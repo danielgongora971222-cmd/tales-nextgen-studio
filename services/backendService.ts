@@ -16,7 +16,22 @@ const MOCK_STYLES: StylePreset[] = [
 const getDbAssets = (): Asset[] => {
   try { return JSON.parse(localStorage.getItem(ASSETS_KEY) || '[]'); } catch { return []; }
 };
-const saveDbAssets = (assets: Asset[]) => localStorage.setItem(ASSETS_KEY, JSON.stringify(assets));
+const saveDbAssets = (assets: Asset[]) => {
+  // localStorage has a very small quota (~5–10MB). Never persist base64 data URLs there.
+  const MAX_STORED_ASSETS = 30;
+
+  const safe = assets.slice(0, MAX_STORED_ASSETS).map((a: any) => {
+    const url = typeof a?.url === "string" ? a.url : "";
+    const isDataUrl = url.startsWith("data:");
+    return {
+      ...a,
+      // If it's a base64 data URL, don't persist it. Keep only metadata.
+      url: isDataUrl ? "" : url,
+    };
+  });
+
+  localStorage.setItem(ASSETS_KEY, JSON.stringify(safe));
+};
 
 const getDbUsers = (): User[] => {
   try { return JSON.parse(localStorage.getItem(USERS_KEY) || '[]'); } catch { return []; }
