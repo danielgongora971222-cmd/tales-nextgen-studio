@@ -1,8 +1,12 @@
 import express from "express";
 import cors from "cors";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
+import pinoHttp from "pino-http";
 import dotenv from "dotenv";
 import { z } from "zod";
 import { GoogleGenAI } from "@google/genai";
+
 
 dotenv.config();
 
@@ -17,8 +21,80 @@ const ai = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
 
 const app = express();
 
+// --- Security & logs ---
+app.disable("x-powered-by");
+
+// Logs básicos (muy útil para ver requests en Render)
+app.use(
+  pinoHttp({
+    redact: {
+      paths: [
+        "req.headers.authorization",
+        "req.headers.cookie",
+        "req.body.apiKey",
+        "req.body.key",
+      ],
+      remove: true,
+    },
+  })
+);
+
+// Security headers
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+  })
+);
+
+
 // IMPORTANT: base64 payloads are large; adjust limits carefully.
-app.use(cors());
+// CORS:
+// - Si usas Vercel rewrites (/api -> Render), normalmente no lo necesitas abierto.
+// - Aun así, dejamos una lista controlable por variable de entorno.
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+app.use(
+  cors({
+    origin: function (origin, cb) {
+      // Si no viene "origin" (ej: server-to-server), lo permitimos
+      if (!origin) return cb(null, true);
+
+      // Si no configuras ALLOWED_ORIGINS, permitimos (modo simple)
+      if (allowedOrigins.length === 0) return cb(null, true);
+
+      // Si está en la lista, ok
+      if (allowedOrigins.includes(origin)) return cb(null, true);
+
+      // Si no, bloquea
+      return cb(new Error("CORS blocked"));
+    },
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+)
+// Rate limit global (protección básica)
+app.use(
+  rateLimit({
+    windowMs: 60 * 1000, // 1 minuto
+    limit: 120, // 120 requests/min por IP
+    standardHeaders: true,
+    legacyHeaders: false,
+  })
+);
+
+// Rate limit más estricto para IA (protege tu key)
+const aiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 20, // 20 requests/min por IP a endpoints de IA
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Aplica este limitador a TODAS las rutas /api/ai/*
+app.use("/api/ai", aiLimiter);
 app.use(express.json({ limit: "25mb" }));
 app.use(express.urlencoded({ extended: true, limit: "25mb" }));
 

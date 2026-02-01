@@ -27,5 +27,6 @@ dist-ssr
 
 # Secrets / security
 .env.*
+.env
 github-recovery-codes.txt
 
