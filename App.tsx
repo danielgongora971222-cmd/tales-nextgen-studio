@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from "react";
 import Layout from './components/Layout';
 import Home from './pages/Home';
 import Login from './pages/Login';
@@ -21,11 +21,15 @@ const AppContent: React.FC = () => {
   const [checking, setChecking] = useState<boolean>(true);
   
   const { user, isLoading: authLoading } = useAuth();
+  
+  const API_BASE =
+    ((import.meta as any).env?.VITE_API_BASE_URL || "").replace(/\/$/, "");
+  const healthUrl = `${API_BASE}/api/health`;
 
   useEffect(() => {
     async function checkBackend() {
       try {
-        const resp = await fetch("/api/health");
+        const resp = await fetch(healthUrl);
         const data = await resp.json();
         setHasKey(Boolean(data?.hasKey));
       } catch (e) {
@@ -42,7 +46,7 @@ const AppContent: React.FC = () => {
     // This simply re-checks the backend configuration after you update env vars.
     setChecking(true);
     try {
-      const resp = await fetch("/api/health");
+      const resp = await fetch(healthUrl);
       const data = await resp.json();
       setHasKey(Boolean(data?.hasKey));
     } catch (e) {
