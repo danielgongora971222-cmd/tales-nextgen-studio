@@ -1,0 +1,76 @@
+export enum AppRoute {
+  HOME = 'home',
+  LOGIN = 'login',
+  
+  // Tool Categories
+  IMAGE_GEN_ROOT = 'image-gen-root',
+  VIDEO_GEN = 'video-gen',
+  
+  // Specific Tools
+  TOOL_GENERATOR = 'tool-generator',
+  TOOL_EDITOR = 'tool-editor',
+  TOOL_RESTYLER = 'tool-restyler',
+  TOOL_FACESWAP = 'tool-faceswap',
+  TOOL_UPSCALER = 'tool-upscaler',
+  TOOL_ANGLES = 'tool-angles',
+  TOOL_COLLAGE = 'tool-collage',
+  
+  CHAT = 'chat'
+}
+
+export interface User {
+  id: string;
+  username: string;
+  avatarUrl?: string;
+}
+
+export interface Comment {
+  id: string;
+  userId: string;
+  username: string;
+  text: string;
+  timestamp: number;
+}
+
+export interface Asset {
+  id: string;
+  url: string; 
+  type: 'image' | 'video';
+  name: string;
+  prompt?: string;
+  createdAt: number;
+  
+  // Social & Privacy
+  ownerId: string;
+  isPublic: boolean;
+  likes: string[]; // Array of User IDs
+  comments: Comment[];
+}
+
+export interface StylePreset {
+  id: string;
+  name: string;
+  coverUrl: string;
+  prompt: string;
+  category: string;
+}
+
+export enum GeminiModel {
+  IMAGE = 'gemini-2.5-flash-image',
+  IMAGE_PRO = 'gemini-3-pro-image-preview',
+  VIDEO_FAST = 'veo-3.1-fast-generate-preview',
+  VIDEO_PRO = 'veo-3.1-generate-preview',
+  TEXT_FAST = 'gemini-3-flash-preview',
+  TEXT_PRO = 'gemini-3-pro-preview'
+}
+
+declare global {
+  interface AIStudio {
+    hasSelectedApiKey: () => Promise<boolean>;
+    openSelectKey: () => Promise<void>;
+  }
+
+  interface Window {
+    aistudio?: AIStudio;
+  }
+}
