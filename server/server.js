@@ -22,6 +22,23 @@ const ai = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
 const app = express();
 app.set("trust proxy", 1);
 
+function getClientIp(req) {
+  // Prioriza headers “reales” cuando estás detrás de proxies (Render/Cloudflare/Vercel)
+  const cf = req.headers["cf-connecting-ip"];
+  if (typeof cf === "string" && cf) return cf;
+
+  const trueClient = req.headers["true-client-ip"];
+  if (typeof trueClient === "string" && trueClient) return trueClient;
+
+  const vercelFwd = req.headers["x-vercel-forwarded-for"];
+  if (typeof vercelFwd === "string" && vercelFwd) return vercelFwd.split(",")[0].trim();
+
+  const xff = req.headers["x-forwarded-for"];
+  if (typeof xff === "string" && xff) return xff.split(",")[0].trim();
+
+  return req.ip;
+}
+
 // --- Security & logs ---
 app.disable("x-powered-by");
 
@@ -82,6 +99,7 @@ const healthLimiter = rateLimit({
   max: 120,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: getClientIp,
   handler: (req, res) => {
     const retryAfter = Number(res.getHeader("Retry-After")) || null;
     return res.status(429).json({
@@ -101,9 +119,10 @@ const healthLimiter = rateLimit({
 // Rate limit general (protección básica) EXCLUYENDO /api/health
 const apiLimiter = rateLimit({
   windowMs: 60 * 1000,
-  limit: 120, // 120 requests/min por IP
+  max: 120, // 120 requests/min por IP
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: getClientIp,
   skip: (req) => req.path === "/api/health" || req.originalUrl === "/api/health",
 });
 
@@ -114,9 +133,10 @@ app.use(apiLimiter);
 // Rate limit más estricto para IA (protege tu key)
 const aiLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 20,
+  max: 10,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: getClientIp,
   handler: (req, res) => {
     const retryAfter = Number(res.getHeader("Retry-After")) || null;
     return res.status(429).json({
