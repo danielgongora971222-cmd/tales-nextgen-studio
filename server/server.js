@@ -156,7 +156,13 @@ function cleanBase64(dataUrl) {
 }
 
 async function ensureAI() {
-  if (!ai) throw new Error("AI not configured (missing GEMINI_API_KEY).");
+  if (!ai) {
+    const err = new Error("AI_NOT_CONFIGURED");
+    err.status = 503;
+    err.code = "AI_NOT_CONFIGURED";
+    err.details = { hint: "Falta GEMINI_API_KEY en Render" };
+    throw err;
+  }
   return ai;
 }
 
@@ -174,16 +180,14 @@ async function extractImageDataUrl(response) {
   throw new Error(msg);
 }
 
-app.post("/api/ai/image", async (req, res) => {
+app.post("/api/ai/image", async (req, res, next) => {
   try {
     const aiClient = await ensureAI();
     const { prompt, model, aspectRatio } = ImageRequestSchema.parse(req.body);
 
-    // Defaults match your frontend enums
     const selectedModel = model || "imagen-3.0-generate-002";
     const config = {};
     if (aspectRatio && selectedModel.includes("imagen")) {
-      // Imagen supports aspectRatio in imageConfig (only for some models)
       config.imageConfig = { aspectRatio };
     }
 
@@ -196,12 +200,11 @@ app.post("/api/ai/image", async (req, res) => {
     const dataUrl = await extractImageDataUrl(response);
     res.json({ ok: true, dataUrl });
   } catch (err) {
-    const message = err?.message || "Unknown error";
-    res.status(400).json({ ok: false, error: message });
+    next(err);
   }
 });
 
-app.post("/api/ai/restyle", async (req, res) => {
+app.post("/api/ai/restyle", async (req, res, next) => {
   try {
     const aiClient = await ensureAI();
     const { imageDataUrl, prompt, model } = RestyleSchema.parse(req.body);
@@ -222,12 +225,11 @@ app.post("/api/ai/restyle", async (req, res) => {
     const dataUrl = await extractImageDataUrl(response);
     res.json({ ok: true, dataUrl });
   } catch (err) {
-    const message = err?.message || "Unknown error";
-    res.status(400).json({ ok: false, error: message });
+    next(err);
   }
 });
 
-app.post("/api/ai/faceswap", async (req, res) => {
+app.post("/api/ai/faceswap", async (req, res, next) => {
   try {
     const aiClient = await ensureAI();
     const { sourceDataUrl, targetDataUrl, model } = FaceSwapSchema.parse(req.body);
@@ -257,12 +259,11 @@ app.post("/api/ai/faceswap", async (req, res) => {
     const dataUrl = await extractImageDataUrl(response);
     res.json({ ok: true, dataUrl });
   } catch (err) {
-    const message = err?.message || "Unknown error";
-    res.status(400).json({ ok: false, error: message });
+    next(err);
   }
 });
 
-app.post("/api/ai/upscale", async (req, res) => {
+app.post("/api/ai/upscale", async (req, res, next) => {
   try {
     const aiClient = await ensureAI();
     const { imageDataUrl, scale, model } = UpscaleSchema.parse(req.body);
@@ -285,8 +286,7 @@ app.post("/api/ai/upscale", async (req, res) => {
     const dataUrl = await extractImageDataUrl(response);
     res.json({ ok: true, dataUrl });
   } catch (err) {
-    const message = err?.message || "Unknown error";
-    res.status(400).json({ ok: false, error: message });
+    next(err);
   }
 });
 
@@ -314,6 +314,72 @@ if (process.env.SERVE_CLIENT === "1") {
     res.sendFile(path.resolve(distPath, "index.html"));
   });
 }
+
+// Si alguien llama una ruta /api que no existe
+app.use("/api", (req, res) => {
+  res.status(404).json({
+    ok: false,
+    error: {
+      code: "NOT_FOUND",
+      message: "Esa ruta /api no existe.",
+    },
+  });
+});
+
+// Manejador global de errores (aquí caen TODOS los errores)
+app.use((err, req, res, _next) => {
+  // 1) Zod (validaciones)
+  if (err?.name === "ZodError") {
+    const details = err.errors?.map((e) => ({
+      field: e.path?.join("."),
+      message: e.message,
+    }));
+
+    return res.status(400).json({
+      ok: false,
+      error: {
+        code: "VALIDATION_ERROR",
+        message: "Datos inválidos.",
+        details,
+      },
+    });
+  }
+
+  // 2) Error controlado (como el de ensureAI)
+  if (err?.status && err?.code) {
+    return res.status(err.status).json({
+      ok: false,
+      error: {
+        code: err.code,
+        message: err.message === "AI_NOT_CONFIGURED"
+          ? "La IA no está configurada en el servidor."
+          : err.message,
+        details: err.details,
+      },
+    });
+  }
+
+  // 3) CORS
+  if (err?.message === "CORS blocked") {
+    return res.status(403).json({
+      ok: false,
+      error: {
+        code: "CORS_BLOCKED",
+        message: "Origen no permitido.",
+      },
+    });
+  }
+
+  // 4) Cualquier otro error inesperado
+  req?.log?.error?.({ err }, "Unhandled error");
+  return res.status(500).json({
+    ok: false,
+    error: {
+      code: "INTERNAL_ERROR",
+      message: "Error inesperado en el servidor.",
+    },
+  });
+});
 
 app.listen(PORT, () => {
   console.log(`[API] listening on http://0.0.0.0:${PORT}`);
