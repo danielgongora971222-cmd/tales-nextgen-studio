@@ -22,9 +22,7 @@ const AppContent: React.FC = () => {
   
   const { user, isLoading: authLoading } = useAuth();
   
-  const API_BASE =
-    ((import.meta as any).env?.VITE_API_BASE_URL || "").replace(/\/$/, "");
-  const healthUrl = `${API_BASE}/api/health`;
+  const healthUrl = "/api/health";
 
   useEffect(() => {
     async function checkBackend() {

@@ -7,8 +7,7 @@ async function apiPost<T>(path: string, body: any): Promise<T> {
   // In dev: Vite proxies /api -> local backend.
   // In prod (Vercel): set VITE_API_BASE_URL to your Render API base URL.
   // Example: https://tales-api.onrender.com
-  const base = (import.meta as any).env?.VITE_API_BASE_URL || "";
-  const url = `${base}${path}`;
+  const url = path; // SIEMPRE /api/... (Vercel hará el rewrite en prod)
 
   const resp = await fetch(url, {
     method: "POST",
