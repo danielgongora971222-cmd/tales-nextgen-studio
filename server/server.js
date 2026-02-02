@@ -116,6 +116,8 @@ app.get("/api/health", (_req, res) => {
     ok: true,
     hasKey: Boolean(process.env.GEMINI_API_KEY),
     service: "tales-nextgen-studio-api",
+    env: process.env.APP_ENV || process.env.NODE_ENV || "unknown",
+    version: process.env.APP_VERSION || "unknown",
     time: new Date().toISOString(),
   });
 });
