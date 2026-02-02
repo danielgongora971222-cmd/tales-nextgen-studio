@@ -20,6 +20,7 @@ if (!GEMINI_API_KEY) {
 const ai = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
 
 const app = express();
+app.set("trust proxy", 1);
 
 // --- Security & logs ---
 app.disable("x-powered-by");
@@ -75,15 +76,26 @@ app.use(
     allowedHeaders: ["Content-Type", "Authorization"],
   })
 )
-// Rate limit global (protección básica)
-app.use(
-  rateLimit({
-    windowMs: 60 * 1000, // 1 minuto
-    limit: 120, // 120 requests/min por IP
-    standardHeaders: true,
-    legacyHeaders: false,
-  })
-);
+// Rate limit SUAVE para health (para que no moleste al refrescar)
+const healthLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 600, // 600 requests/min por IP
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Rate limit general (protección básica) EXCLUYENDO /api/health
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 120, // 120 requests/min por IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => req.path === "/api/health" || req.originalUrl === "/api/health",
+});
+
+// Aplica limitadores
+app.use("/api/health", healthLimiter);
+app.use(apiLimiter);
 
 // Rate limit más estricto para IA (protege tu key)
 const aiLimiter = rateLimit({
@@ -104,6 +116,8 @@ app.get("/api/health", (_req, res) => {
     ok: true,
     hasKey: Boolean(process.env.GEMINI_API_KEY),
     service: "tales-nextgen-studio-api",
+    env: process.env.APP_ENV || process.env.NODE_ENV || "unknown",
+    version: process.env.APP_VERSION || "unknown",
     time: new Date().toISOString(),
   });
 });
