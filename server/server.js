@@ -79,9 +79,23 @@ app.use(
 // Rate limit SUAVE para health (para que no moleste al refrescar)
 const healthLimiter = rateLimit({
   windowMs: 60 * 1000,
-  limit: 600, // 600 requests/min por IP
+  max: 120,
   standardHeaders: true,
   legacyHeaders: false,
+  handler: (req, res) => {
+    const retryAfter = Number(res.getHeader("Retry-After")) || null;
+    return res.status(429).json({
+      ok: false,
+      error: {
+        code: "RATE_LIMITED",
+        message: "Demasiadas solicitudes. Espera un momento y vuelve a intentar.",
+        details: {
+          scope: "health",
+          retryAfterSeconds: retryAfter,
+        },
+      },
+    });
+  },
 });
 
 // Rate limit general (protección básica) EXCLUYENDO /api/health
@@ -100,9 +114,23 @@ app.use(apiLimiter);
 // Rate limit más estricto para IA (protege tu key)
 const aiLimiter = rateLimit({
   windowMs: 60 * 1000,
-  limit: 20, // 20 requests/min por IP a endpoints de IA
+  max: 20,
   standardHeaders: true,
   legacyHeaders: false,
+  handler: (req, res) => {
+    const retryAfter = Number(res.getHeader("Retry-After")) || null;
+    return res.status(429).json({
+      ok: false,
+      error: {
+        code: "RATE_LIMITED",
+        message: "Has hecho demasiadas solicitudes a la IA. Espera y vuelve a intentar.",
+        details: {
+          scope: "ai",
+          retryAfterSeconds: retryAfter,
+        },
+      },
+    });
+  },
 });
 
 // Aplica este limitador a TODAS las rutas /api/ai/*
