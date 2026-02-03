@@ -371,7 +371,7 @@ app.get("/api/assets", async (req, res) => {
   // 3) pedir assets del usuario a la DB
   let q = supabaseAdmin
     .from("assets")
-    .select("id,url,type,tool,prompt,created_at,owner_id,is_public")
+    .select("id, url, storage_path, type, name, prompt, created_at, owner_id, is_public")
     .order("created_at", { ascending: false })
     .limit(limit);
 
@@ -393,21 +393,45 @@ app.get("/api/assets", async (req, res) => {
   }
 
   // 4) convertir a la forma que el frontend espera (Asset de types.ts)
-  const items = (data || []).map((row) => ({
-    id: row.id,
-    url: row.url,
-    type: row.type === "video" ? "video" : "image",
-    name: `Generation ${String(row.id).slice(0, 4)}`,
-    prompt: row.prompt || undefined,
-    createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
-    ownerId: row.owner_id,
-    isPublic: !!row.is_public,
-    likes: [],
-    comments: [],
-  }));
+  //    + generar signed URLs cuando url está null pero hay storage_path
+  const rows = data || [];
 
-  return res.json({ ok: true, items });
+  const items = await Promise.all(
+    rows.map(async (row) => {
+      let url = row.url || null;
+
+      // Si no hay url guardada, la generamos firmada desde storage_path
+      if (!url && row.storage_path) {
+        url = await signStoragePath(row.storage_path, 60 * 60); // 1 hora
+      }
+
+      // createdAt: soporta string timestamp o number (ms)
+      const createdAt =
+        typeof row.created_at === "string"
+          ? new Date(row.created_at).getTime()
+          : row.created_at || Date.now();
+
+      return {
+        id: row.id,
+        url,
+        type: row.type === "video" ? "video" : "image",
+        name: row.name || `Generation ${String(row.id).slice(0, 4)}`,
+        prompt: row.prompt || undefined,
+        createdAt,
+        ownerId: row.owner_id,
+        isPublic: !!row.is_public,
+        likes: [],
+        comments: [],
+      };
+    })
+  );
+
+    return res.json({ ok: true, items });
 });
+
+// ===============================
+// Assets visibility: publish / unpublish
+// POST /api/assets/:id/publish
 
 // ===============================
 // Assets visibility: publish / unpublish
