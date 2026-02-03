@@ -123,7 +123,7 @@ async function signStoragePath(storagePath, expiresSeconds = 60 * 60) {
   return data.signedUrl;
 }
 
-async function insertAssetRow({ ownerId, type, tool, name, prompt, storagePath, isPublic }) {
+async function insertAssetRow({ ownerId, type, tool, name, prompt, storagePath, isPublic, meta }) {
   const payload = {
     owner_id: ownerId,
     type: type || "image",
@@ -132,6 +132,7 @@ async function insertAssetRow({ ownerId, type, tool, name, prompt, storagePath, 
     prompt: prompt || null,
     storage_path: storagePath,
     is_public: Boolean(isPublic),
+    meta: meta || {},
   };
 
   const { data, error } = await supabaseAdmin
@@ -299,6 +300,19 @@ const ImageRequestSchema = z.object({
   prompt: z.string().min(1).max(4000),
   model: z.string().optional(),
   aspectRatio: z.string().optional(),
+
+  // NUEVO:
+  count: z.coerce.number().int().min(1).max(4).optional().default(1),
+  quality: z.enum(["1K", "2K", "4K"]).optional(),
+
+  // Tool metadata (para guardarlo como “Image Generator” en assets)
+  tool: z.string().optional(),     // ej: "image-generator"
+  nameHint: z.string().optional(), // ej: "img-gen"
+
+  // Referencias (assets ya subidos a Supabase Storage)
+  characterAssetIds: z.array(z.string()).max(3).optional(),
+  styleAssetId: z.string().optional(),
+  backgroundAssetId: z.string().optional(),
 });
 
 const Base64ImageSchema = z
@@ -339,18 +353,78 @@ async function ensureAI() {
   return ai;
 }
 
-async function extractImageDataUrl(response) {
-  const candidates = response?.candidates;
-  const parts = candidates?.[0]?.content?.parts || [];
-  for (const part of parts) {
-    if (part?.inlineData?.data) {
-      const mimeType = part.inlineData.mimeType || "image/png";
-      return `data:${mimeType};base64,${part.inlineData.data}`;
-    }
+function mimeFromPath(storagePath) {
+  const ext = (storagePath.split(".").pop() || "").toLowerCase();
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  if (ext === "webp") return "image/webp";
+  return "image/png";
+}
+
+function qualityHint(quality) {
+  if (!quality) return "";
+  if (quality === "1K") return "high quality, clean, sharp";
+  if (quality === "2K") return "very high quality, ultra-detailed, crisp, professional lighting";
+  if (quality === "4K") return "ultra high quality, 4k, hyper-detailed, cinematic lighting, razor sharp";
+  return "";
+}
+
+function buildPromptText({ prompt, aspectRatio, quality, count, index }) {
+  const q = qualityHint(quality);
+  const ar = aspectRatio ? `\nTarget aspect ratio: ${aspectRatio}.` : "";
+  const varHint =
+    count > 1
+      ? `\nVariation ${index + 1} of ${count}: keep identity/style/background consistent with refs, but vary pose/composition/details; do NOT duplicate previous variations.`
+      : "";
+
+  return `${q ? `QUALITY: ${q}\n` : ""}${prompt}${ar}${varHint}`.trim();
+}
+
+async function assetIdToInlineDataPart({ assetId, requesterId }) {
+  // 1) Busca el asset en DB y valida acceso
+  const { data: row, error: rowErr } = await supabaseAdmin
+    .from("assets")
+    .select("id, owner_id, is_public, storage_path, type")
+    .eq("id", assetId)
+    .single();
+
+  if (rowErr || !row) {
+    const e = new Error("Asset no encontrado.");
+    e.status = 404;
+    e.code = "ASSET_NOT_FOUND";
+    throw e;
   }
-  // fallback to text
-  const msg = response?.text || "No image generated.";
-  throw new Error(msg);
+
+  if (row.type !== "image") {
+    const e = new Error("El asset referenciado no es una imagen.");
+    e.status = 400;
+    e.code = "ASSET_NOT_IMAGE";
+    throw e;
+  }
+
+  const isOwner = row.owner_id === requesterId;
+  const isPublic = Boolean(row.is_public);
+  if (!isOwner && !isPublic) {
+    const e = new Error("No tienes acceso a ese asset.");
+    e.status = 403;
+    e.code = "FORBIDDEN_ASSET";
+    throw e;
+  }
+
+  // 2) Descarga desde Storage y convierte a base64
+  const dl = await supabaseAdmin.storage.from(SUPABASE_BUCKET).download(row.storage_path);
+  if (dl.error || !dl.data) {
+    const e = new Error(dl.error?.message || "No se pudo descargar el asset desde Storage.");
+    e.status = 500;
+    e.code = "ASSET_DOWNLOAD_FAILED";
+    throw e;
+  }
+
+  const blob = dl.data;
+  const ab = await blob.arrayBuffer();
+  const base64 = Buffer.from(ab).toString("base64");
+  const mimeType = blob.type || mimeFromPath(row.storage_path);
+
+  return { inlineData: { mimeType, data: base64 } };
 }
 
 // ===============================
@@ -591,7 +665,7 @@ app.post("/api/assets/:id/unpublish", async (req, res) => {
     .update({ is_public: false })
     .eq("id", assetId)
     .eq("owner_id", user.id)
-    .select("id,url,storage_path,type,tool,prompt,created_at,owner_id,is_public")
+    .select("id,is_public")
     .single();
 
   if (upErr) {
@@ -614,40 +688,167 @@ app.post("/api/assets/:id/unpublish", async (req, res) => {
 app.post("/api/ai/image", async (req, res, next) => {
   try {
     const aiClient = await ensureAI();
-    const { prompt, model, aspectRatio } = ImageRequestSchema.parse(req.body);
+
+    const {
+      prompt,
+      model,
+      aspectRatio,
+      count,
+      quality,
+      tool,
+      nameHint,
+      characterAssetIds,
+      styleAssetId,
+      backgroundAssetId,
+    } = ImageRequestSchema.parse(req.body);
 
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
 
     const selectedModel = model || "imagen-3.0-generate-002";
+    const toolId = tool || "image-generator";     // <- NUEVO tool principal
+    const title = nameHint || "generated";
+
+    // Config del modelo (solo aplica imageConfig si el modelo lo soporta)
     const config = {};
     if (aspectRatio && selectedModel.includes("imagen")) {
       config.imageConfig = { aspectRatio };
     }
 
+    // Pre-armamos las referencias (1 sola vez)
+    const refParts = [];
+
+    const chars = Array.isArray(characterAssetIds) ? characterAssetIds.slice(0, 3) : [];
+    for (let i = 0; i < chars.length; i++) {
+      refParts.push({ text: `Character reference ${i + 1}:` });
+      refParts.push(await assetIdToInlineDataPart({ assetId: chars[i], requesterId: user.id }));
+    }
+
+    if (styleAssetId) {
+      refParts.push({ text: "Style reference:" });
+      refParts.push(await assetIdToInlineDataPart({ assetId: styleAssetId, requesterId: user.id }));
+    }
+
+    if (backgroundAssetId) {
+      refParts.push({ text: "Background reference:" });
+      refParts.push(await assetIdToInlineDataPart({ assetId: backgroundAssetId, requesterId: user.id }));
+    }
+
+    const items = [];
+    const urlExpiresInSeconds = 60 * 60;
+
+    for (let i = 0; i < count; i++) {
+      const promptText = buildPromptText({
+        prompt,
+        aspectRatio,
+        quality,
+        count,
+        index: i,
+      });
+
+      const parts = [
+        {
+          text:
+            `Generate ONE image using the prompt and the provided references.\n\n` +
+            `PROMPT:\n${promptText}\n\n` +
+            `RULES:\n` +
+            `- If character refs exist: keep identity consistent.\n` +
+            `- If style ref exists: match style, color grading, textures.\n` +
+            `- If background ref exists: match environment/lighting composition.\n` +
+            `- No text/watermarks unless user prompt requests it.\n`,
+        },
+        ...refParts,
+      ];
+
+      const response = await aiClient.models.generateContent({
+        model: selectedModel,
+        contents: [{ role: "user", parts }],
+        config,
+      });
+
+      const dataUrl = await extractImageDataUrl(response);
+
+      const { storagePath } = await uploadBase64ToStorage({
+        userId: user.id,
+        tool: toolId,
+        dataUrl,
+        nameHint: title,
+      });
+
+      const assetId = await insertAssetRow({
+        ownerId: user.id,
+        type: "image",
+        tool: toolId,
+        name: title,
+        prompt, // guardamos el prompt “base” (sin hints)
+        storagePath,
+        isPublic: false,
+      });
+
+      const url = await signStoragePath(storagePath, urlExpiresInSeconds);
+      items.push({ url, assetId });
+    }
+
+    // Backward compatible: seguimos devolviendo url + assetId (el primero),
+    // y además devolvemos items[] para el modo multi-variación.
+    return res.json({
+      ok: true,
+      url: items[0]?.url,
+      assetId: items[0]?.assetId,
+      urlExpiresInSeconds,
+      items,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post("/api/ai/restyle", async (req, res, next) => {
+  try {
+    const aiClient = await ensureAI();
+    const body = RestyleSchema.parse(req.body);
+
+    const { user, error } = await requireUser(req);
+    if (error) return res.status(401).json({ ok: false, error });
+
+    const selectedModel = body.model || "imagen-3.0-generate-002";
+
+    const { mimeType, base64 } = parseDataUrl(body.imageDataUrl);
+    const prompt = body.prompt || "Restyle this image with high quality.";
+
     const response = await aiClient.models.generateContent({
       model: selectedModel,
-      contents: [{ role: "user", parts: [{ text: `Generate an image: ${prompt}` }] }],
-      config,
+      contents: [
+        {
+          role: "user",
+          parts: [
+            { text: prompt },
+            { inlineData: { mimeType, data: base64 } },
+          ],
+        },
+      ],
     });
 
     const dataUrl = await extractImageDataUrl(response);
 
     const { storagePath } = await uploadBase64ToStorage({
       userId: user.id,
-      tool: "generator",
+      tool: "restyler",
       dataUrl,
-      nameHint: "generated",
+      nameHint: "restyle",
     });
 
     const assetId = await insertAssetRow({
       ownerId: user.id,
       type: "image",
-      tool: "generator",
-      name: "generated",
+      tool: "restyler",
+      name: "restyle",
       prompt,
       storagePath,
       isPublic: false,
+      meta: {
+        toolVersion: 1,
+      },
     });
 
     const urlExpiresInSeconds = 60 * 60;
@@ -659,60 +860,63 @@ app.post("/api/ai/image", async (req, res, next) => {
   }
 });
 
-app.post("/api/ai/restyle", async (req, res, next) => {
-  try {
-    const aiClient = await ensureAI();
-    const { imageDataUrl, prompt, model } = RestyleSchema.parse(req.body);
-    const selectedModel = model || "imagen-3.0-generate-002";
-
-    const imagePart = {
-      inlineData: {
-        mimeType: "image/png",
-        data: cleanBase64(imageDataUrl),
-      },
-    };
-
-    const response = await aiClient.models.generateContent({
-      model: selectedModel,
-      contents: { parts: [imagePart, { text: prompt }] },
-    });
-
-    const dataUrl = await extractImageDataUrl(response);
-    res.json({ ok: true, dataUrl });
-  } catch (err) {
-    next(err);
-  }
-});
-
 app.post("/api/ai/faceswap", async (req, res, next) => {
   try {
     const aiClient = await ensureAI();
-    const { sourceDataUrl, targetDataUrl, model } = FaceSwapSchema.parse(req.body);
-    const selectedModel = model || "imagen-3.0-generate-002";
+    const body = FaceSwapSchema.parse(req.body);
 
-    const sourcePart = {
-      inlineData: {
-        mimeType: "image/png",
-        data: cleanBase64(sourceDataUrl),
-      },
-    };
-    const targetPart = {
-      inlineData: {
-        mimeType: "image/png",
-        data: cleanBase64(targetDataUrl),
-      },
-    };
+    const { user, error } = await requireUser(req);
+    if (error) return res.status(401).json({ ok: false, error });
+
+    const selectedModel = body.model || "imagen-3.0-generate-002";
+
+    const src = parseDataUrl(body.sourceDataUrl);
+    const tgt = parseDataUrl(body.targetDataUrl);
 
     const prompt =
-      "Image 1 is the 'Source Face'. Image 2 is the 'Target Scene'. Create a new image that is exactly Image 2, but replace the main character's face with the face from Image 1. Maintain the lighting, skin tone, expression, and art style of Image 2. High fidelity, seamless blend.";
+      body.prompt ||
+      "Swap the face from the SOURCE onto the TARGET naturally. Match lighting, skin tone, and preserve realism.";
 
     const response = await aiClient.models.generateContent({
       model: selectedModel,
-      contents: { parts: [sourcePart, targetPart, { text: prompt }] },
+      contents: [
+        {
+          role: "user",
+          parts: [
+            { text: "SOURCE IMAGE (face to copy):" },
+            { inlineData: { mimeType: src.mimeType, data: src.base64 } },
+            { text: "TARGET IMAGE (face to replace):" },
+            { inlineData: { mimeType: tgt.mimeType, data: tgt.base64 } },
+            { text: `INSTRUCTIONS: ${prompt}` },
+          ],
+        },
+      ],
     });
 
     const dataUrl = await extractImageDataUrl(response);
-    res.json({ ok: true, dataUrl });
+
+    const { storagePath } = await uploadBase64ToStorage({
+      userId: user.id,
+      tool: "faceswap",
+      dataUrl,
+      nameHint: "faceswap",
+    });
+
+    const assetId = await insertAssetRow({
+      ownerId: user.id,
+      type: "image",
+      tool: "faceswap",
+      name: "faceswap",
+      prompt,
+      storagePath,
+      isPublic: false,
+      meta: { toolVersion: 1 },
+    });
+
+    const urlExpiresInSeconds = 60 * 60;
+    const url = await signStoragePath(storagePath, urlExpiresInSeconds);
+
+    return res.json({ ok: true, url, assetId, urlExpiresInSeconds });
   } catch (err) {
     next(err);
   }
@@ -721,25 +925,55 @@ app.post("/api/ai/faceswap", async (req, res, next) => {
 app.post("/api/ai/upscale", async (req, res, next) => {
   try {
     const aiClient = await ensureAI();
-    const { imageDataUrl, scale, model } = UpscaleSchema.parse(req.body);
-    const selectedModel = model || "imagen-3.0-generate-002";
+    const body = UpscaleSchema.parse(req.body);
 
-    const imagePart = {
-      inlineData: {
-        mimeType: "image/png",
-        data: cleanBase64(imageDataUrl),
-      },
-    };
+    const { user, error } = await requireUser(req);
+    if (error) return res.status(401).json({ ok: false, error });
 
-    const prompt = `Highly detailed, ${scale}x super-resolution version of this image. Enhance texture, sharpen edges, de-noise, 8k resolution. Do not change the composition or subject matter; only increase fidelity.`;
+    const selectedModel = body.model || "imagen-3.0-generate-002";
+    const scale = body.scale || 2;
+
+    const { mimeType, base64 } = parseDataUrl(body.imageDataUrl);
+
+    const prompt = `Upscale this image by ${scale}x. Preserve detail, avoid artifacts, keep it photorealistic.`;
 
     const response = await aiClient.models.generateContent({
       model: selectedModel,
-      contents: { parts: [imagePart, { text: prompt }] },
+      contents: [
+        {
+          role: "user",
+          parts: [
+            { text: prompt },
+            { inlineData: { mimeType, data: base64 } },
+          ],
+        },
+      ],
     });
 
     const dataUrl = await extractImageDataUrl(response);
-    res.json({ ok: true, dataUrl });
+
+    const { storagePath } = await uploadBase64ToStorage({
+      userId: user.id,
+      tool: "upscaler",
+      dataUrl,
+      nameHint: `upscale_${scale}x`,
+    });
+
+    const assetId = await insertAssetRow({
+      ownerId: user.id,
+      type: "image",
+      tool: "upscaler",
+      name: `upscale_${scale}x`,
+      prompt,
+      storagePath,
+      isPublic: false,
+      meta: { toolVersion: 1, scale },
+    });
+
+    const urlExpiresInSeconds = 60 * 60;
+    const url = await signStoragePath(storagePath, urlExpiresInSeconds);
+
+    return res.json({ ok: true, url, assetId, urlExpiresInSeconds });
   } catch (err) {
     next(err);
   }
