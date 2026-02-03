@@ -1,5 +1,6 @@
 import { GeminiModel } from "../types";
 import { backend } from "./backendService";
+import { supabase } from "./supabaseClient";
 
 type ApiResponse<T> = { ok: true; dataUrl?: string; videoUrl?: string } | { ok: false; error: string };
 
@@ -9,9 +10,15 @@ async function apiPost<T>(path: string, body: any): Promise<T> {
   // Example: https://tales-api.onrender.com
   const url = path; // SIEMPRE /api/... (Vercel hará el rewrite en prod)
 
+  const { data: sessionData } = await supabase.auth.getSession();
+  const token = sessionData.session?.access_token;
+
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
   const resp = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(body),
   });
 
@@ -33,7 +40,6 @@ async function apiPost<T>(path: string, body: any): Promise<T> {
   }
 
   return data as T;
-  return data as any;
 }
 
 export const generateImage = async (
@@ -46,8 +52,9 @@ export const generateImage = async (
     model,
     aspectRatio: options?.aspectRatio,
   });
-  if (!res.dataUrl) throw new Error("No image returned from API.");
-  return res.dataUrl;
+  const out = res.url || res.dataUrl;
+  if (!out) throw new Error("No image returned from API.");
+  return out;
 };
 
 export const generateRestyle = async (assetUrl: string, prompt: string): Promise<string> => {

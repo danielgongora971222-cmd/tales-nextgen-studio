@@ -6,6 +6,7 @@ import pinoHttp from "pino-http";
 import dotenv from "dotenv";
 import { z } from "zod";
 import { GoogleGenAI } from "@google/genai";
+import { createClient } from "@supabase/supabase-js";
 
 
 dotenv.config();
@@ -18,6 +19,66 @@ if (!GEMINI_API_KEY) {
 }
 
 const ai = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
+
+// ===============================
+// Supabase (SERVER) - Storage + Auth check
+// ===============================
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const SUPABASE_BUCKET = process.env.SUPABASE_BUCKET || "assets";
+
+const supabaseAdmin =
+  SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
+    ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+        auth: { persistSession: false },
+      })
+    : null;
+
+async function requireUser(req) {
+  const auth = req.headers.authorization || "";
+  const token = auth.startsWith("Bearer ") ? auth.slice(7) : null;
+
+  if (!token) {
+    return {
+      user: null,
+      error: { code: "UNAUTHENTICATED", message: "Login requerido." },
+    };
+  }
+
+  if (!supabaseAdmin) {
+    return {
+      user: null,
+      error: { code: "SUPABASE_NOT_CONFIGURED", message: "Supabase no está configurado en el backend." },
+    };
+  }
+
+  const { data, error } = await supabaseAdmin.auth.getUser(token);
+
+  if (error || !data?.user) {
+    return {
+      user: null,
+      error: { code: "UNAUTHENTICATED", message: "Sesión inválida." },
+    };
+  }
+
+  return { user: data.user, error: null };
+}
+
+function parseDataUrl(dataUrl) {
+  // Espera: data:image/png;base64,AAAA...
+  const match = typeof dataUrl === "string"
+    ? dataUrl.match(/^data:([^;]+);base64,(.+)$/)
+    : null;
+
+  if (!match) return { mimeType: "image/png", base64: dataUrl };
+  return { mimeType: match[1], base64: match[2] };
+}
+
+function extFromMime(mimeType) {
+  if (mimeType.includes("jpeg")) return "jpg";
+  if (mimeType.includes("webp")) return "webp";
+  return "png";
+}
 
 const app = express();
 app.set("trust proxy", 1);
@@ -233,6 +294,9 @@ app.post("/api/ai/image", async (req, res, next) => {
     const aiClient = await ensureAI();
     const { prompt, model, aspectRatio } = ImageRequestSchema.parse(req.body);
 
+    const { user, error } = await requireUser(req);
+    if (error) return res.status(401).json({ ok: false, error });
+
     const selectedModel = model || "imagen-3.0-generate-002";
     const config = {};
     if (aspectRatio && selectedModel.includes("imagen")) {
@@ -246,7 +310,50 @@ app.post("/api/ai/image", async (req, res, next) => {
     });
 
     const dataUrl = await extractImageDataUrl(response);
-    res.json({ ok: true, dataUrl });
+
+// 1) Convertir base64 -> Buffer
+const { mimeType, base64 } = parseDataUrl(dataUrl);
+const buffer = Buffer.from(base64, "base64");
+
+// 2) Crear ruta del archivo dentro del bucket
+const ext = extFromMime(mimeType);
+const filePath = `${user.id}/${Date.now()}-${Math.random().toString(16).slice(2)}.${ext}`;
+
+// 3) Subir a Supabase Storage
+const up = await supabaseAdmin.storage
+  .from(SUPABASE_BUCKET)
+  .upload(filePath, buffer, { contentType: mimeType, upsert: false });
+
+if (up.error) {
+  return res.status(500).json({
+    ok: false,
+    error: { code: "STORAGE_UPLOAD_FAILED", message: up.error.message },
+  });
+}
+
+// 4) Sacar URL pública (requiere bucket público)
+const pub = supabaseAdmin.storage.from(SUPABASE_BUCKET).getPublicUrl(filePath);
+const url = pub.data.publicUrl;
+
+// 5) Guardar en DB (tabla assets)
+const ins = await supabaseAdmin.from("assets").insert({
+  owner_id: user.id,
+  type: "image",
+  tool: "generator",
+  prompt: req.body?.prompt || null,
+  url,
+  storage_path: filePath,
+});
+
+if (ins.error) {
+  return res.status(500).json({
+    ok: false,
+    error: { code: "DB_INSERT_FAILED", message: ins.error.message },
+  });
+}
+
+// 6) Respuesta final: URL real
+return res.json({ ok: true, url });
   } catch (err) {
     next(err);
   }
