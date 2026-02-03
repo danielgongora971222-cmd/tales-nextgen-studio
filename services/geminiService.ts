@@ -15,11 +15,24 @@ async function apiPost<T>(path: string, body: any): Promise<T> {
     body: JSON.stringify(body),
   });
 
-  const data = (await resp.json()) as ApiResponse<T>;
-  if (!resp.ok || (data as any).ok === false) {
-    const msg = (data as any).error || `Request failed: ${resp.status}`;
+    const data = (await resp.json()) as any;
+
+  if (!resp.ok || data?.ok === false) {
+    const e = data?.error;
+
+    let msg = `Request failed: ${resp.status}`;
+    if (typeof e === "string") {
+      msg = e;
+    } else if (e && typeof e === "object") {
+      const code = e.code ? `${e.code}: ` : "";
+      const message = e.message ? e.message : JSON.stringify(e);
+      msg = `${code}${message}`;
+    }
+
     throw new Error(msg);
   }
+
+  return data as T;
   return data as any;
 }
 
