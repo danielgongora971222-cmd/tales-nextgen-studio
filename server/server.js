@@ -289,6 +289,56 @@ async function extractImageDataUrl(response) {
   throw new Error(msg);
 }
 
+// ===============================
+// Assets: historial del usuario (DB)
+// GET /api/assets?type=image&limit=50
+// ===============================
+app.get("/api/assets", async (req, res) => {
+  // 1) exigir login
+  const { user, error } = await requireUser(req);
+  if (error) return res.status(401).json({ ok: false, error });
+
+  // 2) leer filtros simples
+  const type = typeof req.query.type === "string" ? req.query.type : null;
+  const limitRaw = typeof req.query.limit === "string" ? parseInt(req.query.limit, 10) : 50;
+  const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 100) : 50;
+
+  // 3) pedir assets del usuario a la DB
+  let q = supabaseAdmin
+    .from("assets")
+    .select("id,url,type,tool,prompt,created_at,owner_id")
+    .eq("owner_id", user.id)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (type) q = q.eq("type", type);
+
+  const { data, error: dbErr } = await q;
+
+  if (dbErr) {
+    return res.status(500).json({
+      ok: false,
+      error: { code: "DB_QUERY_FAILED", message: dbErr.message },
+    });
+  }
+
+  // 4) convertir a la forma que el frontend espera (Asset de types.ts)
+  const items = (data || []).map((row) => ({
+    id: row.id,
+    url: row.url,
+    type: row.type === "video" ? "video" : "image",
+    name: `Generation ${String(row.id).slice(0, 4)}`,
+    prompt: row.prompt || undefined,
+    createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
+    ownerId: row.owner_id,
+    isPublic: false,
+    likes: [],
+    comments: [],
+  }));
+
+  return res.json({ ok: true, items });
+});
+
 app.post("/api/ai/image", async (req, res, next) => {
   try {
     const aiClient = await ensureAI();
