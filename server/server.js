@@ -591,7 +591,7 @@ app.post("/api/assets/:id/unpublish", async (req, res) => {
     .update({ is_public: false })
     .eq("id", assetId)
     .eq("owner_id", user.id)
-    .select("id,is_public")
+    .select("id,url,storage_path,type,tool,prompt,created_at,owner_id,is_public")
     .single();
 
   if (upErr) {

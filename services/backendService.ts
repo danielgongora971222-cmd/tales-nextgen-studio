@@ -143,9 +143,30 @@ export const backend = {
   },
 
   async getPublicFeed(): Promise<Asset[]> {
-    const all = getDbAssets();
-    // Sort by newest public
-    return all.filter(a => a.isPublic).sort((a, b) => b.createdAt - a.createdAt);
+    try {
+      const resp = await fetch(`/api/community?type=image&limit=50`, { method: "GET" });
+      const text = await resp.text();
+
+      let data: any;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error(
+          `El backend devolvió HTML en vez de JSON (probable: /api/community no existe aún o Vercel/Proxy no está reescribiendo). Inicio: ${text.slice(0, 30)}`
+        );
+      }
+
+      if (!resp.ok || data?.ok === false) {
+        const e = data?.error;
+        throw new Error(e?.message || `Request failed: ${resp.status}`);
+      }
+
+      return Array.isArray(data.items) ? data.items : [];
+    } catch (e) {
+      // fallback (por si estás offline o el API no responde)
+      const all = getDbAssets();
+      return all.filter((a) => a.isPublic).sort((a, b) => b.createdAt - a.createdAt);
+    }
   },
 
   // --- SOCIAL ACTIONS ---
