@@ -133,7 +133,7 @@ export default function Login() {
         return;
       }
 
-      // Ya verificado → ponemos contraseña + nombre visible
+      // Ya verificado → ponemos contrasena + nombre visible
       const { error: updateError } = await supabase.auth.updateUser({
         password,
         data: { display_name: displayName?.trim() || null },
