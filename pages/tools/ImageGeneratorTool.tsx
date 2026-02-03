@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { generateImage } from '../../services/geminiService';
-import { backend } from '../../services/backendService';
+import { listMyAssets } from "../../services/assetsApi";
 import { useAuth } from '../../contexts/AuthContext';
 import { Asset, GeminiModel } from '../../types';
 import GenerationHistory from '../../components/GenerationHistory';
@@ -20,13 +20,17 @@ const ImageGeneratorTool: React.FC = () => {
 
   // Load user's history for this tool (or generic images) on mount
   useEffect(() => {
-    if (user) {
-        backend.getUserAssets(user.id).then(assets => {
-            const images = assets.filter(a => a.type === 'image').sort((a,b) => b.createdAt - a.createdAt);
-            setHistory(images);
-            if (images.length > 0) setSelectedAsset(images[0]);
-        });
-    }
+    if (!user) return;
+
+    (async () => {
+      try {
+        const images = await listMyAssets({ type: "image", limit: 50 });
+        setHistory(images);
+        setSelectedAsset(images.length > 0 ? images[0] : null);
+      } catch (err: any) {
+        setError(err?.message || "No se pudo cargar el historial.");
+      }
+    })();
   }, [user]);
 
   const handleGenerate = async () => {
@@ -36,14 +40,12 @@ const ImageGeneratorTool: React.FC = () => {
     setError(null); // Reset error state
 
     try {
-      const resultBase64 = await generateImage(prompt, model, { aspectRatio });
-      
-      // Save to backend immediately
-      const newAsset = await backend.saveGeneratedAsset(resultBase64, 'image', user.id, prompt);
-      
-      // Update local state
-      setHistory(prev => [newAsset, ...prev]);
-      setSelectedAsset(newAsset);
+      await generateImage(prompt, model, { aspectRatio });
+
+      // volver a pedir el historial desde DB (ya debe incluir la nueva imagen)
+      const images = await listMyAssets({ type: "image", limit: 50 });
+      setHistory(images);
+      setSelectedAsset(images.length > 0 ? images[0] : null);
       
     } catch (err: any) {
       console.error(err);
