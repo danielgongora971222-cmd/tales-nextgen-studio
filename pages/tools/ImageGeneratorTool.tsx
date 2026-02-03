@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { generateImage } from '../../services/geminiService';
-import { listMyAssets } from "../../services/assetsApi";
+import { listMyAssets, publishAsset, unpublishAsset } from "../../services/assetsApi";
 import { useAuth } from '../../contexts/AuthContext';
 import { Asset, GeminiModel } from '../../types';
 import GenerationHistory from '../../components/GenerationHistory';
@@ -57,13 +57,31 @@ const ImageGeneratorTool: React.FC = () => {
       setLoading(false);
     }
   };
+  
+  const handleTogglePublic = async () => {
+    if (!selectedAsset) return;
+
+    try {
+      const makePublic = !selectedAsset.isPublic;
+
+      const result = makePublic
+        ? await publishAsset(selectedAsset.id)
+        : await unpublishAsset(selectedAsset.id);
+
+      // actualizar seleccionado
+      setSelectedAsset({ ...selectedAsset, isPublic: result.isPublic });
+
+      // actualizar historial
+      setHistory((prev) =>
+        prev.map((a) => (a.id === selectedAsset.id ? { ...a, isPublic: result.isPublic } : a))
+      );
+    } catch (err: any) {
+      setError(err?.message || "No se pudo cambiar la visibilidad.");
+    }
+  };
 
   const handlePublish = async () => {
-      if (selectedAsset && !selectedAsset.isPublic) {
-          await backend.social.publishAsset(selectedAsset.id);
-          setSelectedAsset({ ...selectedAsset, isPublic: true });
-          setHistory(prev => prev.map(a => a.id === selectedAsset.id ? { ...a, isPublic: true } : a));
-      }
+    setError("Publish aún no está implementado en esta etapa. Ahora estamos terminando Historial DB.");
   };
 
   return (
@@ -155,11 +173,8 @@ const ImageGeneratorTool: React.FC = () => {
                 <div className="flex gap-3">
                     <button className="text-xs font-bold text-white hover:text-gray-300">Download</button>
                     {!selectedAsset.isPublic && (
-                        <button 
-                            onClick={handlePublish}
-                            className="text-xs bg-white text-black px-4 py-2 rounded-full font-bold hover:scale-105 transition-transform"
-                        >
-                            Publish
+                        <button onClick={handleTogglePublic} disabled={!selectedAsset}>
+                          {selectedAsset?.isPublic ? "Privatizar" : "Publicar"}
                         </button>
                     )}
                 </div>

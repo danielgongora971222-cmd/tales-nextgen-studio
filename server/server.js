@@ -295,6 +295,7 @@ async function extractImageDataUrl(response) {
 // ===============================
 app.get("/api/assets", async (req, res) => {
   // 1) exigir login
+  const scope = typeof req.query.scope === "string" ? req.query.scope : "my";
   const { user, error } = await requireUser(req);
   if (error) return res.status(401).json({ ok: false, error });
 
@@ -306,10 +307,15 @@ app.get("/api/assets", async (req, res) => {
   // 3) pedir assets del usuario a la DB
   let q = supabaseAdmin
     .from("assets")
-    .select("id,url,type,tool,prompt,created_at,owner_id")
-    .eq("owner_id", user.id)
+    .select("id,url,type,tool,prompt,created_at,owner_id,is_public")
     .order("created_at", { ascending: false })
     .limit(limit);
+
+  if (scope === "public") {
+    q = q.eq("is_public", true);
+  } else {
+    q = q.eq("owner_id", user.id);
+  }
 
   if (type) q = q.eq("type", type);
 
@@ -331,12 +337,80 @@ app.get("/api/assets", async (req, res) => {
     prompt: row.prompt || undefined,
     createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
     ownerId: row.owner_id,
-    isPublic: false,
+    isPublic: !!row.is_public,
     likes: [],
     comments: [],
   }));
 
   return res.json({ ok: true, items });
+});
+
+// ===============================
+// Assets visibility: publish / unpublish
+// POST /api/assets/:id/publish
+// POST /api/assets/:id/unpublish
+// ===============================
+
+app.post("/api/assets/:id/publish", async (req, res) => {
+  const { user, error } = await requireUser(req);
+  if (error) return res.status(401).json({ ok: false, error });
+
+  const assetId = req.params.id;
+
+  const { data, error: upErr } = await supabaseAdmin
+    .from("assets")
+    .update({ is_public: true })
+    .eq("id", assetId)
+    .eq("owner_id", user.id)
+    .select("id,is_public")
+    .single();
+
+  if (upErr) {
+    return res.status(500).json({
+      ok: false,
+      error: { code: "DB_UPDATE_FAILED", message: upErr.message },
+    });
+  }
+
+  if (!data) {
+    return res.status(404).json({
+      ok: false,
+      error: { code: "NOT_FOUND", message: "Asset no encontrado o no es tuyo." },
+    });
+  }
+
+  return res.json({ ok: true, id: data.id, isPublic: !!data.is_public });
+});
+
+app.post("/api/assets/:id/unpublish", async (req, res) => {
+  const { user, error } = await requireUser(req);
+  if (error) return res.status(401).json({ ok: false, error });
+
+  const assetId = req.params.id;
+
+  const { data, error: upErr } = await supabaseAdmin
+    .from("assets")
+    .update({ is_public: false })
+    .eq("id", assetId)
+    .eq("owner_id", user.id)
+    .select("id,is_public")
+    .single();
+
+  if (upErr) {
+    return res.status(500).json({
+      ok: false,
+      error: { code: "DB_UPDATE_FAILED", message: upErr.message },
+    });
+  }
+
+  if (!data) {
+    return res.status(404).json({
+      ok: false,
+      error: { code: "NOT_FOUND", message: "Asset no encontrado o no es tuyo." },
+    });
+  }
+
+  return res.json({ ok: true, id: data.id, isPublic: !!data.is_public });
 });
 
 app.post("/api/ai/image", async (req, res, next) => {

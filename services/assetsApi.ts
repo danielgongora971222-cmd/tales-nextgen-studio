@@ -13,7 +13,7 @@ function mapRowToAsset(row: any): Asset {
     prompt: row.prompt ?? undefined,
     createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
     ownerId: row.owner_id,
-    isPublic: false,
+    isPublic: !!row.is_public,
     likes: [],
     comments: [],
   };
@@ -57,4 +57,71 @@ export async function listMyAssets(opts?: { type?: "image" | "video"; limit?: nu
   return (Array.isArray(data.items) ? data.items : [])
     .map(mapRowToAsset)
     .filter((a) => a.url); // quita vacíos
+}
+
+export async function listPublicAssets(opts?: { type?: "image" | "video"; limit?: number }): Promise<Asset[]> {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const token = sessionData.session?.access_token;
+
+  const params = new URLSearchParams();
+  params.set("scope", "public");
+  if (opts?.type) params.set("type", opts.type);
+  if (opts?.limit) params.set("limit", String(opts.limit));
+
+  const url = `/api/assets?${params.toString()}`;
+
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const resp = await fetch(url, { method: "GET", headers });
+
+  const text = await resp.text();
+  let data: any;
+  data = JSON.parse(text);
+
+  if (!resp.ok || data?.ok === false) {
+    const e = data?.error;
+    throw new Error(e?.message || `Request failed: ${resp.status}`);
+  }
+
+  return (Array.isArray(data.items) ? data.items : [])
+    .map(mapRowToAsset)
+    .filter((a) => a.url);
+}
+
+async function authHeadersJson() {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const token = sessionData.session?.access_token;
+
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  return headers;
+}
+
+export async function publishAsset(assetId: string) {
+  const headers = await authHeadersJson();
+  const resp = await fetch(`/api/assets/${assetId}/publish`, { method: "POST", headers });
+
+  const text = await resp.text();
+  const data = JSON.parse(text);
+
+  if (!resp.ok || data?.ok === false) {
+    throw new Error(data?.error?.message || `Publish failed: ${resp.status}`);
+  }
+
+  return { isPublic: !!data.isPublic };
+}
+
+export async function unpublishAsset(assetId: string) {
+  const headers = await authHeadersJson();
+  const resp = await fetch(`/api/assets/${assetId}/unpublish`, { method: "POST", headers });
+
+  const text = await resp.text();
+  const data = JSON.parse(text);
+
+  if (!resp.ok || data?.ok === false) {
+    throw new Error(data?.error?.message || `Unpublish failed: ${resp.status}`);
+  }
+
+  return { isPublic: !!data.isPublic };
 }
