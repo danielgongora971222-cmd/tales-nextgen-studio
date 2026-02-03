@@ -430,6 +430,62 @@ app.get("/api/assets", async (req, res) => {
 });
 
 // ===============================
+// Community Feed (public assets)
+// GET /api/community?type=image&limit=50
+// ===============================
+app.get("/api/community", async (req, res, next) => {
+  try {
+    const type = String(req.query.type || "image");
+    const limit = Math.min(Number(req.query.limit || 50), 100);
+
+    // Trae SOLO públicos
+    const { data, error } = await supabaseAdmin
+      .from("assets")
+      .select("id, url, storage_path, type, name, prompt, created_at, owner_id, is_public")
+      .eq("is_public", true)
+      .eq("type", type)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      return res.status(500).json({
+        ok: false,
+        error: { code: "DB_SELECT_FAILED", message: error.message },
+      });
+    }
+
+    // Firmar URLs si url está null
+    const rows = data || [];
+    const items = await Promise.all(
+      rows.map(async (row) => {
+        let url = row.url || null;
+        if (!url && row.storage_path) {
+          url = await signStoragePath(row.storage_path, 60 * 60);
+        }
+
+        return {
+          id: row.id,
+          url,
+          type: row.type === "video" ? "video" : "image",
+          name: row.name || `Generation ${String(row.id).slice(0, 4)}`,
+          prompt: row.prompt || undefined,
+          createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
+          ownerId: row.owner_id,
+          isPublic: !!row.is_public,
+          likes: [],
+          comments: [],
+        };
+      })
+    );
+
+    res.set("Cache-Control", "no-store");
+    return res.json({ ok: true, items });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ===============================
 // Assets visibility: publish / unpublish
 // POST /api/assets/:id/publish
 

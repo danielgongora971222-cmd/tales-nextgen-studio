@@ -125,3 +125,46 @@ export async function unpublishAsset(assetId: string) {
 
   return { isPublic: !!data.isPublic };
 }
+
+export async function uploadUserAsset(file: File, tool = "upload"): Promise<Asset> {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const token = sessionData.session?.access_token;
+
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error("No se pudo leer el archivo"));
+    reader.readAsDataURL(file);
+  });
+
+  const resp = await fetch("/api/assets/upload", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ dataUrl, name: file.name, tool, type: file.type.startsWith("video") ? "video" : "image" }),
+  });
+
+  const text = await resp.text();
+  const data = JSON.parse(text);
+
+  if (!resp.ok || data?.ok === false) {
+    throw new Error(data?.error?.message || "Upload failed");
+  }
+
+  // backend devuelve { item: { ... } }
+  const row = data.item;
+  return {
+    id: row.id,
+    url: row.url,
+    type: row.type === "video" ? "video" : "image",
+    name: row.name || file.name,
+    prompt: undefined,
+    createdAt: row.createdAt ? new Date(row.createdAt).getTime() : Date.now(),
+    ownerId: row.ownerId,
+    isPublic: !!row.isPublic,
+    likes: [],
+    comments: [],
+  };
+}

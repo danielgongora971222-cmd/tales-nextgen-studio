@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { backend } from '../services/backendService';
+import { uploadUserAsset } from "../services/assetsApi";
 import { Asset } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -33,7 +33,7 @@ const FileUploader: React.FC<FileUploaderProps> = ({ label, onAssetReady, accept
         }, 150);
 
         // Upload to "Backend"
-        const asset = await backend.uploadAsset(file, user.id);
+        const asset = await uploadUserAsset(file, "upload");
         
         clearInterval(interval);
         setProgress(100);
