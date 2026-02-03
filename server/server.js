@@ -80,6 +80,70 @@ function extFromMime(mimeType) {
   return "png";
 }
 
+function safeSlug(input) {
+  return (input || "file")
+    .toString()
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-_.]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80) || "file";
+}
+
+function buildAssetPath({ userId, tool, mimeType, nameHint }) {
+  const ext = extFromMime(mimeType || "image/png");
+  const day = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  const ts = Date.now();
+  const rand = Math.random().toString(16).slice(2, 10);
+  const slug = safeSlug(nameHint || tool || "asset");
+  const folder = safeSlug(tool || "generated");
+  return `${userId}/${folder}/${day}/${ts}-${rand}-${slug}.${ext}`;
+}
+
+async function uploadBase64ToStorage({ userId, tool, dataUrl, nameHint }) {
+  const { mimeType, base64 } = parseDataUrl(dataUrl);
+  const bytes = Buffer.from(base64, "base64");
+  const path = buildAssetPath({ userId, tool, mimeType, nameHint });
+
+  const up = await supabaseAdmin.storage
+    .from(SUPABASE_BUCKET)
+    .upload(path, bytes, { contentType: mimeType, upsert: false });
+
+  if (up.error) throw new Error(up.error.message);
+  return { storagePath: path, mimeType, sizeBytes: bytes.length };
+}
+
+async function signStoragePath(storagePath, expiresSeconds = 60 * 60) {
+  const { data, error } = await supabaseAdmin.storage
+    .from(SUPABASE_BUCKET)
+    .createSignedUrl(storagePath, expiresSeconds);
+
+  if (error) throw new Error(error.message);
+  return data.signedUrl;
+}
+
+async function insertAssetRow({ ownerId, type, tool, name, prompt, storagePath, isPublic }) {
+  const payload = {
+    owner_id: ownerId,
+    type: type || "image",
+    tool: tool || null,
+    name: name || null,
+    prompt: prompt || null,
+    storage_path: storagePath,
+    is_public: Boolean(isPublic),
+  };
+
+  const { data, error } = await supabaseAdmin
+    .from("assets")
+    .insert(payload)
+    .select("id")
+    .single();
+
+  if (error) throw new Error(error.message);
+  return data.id;
+}
+
 const app = express();
 app.set("trust proxy", 1);
 
@@ -382,6 +446,60 @@ app.post("/api/assets/:id/publish", async (req, res) => {
   return res.json({ ok: true, id: data.id, isPublic: !!data.is_public });
 });
 
+const UploadAssetSchema = z.object({
+  dataUrl: Base64ImageSchema,
+  name: z.string().max(200).optional(),
+  tool: z.string().max(50).optional(),
+  type: z.enum(["image","video"]).optional(),
+});
+
+app.post("/api/assets/upload", async (req, res, next) => {
+  try {
+    const { user, error } = await requireUser(req);
+    if (error) return res.status(401).json({ ok: false, error });
+
+    const { dataUrl, name, tool, type } = UploadAssetSchema.parse(req.body);
+
+    const toolName = tool || "upload";
+    const assetType = type || "image";
+
+    const { storagePath } = await uploadBase64ToStorage({
+      userId: user.id,
+      tool: toolName,
+      dataUrl,
+      nameHint: name || "upload",
+    });
+
+    const assetId = await insertAssetRow({
+      ownerId: user.id,
+      type: assetType,
+      tool: toolName,
+      name: name || "upload",
+      prompt: null,
+      storagePath,
+      isPublic: false,
+    });
+
+    const url = await signStoragePath(storagePath);
+
+    return res.json({
+      ok: true,
+      item: {
+        id: assetId,
+        url,
+        type: assetType,
+        tool: toolName,
+        name: name || "upload",
+        ownerId: user.id,
+        isPublic: false,
+        createdAt: new Date().toISOString(),
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.post("/api/assets/:id/unpublish", async (req, res) => {
   const { user, error } = await requireUser(req);
   if (error) return res.status(401).json({ ok: false, error });
@@ -435,49 +553,27 @@ app.post("/api/ai/image", async (req, res, next) => {
 
     const dataUrl = await extractImageDataUrl(response);
 
-// 1) Convertir base64 -> Buffer
-const { mimeType, base64 } = parseDataUrl(dataUrl);
-const buffer = Buffer.from(base64, "base64");
+    const { storagePath } = await uploadBase64ToStorage({
+      userId: user.id,
+      tool: "generator",
+      dataUrl,
+      nameHint: "generated",
+    });
 
-// 2) Crear ruta del archivo dentro del bucket
-const ext = extFromMime(mimeType);
-const filePath = `${user.id}/${Date.now()}-${Math.random().toString(16).slice(2)}.${ext}`;
+    const assetId = await insertAssetRow({
+      ownerId: user.id,
+      type: "image",
+      tool: "generator",
+      name: "generated",
+      prompt,
+      storagePath,
+      isPublic: false,
+    });
 
-// 3) Subir a Supabase Storage
-const up = await supabaseAdmin.storage
-  .from(SUPABASE_BUCKET)
-  .upload(filePath, buffer, { contentType: mimeType, upsert: false });
+    const urlExpiresInSeconds = 60 * 60;
+    const url = await signStoragePath(storagePath, urlExpiresInSeconds);
 
-if (up.error) {
-  return res.status(500).json({
-    ok: false,
-    error: { code: "STORAGE_UPLOAD_FAILED", message: up.error.message },
-  });
-}
-
-// 4) Sacar URL pública (requiere bucket público)
-const pub = supabaseAdmin.storage.from(SUPABASE_BUCKET).getPublicUrl(filePath);
-const url = pub.data.publicUrl;
-
-// 5) Guardar en DB (tabla assets)
-const ins = await supabaseAdmin.from("assets").insert({
-  owner_id: user.id,
-  type: "image",
-  tool: "generator",
-  prompt: req.body?.prompt || null,
-  url,
-  storage_path: filePath,
-});
-
-if (ins.error) {
-  return res.status(500).json({
-    ok: false,
-    error: { code: "DB_INSERT_FAILED", message: ins.error.message },
-  });
-}
-
-// 6) Respuesta final: URL real
-return res.json({ ok: true, url });
+    return res.json({ ok: true, url, assetId, urlExpiresInSeconds });
   } catch (err) {
     next(err);
   }

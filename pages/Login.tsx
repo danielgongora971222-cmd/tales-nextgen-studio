@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+// pages/Login.tsx
+import React, { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
+import Background3D from "../components/Background3D";
 import { supabase } from "../services/supabaseClient";
 import { useAuth } from "../contexts/AuthContext";
 
@@ -9,6 +11,7 @@ export default function Login() {
   const { isLoading } = useAuth();
 
   const [view, setView] = useState<"login" | "register" | "verify">("login");
+  const [verifyMode, setVerifyMode] = useState<"login" | "register">("login");
 
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
@@ -53,8 +56,24 @@ export default function Login() {
     if (error) throw error;
   }
 
+  function friendlyAuthError(msgRaw: string) {
+    const msg = (msgRaw || "").toLowerCase();
+
+    if (msg.includes("invalid login") || msg.includes("invalid") || msg.includes("login")) {
+      return "Correo o contraseña incorrectos.";
+    }
+    if (msg.includes("email not confirmed") || msg.includes("not confirmed")) {
+      return "Tu correo no está confirmado. Te envío un código.";
+    }
+    if (msg.includes("rate limit")) {
+      return "Demasiados intentos. Espera un momento y vuelve a intentar.";
+    }
+    return msgRaw || "Error de autenticación.";
+  }
+
   async function handleLoginSubmit(e: FormEvent) {
     e.preventDefault();
+
     if (!email.trim()) return showToast("error", "Escribe tu correo.");
     if (!password) return showToast("error", "Escribe tu contraseña.");
 
@@ -66,21 +85,17 @@ export default function Login() {
       });
 
       if (error) {
-        const msg = (error.message || "").toLowerCase();
+        const friendly = friendlyAuthError(error.message);
 
-        if (msg.includes("email not confirmed") || msg.includes("not confirmed")) {
-          showToast("info", "Tu correo no está confirmado. Te envío un código.");
+        if (friendly.includes("Te envío un código")) {
+          showToast("info", friendly);
           await requestOtp(false);
+          setVerifyMode("login");
           setView("verify");
           return;
         }
 
-        if (msg.includes("invalid") || msg.includes("login")) {
-          showToast("error", "Correo o contraseña incorrectos.");
-          return;
-        }
-
-        showToast("error", error.message);
+        showToast("error", friendly);
         return;
       }
 
@@ -101,11 +116,13 @@ export default function Login() {
     if (!password) return showToast("error", "Escribe tu contraseña.");
     if (!password2) return showToast("error", "Repite tu contraseña.");
     if (password !== password2) return showToast("error", "Las contraseñas no coinciden.");
+    if (password.length < 8) return showToast("error", "Usa una contraseña de al menos 8 caracteres.");
 
     setSubmitting(true);
     try {
       await requestOtp(true);
-      showToast("success", "Cuenta creada. Revisa tu correo: te llegó un código ✅");
+      showToast("success", "Cuenta creada ✅ Te llegó un código al correo.");
+      setVerifyMode("register");
       setView("verify");
     } catch (err: any) {
       showToast("error", err?.message || "No se pudo crear la cuenta.");
@@ -120,6 +137,13 @@ export default function Login() {
     if (!email.trim()) return showToast("error", "Falta el correo.");
     if (!otpCode.trim()) return showToast("error", "Escribe el código que te llegó por correo.");
 
+    // Si venimos de registro, aseguramos que la contraseña esté lista
+    if (verifyMode === "register") {
+      if (!password) return showToast("error", "Falta la contraseña.");
+      if (!password2) return showToast("error", "Repite la contraseña.");
+      if (password !== password2) return showToast("error", "Las contraseñas no coinciden.");
+    }
+
     setSubmitting(true);
     try {
       const { error: verifyError } = await supabase.auth.verifyOtp({
@@ -133,24 +157,26 @@ export default function Login() {
         return;
       }
 
-      // Ya verificado → ponemos contrasena + nombre visible
-      const { error: updateError } = await supabase.auth.updateUser({
-        password,
-        data: { display_name: displayName?.trim() || null },
-      });
+      // Si fue registro: setear password + display_name (ya hay sesión luego del verify)
+      if (verifyMode === "register") {
+        const { error: updateError } = await supabase.auth.updateUser({
+          password,
+          data: { display_name: displayName?.trim() || null },
+        });
 
-      if (updateError) {
-        showToast("error", updateError.message);
+        if (updateError) {
+          showToast("error", updateError.message);
+          return;
+        }
+
+        showToast("success", "Correo confirmado ✅ ¡Bienvenido!");
+        window.location.replace("/");
         return;
       }
 
-      showToast("success", "Correo confirmado ✅ Ahora inicia sesión.");
-      await supabase.auth.signOut();
-
-      setOtpCode("");
-      setPassword("");
-      setPassword2("");
-      setView("login");
+      // Si fue login (solo confirmar correo)
+      showToast("success", "Correo confirmado ✅");
+      window.location.replace("/");
     } catch (err: any) {
       showToast("error", err?.message || "No se pudo confirmar el código.");
     } finally {
@@ -158,175 +184,244 @@ export default function Login() {
     }
   }
 
-  const toastBg =
+  const toastClass =
     toast?.type === "success"
-      ? "bg-green-600"
+      ? "bg-emerald-900/30 border-emerald-500/30 text-emerald-200"
       : toast?.type === "error"
-      ? "bg-red-600"
-      : "bg-blue-600";
+      ? "bg-red-900/30 border-red-500/30 text-red-200"
+      : "bg-blue-900/30 border-blue-500/30 text-blue-200";
+
+  const canSubmitLogin = Boolean(email.trim() && password);
+  const canSubmitRegister = Boolean(displayName.trim() && email.trim() && password && password2);
 
   return (
-    <div className="mx-auto mt-16 max-w-md px-4">
-      <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
-        <h1 className="mb-3 text-xl font-semibold">
-          {view === "login" && "Iniciar sesión"}
-          {view === "register" && "Crear cuenta"}
-          {view === "verify" && "Confirmar correo (código)"}
-        </h1>
+    <div className="relative w-full h-screen overflow-hidden flex items-center justify-center bg-black text-white font-sans">
+      {/* Galaxy/Cosmos Grid Background */}
+      <div className="absolute inset-0 z-0 opacity-60 pointer-events-none">
+        <Background3D />
+      </div>
 
+      {/* Ambient Glows */}
+      <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-purple-900/20 blur-[120px] rounded-full pointer-events-none" />
+      <div className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] bg-blue-900/20 blur-[120px] rounded-full pointer-events-none" />
+
+      {/* Card */}
+      <div className="relative z-10 w-full max-w-md p-8 glass-panel rounded-3xl border border-white/10 shadow-[0_0_50px_rgba(0,0,0,0.5)] animate-in fade-in zoom-in duration-700 backdrop-blur-xl">
+        <div className="text-center mb-8 relative">
+          <div className="inline-block relative">
+            <h1 className="text-5xl font-bold tracking-tighter mb-2 bg-gradient-to-br from-white via-gray-300 to-gray-500 bg-clip-text text-transparent">
+              TALES
+            </h1>
+            <div className="absolute -top-2 -right-4 w-2 h-2 bg-white rounded-full animate-pulse shadow-[0_0_10px_white]" />
+          </div>
+          <p className="text-gray-400 text-sm font-mono tracking-widest uppercase opacity-70">
+            NextGen Creative Studio
+          </p>
+        </div>
+
+        {/* Toast */}
         {toast && (
-          <div className={`mb-4 rounded-md px-3 py-2 text-white ${toastBg}`}>{toast.text}</div>
+          <div className={`mb-6 p-3 border rounded-lg text-xs text-center animate-in slide-in-from-top-2 ${toastClass}`}>
+            {toast.type === "success" ? "✅ " : toast.type === "error" ? "⚠️ " : "ℹ️ "}
+            {toast.text}
+          </div>
         )}
 
+        {/* LOGIN */}
         {view === "login" && (
-          <form onSubmit={handleLoginSubmit} className="space-y-4">
-            <div>
-              <label className="mb-1 block text-sm font-medium">Correo</label>
-              <input
-                className="w-full rounded-md border px-3 py-2"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="tu@email.com"
-              />
+          <form onSubmit={handleLoginSubmit} className="space-y-6">
+            <div className="space-y-1">
+              <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest">Email</label>
+              <div className="relative group">
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="tuemail@gmail.com"
+                  className="w-full bg-black/40 border border-white/10 rounded-xl px-5 py-4 text-lg text-white focus:outline-none focus:border-white/50 focus:bg-black/60 transition-all placeholder-gray-600"
+                  autoFocus
+                />
+                <div className="absolute inset-0 rounded-xl border border-white/0 group-hover:border-white/10 pointer-events-none transition-colors" />
+              </div>
             </div>
 
-            <div>
-              <label className="mb-1 block text-sm font-medium">Contraseña</label>
-              <input
-                className="w-full rounded-md border px-3 py-2"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-              />
+            <div className="space-y-1">
+              <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest">Password</label>
+              <div className="relative group">
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full bg-black/40 border border-white/10 rounded-xl px-5 py-4 text-lg text-white focus:outline-none focus:border-white/50 focus:bg-black/60 transition-all placeholder-gray-600"
+                />
+                <div className="absolute inset-0 rounded-xl border border-white/0 group-hover:border-white/10 pointer-events-none transition-colors" />
+              </div>
             </div>
 
             <button
               type="submit"
-              className="w-full rounded-md bg-black px-3 py-2 text-white disabled:opacity-60"
-              disabled={isLoading || submitting}
+              disabled={isLoading || submitting || !canSubmitLogin}
+              className={`w-full py-4 rounded-xl font-bold text-black text-sm tracking-wide uppercase transition-all shadow-lg ${
+                isLoading || submitting || !canSubmitLogin
+                  ? "bg-gray-800 cursor-not-allowed text-gray-500"
+                  : "bg-white hover:bg-gray-100 hover:scale-[1.02] hover:shadow-[0_0_30px_rgba(255,255,255,0.2)]"
+              }`}
             >
-              {submitting ? "Entrando..." : "Entrar"}
+              {submitting ? "AUTHENTICATING..." : "LOGIN"}
             </button>
 
-            <div className="text-center text-sm">
-              ¿No tienes cuenta?{" "}
+            <div className="mt-4 pt-6 border-t border-white/5 text-center space-y-4">
+              <p className="text-xs text-gray-400">New here?</p>
               <button
                 type="button"
-                className="underline"
                 onClick={() => {
                   resetForm();
                   setView("register");
+                  showToast("info", "Completa el registro y te llegará un código al correo.");
                 }}
+                className="text-xs font-bold text-white border border-white/20 px-6 py-2 rounded-full hover:bg-white hover:text-black transition-all"
               >
-                Crear cuenta
+                CREATE ACCOUNT
               </button>
             </div>
           </form>
         )}
 
+        {/* REGISTER */}
         {view === "register" && (
-          <form onSubmit={handleRegisterSubmit} className="space-y-4">
-            <div>
-              <label className="mb-1 block text-sm font-medium">Nombre visible</label>
-              <input
-                className="w-full rounded-md border px-3 py-2"
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-                placeholder="Tu nombre"
-              />
+          <form onSubmit={handleRegisterSubmit} className="space-y-6">
+            <div className="space-y-1">
+              <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                Display name
+              </label>
+              <div className="relative group">
+                <input
+                  type="text"
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  placeholder="Ej: Rafael"
+                  className="w-full bg-black/40 border border-white/10 rounded-xl px-5 py-4 text-lg text-white focus:outline-none focus:border-white/50 focus:bg-black/60 transition-all placeholder-gray-600"
+                  autoFocus
+                />
+                <div className="absolute inset-0 rounded-xl border border-white/0 group-hover:border-white/10 pointer-events-none transition-colors" />
+              </div>
             </div>
 
-            <div>
-              <label className="mb-1 block text-sm font-medium">Correo</label>
-              <input
-                className="w-full rounded-md border px-3 py-2"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="tu@email.com"
-              />
+            <div className="space-y-1">
+              <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest">Email</label>
+              <div className="relative group">
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="tuemail@gmail.com"
+                  className="w-full bg-black/40 border border-white/10 rounded-xl px-5 py-4 text-lg text-white focus:outline-none focus:border-white/50 focus:bg-black/60 transition-all placeholder-gray-600"
+                />
+                <div className="absolute inset-0 rounded-xl border border-white/0 group-hover:border-white/10 pointer-events-none transition-colors" />
+              </div>
             </div>
 
-            <div>
-              <label className="mb-1 block text-sm font-medium">Contraseña</label>
-              <input
-                className="w-full rounded-md border px-3 py-2"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-              />
+            <div className="space-y-1">
+              <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest">Password</label>
+              <div className="relative group">
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full bg-black/40 border border-white/10 rounded-xl px-5 py-4 text-lg text-white focus:outline-none focus:border-white/50 focus:bg-black/60 transition-all placeholder-gray-600"
+                />
+                <div className="absolute inset-0 rounded-xl border border-white/0 group-hover:border-white/10 pointer-events-none transition-colors" />
+              </div>
             </div>
 
-            <div>
-              <label className="mb-1 block text-sm font-medium">Repetir contraseña</label>
-              <input
-                className="w-full rounded-md border px-3 py-2"
-                type="password"
-                value={password2}
-                onChange={(e) => setPassword2(e.target.value)}
-                placeholder="••••••••"
-              />
+            <div className="space-y-1">
+              <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                Repeat password
+              </label>
+              <div className="relative group">
+                <input
+                  type="password"
+                  value={password2}
+                  onChange={(e) => setPassword2(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full bg-black/40 border border-white/10 rounded-xl px-5 py-4 text-lg text-white focus:outline-none focus:border-white/50 focus:bg-black/60 transition-all placeholder-gray-600"
+                />
+                <div className="absolute inset-0 rounded-xl border border-white/0 group-hover:border-white/10 pointer-events-none transition-colors" />
+              </div>
             </div>
 
             <button
               type="submit"
-              className="w-full rounded-md bg-black px-3 py-2 text-white disabled:opacity-60"
-              disabled={isLoading || submitting}
+              disabled={isLoading || submitting || !canSubmitRegister}
+              className={`w-full py-4 rounded-xl font-bold text-black text-sm tracking-wide uppercase transition-all shadow-lg ${
+                isLoading || submitting || !canSubmitRegister
+                  ? "bg-gray-800 cursor-not-allowed text-gray-500"
+                  : "bg-white hover:bg-gray-100 hover:scale-[1.02] hover:shadow-[0_0_30px_rgba(255,255,255,0.2)]"
+              }`}
             >
-              {submitting ? "Creando..." : "Crear cuenta"}
+              {submitting ? "CREATING ACCOUNT..." : "CREATE ACCOUNT"}
             </button>
 
-            <div className="text-center text-sm">
-              ¿Ya tienes cuenta?{" "}
+            <div className="mt-4 pt-6 border-t border-white/5 text-center space-y-4">
+              <p className="text-xs text-gray-400">Already have an account?</p>
               <button
                 type="button"
-                className="underline"
                 onClick={() => {
                   resetForm();
                   setView("login");
                 }}
+                className="text-xs font-bold text-white border border-white/20 px-6 py-2 rounded-full hover:bg-white hover:text-black transition-all"
               >
-                Iniciar sesión
+                LOGIN INSTEAD
               </button>
             </div>
           </form>
         )}
 
+        {/* VERIFY OTP */}
         {view === "verify" && (
-          <form onSubmit={handleVerifySubmit} className="space-y-4">
-            <div className="text-sm text-zinc-600">
-              Te envié un código a: <b>{email.trim()}</b>
+          <form onSubmit={handleVerifySubmit} className="space-y-6">
+            <div className="text-xs text-gray-400 text-center">
+              Te envié un código a: <span className="text-white font-bold">{email.trim()}</span>
             </div>
 
-            <div>
-              <label className="mb-1 block text-sm font-medium">Código</label>
-              <input
-                className="w-full rounded-md border px-3 py-2"
-                value={otpCode}
-                onChange={(e) => setOtpCode(e.target.value)}
-                placeholder="Ej: 123456"
-              />
+            <div className="space-y-1">
+              <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest">Código</label>
+              <div className="relative group">
+                <input
+                  type="text"
+                  value={otpCode}
+                  onChange={(e) => setOtpCode(e.target.value)}
+                  placeholder="Ej: 123456"
+                  className="w-full bg-black/40 border border-white/10 rounded-xl px-5 py-4 text-lg text-white focus:outline-none focus:border-white/50 focus:bg-black/60 transition-all placeholder-gray-600"
+                  autoFocus
+                />
+                <div className="absolute inset-0 rounded-xl border border-white/0 group-hover:border-white/10 pointer-events-none transition-colors" />
+              </div>
             </div>
 
             <button
               type="submit"
-              className="w-full rounded-md bg-black px-3 py-2 text-white disabled:opacity-60"
               disabled={submitting}
+              className={`w-full py-4 rounded-xl font-bold text-black text-sm tracking-wide uppercase transition-all shadow-lg ${
+                submitting
+                  ? "bg-gray-800 cursor-not-allowed text-gray-500"
+                  : "bg-white hover:bg-gray-100 hover:scale-[1.02] hover:shadow-[0_0_30px_rgba(255,255,255,0.2)]"
+              }`}
             >
-              {submitting ? "Confirmando..." : "Confirmar"}
+              {submitting ? "CONFIRMING..." : "CONFIRM CODE"}
             </button>
 
-            <div className="flex gap-2">
+            <div className="flex gap-3">
               <button
                 type="button"
-                className="w-1/2 rounded-md border px-3 py-2"
                 disabled={submitting}
                 onClick={async () => {
                   try {
                     setSubmitting(true);
+                    // Para reenviar, NO intentamos “crear usuario” de nuevo
                     await requestOtp(false);
                     showToast("success", "Código reenviado ✅");
                   } catch (err: any) {
@@ -335,24 +430,36 @@ export default function Login() {
                     setSubmitting(false);
                   }
                 }}
+                className="w-1/2 py-3 rounded-xl font-bold text-xs tracking-wide uppercase border border-white/20 text-white hover:bg-white hover:text-black transition-all disabled:opacity-60"
               >
-                Reenviar código
+                RESEND
               </button>
 
               <button
                 type="button"
-                className="w-1/2 rounded-md border px-3 py-2"
                 disabled={submitting}
                 onClick={() => {
                   setOtpCode("");
-                  setView("login");
-                  showToast("info", "Vuelve a iniciar sesión cuando quieras.");
+                  // Volver al formulario correcto según de dónde veníamos
+                  setView(verifyMode === "register" ? "register" : "login");
+                  showToast("info", "Puedes intentar de nuevo cuando quieras.");
                 }}
+                className="w-1/2 py-3 rounded-xl font-bold text-xs tracking-wide uppercase border border-white/20 text-white hover:bg-white hover:text-black transition-all disabled:opacity-60"
               >
-                Volver
+                BACK
               </button>
             </div>
+
+            <div className="mt-2 text-[10px] text-gray-600 text-center font-mono">
+              SECURE CONNECTION ESTABLISHED
+            </div>
           </form>
+        )}
+
+        {view !== "verify" && (
+          <div className="mt-6 text-[10px] text-gray-600 text-center font-mono">
+            SECURE CONNECTION ESTABLISHED
+          </div>
         )}
       </div>
     </div>

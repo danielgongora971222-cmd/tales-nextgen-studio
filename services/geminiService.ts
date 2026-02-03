@@ -64,8 +64,9 @@ export const generateRestyle = async (assetUrl: string, prompt: string): Promise
     prompt,
     model: GeminiModel.IMAGE,
   });
-  if (!res.dataUrl) throw new Error("No image returned from API.");
-  return res.dataUrl;
+  const out = res.url || res.dataUrl;
+  if (!out) throw new Error("No image returned from API.");
+  return out;
 };
 
 export const generateFaceSwap = async (sourceUrl: string, targetUrl: string): Promise<string> => {
@@ -77,8 +78,9 @@ export const generateFaceSwap = async (sourceUrl: string, targetUrl: string): Pr
     targetDataUrl,
     model: GeminiModel.IMAGE,
   });
-  if (!res.dataUrl) throw new Error("No image returned from API.");
-  return res.dataUrl;
+  const out = res.url || res.dataUrl;
+  if (!out) throw new Error("No image returned from API.");
+  return out;
 };
 
 export const generateUpscale = async (assetUrl: string, scale: number): Promise<string> => {
@@ -88,8 +90,9 @@ export const generateUpscale = async (assetUrl: string, scale: number): Promise<
     scale,
     model: GeminiModel.IMAGE,
   });
-  if (!res.dataUrl) throw new Error("No image returned from API.");
-  return res.dataUrl;
+  const out = res.url || res.dataUrl;
+  if (!out) throw new Error("No image returned from API.");
+  return out;
 };
 
 export const generateVideo = async (_prompt: string): Promise<string> => {
