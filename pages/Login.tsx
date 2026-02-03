@@ -1,180 +1,360 @@
-import React, { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { FormEvent } from "react";
+import { supabase } from "../services/supabaseClient";
 import { useAuth } from "../contexts/AuthContext";
-import Background3D from "../components/Background3D";
 
-const Login: React.FC = () => {
+type ToastType = "success" | "error" | "info";
+
+export default function Login() {
+  const { isLoading } = useAuth();
+
+  const [view, setView] = useState<"login" | "register" | "verify">("login");
+
+  const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [password2, setPassword2] = useState("");
+  const [otpCode, setOtpCode] = useState("");
 
-  // Solo para registro (opcional)
-  const [displayName, setDisplayName] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
-  const [isRegistering, setIsRegistering] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [info, setInfo] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ type: ToastType; text: string } | null>(null);
+  const toastTimer = useRef<number | null>(null);
 
-  const { login, register, isLoading } = useAuth();
+  function showToast(type: ToastType, text: string) {
+    setToast({ type, text });
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(null), 4000);
+  }
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  useEffect(() => {
+    // Si ya hay sesión, manda al home
+    supabase.auth.getSession().then(({ data }) => {
+      if (data.session) window.location.replace("/");
+    });
+  }, []);
+
+  function resetForm() {
+    setDisplayName("");
+    setEmail("");
+    setPassword("");
+    setPassword2("");
+    setOtpCode("");
+  }
+
+  async function requestOtp(shouldCreateUser: boolean) {
+    const { error } = await supabase.auth.signInWithOtp({
+      email: email.trim(),
+      options: {
+        shouldCreateUser,
+        data: { display_name: displayName?.trim() || null },
+      },
+    });
+    if (error) throw error;
+  }
+
+  async function handleLoginSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (!email.trim()) return showToast("error", "Escribe tu correo.");
+    if (!password) return showToast("error", "Escribe tu contraseña.");
+
+    setSubmitting(true);
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
+
+      if (error) {
+        const msg = (error.message || "").toLowerCase();
+
+        if (msg.includes("email not confirmed") || msg.includes("not confirmed")) {
+          showToast("info", "Tu correo no está confirmado. Te envío un código.");
+          await requestOtp(false);
+          setView("verify");
+          return;
+        }
+
+        if (msg.includes("invalid") || msg.includes("login")) {
+          showToast("error", "Correo o contraseña incorrectos.");
+          return;
+        }
+
+        showToast("error", error.message);
+        return;
+      }
+
+      showToast("success", "Login correcto ✅");
+      window.location.replace("/");
+    } catch (err: any) {
+      showToast("error", err?.message || "Error iniciando sesión.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleRegisterSubmit(e: FormEvent) {
     e.preventDefault();
 
-    setError(null);
-    setInfo(null);
+    if (!displayName.trim()) return showToast("error", "Escribe tu nombre visible.");
+    if (!email.trim()) return showToast("error", "Escribe tu correo.");
+    if (!password) return showToast("error", "Escribe tu contraseña.");
+    if (!password2) return showToast("error", "Repite tu contraseña.");
+    if (password !== password2) return showToast("error", "Las contraseñas no coinciden.");
 
-    if (!email.trim() || !password.trim()) return;
-
+    setSubmitting(true);
     try {
-      if (isRegistering) {
-        const res = await register(email.trim(), password, displayName);
-        if (res.needsEmailConfirmation) {
-          setInfo(
-            "Cuenta creada ✅ Ahora revisa tu correo para confirmar (si Supabase tiene Confirm Email activado)."
-          );
-        }
-      } else {
-        await login(email.trim(), password);
-      }
+      await requestOtp(true);
+      showToast("success", "Cuenta creada. Revisa tu correo: te llegó un código ✅");
+      setView("verify");
     } catch (err: any) {
-      setError(err.message || "Authentication failed");
+      showToast("error", err?.message || "No se pudo crear la cuenta.");
+    } finally {
+      setSubmitting(false);
     }
-  };
+  }
 
-  const canSubmit = Boolean(email.trim() && password.trim());
+  async function handleVerifySubmit(e: FormEvent) {
+    e.preventDefault();
+
+    if (!email.trim()) return showToast("error", "Falta el correo.");
+    if (!otpCode.trim()) return showToast("error", "Escribe el código que te llegó por correo.");
+
+    setSubmitting(true);
+    try {
+      const { error: verifyError } = await supabase.auth.verifyOtp({
+        email: email.trim(),
+        token: otpCode.trim(),
+        type: "email",
+      });
+
+      if (verifyError) {
+        showToast("error", verifyError.message);
+        return;
+      }
+
+      // Ya verificado → ponemos contraseña + nombre visible
+      const { error: updateError } = await supabase.auth.updateUser({
+        password,
+        data: { display_name: displayName?.trim() || null },
+      });
+
+      if (updateError) {
+        showToast("error", updateError.message);
+        return;
+      }
+
+      showToast("success", "Correo confirmado ✅ Ahora inicia sesión.");
+      await supabase.auth.signOut();
+
+      setOtpCode("");
+      setPassword("");
+      setPassword2("");
+      setView("login");
+    } catch (err: any) {
+      showToast("error", err?.message || "No se pudo confirmar el código.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const toastBg =
+    toast?.type === "success"
+      ? "bg-green-600"
+      : toast?.type === "error"
+      ? "bg-red-600"
+      : "bg-blue-600";
 
   return (
-    <div className="relative w-full h-screen overflow-hidden flex items-center justify-center bg-black text-white font-sans">
-      {/* Galaxy/Cosmos Grid Background */}
-      <div className="absolute inset-0 z-0 opacity-60 pointer-events-none">
-        <Background3D />
-      </div>
+    <div className="mx-auto mt-16 max-w-md px-4">
+      <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+        <h1 className="mb-3 text-xl font-semibold">
+          {view === "login" && "Iniciar sesión"}
+          {view === "register" && "Crear cuenta"}
+          {view === "verify" && "Confirmar correo (código)"}
+        </h1>
 
-      {/* Ambient Glows */}
-      <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-purple-900/20 blur-[120px] rounded-full pointer-events-none"></div>
-      <div className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] bg-blue-900/20 blur-[120px] rounded-full pointer-events-none"></div>
-
-      {/* Login Card */}
-      <div className="relative z-10 w-full max-w-md p-8 glass-panel rounded-3xl border border-white/10 shadow-[0_0_50px_rgba(0,0,0,0.5)] animate-in fade-in zoom-in duration-700 backdrop-blur-xl">
-        <div className="text-center mb-10 relative">
-          <div className="inline-block relative">
-            <h1 className="text-5xl font-bold tracking-tighter mb-2 bg-gradient-to-br from-white via-gray-300 to-gray-500 bg-clip-text text-transparent">
-              TALES
-            </h1>
-            <div className="absolute -top-2 -right-4 w-2 h-2 bg-white rounded-full animate-pulse shadow-[0_0_10px_white]"></div>
-          </div>
-          <p className="text-gray-400 text-sm font-mono tracking-widest uppercase opacity-70">
-            NextGen Creative Studio
-          </p>
-        </div>
-
-        {info && (
-          <div className="mb-6 p-3 bg-emerald-900/30 border border-emerald-500/30 rounded-lg text-emerald-200 text-xs text-center animate-in slide-in-from-top-2">
-            ✅ {info}
-          </div>
+        {toast && (
+          <div className={`mb-4 rounded-md px-3 py-2 text-white ${toastBg}`}>{toast.text}</div>
         )}
 
-        {error && (
-          <div className="mb-6 p-3 bg-red-900/30 border border-red-500/30 rounded-lg text-red-200 text-xs text-center animate-in slide-in-from-top-2">
-            ⚠️ {error}
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} className="space-y-6">
-          {isRegistering && (
-            <div className="space-y-1">
-              <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest">
-                Display name (opcional)
-              </label>
-              <div className="relative group">
-                <input
-                  type="text"
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                  placeholder="Ej: Rafael"
-                  className="w-full bg-black/40 border border-white/10 rounded-xl px-5 py-4 text-lg text-white focus:outline-none focus:border-white/50 focus:bg-black/60 transition-all placeholder-gray-600"
-                />
-                <div className="absolute inset-0 rounded-xl border border-white/0 group-hover:border-white/10 pointer-events-none transition-colors"></div>
-              </div>
-            </div>
-          )}
-
-          <div className="space-y-1">
-            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest">
-              Email
-            </label>
-            <div className="relative group">
+        {view === "login" && (
+          <form onSubmit={handleLoginSubmit} className="space-y-4">
+            <div>
+              <label className="mb-1 block text-sm font-medium">Correo</label>
               <input
+                className="w-full rounded-md border px-3 py-2"
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="tuemail@gmail.com"
-                className="w-full bg-black/40 border border-white/10 rounded-xl px-5 py-4 text-lg text-white focus:outline-none focus:border-white/50 focus:bg-black/60 transition-all placeholder-gray-600"
-                autoFocus
+                placeholder="tu@email.com"
               />
-              <div className="absolute inset-0 rounded-xl border border-white/0 group-hover:border-white/10 pointer-events-none transition-colors"></div>
             </div>
-          </div>
 
-          <div className="space-y-1">
-            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest">
-              Password
-            </label>
-            <div className="relative group">
+            <div>
+              <label className="mb-1 block text-sm font-medium">Contraseña</label>
               <input
+                className="w-full rounded-md border px-3 py-2"
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
-                className="w-full bg-black/40 border border-white/10 rounded-xl px-5 py-4 text-lg text-white focus:outline-none focus:border-white/50 focus:bg-black/60 transition-all placeholder-gray-600"
               />
-              <div className="absolute inset-0 rounded-xl border border-white/0 group-hover:border-white/10 pointer-events-none transition-colors"></div>
             </div>
-          </div>
 
-          <button
-            type="submit"
-            disabled={isLoading || !canSubmit}
-            className={`w-full py-4 rounded-xl font-bold text-black text-sm tracking-wide uppercase transition-all shadow-lg ${
-              isLoading || !canSubmit
-                ? "bg-gray-800 cursor-not-allowed text-gray-500"
-                : "bg-white hover:bg-gray-100 hover:scale-[1.02] hover:shadow-[0_0_30px_rgba(255,255,255,0.2)]"
-            }`}
-          >
-            {isLoading
-              ? isRegistering
-                ? "CREATING ACCOUNT..."
-                : "AUTHENTICATING..."
-              : isRegistering
-              ? "CREATE ACCOUNT"
-              : "LOGIN"}
-          </button>
-        </form>
+            <button
+              type="submit"
+              className="w-full rounded-md bg-black px-3 py-2 text-white disabled:opacity-60"
+              disabled={isLoading || submitting}
+            >
+              {submitting ? "Entrando..." : "Entrar"}
+            </button>
 
-        <div className="mt-8 pt-6 border-t border-white/5 text-center space-y-4">
-          <p className="text-xs text-gray-400">
-            {isRegistering ? "Already have an account?" : "New here?"}
-          </p>
+            <div className="text-center text-sm">
+              ¿No tienes cuenta?{" "}
+              <button
+                type="button"
+                className="underline"
+                onClick={() => {
+                  resetForm();
+                  setView("register");
+                }}
+              >
+                Crear cuenta
+              </button>
+            </div>
+          </form>
+        )}
 
-          <button
-            onClick={() => {
-              setIsRegistering(!isRegistering);
-              setError(null);
-              setInfo(null);
-              setEmail("");
-              setPassword("");
-              setDisplayName("");
-            }}
-            className="text-xs font-bold text-white border border-white/20 px-6 py-2 rounded-full hover:bg-white hover:text-black transition-all"
-          >
-            {isRegistering ? "LOGIN INSTEAD" : "CREATE ACCOUNT"}
-          </button>
-        </div>
+        {view === "register" && (
+          <form onSubmit={handleRegisterSubmit} className="space-y-4">
+            <div>
+              <label className="mb-1 block text-sm font-medium">Nombre visible</label>
+              <input
+                className="w-full rounded-md border px-3 py-2"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                placeholder="Tu nombre"
+              />
+            </div>
 
-        <div className="mt-6 text-[10px] text-gray-600 text-center font-mono">
-          SECURE CONNECTION ESTABLISHED
-        </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium">Correo</label>
+              <input
+                className="w-full rounded-md border px-3 py-2"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="tu@email.com"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium">Contraseña</label>
+              <input
+                className="w-full rounded-md border px-3 py-2"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium">Repetir contraseña</label>
+              <input
+                className="w-full rounded-md border px-3 py-2"
+                type="password"
+                value={password2}
+                onChange={(e) => setPassword2(e.target.value)}
+                placeholder="••••••••"
+              />
+            </div>
+
+            <button
+              type="submit"
+              className="w-full rounded-md bg-black px-3 py-2 text-white disabled:opacity-60"
+              disabled={isLoading || submitting}
+            >
+              {submitting ? "Creando..." : "Crear cuenta"}
+            </button>
+
+            <div className="text-center text-sm">
+              ¿Ya tienes cuenta?{" "}
+              <button
+                type="button"
+                className="underline"
+                onClick={() => {
+                  resetForm();
+                  setView("login");
+                }}
+              >
+                Iniciar sesión
+              </button>
+            </div>
+          </form>
+        )}
+
+        {view === "verify" && (
+          <form onSubmit={handleVerifySubmit} className="space-y-4">
+            <div className="text-sm text-zinc-600">
+              Te envié un código a: <b>{email.trim()}</b>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium">Código</label>
+              <input
+                className="w-full rounded-md border px-3 py-2"
+                value={otpCode}
+                onChange={(e) => setOtpCode(e.target.value)}
+                placeholder="Ej: 123456"
+              />
+            </div>
+
+            <button
+              type="submit"
+              className="w-full rounded-md bg-black px-3 py-2 text-white disabled:opacity-60"
+              disabled={submitting}
+            >
+              {submitting ? "Confirmando..." : "Confirmar"}
+            </button>
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className="w-1/2 rounded-md border px-3 py-2"
+                disabled={submitting}
+                onClick={async () => {
+                  try {
+                    setSubmitting(true);
+                    await requestOtp(false);
+                    showToast("success", "Código reenviado ✅");
+                  } catch (err: any) {
+                    showToast("error", err?.message || "No se pudo reenviar el código.");
+                  } finally {
+                    setSubmitting(false);
+                  }
+                }}
+              >
+                Reenviar código
+              </button>
+
+              <button
+                type="button"
+                className="w-1/2 rounded-md border px-3 py-2"
+                disabled={submitting}
+                onClick={() => {
+                  setOtpCode("");
+                  setView("login");
+                  showToast("info", "Vuelve a iniciar sesión cuando quieras.");
+                }}
+              >
+                Volver
+              </button>
+            </div>
+          </form>
+        )}
       </div>
     </div>
   );
-};
-
-export default Login;
+}
