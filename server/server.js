@@ -297,7 +297,7 @@ app.get("/api/health", (_req, res) => {
 });
 
 const ImageRequestSchema = z.object({
-  prompt: z.string().min(1).max(4000),
+  prompt: z.string().min(1).max(14000),
   model: z.string().optional(),
   aspectRatio: z.string().optional(),
 
