@@ -755,6 +755,77 @@ async function assetIdToInlinePart(assetId, userId) {
   return { inlineData: { mimeType, data: buf.toString("base64") } };
 }
 
+// ===============================
+// Assets: delete (owner only)
+// DELETE /api/assets/:id
+// ===============================
+app.delete("/api/assets/:id", async (req, res) => {
+  const { user, error } = await requireUser(req);
+  if (error) return res.status(401).json({ ok: false, error });
+
+  const assetId = req.params.id;
+
+  // 1) Buscar asset y validar dueño
+  const { data: row, error: qErr } = await supabaseAdmin
+    .from("assets")
+    .select("id, owner_id, storage_path")
+    .eq("id", assetId)
+    .maybeSingle();
+
+  if (qErr) {
+    return res.status(500).json({
+      ok: false,
+      error: { code: "DB_QUERY_FAILED", message: qErr.message },
+    });
+  }
+
+  if (!row) {
+    return res.status(404).json({
+      ok: false,
+      error: { code: "NOT_FOUND", message: "Asset no encontrado." },
+    });
+  }
+
+  if (row.owner_id !== user.id) {
+    return res.status(403).json({
+      ok: false,
+      error: { code: "FORBIDDEN", message: "No tienes permiso para eliminar este asset." },
+    });
+  }
+
+  // 2) Borrar del storage si existe
+  if (row.storage_path) {
+    const { error: rmErr } = await supabaseAdmin.storage
+      .from(SUPABASE_BUCKET)
+      .remove([row.storage_path]);
+
+    // Si falla, reportamos error (para evitar DB sin archivo o viceversa)
+    if (rmErr) {
+      return res.status(500).json({
+        ok: false,
+        error: { code: "STORAGE_DELETE_FAILED", message: rmErr.message },
+      });
+    }
+  }
+
+  // 3) Borrar fila en DB
+  const { error: delErr } = await supabaseAdmin
+    .from("assets")
+    .delete()
+    .eq("id", assetId)
+    .eq("owner_id", user.id);
+
+  if (delErr) {
+    return res.status(500).json({
+      ok: false,
+      error: { code: "DB_DELETE_FAILED", message: delErr.message },
+    });
+  }
+
+  return res.json({ ok: true, id: assetId });
+});
+
+
 app.post("/api/ai/image", async (req, res, next) => {
   try {
     const aiClient = await ensureAI();

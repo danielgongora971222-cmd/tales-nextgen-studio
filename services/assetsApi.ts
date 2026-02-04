@@ -137,6 +137,20 @@ export async function unpublishAsset(assetId: string) {
   return { isPublic: !!data.isPublic };
 }
 
+export async function deleteAsset(assetId: string) {
+  const headers = await authHeadersJson();
+  const resp = await fetch(`/api/assets/${assetId}`, { method: "DELETE", headers });
+
+  const text = await resp.text();
+  const data = JSON.parse(text);
+
+  if (!resp.ok || data?.ok === false) {
+    throw new Error(data?.error?.message || `Delete failed: ${resp.status}`);
+  }
+
+  return { ok: true };
+}
+
 export async function uploadUserAsset(file: File, tool = "upload"): Promise<Asset> {
   const { data: sessionData } = await supabase.auth.getSession();
   const token = sessionData.session?.access_token;
