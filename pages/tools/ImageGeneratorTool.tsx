@@ -326,7 +326,12 @@ const ImageGeneratorTool: React.FC = () => {
   };
 
   const handleGenerate = async () => {
-    if (!prompt.trim() || !user) return;
+    // 1) Asegura que el prompt sea string y no venga “raro”
+    const safePrompt = String(prompt ?? "").trim();
+    if (!safePrompt) return;
+
+    // 2) Asegura que el model sea string
+    const safeModel = String(model ?? GeminiModel.IMAGE);
 
     setLoading(true);
     setError(null);
@@ -388,9 +393,9 @@ const ImageGeneratorTool: React.FC = () => {
       const firstId = res.items[0]?.assetId;
       const found = firstId ? images.find((a) => a.id === firstId) : null;
       setSelectedAsset(found || (images.length > 0 ? images[0] : null));
-    } catch (err: any) {
-      console.error(err);
-      setError(err?.message || "El modelo rechazó la solicitud. Prueba con otro prompt.");
+    } catch (error) {
+      console.error(error);
+      alert("Failed to generate image. Ensure API Key is valid.");
     } finally {
       setLoading(false);
     }
