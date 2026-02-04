@@ -1,23 +1,21 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { generateImageBatch } from "../../services/geminiService";
 import { listMyAssets, publishAsset, unpublishAsset, uploadUserAsset } from "../../services/assetsApi";
 import { useAuth } from "../../contexts/AuthContext";
 import { Asset, GeminiModel } from "../../types";
-import GenerationHistory from "../../components/GenerationHistory";
 import ErrorModal from "../../components/ErrorModal";
+import styles from "./ImageGeneratorTool.module.css";
 
 type StylePreset = {
   id: string;
   name: string;
   prompt: string;
-  coverUrl?: string; // imagen principal del estilo
-  exampleUrls?: [string, string, string, string]; // 4 imágenes para el collage 2x2
+  coverUrl?: string;
+  exampleUrls?: [string, string, string, string];
 };
 
 const STYLE_PRESET_BLOCK_START = "[[STYLE_PRESET_START]]";
 const STYLE_PRESET_BLOCK_END = "[[STYLE_PRESET_END]]";
-
-// soporte para prompts viejos ya guardados en historial
 const LEGACY_STYLE_PRESET_BLOCK_START = "/* STYLE_PRESET_START */";
 const LEGACY_STYLE_PRESET_BLOCK_END = "/* STYLE_PRESET_END */";
 
@@ -27,7 +25,6 @@ function escapeRegExp(s: string) {
 
 function removeStylePresetBlock(input: string) {
   let out = input;
-
   const pairs = [
     { start: STYLE_PRESET_BLOCK_START, end: STYLE_PRESET_BLOCK_END },
     { start: LEGACY_STYLE_PRESET_BLOCK_START, end: LEGACY_STYLE_PRESET_BLOCK_END },
@@ -37,10 +34,8 @@ function removeStylePresetBlock(input: string) {
     const re = new RegExp(`${escapeRegExp(start)}[\\s\\S]*?${escapeRegExp(end)}\\n*`, "g");
     out = out.replace(re, "");
   }
-
   return out.trim();
 }
-
 
 function applyStylePresetToPrompt(input: string, presetPrompt: string) {
   const base = removeStylePresetBlock(input).trim();
@@ -48,7 +43,6 @@ function applyStylePresetToPrompt(input: string, presetPrompt: string) {
   return `${block}${base}`.trim();
 }
 
-// ✅ ESTILOS (puedes cambiar prompts e imágenes cuando quieras)
 const STYLE_PRESETS: StylePreset[] = [
   {
     id: "live_action",
@@ -132,12 +126,7 @@ pose change, framing change, crop, zoom, perspective change
     id: "luxury_product",
     name: "Luxury Product",
     coverUrl: "/style-presets/luxury/cover.jpg",
-    exampleUrls: [
-      "/style-presets/luxury/1.jpg",
-      "/style-presets/luxury/2.jpg",
-      "/style-presets/luxury/3.jpg",
-      "/style-presets/luxury/4.jpg",
-    ],
+    exampleUrls: ["/style-presets/luxury/1.jpg", "/style-presets/luxury/2.jpg", "/style-presets/luxury/3.jpg", "/style-presets/luxury/4.jpg"],
     prompt: `
 STYLE: Luxury product advertising. Clean studio, premium reflections.
 Lighting: controlled specular highlights, soft gradients, no harsh glare.
@@ -149,12 +138,7 @@ Quality: extremely sharp, high contrast micro-detail, commercial polish.
     id: "pixar_3d",
     name: "3D Pixar-ish",
     coverUrl: "/style-presets/pixar/cover.jpg",
-    exampleUrls: [
-      "/style-presets/pixar/1.jpg",
-      "/style-presets/pixar/2.jpg",
-      "/style-presets/pixar/3.jpg",
-      "/style-presets/pixar/4.jpg",
-    ],
+    exampleUrls: ["/style-presets/pixar/1.jpg", "/style-presets/pixar/2.jpg", "/style-presets/pixar/3.jpg", "/style-presets/pixar/4.jpg"],
     prompt: `
 STYLE: High-quality 3D animation look (family-friendly, stylized).
 Materials: smooth but detailed shaders, soft bounce light, clean render.
@@ -166,58 +150,44 @@ Rules: no uncanny realism, keep shapes clean, avoid noise/artifacts.
 
 type Quality = "" | "1K" | "2K" | "4K";
 type RefSlot = "char1" | "char2" | "char3" | "style" | "background";
+type PanelKey = "reference" | "model" | "params" | "styles";
 
 const TOOL_ID = "image-generator";
 const REF_TOOL_ID = "image-generator-ref";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function getStatus(err: any): number | null {
-  return typeof err?.status === "number"
-    ? err.status
-    : typeof err?.response?.status === "number"
-      ? err.response.status
-      : null;
+  return typeof err?.status === "number" ? err.status : typeof err?.response?.status === "number" ? err.response.status : null;
 }
-
 function getErrMsg(err: any): string {
-  return (
-    err?.response?.data?.message ||
-    err?.response?.data?.error ||
-    err?.message ||
-    (typeof err === "string" ? err : "Failed to generate image.")
-  );
+  return err?.response?.data?.message || err?.response?.data?.error || err?.message || (typeof err === "string" ? err : "Failed to generate image.");
 }
-
 function isRetryable(err: any): boolean {
   const s = getStatus(err);
   if (s && [408, 429, 500, 502, 503, 504].includes(s)) return true;
-
   const m = (getErrMsg(err) || "").toLowerCase();
   return m.includes("timeout") || m.includes("failed to fetch") || m.includes("network");
 }
-
 function formatErr(err: any): string {
   const s = getStatus(err);
   const m = getErrMsg(err);
   return s ? `${m} (HTTP ${s})` : m;
 }
 
-// ===== Hidden Style Prompt (never show to user) =====
+// ===== Hidden Style Prompt =====
 const STYLE_BLOCK_START = STYLE_PRESET_BLOCK_START;
 const STYLE_BLOCK_END = STYLE_PRESET_BLOCK_END;
 
 function splitStyleBlock(text: string): { cleaned: string; style: string | null } {
   const pairs = [
-    { start: STYLE_BLOCK_START, end: STYLE_BLOCK_END }, // nuevo
-    { start: LEGACY_STYLE_PRESET_BLOCK_START, end: LEGACY_STYLE_PRESET_BLOCK_END }, // legacy
+    { start: STYLE_BLOCK_START, end: STYLE_BLOCK_END },
+    { start: LEGACY_STYLE_PRESET_BLOCK_START, end: LEGACY_STYLE_PRESET_BLOCK_END },
   ];
 
   for (const { start, end } of pairs) {
     if (!text.includes(start) || !text.includes(end)) continue;
-
     const s = text.indexOf(start);
     const e = text.indexOf(end);
-
     if (s === -1 || e === -1 || e < s) continue;
 
     const before = text.slice(0, s).trimEnd();
@@ -227,7 +197,6 @@ function splitStyleBlock(text: string): { cleaned: string; style: string | null 
     const cleaned = [before, after].filter(Boolean).join("\n\n").trim();
     return { cleaned, style: inside || null };
   }
-
   return { cleaned: text, style: null };
 }
 
@@ -238,17 +207,14 @@ function stripStyleBlock(text: string): string {
 function attachStyleBlock(userPrompt: string, stylePrompt: string | null): string {
   const p = (userPrompt || "").trim();
   const s = (stylePrompt || "").trim();
-
   if (!s) return p;
 
-  // Evitar duplicarlo si ya existiera
   if (
     (p.includes(STYLE_BLOCK_START) && p.includes(STYLE_BLOCK_END)) ||
     (p.includes(LEGACY_STYLE_PRESET_BLOCK_START) && p.includes(LEGACY_STYLE_PRESET_BLOCK_END))
   ) {
     return p;
   }
-
   return `${STYLE_BLOCK_START}\n${s}\n${STYLE_BLOCK_END}\n\n${p}`.trim();
 }
 
@@ -270,15 +236,15 @@ function makeTempAsset(item: { assetId: string; url: string }, prompt: string, o
 const ImageGeneratorTool: React.FC = () => {
   const { user } = useAuth();
 
-  // Prompt + config
   const [prompt, setPrompt] = useState("");
-  // Aquí se guarda el prompt del estilo, pero NUNCA se muestra al usuario
   const [hiddenStylePrompt, setHiddenStylePrompt] = useState<string>("");
   const [loading, setLoading] = useState(false);
+
   const [model, setModel] = useState<string>(GeminiModel.IMAGE);
   const [aspectRatio, setAspectRatio] = useState("1:1");
   const [count, setCount] = useState<number>(1);
   const [quality, setQuality] = useState<Quality>("1K");
+
   const isNanoBanana = model === GeminiModel.IMAGE;
   const isNanoBananaPro = model === GeminiModel.IMAGE_PRO;
 
@@ -290,17 +256,12 @@ const ImageGeneratorTool: React.FC = () => {
     if (isNanoBanana) setQuality("1K");
   }, [isNanoBanana]);
 
-  // Errors
   const [error, setError] = useState<string | null>(null);
 
-  // History
   const [history, setHistory] = useState<Asset[]>([]);
   const [selectedAsset, setSelectedAsset] = useState<Asset | null>(null);
-
-  // Latest batch (variations)
   const [latestBatch, setLatestBatch] = useState<Array<{ assetId: string; url: string }>>([]);
 
-  // Refs
   const [refs, setRefs] = useState<Record<RefSlot, Asset | null>>({
     char1: null,
     char2: null,
@@ -309,50 +270,89 @@ const ImageGeneratorTool: React.FC = () => {
     background: null,
   });
 
-  // Picker modal state
   const [pickerSlot, setPickerSlot] = useState<RefSlot | null>(null);
   const [pickerQuery, setPickerQuery] = useState("");
 
-  // Style selector state
   const [styleModalOpen, setStyleModalOpen] = useState(false);
   const [stylePresetId, setStylePresetId] = useState<string | null>(null);
 
-  const selectedStylePreset = useMemo(() => {
-    return STYLE_PRESETS.find((s) => s.id === stylePresetId) || null;
-  }, [stylePresetId]);
+  const [panel, setPanel] = useState<PanelKey | null>(null);
+
+  const [isPortraitUI, setIsPortraitUI] = useState(false);
+  const [tileRatios, setTileRatios] = useState<Record<string, number>>({});
+
+  const promptRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const selectedStylePreset = useMemo(() => STYLE_PRESETS.find((s) => s.id === stylePresetId) || null, [stylePresetId]);
 
   const imageHistory = useMemo(() => history.filter((a) => a.type === "image" && a.url), [history]);
+  const sortedHistory = useMemo(() => {
+    const arr = [...imageHistory];
+    arr.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    return arr;
+  }, [imageHistory]);
 
   const filteredPickerAssets = useMemo(() => {
     const q = pickerQuery.trim().toLowerCase();
-    if (!q) return imageHistory;
-    return imageHistory.filter((a) => (a.prompt || a.name || "").toLowerCase().includes(q));
-  }, [imageHistory, pickerQuery]);
+    if (!q) return sortedHistory;
+    return sortedHistory.filter((a) => (a.prompt || a.name || "").toLowerCase().includes(q));
+  }, [sortedHistory, pickerQuery]);
 
-  // Si por cualquier razón el prompt tiene un bloque de estilo dentro,
-  // lo extraemos y lo ocultamos para que el usuario NUNCA lo vea.
+  // UI portrait detector (para 4xN vs 1xN)
+  useEffect(() => {
+    const compute = () => {
+      const w = window.innerWidth || 1;
+      const h = window.innerHeight || 1;
+      const ratio = h / w;
+      setIsPortraitUI(ratio > 1.18 || w < 860);
+    };
+    compute();
+    window.addEventListener("resize", compute);
+    return () => window.removeEventListener("resize", compute);
+  }, []);
+
+  // autosize textarea
+  const autosizePrompt = () => {
+    const el = promptRef.current;
+    if (!el) return;
+    el.style.height = "0px";
+    const next = Math.min(el.scrollHeight, 220);
+    el.style.height = `${Math.max(next, 44)}px`;
+  };
+
+  useEffect(() => {
+    autosizePrompt();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prompt]);
+
+  // Escape closes drawer/modals
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setPanel(null);
+        setPickerSlot(null);
+        setStyleModalOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Hide style blocks if they appear in prompt
   useEffect(() => {
     if (!prompt.includes(STYLE_BLOCK_START)) return;
-
     const { cleaned, style } = splitStyleBlock(prompt);
-
     if (style) setHiddenStylePrompt(style);
     if (cleaned !== prompt) setPrompt(cleaned);
   }, [prompt]);
 
-  // Load user's history on mount
+  // Load history
   useEffect(() => {
     if (!user) return;
-
     (async () => {
       try {
         const images = await listMyAssets({ type: "image", limit: 80 });
-
-        const cleanImages = images.map((a) => ({
-          ...a,
-          prompt: stripStyleBlock(a.prompt || ""),
-        }));
-
+        const cleanImages = images.map((a) => ({ ...a, prompt: stripStyleBlock(a.prompt || "") }));
         setHistory(cleanImages);
         setSelectedAsset(cleanImages.length > 0 ? cleanImages[0] : null);
       } catch (err: any) {
@@ -361,19 +361,14 @@ const ImageGeneratorTool: React.FC = () => {
     })();
   }, [user]);
 
-  const setRefSlot = (slot: RefSlot, asset: Asset | null) => {
-    setRefs((prev) => ({ ...prev, [slot]: asset }));
-  };
+  const setRefSlot = (slot: RefSlot, asset: Asset | null) => setRefs((prev) => ({ ...prev, [slot]: asset }));
 
   const handleUploadRef = async (slot: RefSlot, file: File) => {
     if (!user) return;
     setError(null);
-
     try {
       const asset = await uploadUserAsset(file, REF_TOOL_ID);
       setRefSlot(slot, asset);
-
-      // UX rápido
       setHistory((prev) => [asset, ...prev]);
     } catch (err: any) {
       setError(err?.message || "No se pudo subir la referencia.");
@@ -384,32 +379,26 @@ const ImageGeneratorTool: React.FC = () => {
     const safePrompt = String(prompt ?? "").trim();
     if (!safePrompt) return;
 
-    const safeModel =
-      model === GeminiModel.IMAGE || model === GeminiModel.IMAGE_PRO ? model : GeminiModel.IMAGE;
+    const safeModel = model === GeminiModel.IMAGE || model === GeminiModel.IMAGE_PRO ? model : GeminiModel.IMAGE;
 
     setLoading(true);
     setError(null);
 
-    const characterAssetIds = [refs.char1, refs.char2, refs.char3]
-      .filter(Boolean)
-      .map((a) => (a as Asset).id);
+    const characterAssetIds = [refs.char1, refs.char2, refs.char3].filter(Boolean).map((a) => (a as Asset).id);
 
     const effectiveQuality = isNanoBanana ? ("1K" as Quality) : quality;
     const effectiveCount = isNanoBananaPro ? 1 : count;
 
     const backgroundAutoPrompt = refs.background
       ? `
-  [BACKGROUND AUTO-RULES]
-  - Use the Background reference image as the scene/environment/backdrop.
-  - Match its lighting direction, color temperature, contrast, shadows, and overall mood so the subject looks naturally integrated.
-  - Keep the scene geometry/perspective consistent with the background reference.
-  - If my text prompt explicitly asks for a different background or lighting, follow my text prompt.
-  - If a Style reference is provided, prioritize the Style for the artistic look, but keep the environment/lighting grounded in the Background reference unless my text says otherwise.
-  `.trim()
+[BACKGROUND AUTO-RULES]
+- Use the Background reference image as the scene/environment/backdrop.
+- Match its lighting direction, color temperature, contrast, shadows, and overall mood so the subject looks naturally integrated.
+- Keep the scene geometry/perspective consistent with the background reference.
+- If my text prompt explicitly asks for a different background or lighting, follow my text prompt.
+- If a Style reference is provided, prioritize the Style for the artistic look, but keep the environment/lighting grounded in the Background reference unless my text says otherwise.
+`.trim()
       : "";
-
-    // ✅ Solo aplica preset si realmente hay uno seleccionado
-    const presetStyle = stylePresetId ? hiddenStylePrompt : "";
 
     const basePrompt = `${safePrompt}${backgroundAutoPrompt}`.trim();
     const styleText = stylePresetId ? hiddenStylePrompt : "";
@@ -429,8 +418,6 @@ const ImageGeneratorTool: React.FC = () => {
 
     try {
       let res: any;
-
-      // ✅ retry 1 vez si es temporal (429/timeout/network)
       try {
         res = await run();
       } catch (e1: any) {
@@ -442,22 +429,13 @@ const ImageGeneratorTool: React.FC = () => {
         }
       }
 
-      setLatestBatch(res.items);
+      setLatestBatch(res.items || []);
 
-      // preview inmediata aunque falle el historial
-      if (res.items?.[0] && user) {
-        setSelectedAsset(makeTempAsset(res.items[0], safePrompt, user.id));
-      }
+      if (res.items?.[0] && user) setSelectedAsset(makeTempAsset(res.items[0], safePrompt, user.id));
 
-      // ✅ refresco historial en try separado: si falla NO debe parecer “falló generar”
       try {
         const images = await listMyAssets({ type: "image", limit: 80 });
-
-        const cleanImages = images.map((a) => ({
-          ...a,
-          prompt: stripStyleBlock(a.prompt || ""),
-        }));
-
+        const cleanImages = images.map((a) => ({ ...a, prompt: stripStyleBlock(a.prompt || "") }));
         setHistory(cleanImages);
 
         const firstId = res.items?.[0]?.assetId;
@@ -477,7 +455,6 @@ const ImageGeneratorTool: React.FC = () => {
 
   const handleTogglePublic = async () => {
     if (!selectedAsset) return;
-
     try {
       const makePublic = !selectedAsset.isPublic;
       const result = makePublic ? await publishAsset(selectedAsset.id) : await unpublishAsset(selectedAsset.id);
@@ -509,349 +486,434 @@ const ImageGeneratorTool: React.FC = () => {
     if (user) setSelectedAsset(makeTempAsset(item, prompt, user.id));
   };
 
-  const StyleCard = () => {
-  return (
-    <div className="bg-black/30 border border-white/10 rounded-2xl p-3">
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Style</span>
+  const togglePanel = (k: PanelKey) => setPanel((p) => (p === k ? null : k));
 
-        {stylePresetId ? (
-          <button
-            type="button"
-            onClick={() => {
-              setStylePresetId(null);
-              setHiddenStylePrompt(""); // ✅ IMPORTANTE: si no limpias esto, el estilo se sigue aplicando oculto
-              setPrompt((prev) => removeStylePresetBlock(prev).trim());
-            }}
-            className="text-[10px] font-bold text-gray-300 hover:text-white"
-          >
-            CLEAR
-          </button>
-        ) : null}
-      </div>
+  const cols = isPortraitUI ? 1 : 4;
 
-      <button
-        type="button"
-        onClick={() => setStyleModalOpen(true)}
-        className="w-full aspect-video rounded-xl overflow-hidden border border-white/10 bg-black/40 hover:bg-white/5 transition relative"
-      >
-        {selectedStylePreset?.coverUrl ? (
-          <img
-            src={encodeURI(selectedStylePreset.coverUrl)}
-            alt={selectedStylePreset.name}
-            className="w-full h-full object-cover"
-          />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center text-xs text-white/30">Click to choose a style</div>
-        )}
+  const onTileLoad = (id: string, img: HTMLImageElement) => {
+    const r = img.naturalWidth && img.naturalHeight ? img.naturalWidth / img.naturalHeight : 1;
+    setTileRatios((prev) => (prev[id] ? prev : { ...prev, [id]: r }));
+  };
 
-        {selectedStylePreset ? (
-          <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/80 to-transparent">
-            <div className="text-[11px] font-bold text-white">{selectedStylePreset.name}</div>
-          </div>
-        ) : null}
-      </button>
-
-      <button
-        type="button"
-        onClick={() => setStyleModalOpen(true)}
-        className="mt-2 w-full text-[10px] font-bold py-2 rounded-xl bg-white text-black hover:scale-[1.02] transition"
-      >
-        CHOOSE
-      </button>
-    </div>
-  );
-};
-
-  const RefCard = ({ slot, label, asset }: { slot: RefSlot; label: string; asset: Asset | null }) => {
+  const SlotCard = ({ slot, label, asset }: { slot: RefSlot; label: string; asset: Asset | null }) => {
     return (
-      <div className="bg-black/30 border border-white/10 rounded-2xl p-3">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{label}</span>
+      <div className={styles.slotCard}>
+        <div className={styles.slotHead}>
+          <span className={styles.slotLabel}>{label}</span>
           {asset ? (
-            <button onClick={() => setRefSlot(slot, null)} className="text-[10px] font-bold text-gray-300 hover:text-white" type="button">
+            <button type="button" className={styles.slotClear} onClick={() => setRefSlot(slot, null)}>
               CLEAR
             </button>
           ) : null}
         </div>
 
-        <button
-          type="button"
-          onClick={() => setPickerSlot(slot)}
-          className="w-full aspect-video rounded-xl overflow-hidden border border-white/10 bg-black/40 hover:bg-white/5 transition relative"
-        >
-          {asset ? (
-            <img src={asset.url} alt={asset.name} className="w-full h-full object-cover" />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center text-xs text-white/30">Click to pick from history</div>
-          )}
-        </button>
-
-        <div className="mt-2 flex items-center gap-2">
-          <label className="flex-1">
-            <input
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) handleUploadRef(slot, f);
-                e.currentTarget.value = "";
-              }}
-            />
-            <span className="block text-center text-[10px] font-bold py-2 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 cursor-pointer">
-              UPLOAD
-            </span>
-          </label>
-
-          <button
-            type="button"
-            onClick={() => setPickerSlot(slot)}
-            className="flex-1 text-[10px] font-bold py-2 rounded-xl bg-white text-black hover:scale-[1.02] transition"
-          >
-            PICK
+        <div className={styles.slotBody}>
+          <button type="button" className={styles.slotPreviewBtn} onClick={() => setPickerSlot(slot)}>
+            {asset ? <img className={styles.slotPreview} src={asset.url} alt={asset.name} /> : <div className={styles.slotEmpty}>Pick from history</div>}
           </button>
+
+          <div className={styles.slotBtns}>
+            <label className={styles.slotBtn}>
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) handleUploadRef(slot, f);
+                  e.currentTarget.value = "";
+                }}
+              />
+              UPLOAD
+            </label>
+
+            <button type="button" className={styles.slotBtn} onClick={() => setPickerSlot(slot)}>
+              PICK
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const StylePresetCard = () => {
+    return (
+      <div className={styles.slotCard}>
+        <div className={styles.slotHead}>
+          <span className={styles.slotLabel}>Style Preset</span>
+          {stylePresetId ? (
+            <button
+              type="button"
+              className={styles.slotClear}
+              onClick={() => {
+                setStylePresetId(null);
+                setHiddenStylePrompt("");
+                setPrompt((prev) => removeStylePresetBlock(prev).trim());
+              }}
+            >
+              CLEAR
+            </button>
+          ) : null}
+        </div>
+
+        <div className={styles.slotBody}>
+          <button type="button" className={styles.slotPreviewBtn} onClick={() => setStyleModalOpen(true)}>
+            {selectedStylePreset?.coverUrl ? (
+              <img className={styles.slotPreview} src={encodeURI(selectedStylePreset.coverUrl)} alt={selectedStylePreset.name} />
+            ) : (
+              <div className={styles.slotEmpty}>Choose a style</div>
+            )}
+          </button>
+
+          <div className={styles.slotBtns}>
+            <button type="button" className={styles.slotBtn} onClick={() => setStyleModalOpen(true)}>
+              CHOOSE
+            </button>
+            <button type="button" className={styles.slotBtn} onClick={() => togglePanel("styles")}>
+              PANEL
+            </button>
+          </div>
         </div>
       </div>
     );
   };
 
   return (
-    <div className="h-full flex flex-col lg:flex-row gap-6 animate-in fade-in zoom-in duration-500 min-h-[650px]">
+    <div className={`${styles.root} hud-noise`}>
       <ErrorModal error={error} onClose={() => setError(null)} />
 
-      {/* History Sidebar */}
-      <div className="w-full lg:w-48 lg:flex-shrink-0 order-3 lg:order-1 h-32 lg:h-auto">
-        <GenerationHistory assets={history} onSelect={setSelectedAsset} selectedId={selectedAsset?.id} title="History" />
+      <div className={styles.topBar}>
+        <div className={styles.title}>
+          <div className={styles.titleMain}>Image Generator Tool</div>
+          <div className={styles.titleSub}>Dock UI + dynamic history (new → old)</div>
+        </div>
+
+        <div className={styles.pills}>
+          <div className={`${styles.pill} ${styles.pillStrong}`}>MODEL: {isNanoBananaPro ? "PRO" : "BASE"}</div>
+          <div className={styles.pill}>RATIO: {aspectRatio}</div>
+          <div className={styles.pill}>COUNT: {isNanoBananaPro ? 1 : count}</div>
+          <div className={styles.pill}>QUALITY: {isNanoBanana ? "1K" : quality || "AUTO"}</div>
+          <div className={styles.pill}>HISTORY: {sortedHistory.length}</div>
+        </div>
       </div>
 
-      {/* Controls */}
-      <div className="w-full lg:w-1/3 space-y-6 order-2">
-        <div className="glass-panel p-6 rounded-3xl border border-white/10">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="p-2 bg-white/10 rounded-lg">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5" />
-                <path d="M9 18h6" />
-                <path d="M10 22h4" />
-              </svg>
+      <div className={styles.preview}>
+        <div className={styles.previewInner}>
+          {selectedAsset?.url ? (
+            <img className={styles.previewImg} src={selectedAsset.url} alt="Selected" />
+          ) : (
+            <div className={styles.empty}>
+              <div className={styles.emptyCode}>NO IMAGE SELECTED</div>
+              <div className={styles.emptyText}>Generate a new image or select from history.</div>
             </div>
-            <h2 className="text-xl font-bold">Image Generator</h2>
-          </div>
+          )}
+        </div>
 
-          {/* References */}
-          <div className="space-y-3 mb-6">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">References</h3>
-              <span className="text-[10px] text-white/30">optional</span>
+        {selectedAsset && (
+          <div className={styles.previewFooter}>
+            <div className={styles.meta}>
+              <div className={styles.metaLine}>
+                {selectedAsset.createdAt ? new Date(selectedAsset.createdAt).toLocaleString() : ""}
+              </div>
+              {selectedAsset.isPublic ? <div className={styles.badgePublic}>PUBLISHED</div> : null}
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <RefCard slot="char1" label="Character 1" asset={refs.char1} />
-              <RefCard slot="char2" label="Character 2" asset={refs.char2} />
-              <RefCard slot="char3" label="Character 3" asset={refs.char3} />
-              <div className="col-span-2">
-                <StyleCard />
-              </div>
-              <div className="col-span-2">
-                <RefCard slot="background" label="Background" asset={refs.background} />
-              </div>
+            <div className={styles.actions}>
+              <button className={styles.actionBtn} onClick={handleDownload} type="button">
+                Download
+              </button>
+              <button className={styles.actionBtn} onClick={handleTogglePublic} type="button">
+                {selectedAsset.isPublic ? "Privatizar" : "Publicar"}
+              </button>
             </div>
           </div>
+        )}
+      </div>
 
-          {/* Config */}
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Model</label>
-                <select
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  className="w-full bg-black/50 border border-white/20 rounded-xl px-2 py-2 text-xs focus:border-white focus:outline-none"
-                >
-                  <option value={GeminiModel.IMAGE}>NanoBanana</option>
-                  <option value={GeminiModel.IMAGE_PRO}>NanoBanana Pro</option>
-                </select>
-              </div>
+      {latestBatch.length > 0 && (
+        <div className={styles.variations}>
+          <div className={styles.variationsTop}>
+            <div className={styles.variationsTitle}>Variations</div>
+            <button type="button" className={styles.variationsClear} onClick={() => setLatestBatch([])}>
+              CLEAR
+            </button>
+          </div>
 
-              <div>
-                <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Ratio</label>
-                <select
-                  value={aspectRatio}
-                  onChange={(e) => setAspectRatio(e.target.value)}
-                  className="w-full bg-black/50 border border-white/20 rounded-xl px-2 py-2 text-xs focus:border-white focus:outline-none"
-                >
-                  <option value="1:1">1:1 (Square)</option>
-                  <option value="3:2">3:2 (Landscape)</option>
-                  <option value="2:3">2:3 (Portrait)</option>
-                  <option value="3:4">3:4 (Portrait)</option>
-                  <option value="4:3">4:3 (Landscape)</option>
-                  <option value="4:5">4:5 (Portrait)</option>
-                  <option value="5:4">5:4 (Landscape)</option>
-                  <option value="9:16">9:16 (Vertical)</option>
-                  <option value="16:9">16:9 (Widescreen)</option>
-                  <option value="21:9">21:9 (Cinematic)</option>
-                </select>
-              </div>
+          <div className={styles.variationRow}>
+            {latestBatch.map((it) => (
+              <button
+                key={it.assetId}
+                type="button"
+                onClick={() => handlePickFromBatch(it)}
+                className={`${styles.variationThumb} ${selectedAsset?.id === it.assetId ? styles.variationThumbSelected : ""}`}
+              >
+                <img src={it.url} alt="variation" />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className={styles.historyPanel}>
+        <div className={styles.historyTop}>
+          <div className={styles.historyTitle}>History</div>
+          <div className={styles.historyHint}>{isPortraitUI ? "Portrait: 1×N" : "Landscape: 4×N"} • New → Old</div>
+        </div>
+
+        <div className={styles.grid} style={{ ["--cols" as any]: cols }}>
+          {sortedHistory.map((a, idx) => {
+            const isSelected = selectedAsset?.id === a.id;
+            const isNew = idx === 0;
+
+            return (
+              <button
+                key={a.id}
+                type="button"
+                onClick={() => setSelectedAsset(a)}
+                className={`${styles.tile} ${isSelected ? styles.tileSelected : ""}`}
+                style={{ aspectRatio: tileRatios[a.id] ? String(tileRatios[a.id]) : "1 / 1" }}
+              >
+                {isNew ? <div className={styles.tileNewTag}>NEW</div> : null}
+
+                <img
+                  src={a.url}
+                  alt={a.name}
+                  onLoad={(e) => onTileLoad(a.id, e.currentTarget)}
+                />
+
+                <div className={styles.tileCaption}>{a.prompt || a.name || "..."}</div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Drawer backdrop (click outside closes) */}
+      {panel ? (
+        <button type="button" className={styles.backdrop} onClick={() => setPanel(null)} aria-label="Close panel" />
+      ) : null}
+
+      <div className={styles.dockWrap}>
+        {/* Drawer */}
+        {panel ? (
+          <div className={styles.drawer}>
+            <div className={styles.drawerHeader}>
+              <div className={styles.drawerTitle}>{panel}</div>
+              <button type="button" className={styles.drawerClose} onClick={() => setPanel(null)}>
+                CLOSE
+              </button>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Count</label>
-                <select
-                  value={count}
-                  onChange={(e) => setCount(parseInt(e.target.value, 10))}
-                  disabled={isNanoBananaPro}
-                  className="w-full bg-black/50 border border-white/20 rounded-xl px-2 py-2 text-xs focus:border-white focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <option value={1}>1</option>
-                  <option value={2}>2</option>
-                  <option value={3}>3</option>
-                  <option value={4}>4</option>
-                </select>
-              </div>
-
-              {isNanoBananaPro && (
-                <div className="mt-1 text-xs text-white/60">
-                  NanoBanana Pro genera 1 imagen por request.
-                </div>
-              )}
-
-              <div>
-                <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Quality</label>
-                <select
-                  value={quality}
-                  onChange={(e) => setQuality(e.target.value as Quality)}
-                  disabled={isNanoBanana}
-                  className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <option value="">Auto</option>
-                  <option value="1K">1K</option>
-                  <option value="2K">2K</option>
-                  <option value="4K">4K</option>
-                </select>
-              </div>
-            </div>
-
-            {isNanoBanana && (
-              <div className="mt-1 text-xs text-white/60">
-                NanoBanana genera en 1K fijo.
+            {panel === "reference" && (
+              <div className={styles.panelGrid}>
+                <SlotCard slot="char1" label="Character 1" asset={refs.char1} />
+                <SlotCard slot="char2" label="Character 2" asset={refs.char2} />
+                <SlotCard slot="char3" label="Character 3" asset={refs.char3} />
+                <SlotCard slot="background" label="Background" asset={refs.background} />
+                <SlotCard slot="style" label="Style Reference (image)" asset={refs.style} />
               </div>
             )}
 
-            <div>
-              <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Prompt</label>
+            {panel === "styles" && (
+              <div className={styles.panelGrid}>
+                <StylePresetCard />
+                <div className={styles.slotCard}>
+                  <div className={styles.slotHead}>
+                    <span className={styles.slotLabel}>Selected</span>
+                  </div>
+                  <div className={styles.slotBody}>
+                    <div style={{ color: "rgba(255,255,255,0.75)", fontSize: 12 }}>
+                      {selectedStylePreset ? selectedStylePreset.name : "None"}
+                    </div>
+                    <div style={{ color: "rgba(255,255,255,0.35)", fontSize: 11, marginTop: 8 }}>
+                      El preset se aplica “oculto” y nunca se muestra dentro del textarea.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {panel === "model" && (
+              <div className={styles.panelGrid}>
+                <div className={styles.slotCard}>
+                  <div className={styles.slotHead}>
+                    <span className={styles.slotLabel}>Model</span>
+                  </div>
+                  <div className={styles.slotBody}>
+                    <select
+                      value={model}
+                      onChange={(e) => setModel(e.target.value)}
+                      style={{
+                        width: "100%",
+                        borderRadius: 12,
+                        padding: "10px 12px",
+                        border: "1px solid rgba(241,225,148,0.16)",
+                        background: "rgba(0,0,0,0.55)",
+                        color: "rgba(255,255,255,0.9)",
+                      }}
+                    >
+                      <option value={GeminiModel.IMAGE}>NanoBanana</option>
+                      <option value={GeminiModel.IMAGE_PRO}>NanoBanana Pro</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {panel === "params" && (
+              <div className={styles.panelGrid}>
+                <div className={styles.slotCard}>
+                  <div className={styles.slotHead}>
+                    <span className={styles.slotLabel}>Aspect Ratio</span>
+                  </div>
+                  <div className={styles.slotBody}>
+                    <select
+                      value={aspectRatio}
+                      onChange={(e) => setAspectRatio(e.target.value)}
+                      style={{
+                        width: "100%",
+                        borderRadius: 12,
+                        padding: "10px 12px",
+                        border: "1px solid rgba(241,225,148,0.16)",
+                        background: "rgba(0,0,0,0.55)",
+                        color: "rgba(255,255,255,0.9)",
+                      }}
+                    >
+                      <option value="1:1">1:1</option>
+                      <option value="3:2">3:2</option>
+                      <option value="2:3">2:3</option>
+                      <option value="3:4">3:4</option>
+                      <option value="4:3">4:3</option>
+                      <option value="4:5">4:5</option>
+                      <option value="5:4">5:4</option>
+                      <option value="9:16">9:16</option>
+                      <option value="16:9">16:9</option>
+                      <option value="21:9">21:9</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className={styles.slotCard}>
+                  <div className={styles.slotHead}>
+                    <span className={styles.slotLabel}>Count</span>
+                  </div>
+                  <div className={styles.slotBody}>
+                    <select
+                      value={count}
+                      onChange={(e) => setCount(parseInt(e.target.value, 10))}
+                      disabled={isNanoBananaPro}
+                      style={{
+                        width: "100%",
+                        borderRadius: 12,
+                        padding: "10px 12px",
+                        border: "1px solid rgba(241,225,148,0.16)",
+                        background: "rgba(0,0,0,0.55)",
+                        color: "rgba(255,255,255,0.9)",
+                        opacity: isNanoBananaPro ? 0.5 : 1,
+                      }}
+                    >
+                      <option value={1}>1</option>
+                      <option value={2}>2</option>
+                      <option value={3}>3</option>
+                      <option value={4}>4</option>
+                    </select>
+                    {isNanoBananaPro ? <div style={{ marginTop: 8, fontSize: 11, color: "rgba(255,255,255,0.45)" }}>Pro genera 1 imagen por request.</div> : null}
+                  </div>
+                </div>
+
+                <div className={styles.slotCard}>
+                  <div className={styles.slotHead}>
+                    <span className={styles.slotLabel}>Quality</span>
+                  </div>
+                  <div className={styles.slotBody}>
+                    <select
+                      value={quality}
+                      onChange={(e) => setQuality(e.target.value as Quality)}
+                      disabled={isNanoBanana}
+                      style={{
+                        width: "100%",
+                        borderRadius: 12,
+                        padding: "10px 12px",
+                        border: "1px solid rgba(241,225,148,0.16)",
+                        background: "rgba(0,0,0,0.55)",
+                        color: "rgba(255,255,255,0.9)",
+                        opacity: isNanoBanana ? 0.5 : 1,
+                      }}
+                    >
+                      <option value="">Auto</option>
+                      <option value="1K">1K</option>
+                      <option value="2K">2K</option>
+                      <option value="4K">4K</option>
+                    </select>
+                    {isNanoBanana ? <div style={{ marginTop: 8, fontSize: 11, color: "rgba(255,255,255,0.45)" }}>Base genera en 1K fijo.</div> : null}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : null}
+
+        <div className={styles.dock}>
+          <div className={styles.dockTop}>
+            <button className={`${styles.dockBtn} ${panel === "reference" ? styles.dockBtnActive : ""}`} onClick={() => togglePanel("reference")} type="button">
+              Reference
+            </button>
+            <button className={`${styles.dockBtn} ${panel === "model" ? styles.dockBtnActive : ""}`} onClick={() => togglePanel("model")} type="button">
+              Model
+            </button>
+            <button className={`${styles.dockBtn} ${panel === "params" ? styles.dockBtnActive : ""}`} onClick={() => togglePanel("params")} type="button">
+              Parameters
+            </button>
+            <button className={`${styles.dockBtn} ${panel === "styles" ? styles.dockBtnActive : ""}`} onClick={() => togglePanel("styles")} type="button">
+              Styles
+            </button>
+            <button className={styles.dockBtn} type="button" onClick={() => setStyleModalOpen(true)}>
+              Style Picker
+            </button>
+          </div>
+
+          <div className={styles.dockMain}>
+            <div className={styles.promptBox}>
               <textarea
+                ref={promptRef}
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
-                placeholder="Describe what you want to generate..."
-                className="w-full h-32 bg-black/50 border border-white/20 rounded-xl px-4 py-3 focus:outline-none focus:border-white resize-none text-sm"
+                onInput={autosizePrompt}
+                placeholder="Escribe tu prompt y comienza a crear..."
+                className={styles.prompt}
               />
             </div>
 
             <button
+              type="button"
               onClick={handleGenerate}
               disabled={loading || !prompt.trim()}
-              className={`w-full py-4 rounded-xl font-bold text-black transition-all ${
-                loading ? "bg-gray-600" : "bg-white hover:scale-[1.02] shadow-[0_0_20px_white]"
-              }`}
+              className={`${styles.generate} ${loading ? styles.generateLoading : ""} ${loading || !prompt.trim() ? styles.generateDisabled : ""}`}
             >
-              {loading ? "GENERATING..." : "GENERATE"}
+              {loading ? "GENERATING" : "GENERATE"}
             </button>
           </div>
         </div>
       </div>
 
-      {/* Main Preview Area */}
-      <div className="flex-1 glass-panel rounded-3xl border border-white/10 flex flex-col relative overflow-hidden min-h-[400px] order-1 lg:order-3">
-        {selectedAsset ? (
-          <>
-            <div className="flex-1 flex flex-col items-center justify-center p-4 gap-4">
-              <img src={selectedAsset.url} alt="Generated" className="max-w-full max-h-[70%] object-contain shadow-2xl rounded-lg animate-in fade-in" />
-
-              {latestBatch.length > 0 && (
-                <div className="w-full max-w-4xl">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Variations</span>
-                    <button type="button" onClick={() => setLatestBatch([])} className="text-[10px] font-bold text-gray-300 hover:text-white">
-                      CLEAR
-                    </button>
-                  </div>
-
-                  <div className="flex gap-3 overflow-x-auto custom-scrollbar pb-2">
-                    {latestBatch.map((it) => (
-                      <button
-                        key={it.assetId}
-                        type="button"
-                        onClick={() => handlePickFromBatch(it)}
-                        className={`relative flex-shrink-0 w-28 h-28 rounded-xl overflow-hidden border-2 transition ${
-                          selectedAsset.id === it.assetId ? "border-white" : "border-white/10 hover:border-white/40"
-                        }`}
-                      >
-                        <img src={it.url} alt="variation" className="w-full h-full object-cover" />
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="p-4 border-t border-white/10 bg-black/40 backdrop-blur-md flex items-center justify-between">
-              <div>
-                <p className="text-xs text-gray-400 font-mono">{new Date(selectedAsset.createdAt).toLocaleString()}</p>
-                {selectedAsset.isPublic && <span className="text-[10px] text-green-400 font-bold">PUBLISHED TO COMMUNITY</span>}
-              </div>
-
-              <div className="flex gap-3 items-center">
-                <button onClick={handleDownload} className="text-xs font-bold text-white hover:text-gray-300">
-                  Download
-                </button>
-                <button onClick={handleTogglePublic} className="text-xs font-bold text-white hover:text-gray-300">
-                  {selectedAsset.isPublic ? "Privatizar" : "Publicar"}
-                </button>
-              </div>
-            </div>
-          </>
-        ) : (
-          <div className="flex-1 flex items-center justify-center text-center text-white/20">
-            <div>
-              <p className="font-mono text-sm mb-2">NO IMAGE SELECTED</p>
-              <p className="text-xs">Generate a new image or select from history.</p>
-            </div>
-          </div>
-        )}
-
-        {loading && (
-          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center">
-            <div className="w-16 h-16 border-4 border-white border-t-transparent rounded-full animate-spin mb-4"></div>
-            <p className="text-sm font-mono tracking-widest animate-pulse">CREATING...</p>
-          </div>
-        )}
-      </div>
-
       {/* Style Modal */}
       {styleModalOpen && (
         <div className="fixed inset-0 z-[999] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="glass-panel w-full max-w-3xl rounded-3xl border border-white/10 overflow-hidden">
+          <div className="hud-panel w-full max-w-3xl rounded-3xl overflow-hidden">
             <div className="p-4 border-b border-white/10 flex items-center justify-between">
               <div>
                 <p className="text-sm font-bold">Choose a style</p>
-                <p className="text-[10px] text-white/40">Pick one preset and it will be added to your prompt automatically.</p>
+                <p className="text-[10px] text-white/40">Se aplica de forma oculta y no altera el textarea.</p>
               </div>
-              <button
-                type="button"
-                onClick={() => setStyleModalOpen(false)}
-                className="text-xs font-bold text-white/70 hover:text-white"
-              >
+              <button type="button" onClick={() => setStyleModalOpen(false)} className="text-xs font-bold text-white/70 hover:text-white">
                 CLOSE
               </button>
             </div>
 
             <div className="p-4">
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 gap-3 max-h-[60vh] overflow-y-auto custom-scrollbar pr-1">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 gap-3 max-h-[60vh] overflow-y-auto pr-1">
                 {STYLE_PRESETS.map((s) => {
                   const isSelected = s.id === stylePresetId;
-
                   return (
                     <button
                       key={s.id}
@@ -866,29 +928,22 @@ const ImageGeneratorTool: React.FC = () => {
                         isSelected ? "border-white/70" : "border-white/10 hover:border-white/40",
                       ].join(" ")}
                     >
-                      {/* Cover */}
                       {s.coverUrl ? (
                         <img src={encodeURI(s.coverUrl)} alt={s.name} className="w-full h-full object-cover" />
                       ) : (
                         <div className="w-full h-full flex items-center justify-center text-xs text-white/30 bg-black/40">{s.name}</div>
                       )}
 
-                      {/* Collage 2x2 (aparece al hover) */}
                       <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity">
                         <div className="grid grid-cols-2 grid-rows-2 w-full h-full">
                           {(s.exampleUrls ? Array.from(s.exampleUrls) : [null, null, null, null]).map((url, idx) => (
                             <div key={idx} className="relative w-full h-full">
-                              {url ? (
-                                <img src={encodeURI(url)} alt={`${s.name} example ${idx + 1}`} className="w-full h-full object-cover" />
-                              ) : (
-                                <div className="w-full h-full bg-white/5" />
-                              )}
+                              {url ? <img src={encodeURI(url)} alt={`${s.name} ex ${idx + 1}`} className="w-full h-full object-cover" /> : <div className="w-full h-full bg-white/5" />}
                             </div>
                           ))}
                         </div>
                       </div>
 
-                      {/* Name label */}
                       <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent p-2">
                         <div className="text-[10px] font-bold text-white text-left">{s.name}</div>
                       </div>
@@ -904,7 +959,7 @@ const ImageGeneratorTool: React.FC = () => {
       {/* Picker Modal */}
       {pickerSlot && (
         <div className="fixed inset-0 z-[999] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="glass-panel w-full max-w-3xl rounded-3xl border border-white/10 overflow-hidden">
+          <div className="hud-panel w-full max-w-3xl rounded-3xl overflow-hidden">
             <div className="p-4 border-b border-white/10 flex items-center justify-between">
               <div>
                 <p className="text-sm font-bold">Pick reference</p>
@@ -933,7 +988,7 @@ const ImageGeneratorTool: React.FC = () => {
               {filteredPickerAssets.length === 0 ? (
                 <div className="text-center text-white/30 py-10">No images in history. Generate or upload an image first.</div>
               ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 max-h-[60vh] overflow-y-auto custom-scrollbar pr-1">
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 max-h-[60vh] overflow-y-auto pr-1">
                   {filteredPickerAssets.map((a) => (
                     <button
                       key={a.id}
