@@ -1,0 +1,149 @@
+/*
+  TALES.AI — HUD Base Theme (no brand/game references)
+  Palette (subtle life):
+    Deep Burgundy: #5B0E14
+    Golden Sand:   #F1E194
+*/
+
+:root {
+  --hud-black: #000000;
+  --hud-white: #ffffff;
+
+  --hud-burgundy: #5B0E14;
+  --hud-sand: #F1E194;
+
+  /* Core UI */
+  --hud-text: rgba(255, 255, 255, 0.92);
+  --hud-muted: rgba(255, 255, 255, 0.58);
+  --hud-dim: rgba(255, 255, 255, 0.32);
+
+  --hud-border: rgba(241, 225, 148, 0.14);
+  --hud-border-strong: rgba(241, 225, 148, 0.28);
+
+  --hud-panel: rgba(0, 0, 0, 0.78);
+  --hud-panel-2: rgba(0, 0, 0, 0.62);
+  --hud-glow: rgba(241, 225, 148, 0.18);
+  --hud-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
+
+  --hud-radius: 18px;
+  --hud-radius-sm: 12px;
+
+  --hud-font: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, sans-serif;
+  --hud-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+html, body {
+  height: 100%;
+}
+
+body {
+  font-family: var(--hud-font);
+  color: var(--hud-text);
+  background: var(--hud-black);
+}
+
+/* Background aura (very subtle) */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.95;
+  background:
+    radial-gradient(900px 520px at 10% 12%, rgba(91, 14, 20, 0.24), transparent 60%),
+    radial-gradient(760px 520px at 88% 82%, rgba(241, 225, 148, 0.10), transparent 62%),
+    radial-gradient(520px 360px at 70% 18%, rgba(241, 225, 148, 0.06), transparent 62%);
+}
+
+/* Scanlines */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0.10;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.06) 0px,
+    rgba(255, 255, 255, 0.06) 1px,
+    rgba(0, 0, 0, 0.0) 3px,
+    rgba(0, 0, 0, 0.0) 6px
+  );
+  mix-blend-mode: overlay;
+  animation: hudScan 10s linear infinite;
+}
+
+@keyframes hudScan {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(14px); }
+}
+
+/* Tiny noise (cheap + safe) */
+.hud-noise {
+  position: relative;
+}
+
+.hud-noise::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.06;
+  background-image:
+    repeating-linear-gradient(0deg, rgba(255,255,255,0.12) 0px, rgba(255,255,255,0.12) 1px, rgba(0,0,0,0) 2px, rgba(0,0,0,0) 3px),
+    repeating-linear-gradient(90deg, rgba(255,255,255,0.06) 0px, rgba(255,255,255,0.06) 1px, rgba(0,0,0,0) 2px, rgba(0,0,0,0) 4px);
+  mix-blend-mode: overlay;
+  border-radius: inherit;
+}
+
+/* HUD Panel primitives */
+.hud-panel {
+  background: linear-gradient(180deg, rgba(0,0,0,0.72), rgba(0,0,0,0.82));
+  border: 1px solid var(--hud-border);
+  border-radius: var(--hud-radius);
+  box-shadow: var(--hud-shadow);
+  backdrop-filter: blur(12px);
+}
+
+.hud-panel--soft {
+  background: linear-gradient(180deg, rgba(0,0,0,0.56), rgba(0,0,0,0.72));
+}
+
+.hud-divider {
+  height: 1px;
+  width: 100%;
+  background: linear-gradient(90deg, transparent, rgba(241,225,148,0.18), transparent);
+}
+
+/* Button base (works even without Tailwind) */
+.hud-btn {
+  border: 1px solid rgba(241,225,148,0.18);
+  background: rgba(0,0,0,0.35);
+  color: var(--hud-text);
+  border-radius: 999px;
+  transition: transform 160ms ease, background 160ms ease, border-color 160ms ease;
+}
+
+.hud-btn:hover {
+  border-color: rgba(241,225,148,0.34);
+  background: rgba(241,225,148,0.06);
+}
+
+.hud-btn:active {
+  transform: translateY(1px);
+}
+
+.hud-btn--active {
+  background: rgba(241,225,148,0.14);
+  border-color: rgba(241,225,148,0.42);
+  box-shadow: 0 0 0 4px rgba(241,225,148,0.08);
+}
+
+/* Focus ring */
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(241,225,148,0.16), 0 0 0 1px rgba(241,225,148,0.40);
+  border-radius: 10px;
+}

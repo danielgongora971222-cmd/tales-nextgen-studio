@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { AppRoute } from '../types';
 import Background3D from './Background3D';
 import { TOOLS_REGISTRY } from '../config/tools';
@@ -19,31 +19,31 @@ const NavItem: React.FC<{
 }> = ({ label, active, icon, onClick, expanded }) => (
   <button
     onClick={onClick}
-    className={`w-full flex items-center gap-4 px-4 py-3 text-sm font-medium transition-all duration-300 rounded-xl group ${
-      active 
-        ? 'bg-white text-black shadow-[0_0_20px_rgba(255,255,255,0.3)]' 
-        : 'text-white/60 hover:text-white hover:bg-white/10'
+    className={`w-full flex items-center gap-4 px-4 py-3 text-sm font-medium transition-all duration-300 rounded-xl group border ${
+      active
+        ? 'border-[rgba(241,225,148,0.40)] bg-[rgba(241,225,148,0.12)] text-white shadow-[0_0_22px_rgba(241,225,148,0.10)]'
+        : 'border-transparent text-white/55 hover:text-white hover:bg-[rgba(241,225,148,0.06)] hover:border-[rgba(241,225,148,0.18)]'
     }`}
   >
     <span className="text-xl group-hover:scale-110 transition-transform">{icon}</span>
     {expanded !== undefined ? (
-       <div className="flex-1 flex justify-between items-center">
-         <span className={`tracking-wide ${active ? 'font-bold' : ''}`}>{label}</span>
-         <svg 
-            xmlns="http://www.w3.org/2000/svg" 
-            width="14" 
-            height="14" 
-            viewBox="0 0 24 24" 
-            fill="none" 
-            stroke="currentColor" 
-            strokeWidth="2" 
-            strokeLinecap="round" 
-            strokeLinejoin="round"
-            className={`transition-transform duration-300 ${expanded ? 'rotate-180' : ''}`}
-          >
-            <path d="m6 9 6 6 6-6"/>
-          </svg>
-       </div>
+      <div className="flex-1 flex justify-between items-center">
+        <span className={`tracking-wide ${active ? 'font-bold' : ''}`}>{label}</span>
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className={`transition-transform duration-300 ${expanded ? 'rotate-180' : ''}`}
+        >
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </div>
     ) : (
       <span className={`tracking-wide ${active ? 'font-bold' : ''}`}>{label}</span>
     )}
@@ -59,9 +59,9 @@ const SubNavItem: React.FC<{
   <button
     onClick={onClick}
     className={`w-full text-left pl-12 pr-4 py-2 text-xs font-medium transition-all rounded-r-xl border-l-2 flex justify-between items-center ${
-      active 
-        ? 'border-white text-white bg-white/5' 
-        : 'border-white/10 text-white/40 hover:text-white hover:border-white/50'
+      active
+        ? 'border-[rgba(241,225,148,0.45)] text-white bg-[rgba(241,225,148,0.06)]'
+        : 'border-[rgba(241,225,148,0.10)] text-white/40 hover:text-white hover:border-[rgba(241,225,148,0.28)] hover:bg-[rgba(241,225,148,0.04)]'
     }`}
   >
     <span>{label}</span>
@@ -74,15 +74,37 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
   const [imageMenuOpen, setImageMenuOpen] = useState(true);
   const { user, logout } = useAuth();
 
-  const isImageTool = TOOLS_REGISTRY.some(tool => tool.route === currentRoute) || currentRoute === AppRoute.IMAGE_GEN_ROOT;
+  const sidebarRef = useRef<HTMLElement | null>(null);
+
+  const isImageTool =
+    TOOLS_REGISTRY.some((tool) => tool.route === currentRoute) || currentRoute === AppRoute.IMAGE_GEN_ROOT;
+
+  // Auto-collapse sidebar when clicking outside (matches your mock)
+  useEffect(() => {
+    function onPointerDown(ev: PointerEvent) {
+      if (!sidebarOpen) return;
+      const el = sidebarRef.current;
+      if (!el) return;
+      const target = ev.target as Node | null;
+      if (!target) return;
+      if (el.contains(target)) return;
+      setSidebarOpen(false);
+    }
+
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [sidebarOpen]);
 
   return (
     <div className="relative w-full h-screen overflow-hidden flex bg-black text-white font-sans selection:bg-white selection:text-black">
-      <div className="absolute inset-0 z-0"><Background3D /></div>
+      <div className="absolute inset-0 z-0">
+        <Background3D />
+      </div>
       <div className="absolute inset-0 z-0 bg-gradient-to-b from-transparent via-black/20 to-black/80 pointer-events-none" />
 
-      <aside 
-        className={`relative z-20 h-full transition-all duration-500 ease-out border-r border-white/10 glass-panel flex flex-col ${
+      <aside
+        ref={sidebarRef}
+        className={`relative z-20 h-full transition-all duration-500 ease-out flex flex-col hud-panel hud-noise ${
           sidebarOpen ? 'w-72' : 'w-20'
         }`}
       >
@@ -92,27 +114,44 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
               TALES<span className="font-light opacity-50">.AI</span>
             </h1>
           )}
-          <button 
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="p-2 rounded-full hover:bg-white/10 transition-colors"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><path d="M9 3v18"/></svg>
+          <button onClick={() => setSidebarOpen(!sidebarOpen)} className="p-2 rounded-full hud-btn transition-colors">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+              <path d="M9 3v18" />
+            </svg>
           </button>
         </div>
 
         <nav className="flex-1 px-4 space-y-2 py-4 overflow-y-auto custom-scrollbar">
-          <NavItem 
-            label={sidebarOpen ? "Dashboard" : ""}
+          <NavItem
+            label={sidebarOpen ? 'Dashboard' : ''}
             active={currentRoute === AppRoute.HOME}
             onClick={() => onNavigate(AppRoute.HOME)}
-            icon={<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>}
+            icon={
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect width="7" height="9" x="3" y="3" rx="1" />
+                <rect width="7" height="5" x="14" y="3" rx="1" />
+                <rect width="7" height="9" x="14" y="12" rx="1" />
+                <rect width="7" height="5" x="3" y="16" rx="1" />
+              </svg>
+            }
           />
-          
-          <div className="h-px bg-white/10 my-4 mx-2" />
-          
+
+          <div className="hud-divider my-4 mx-2" />
+
           <div>
-            <NavItem 
-              label={sidebarOpen ? "Image Gen" : ""}
+            <NavItem
+              label={sidebarOpen ? 'Image Gen' : ''}
               active={isImageTool}
               onClick={() => {
                 if (!sidebarOpen) setSidebarOpen(true);
@@ -120,15 +159,27 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
                 onNavigate(AppRoute.IMAGE_GEN_ROOT);
               }}
               expanded={sidebarOpen ? imageMenuOpen : undefined}
-              icon={<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 4V2"/><path d="M15 16v-2"/><path d="M8 9h2"/><path d="M20 9h2"/><path d="M17.8 11.8 19 13"/><path d="M15 9h0"/><path d="M17.8 6.2 19 5"/><path d="m3 21 9-9"/><path d="M12.2 6.2 11 5"/></svg>}
+              icon={
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M15 4V2" />
+                  <path d="M15 16v-2" />
+                  <path d="M8 9h2" />
+                  <path d="M20 9h2" />
+                  <path d="M17.8 11.8 19 13" />
+                  <path d="M15 9h0" />
+                  <path d="M17.8 6.2 19 5" />
+                  <path d="m3 21 9-9" />
+                  <path d="M12.2 6.2 11 5" />
+                </svg>
+              }
             />
             {sidebarOpen && imageMenuOpen && (
               <div className="mt-2 space-y-1 animate-in slide-in-from-top-2 duration-200">
                 {TOOLS_REGISTRY.map((tool) => (
-                  <SubNavItem 
+                  <SubNavItem
                     key={tool.id}
-                    label={tool.label} 
-                    active={currentRoute === tool.route} 
+                    label={tool.label}
+                    active={currentRoute === tool.route}
                     onClick={() => onNavigate(tool.route)}
                     status={tool.status}
                   />
@@ -137,37 +188,37 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
             )}
           </div>
 
-          <NavItem 
-            label={sidebarOpen ? "Video Gen" : ""}
+          <NavItem
+            label={sidebarOpen ? 'Video Gen' : ''}
             active={currentRoute === AppRoute.VIDEO_GEN}
             onClick={() => onNavigate(AppRoute.VIDEO_GEN)}
-            icon={<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/></svg>}
+            icon={
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="m22 8-6 4 6 4V8Z" />
+                <rect width="14" height="12" x="2" y="6" rx="2" ry="2" />
+              </svg>
+            }
           />
         </nav>
 
         <div className="p-4 border-t border-white/10">
-          <div className={`rounded-xl bg-white/5 border border-white/10 p-4 transition-all ${sidebarOpen ? 'opacity-100' : 'opacity-0 hidden'}`}>
+          <div className={`rounded-xl p-4 transition-all hud-panel hud-panel--soft hud-noise ${sidebarOpen ? 'opacity-100' : 'opacity-0 hidden'}`}>
             <div className="flex items-center gap-3 mb-3">
-                 <img src={user?.avatarUrl} alt="User" className="w-8 h-8 rounded-full border border-white/30" />
-                 <div className="overflow-hidden">
-                    <p className="text-xs font-bold text-white truncate">{user?.username || 'Guest'}</p>
-                    <p className="text-[10px] text-gray-400">Pro Plan</p>
-                 </div>
+              <img src={user?.avatarUrl} alt="User" className="w-8 h-8 rounded-full border border-white/30" />
+              <div className="overflow-hidden">
+                <p className="text-xs font-bold text-white truncate">{user?.username || 'Guest'}</p>
+                <p className="text-[10px] text-gray-400">Pro Plan</p>
+              </div>
             </div>
-            <button 
-                onClick={logout}
-                className="w-full text-xs bg-white/10 hover:bg-white/20 py-1.5 rounded transition-colors text-gray-300"
-            >
-                Log Out
+            <button onClick={logout} className="w-full text-xs bg-white/10 hover:bg-white/20 py-1.5 rounded transition-colors text-gray-300">
+              Log Out
             </button>
           </div>
         </div>
       </aside>
 
       <main className="flex-1 relative z-10 overflow-y-auto overflow-x-hidden">
-        <div className="max-w-[1600px] mx-auto p-4 md:p-8">
-          {children}
-        </div>
+        <div className="max-w-[1600px] mx-auto p-4 md:p-8">{children}</div>
       </main>
     </div>
   );
