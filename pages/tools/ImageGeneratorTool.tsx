@@ -53,12 +53,12 @@ const STYLE_PRESETS: StylePreset[] = [
   {
     id: "live_action",
     name: "Live Action",
-    coverUrl: "/style-presets/Live Action/cover.jpg",
+    coverUrl: "/style-presets/LiveAction/cover.png",
     exampleUrls: [
-      "/style-presets/Live Action/1.jpg",
-      "/style-presets/Live Action/2.jpg",
-      "/style-presets/Live Action/3.jpg",
-      "/style-presets/Live Action/4.jpg",
+      "/style-presets/LiveAction/1.png",
+      "/style-presets/LiveAction/2.jpg",
+      "/style-presets/LiveAction/3.png",
+      "/style-presets/LiveAction/4.jpg",
     ],
     prompt: `
 STYLE: Apply photorealistic materials and cinematic lighting to the provided image using TEXTURE AND MATERIAL
