@@ -57,6 +57,60 @@ export const generateImage = async (
   return out;
 };
 
+export type ImageGenQuality = "1K" | "2K" | "4K";
+export type ImageGenItem = { url: string; assetId: string };
+
+export type GenerateImageBatchOptions = {
+  aspectRatio?: string;
+  count?: number;
+  quality?: ImageGenQuality;
+  tool?: string;
+  nameHint?: string;
+
+  // refs (IDs de assets guardados en tu DB)
+  characterAssetIds?: string[];
+  styleAssetId?: string;
+  backgroundAssetId?: string;
+};
+
+export type GenerateImageBatchResult = {
+  items: ImageGenItem[];
+  urlExpiresInSeconds?: number;
+};
+
+export const generateImageBatch = async (
+  prompt: string,
+  model: string = GeminiModel.IMAGE,
+  options?: GenerateImageBatchOptions
+): Promise<GenerateImageBatchResult> => {
+  const res: any = await apiPost("/api/ai/image", {
+    prompt,
+    model,
+    aspectRatio: options?.aspectRatio,
+    count: options?.count,
+    quality: options?.quality,
+    tool: options?.tool,
+    nameHint: options?.nameHint,
+    characterAssetIds: options?.characterAssetIds,
+    styleAssetId: options?.styleAssetId,
+    backgroundAssetId: options?.backgroundAssetId,
+  });
+
+  const items: ImageGenItem[] = Array.isArray(res?.items) ? res.items : [];
+
+  // fallback por si el backend devolviera solo una url (compat)
+  if (!items.length) {
+    const out = res.url || res.dataUrl;
+    if (!out) throw new Error("No image returned from API.");
+    return {
+      items: [{ url: out, assetId: res.assetId || "unknown" }],
+      urlExpiresInSeconds: res.urlExpiresInSeconds,
+    };
+  }
+
+  return { items, urlExpiresInSeconds: res.urlExpiresInSeconds };
+};
+
 export const generateRestyle = async (assetUrl: string, prompt: string): Promise<string> => {
   const imageDataUrl = await backend.getAssetData(assetUrl);
   const res: any = await apiPost("/api/ai/restyle", {

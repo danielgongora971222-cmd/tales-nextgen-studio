@@ -5,15 +5,26 @@ type ApiOk = { ok: true; items: any[] };
 type ApiFail = { ok: false; error: any };
 
 function mapRowToAsset(row: any): Asset {
+  const createdRaw = row.createdAt ?? row.created_at;
+  const createdAt =
+    typeof createdRaw === "number"
+      ? createdRaw
+      : typeof createdRaw === "string"
+        ? new Date(createdRaw).getTime()
+        : Date.now();
+
+  const ownerId = row.ownerId ?? row.owner_id ?? "";
+  const isPublic = !!(row.isPublic ?? row.is_public);
+
   return {
     id: row.id,
     url: row.url || "",
     type: row.type === "video" ? "video" : "image",
     name: row.name || `Generation ${String(row.id || "").slice(0, 4)}`,
     prompt: row.prompt ?? undefined,
-    createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
-    ownerId: row.owner_id,
-    isPublic: !!row.is_public,
+    createdAt,
+    ownerId,
+    isPublic,
     likes: [],
     comments: [],
   };
