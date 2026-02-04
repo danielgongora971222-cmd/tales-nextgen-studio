@@ -5,9 +5,6 @@ import { supabase } from "./supabaseClient";
 type ApiResponse<T> = { ok: true; dataUrl?: string; videoUrl?: string } | { ok: false; error: string };
 
 async function apiPost<T>(path: string, body: any): Promise<T> {
-  // In dev: Vite proxies /api -> local backend.
-  // In prod (Vercel): set VITE_API_BASE_URL to your Render API base URL.
-  // Example: https://tales-api.onrender.com
   const url = path; // SIEMPRE /api/... (Vercel hará el rewrite en prod)
 
   const { data: sessionData } = await supabase.auth.getSession();
@@ -22,18 +19,54 @@ async function apiPost<T>(path: string, body: any): Promise<T> {
     body: JSON.stringify(body),
   });
 
-    const data = (await resp.json()) as any;
+  // ✅ No asumas que siempre es JSON (502/HTML, etc.)
+  let data: any = null;
+  try {
+    data = await resp.json();
+  } catch {
+    data = null;
+  }
+
+  // ---- helpers para formatear details (Zod) ----
+  const formatDetails = (details: any): string => {
+    if (!details) return "";
+
+    // Zod issues típicos: [{ path: [...], message: "..." }, ...]
+    if (Array.isArray(details)) {
+      const lines = details.map((d) => {
+        const path = Array.isArray(d?.path) ? d.path.join(".") : "";
+        const msg = d?.message ? String(d.message) : JSON.stringify(d);
+        return path ? `- ${path}: ${msg}` : `- ${msg}`;
+      });
+      return lines.length ? `\n\nDetalles:\n${lines.join("\n")}` : "";
+    }
+
+    // Objeto cualquiera
+    if (typeof details === "object") {
+      return `\n\nDetalles:\n${JSON.stringify(details, null, 2)}`;
+    }
+
+    return `\n\nDetalles:\n${String(details)}`;
+  };
 
   if (!resp.ok || data?.ok === false) {
-    const e = data?.error;
+    // backend suele devolver { ok:false, error:{ code, message, details } } o error string
+    const e = data?.error ?? data;
 
     let msg = `Request failed: ${resp.status}`;
+
     if (typeof e === "string") {
       msg = e;
     } else if (e && typeof e === "object") {
       const code = e.code ? `${e.code}: ` : "";
-      const message = e.message ? e.message : JSON.stringify(e);
-      msg = `${code}${message}`;
+      const message =
+        e.message ||
+        e.error ||
+        (resp.statusText ? resp.statusText : "Unknown error");
+
+      msg = `${code}${message}${formatDetails(e.details)}`;
+    } else if (!data && resp.statusText) {
+      msg = `Request failed: ${resp.status} ${resp.statusText}`;
     }
 
     throw new Error(msg);
