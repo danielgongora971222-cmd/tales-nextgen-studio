@@ -352,6 +352,36 @@ async function ensureAI() {
   return ai;
 }
 
+async function extractImageDataUrl(response) {
+  const candidates = response?.candidates || response?.response?.candidates;
+  const parts = candidates?.[0]?.content?.parts || [];
+
+  for (const part of parts) {
+    const inline = part?.inlineData || part?.inline_data;
+    if (inline?.data) {
+      const mimeType = inline.mimeType || inline.mime_type || "image/png";
+      return `data:${mimeType};base64,${inline.data}`;
+    }
+  }
+
+  // fallback: si el modelo devolvió texto (ej: rechazo por safety), lo mandamos como error CLARO
+  let msg = "No image generated.";
+  try {
+    if (typeof response?.text === "string") msg = response.text;
+    // por si alguna versión lo trae como función
+    if (typeof response?.text === "function") msg = String(await response.text());
+  } catch (_) {}
+
+  const err = new Error(msg);
+  err.status = 400;
+  err.code = "GENERATION_REJECTED";
+  err.details = {
+    hasCandidates: Boolean(candidates?.length),
+    partsCount: parts.length,
+  };
+  throw err;
+}
+
 function mimeFromPath(storagePath) {
   const ext = (storagePath.split(".").pop() || "").toLowerCase();
   if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
