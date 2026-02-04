@@ -38,6 +38,11 @@ const ImageGeneratorTool: React.FC = () => {
   const [count, setCount] = useState<number>(1);
   const [quality, setQuality] = useState<Quality>("1K");
   const isNanoBanana = model === GeminiModel.IMAGE;
+  const isNanoBananaPro = model === GeminiModel.IMAGE_PRO;
+
+  useEffect(() => {
+    if (isNanoBananaPro) setCount(1);
+  }, [isNanoBananaPro]);
 
   useEffect(() => {
     if (isNanoBanana) setQuality("1K");
@@ -119,9 +124,28 @@ const ImageGeneratorTool: React.FC = () => {
 
       const effectiveQuality = isNanoBanana ? ("1K" as Quality) : quality;
 
-      const res = await generateImageBatch(prompt, model, {
+      const effectiveCount = isNanoBananaPro ? 1 : count;
+
+      const hasBackground = !!refs.background;
+      const hasStyle = !!refs.style;
+
+      const backgroundAutoPrompt = hasBackground
+        ? `
+
+      [BACKGROUND AUTO-RULES]
+      - Use the Background reference image as the scene/environment/backdrop.
+      - Match its lighting direction, color temperature, contrast, shadows, and overall mood so the subject looks naturally integrated.
+      - Keep the scene geometry/perspective consistent with the background reference.
+      - If my text prompt explicitly asks for a different background or lighting, follow my text prompt.
+      - If a Style reference is provided, prioritize the Style for the artistic look, but keep the environment/lighting grounded in the Background reference unless my text says otherwise.
+      `
+        : "";
+
+      const effectivePrompt = `${prompt.trim()}${backgroundAutoPrompt}`;
+
+      const res = await generateImageBatch(effectivePrompt, model, {
         aspectRatio,
-        count,
+        count: effectiveCount,
         quality: effectiveQuality || undefined,
         tool: TOOL_ID,
         nameHint: "generated",
@@ -302,9 +326,16 @@ const ImageGeneratorTool: React.FC = () => {
                   onChange={(e) => setAspectRatio(e.target.value)}
                   className="w-full bg-black/50 border border-white/20 rounded-xl px-2 py-2 text-xs focus:border-white focus:outline-none"
                 >
-                  <option value="1:1">1:1</option>
-                  <option value="16:9">16:9</option>
-                  <option value="9:16">9:16</option>
+                  <option value="1:1">1:1 (Square)</option>
+                  <option value="3:2">3:2 (Landscape)</option>
+                  <option value="2:3">2:3 (Portrait)</option>
+                  <option value="3:4">3:4 (Portrait)</option>
+                  <option value="4:3">4:3 (Landscape)</option>
+                  <option value="4:5">4:5 (Portrait)</option>
+                  <option value="5:4">5:4 (Landscape)</option>
+                  <option value="9:16">9:16 (Vertical)</option>
+                  <option value="16:9">16:9 (Widescreen)</option>
+                  <option value="21:9">21:9 (Cinematic)</option>
                 </select>
               </div>
             </div>
@@ -315,7 +346,8 @@ const ImageGeneratorTool: React.FC = () => {
                 <select
                   value={count}
                   onChange={(e) => setCount(parseInt(e.target.value, 10))}
-                  className="w-full bg-black/50 border border-white/20 rounded-xl px-2 py-2 text-xs focus:border-white focus:outline-none"
+                  disabled={isNanoBananaPro}
+                  className="w-full bg-black/50 border border-white/20 rounded-xl px-2 py-2 text-xs focus:border-white focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <option value={1}>1</option>
                   <option value={2}>2</option>
@@ -323,6 +355,12 @@ const ImageGeneratorTool: React.FC = () => {
                   <option value={4}>4</option>
                 </select>
               </div>
+
+              {isNanoBananaPro && (
+                <div className="mt-1 text-xs text-white/60">
+                  NanoBanana Pro genera 1 imagen por request.
+                </div>
+              )}
 
               <div>
                 <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Quality</label>
