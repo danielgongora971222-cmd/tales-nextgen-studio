@@ -14,20 +14,33 @@ type StylePreset = {
   exampleUrls?: [string, string, string, string]; // 4 imágenes para el collage 2x2
 };
 
-const STYLE_PRESET_BLOCK_START = "/* STYLE_PRESET_START */";
-const STYLE_PRESET_BLOCK_END = "/* STYLE_PRESET_END */";
+const STYLE_PRESET_BLOCK_START = "[[STYLE_PRESET_START]]";
+const STYLE_PRESET_BLOCK_END = "[[STYLE_PRESET_END]]";
+
+// soporte para prompts viejos ya guardados en historial
+const LEGACY_STYLE_PRESET_BLOCK_START = "/* STYLE_PRESET_START */";
+const LEGACY_STYLE_PRESET_BLOCK_END = "/* STYLE_PRESET_END */";
 
 function escapeRegExp(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function removeStylePresetBlock(input: string) {
-  const re = new RegExp(
-    `${escapeRegExp(STYLE_PRESET_BLOCK_START)}[\\s\\S]*?${escapeRegExp(STYLE_PRESET_BLOCK_END)}\\n*`,
-    "g"
-  );
-  return input.replace(re, "").trim();
+  let out = input;
+
+  const pairs = [
+    { start: STYLE_PRESET_BLOCK_START, end: STYLE_PRESET_BLOCK_END },
+    { start: LEGACY_STYLE_PRESET_BLOCK_START, end: LEGACY_STYLE_PRESET_BLOCK_END },
+  ];
+
+  for (const { start, end } of pairs) {
+    const re = new RegExp(`${escapeRegExp(start)}[\\s\\S]*?${escapeRegExp(end)}\\n*`, "g");
+    out = out.replace(re, "");
+  }
+
+  return out.trim();
 }
+
 
 function applyStylePresetToPrompt(input: string, presetPrompt: string) {
   const base = removeStylePresetBlock(input).trim();
@@ -190,27 +203,32 @@ function formatErr(err: any): string {
 }
 
 // ===== Hidden Style Prompt (never show to user) =====
-const STYLE_BLOCK_START = "/* STYLE_PRESET_START */";
-const STYLE_BLOCK_END = "/* STYLE_PRESET_END */";
+const STYLE_BLOCK_START = STYLE_PRESET_BLOCK_START;
+const STYLE_BLOCK_END = STYLE_PRESET_BLOCK_END;
 
 function splitStyleBlock(text: string): { cleaned: string; style: string | null } {
-  if (!text.includes(STYLE_BLOCK_START) || !text.includes(STYLE_BLOCK_END)) {
-    return { cleaned: text, style: null };
+  const pairs = [
+    { start: STYLE_BLOCK_START, end: STYLE_BLOCK_END }, // nuevo
+    { start: LEGACY_STYLE_PRESET_BLOCK_START, end: LEGACY_STYLE_PRESET_BLOCK_END }, // legacy
+  ];
+
+  for (const { start, end } of pairs) {
+    if (!text.includes(start) || !text.includes(end)) continue;
+
+    const s = text.indexOf(start);
+    const e = text.indexOf(end);
+
+    if (s === -1 || e === -1 || e < s) continue;
+
+    const before = text.slice(0, s).trimEnd();
+    const inside = text.slice(s + start.length, e).trim();
+    const after = text.slice(e + end.length).trimStart();
+
+    const cleaned = [before, after].filter(Boolean).join("\n\n").trim();
+    return { cleaned, style: inside || null };
   }
 
-  const start = text.indexOf(STYLE_BLOCK_START);
-  const end = text.indexOf(STYLE_BLOCK_END);
-
-  if (start === -1 || end === -1 || end < start) {
-    return { cleaned: text, style: null };
-  }
-
-  const before = text.slice(0, start).trimEnd();
-  const inside = text.slice(start + STYLE_BLOCK_START.length, end).trim();
-  const after = text.slice(end + STYLE_BLOCK_END.length).trimStart();
-
-  const cleaned = [before, after].filter(Boolean).join("\n\n").trim();
-  return { cleaned, style: inside || null };
+  return { cleaned: text, style: null };
 }
 
 function stripStyleBlock(text: string): string {
@@ -224,7 +242,12 @@ function attachStyleBlock(userPrompt: string, stylePrompt: string | null): strin
   if (!s) return p;
 
   // Evitar duplicarlo si ya existiera
-  if (p.includes(STYLE_BLOCK_START) && p.includes(STYLE_BLOCK_END)) return p;
+  if (
+    (p.includes(STYLE_BLOCK_START) && p.includes(STYLE_BLOCK_END)) ||
+    (p.includes(LEGACY_STYLE_PRESET_BLOCK_START) && p.includes(LEGACY_STYLE_PRESET_BLOCK_END))
+  ) {
+    return p;
+  }
 
   return `${STYLE_BLOCK_START}\n${s}\n${STYLE_BLOCK_END}\n\n${p}`.trim();
 }
@@ -388,8 +411,9 @@ const ImageGeneratorTool: React.FC = () => {
     // ✅ Solo aplica preset si realmente hay uno seleccionado
     const presetStyle = stylePresetId ? hiddenStylePrompt : "";
 
-    const basePrompt = `${safePrompt}${backgroundAutoPrompt ? "\n\n" + backgroundAutoPrompt : ""}`.trim();
-    const finalPrompt = attachStyleBlock(basePrompt, presetStyle || null);
+    const basePrompt = `${safePrompt}${backgroundAutoPrompt}`.trim();
+    const styleText = stylePresetId ? hiddenStylePrompt : "";
+    const finalPrompt = attachStyleBlock(basePrompt, styleText || null);
 
     const run = () =>
       generateImageBatch(finalPrompt, safeModel, {
@@ -512,7 +536,11 @@ const ImageGeneratorTool: React.FC = () => {
         className="w-full aspect-video rounded-xl overflow-hidden border border-white/10 bg-black/40 hover:bg-white/5 transition relative"
       >
         {selectedStylePreset?.coverUrl ? (
-          <img src={selectedStylePreset.coverUrl} alt={selectedStylePreset.name} className="w-full h-full object-cover" />
+          <img
+            src={encodeURI(selectedStylePreset.coverUrl)}
+            alt={selectedStylePreset.name}
+            className="w-full h-full object-cover"
+          />
         ) : (
           <div className="w-full h-full flex items-center justify-center text-xs text-white/30">Click to choose a style</div>
         )}
@@ -840,7 +868,7 @@ const ImageGeneratorTool: React.FC = () => {
                     >
                       {/* Cover */}
                       {s.coverUrl ? (
-                        <img src={s.coverUrl} alt={s.name} className="w-full h-full object-cover" />
+                        <img src={encodeURI(s.coverUrl)} alt={s.name} className="w-full h-full object-cover" />
                       ) : (
                         <div className="w-full h-full flex items-center justify-center text-xs text-white/30 bg-black/40">{s.name}</div>
                       )}
@@ -851,7 +879,7 @@ const ImageGeneratorTool: React.FC = () => {
                           {(s.exampleUrls ? Array.from(s.exampleUrls) : [null, null, null, null]).map((url, idx) => (
                             <div key={idx} className="relative w-full h-full">
                               {url ? (
-                                <img src={url} alt={`${s.name} example ${idx + 1}`} className="w-full h-full object-cover" />
+                                <img src={encodeURI(url)} alt={`${s.name} example ${idx + 1}`} className="w-full h-full object-cover" />
                               ) : (
                                 <div className="w-full h-full bg-white/5" />
                               )}
