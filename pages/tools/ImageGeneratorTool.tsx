@@ -156,6 +156,38 @@ type RefSlot = "char1" | "char2" | "char3" | "style" | "background";
 
 const TOOL_ID = "image-generator";
 const REF_TOOL_ID = "image-generator-ref";
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+function getStatus(err: any): number | null {
+  return typeof err?.status === "number"
+    ? err.status
+    : typeof err?.response?.status === "number"
+      ? err.response.status
+      : null;
+}
+
+function getErrMsg(err: any): string {
+  return (
+    err?.response?.data?.message ||
+    err?.response?.data?.error ||
+    err?.message ||
+    (typeof err === "string" ? err : "Failed to generate image.")
+  );
+}
+
+function isRetryable(err: any): boolean {
+  const s = getStatus(err);
+  if (s && [408, 429, 500, 502, 503, 504].includes(s)) return true;
+
+  const m = (getErrMsg(err) || "").toLowerCase();
+  return m.includes("timeout") || m.includes("failed to fetch") || m.includes("network");
+}
+
+function formatErr(err: any): string {
+  const s = getStatus(err);
+  const m = getErrMsg(err);
+  return s ? `${m} (HTTP ${s})` : m;
+}
 
 // ===== Hidden Style Prompt (never show to user) =====
 const STYLE_BLOCK_START = "/* STYLE_PRESET_START */";
@@ -326,43 +358,41 @@ const ImageGeneratorTool: React.FC = () => {
   };
 
   const handleGenerate = async () => {
-    // 1) Asegura que el prompt sea string y no venga “raro”
     const safePrompt = String(prompt ?? "").trim();
     if (!safePrompt) return;
 
-    // 2) Asegura que el model sea string
-    const safeModel = String(model ?? GeminiModel.IMAGE);
+    const safeModel =
+      model === GeminiModel.IMAGE || model === GeminiModel.IMAGE_PRO ? model : GeminiModel.IMAGE;
 
     setLoading(true);
     setError(null);
 
-    try {
-      const characterAssetIds = [refs.char1, refs.char2, refs.char3].filter(Boolean).map((a) => (a as Asset).id);
+    const characterAssetIds = [refs.char1, refs.char2, refs.char3]
+      .filter(Boolean)
+      .map((a) => (a as Asset).id);
 
-      const effectiveQuality = isNanoBanana ? ("1K" as Quality) : quality;
+    const effectiveQuality = isNanoBanana ? ("1K" as Quality) : quality;
+    const effectiveCount = isNanoBananaPro ? 1 : count;
 
-      const effectiveCount = isNanoBananaPro ? 1 : count;
+    const backgroundAutoPrompt = refs.background
+      ? `
+  [BACKGROUND AUTO-RULES]
+  - Use the Background reference image as the scene/environment/backdrop.
+  - Match its lighting direction, color temperature, contrast, shadows, and overall mood so the subject looks naturally integrated.
+  - Keep the scene geometry/perspective consistent with the background reference.
+  - If my text prompt explicitly asks for a different background or lighting, follow my text prompt.
+  - If a Style reference is provided, prioritize the Style for the artistic look, but keep the environment/lighting grounded in the Background reference unless my text says otherwise.
+  `.trim()
+      : "";
 
-      const hasBackground = !!refs.background;
-      const hasStyle = !!refs.style;
+    // ✅ Solo aplica preset si realmente hay uno seleccionado
+    const presetStyle = stylePresetId ? hiddenStylePrompt : "";
 
-      const backgroundAutoPrompt = hasBackground
-        ? `
+    const basePrompt = `${safePrompt}${backgroundAutoPrompt ? "\n\n" + backgroundAutoPrompt : ""}`.trim();
+    const finalPrompt = attachStyleBlock(basePrompt, presetStyle || null);
 
-      [BACKGROUND AUTO-RULES]
-      - Use the Background reference image as the scene/environment/backdrop.
-      - Match its lighting direction, color temperature, contrast, shadows, and overall mood so the subject looks naturally integrated.
-      - Keep the scene geometry/perspective consistent with the background reference.
-      - If my text prompt explicitly asks for a different background or lighting, follow my text prompt.
-      - If a Style reference is provided, prioritize the Style for the artistic look, but keep the environment/lighting grounded in the Background reference unless my text says otherwise.
-      `
-        : "";
-
-      const effectivePrompt = `${prompt.trim()}${backgroundAutoPrompt}`;
-
-      const finalPrompt = attachStyleBlock(prompt, hiddenStylePrompt || null);
-
-      const res = await generateImageBatch(finalPrompt, model, {
+    const run = () =>
+      generateImageBatch(finalPrompt, safeModel, {
         aspectRatio,
         count: effectiveCount,
         quality: effectiveQuality || undefined,
@@ -373,29 +403,49 @@ const ImageGeneratorTool: React.FC = () => {
         backgroundAssetId: refs.background?.id,
       });
 
-      setLatestBatch(res.items);
+    try {
+      let res: any;
 
-      // selecciona la primera instantáneo
-      if (res.items[0]) {
-        setSelectedAsset(makeTempAsset(res.items[0], prompt, user.id));
+      // ✅ retry 1 vez si es temporal (429/timeout/network)
+      try {
+        res = await run();
+      } catch (e1: any) {
+        if (isRetryable(e1)) {
+          await sleep(900);
+          res = await run();
+        } else {
+          throw e1;
+        }
       }
 
-      // re-fetch historial
-      const images = await listMyAssets({ type: "image", limit: 80 });
+      setLatestBatch(res.items);
 
-      const cleanImages = images.map((a) => ({
-        ...a,
-        prompt: stripStyleBlock(a.prompt || ""),
-      }));
+      // preview inmediata aunque falle el historial
+      if (res.items?.[0] && user) {
+        setSelectedAsset(makeTempAsset(res.items[0], safePrompt, user.id));
+      }
 
-      setHistory(cleanImages);
+      // ✅ refresco historial en try separado: si falla NO debe parecer “falló generar”
+      try {
+        const images = await listMyAssets({ type: "image", limit: 80 });
 
-      const firstId = res.items[0]?.assetId;
-      const found = firstId ? images.find((a) => a.id === firstId) : null;
-      setSelectedAsset(found || (images.length > 0 ? images[0] : null));
-    } catch (error) {
-      console.error(error);
-      alert("Failed to generate image. Ensure API Key is valid.");
+        const cleanImages = images.map((a) => ({
+          ...a,
+          prompt: stripStyleBlock(a.prompt || ""),
+        }));
+
+        setHistory(cleanImages);
+
+        const firstId = res.items?.[0]?.assetId;
+        const found = firstId ? images.find((a) => a.id === firstId) : null;
+        setSelectedAsset(found || (images.length > 0 ? images[0] : null));
+      } catch (histErr: any) {
+        console.warn("History refresh failed:", histErr);
+        setError(formatErr(histErr) || "La imagen se generó, pero falló el refresco del historial.");
+      }
+    } catch (err: any) {
+      console.error("Generate failed:", err);
+      setError(formatErr(err));
     } finally {
       setLoading(false);
     }
@@ -446,6 +496,7 @@ const ImageGeneratorTool: React.FC = () => {
             type="button"
             onClick={() => {
               setStylePresetId(null);
+              setHiddenStylePrompt(""); // ✅ IMPORTANTE: si no limpias esto, el estilo se sigue aplicando oculto
               setPrompt((prev) => removeStylePresetBlock(prev).trim());
             }}
             className="text-[10px] font-bold text-gray-300 hover:text-white"
