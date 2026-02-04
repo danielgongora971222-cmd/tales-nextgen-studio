@@ -6,11 +6,196 @@ import { Asset, GeminiModel } from "../../types";
 import GenerationHistory from "../../components/GenerationHistory";
 import ErrorModal from "../../components/ErrorModal";
 
+type StylePreset = {
+  id: string;
+  name: string;
+  prompt: string;
+  coverUrl?: string; // imagen principal del estilo
+  exampleUrls?: [string, string, string, string]; // 4 imágenes para el collage 2x2
+};
+
+const STYLE_PRESET_BLOCK_START = "/* STYLE_PRESET_START */";
+const STYLE_PRESET_BLOCK_END = "/* STYLE_PRESET_END */";
+
+function escapeRegExp(s: string) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function removeStylePresetBlock(input: string) {
+  const re = new RegExp(
+    `${escapeRegExp(STYLE_PRESET_BLOCK_START)}[\\s\\S]*?${escapeRegExp(STYLE_PRESET_BLOCK_END)}\\n*`,
+    "g"
+  );
+  return input.replace(re, "").trim();
+}
+
+function applyStylePresetToPrompt(input: string, presetPrompt: string) {
+  const base = removeStylePresetBlock(input).trim();
+  const block = `${STYLE_PRESET_BLOCK_START}\n${presetPrompt}\n${STYLE_PRESET_BLOCK_END}\n\n`;
+  return `${block}${base}`.trim();
+}
+
+// ✅ ESTILOS (puedes cambiar prompts e imágenes cuando quieras)
+const STYLE_PRESETS: StylePreset[] = [
+  {
+    id: "live_action",
+    name: "Live Action",
+    coverUrl: "/style-presets/Live Action/cover.jpg",
+    exampleUrls: [
+      "/style-presets/Live Action/1.jpg",
+      "/style-presets/Live Action/2.jpg",
+      "/style-presets/Live Action/3.jpg",
+      "/style-presets/Live Action/4.jpg",
+    ],
+    prompt: `
+STYLE: Apply photorealistic materials and cinematic lighting to the provided image using TEXTURE AND MATERIAL
+TRANSLATION ONLY.
+
+ABSOLUTE PRESERVATION RULE:
+Preserve the original image EXACTLY as-is in design and identity. This is a material/lighting pass only.
+Do not reinterpret any described traits from the text prompt. Do not reinterpret any traits shown in reference images.
+Even if features are stylized, non-realistic, simplified or exaggerated, they must remain EXACTLY the same.
+
+PRESERVE ORIGINAL CHARACTERS EXACTLY (LOCKED DESIGN):
+- identical facial structure and proportions
+- identical head shape and stylized geometry
+- identical mouth shape and facial expressions
+- identical silhouette, body proportions, and overall character identity
+- identical hairstyle shape, hairline, hair volume and hair design (only add strand-level texture without changing the shape)
+- identical clothing design, seams, patterns, logos, symbols, text, graphics, jewelry, accessories, props (do NOT alter, replace, add, or remove anything)
+
+EYES AND FACIAL EXPRESSIONS ARE ABSOLUTELY LOCKED (HIGHEST PRIORITY):
+- do not change eye size, eye shape, iris size, pupil size or eye spacing
+- do not add shine, emotion, intensity, wetness, sparkle, reflections or realism to the eyes
+- do not modify eyelids, eyebrows, lashes, or facial muscle tension
+- do not change gaze direction, head tilt, micro-expression, or “mood”
+- eyes and expressions must remain pixel-identical in pose and emotion to the original image
+Facial expressions are the HIGHEST PRIORITY and must remain completely unchanged.
+
+FACE PROTECTION (NO BEAUTIFICATION / NO REPAIR):
+Do NOT reinterpret, redesign, enhance, beautify, “improve”, or “fix” faces.
+Do NOT correct anatomy or add realism to facial features.
+Do NOT change facial identity, symmetry, jawline, cheek volume, nose shape, lips shape, or skin contour.
+Treat all facial geometry, eyes, and expressions as LOCKED reference design.
+
+ALLOWED CHANGES (ONLY THESE):
+Only upgrade:
+- fur texture and hair strands (micro-detail only; keep original hair/fur shape and clumps)
+- skin material detail (material response only; do NOT change facial features or perceived age)
+- material depth (PBR-like roughness/normal depth; subtle, controlled)
+- cinematic lighting and shadows applied to the scene/environment, not the face
+- improved global shading coherence without altering design or colors
+
+TEXT / LOGO / GRAPHICS LOCK:
+If there is ANY text, logo, signage, UI, symbols, or typography:
+- keep EXACT content, spelling, font shape, placement, size, and alignment
+- do not redraw, restyle, translate, “correct”, or replace text
+- do not add new text
+
+COLOR AND LIGHTING DIRECTION (NO NIGHT CONDITION):
+- cinematic color grading
+- natural, film-like colors
+- slightly desaturated palette
+- soft highlights, controlled shadows
+- NO oversaturation, NO HDR plastic look
+- match the original time-of-day and scene intent from the input (day stays day, indoor stays indoor, etc.)
+- preserve original light direction and key-to-fill logic; enhance it cinematically without changing mood/emotion
+- avoid any dramatic face/eye lighting; keep face lighting consistent with the original
+
+COMPOSITION & CAMERA LOCK:
+Maintain original composition, pose, framing, lens feel, perspective, and emotion.
+Do not crop, zoom, warp, or change camera angle.
+Soft depth of field (subtle, cinematic) while preserving original focus intent.
+
+Negative prompt:
+face redesign, eye variation, expression change, emotional enhancement, eye sparkle, wet eyes, added eye reflections,
+beautification, symmetry correction, anatomy correction, realistic facial anatomy conversion, new facial identity,
+generic lion face, wildlife photography look, realistic lion anatomy, new accessories, removed accessories, added props,
+text changes, logo changes, typography changes, oversaturated colors, HDR look, dramatic eye lighting, face relighting,
+pose change, framing change, crop, zoom, perspective change
+    `.trim(),
+  },
+  {
+    id: "luxury_product",
+    name: "Luxury Product",
+    coverUrl: "/style-presets/luxury/cover.jpg",
+    exampleUrls: [
+      "/style-presets/luxury/1.jpg",
+      "/style-presets/luxury/2.jpg",
+      "/style-presets/luxury/3.jpg",
+      "/style-presets/luxury/4.jpg",
+    ],
+    prompt: `
+STYLE: Luxury product advertising. Clean studio, premium reflections.
+Lighting: controlled specular highlights, soft gradients, no harsh glare.
+Composition: centered hero shot, elegant negative space, minimal clutter.
+Quality: extremely sharp, high contrast micro-detail, commercial polish.
+    `.trim(),
+  },
+  {
+    id: "pixar_3d",
+    name: "3D Pixar-ish",
+    coverUrl: "/style-presets/pixar/cover.jpg",
+    exampleUrls: [
+      "/style-presets/pixar/1.jpg",
+      "/style-presets/pixar/2.jpg",
+      "/style-presets/pixar/3.jpg",
+      "/style-presets/pixar/4.jpg",
+    ],
+    prompt: `
+STYLE: High-quality 3D animation look (family-friendly, stylized).
+Materials: smooth but detailed shaders, soft bounce light, clean render.
+Colors: vibrant but balanced, pleasing tones, gentle bloom.
+Rules: no uncanny realism, keep shapes clean, avoid noise/artifacts.
+    `.trim(),
+  },
+];
+
 type Quality = "" | "1K" | "2K" | "4K";
 type RefSlot = "char1" | "char2" | "char3" | "style" | "background";
 
 const TOOL_ID = "image-generator";
 const REF_TOOL_ID = "image-generator-ref";
+
+// ===== Hidden Style Prompt (never show to user) =====
+const STYLE_BLOCK_START = "/* STYLE_PRESET_START */";
+const STYLE_BLOCK_END = "/* STYLE_PRESET_END */";
+
+function splitStyleBlock(text: string): { cleaned: string; style: string | null } {
+  if (!text.includes(STYLE_BLOCK_START) || !text.includes(STYLE_BLOCK_END)) {
+    return { cleaned: text, style: null };
+  }
+
+  const start = text.indexOf(STYLE_BLOCK_START);
+  const end = text.indexOf(STYLE_BLOCK_END);
+
+  if (start === -1 || end === -1 || end < start) {
+    return { cleaned: text, style: null };
+  }
+
+  const before = text.slice(0, start).trimEnd();
+  const inside = text.slice(start + STYLE_BLOCK_START.length, end).trim();
+  const after = text.slice(end + STYLE_BLOCK_END.length).trimStart();
+
+  const cleaned = [before, after].filter(Boolean).join("\n\n").trim();
+  return { cleaned, style: inside || null };
+}
+
+function stripStyleBlock(text: string): string {
+  return splitStyleBlock(text).cleaned;
+}
+
+function attachStyleBlock(userPrompt: string, stylePrompt: string | null): string {
+  const p = (userPrompt || "").trim();
+  const s = (stylePrompt || "").trim();
+
+  if (!s) return p;
+
+  // Evitar duplicarlo si ya existiera
+  if (p.includes(STYLE_BLOCK_START) && p.includes(STYLE_BLOCK_END)) return p;
+
+  return `${STYLE_BLOCK_START}\n${s}\n${STYLE_BLOCK_END}\n\n${p}`.trim();
+}
 
 function makeTempAsset(item: { assetId: string; url: string }, prompt: string, ownerId: string): Asset {
   return {
@@ -32,6 +217,8 @@ const ImageGeneratorTool: React.FC = () => {
 
   // Prompt + config
   const [prompt, setPrompt] = useState("");
+  // Aquí se guarda el prompt del estilo, pero NUNCA se muestra al usuario
+  const [hiddenStylePrompt, setHiddenStylePrompt] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [model, setModel] = useState<string>(GeminiModel.IMAGE);
   const [aspectRatio, setAspectRatio] = useState("1:1");
@@ -71,6 +258,14 @@ const ImageGeneratorTool: React.FC = () => {
   const [pickerSlot, setPickerSlot] = useState<RefSlot | null>(null);
   const [pickerQuery, setPickerQuery] = useState("");
 
+  // Style selector state
+  const [styleModalOpen, setStyleModalOpen] = useState(false);
+  const [stylePresetId, setStylePresetId] = useState<string | null>(null);
+
+  const selectedStylePreset = useMemo(() => {
+    return STYLE_PRESETS.find((s) => s.id === stylePresetId) || null;
+  }, [stylePresetId]);
+
   const imageHistory = useMemo(() => history.filter((a) => a.type === "image" && a.url), [history]);
 
   const filteredPickerAssets = useMemo(() => {
@@ -79,6 +274,17 @@ const ImageGeneratorTool: React.FC = () => {
     return imageHistory.filter((a) => (a.prompt || a.name || "").toLowerCase().includes(q));
   }, [imageHistory, pickerQuery]);
 
+  // Si por cualquier razón el prompt tiene un bloque de estilo dentro,
+  // lo extraemos y lo ocultamos para que el usuario NUNCA lo vea.
+  useEffect(() => {
+    if (!prompt.includes(STYLE_BLOCK_START)) return;
+
+    const { cleaned, style } = splitStyleBlock(prompt);
+
+    if (style) setHiddenStylePrompt(style);
+    if (cleaned !== prompt) setPrompt(cleaned);
+  }, [prompt]);
+
   // Load user's history on mount
   useEffect(() => {
     if (!user) return;
@@ -86,8 +292,14 @@ const ImageGeneratorTool: React.FC = () => {
     (async () => {
       try {
         const images = await listMyAssets({ type: "image", limit: 80 });
-        setHistory(images);
-        setSelectedAsset(images.length > 0 ? images[0] : null);
+
+        const cleanImages = images.map((a) => ({
+          ...a,
+          prompt: stripStyleBlock(a.prompt || ""),
+        }));
+
+        setHistory(cleanImages);
+        setSelectedAsset(cleanImages.length > 0 ? cleanImages[0] : null);
       } catch (err: any) {
         setError(err?.message || "No se pudo cargar el historial.");
       }
@@ -143,7 +355,9 @@ const ImageGeneratorTool: React.FC = () => {
 
       const effectivePrompt = `${prompt.trim()}${backgroundAutoPrompt}`;
 
-      const res = await generateImageBatch(effectivePrompt, model, {
+      const finalPrompt = attachStyleBlock(prompt, hiddenStylePrompt || null);
+
+      const res = await generateImageBatch(finalPrompt, model, {
         aspectRatio,
         count: effectiveCount,
         quality: effectiveQuality || undefined,
@@ -163,7 +377,13 @@ const ImageGeneratorTool: React.FC = () => {
 
       // re-fetch historial
       const images = await listMyAssets({ type: "image", limit: 80 });
-      setHistory(images);
+
+      const cleanImages = images.map((a) => ({
+        ...a,
+        prompt: stripStyleBlock(a.prompt || ""),
+      }));
+
+      setHistory(cleanImages);
 
       const firstId = res.items[0]?.assetId;
       const found = firstId ? images.find((a) => a.id === firstId) : null;
@@ -209,6 +429,55 @@ const ImageGeneratorTool: React.FC = () => {
     }
     if (user) setSelectedAsset(makeTempAsset(item, prompt, user.id));
   };
+
+  const StyleCard = () => {
+  return (
+    <div className="bg-black/30 border border-white/10 rounded-2xl p-3">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Style</span>
+
+        {stylePresetId ? (
+          <button
+            type="button"
+            onClick={() => {
+              setStylePresetId(null);
+              setPrompt((prev) => removeStylePresetBlock(prev).trim());
+            }}
+            className="text-[10px] font-bold text-gray-300 hover:text-white"
+          >
+            CLEAR
+          </button>
+        ) : null}
+      </div>
+
+      <button
+        type="button"
+        onClick={() => setStyleModalOpen(true)}
+        className="w-full aspect-video rounded-xl overflow-hidden border border-white/10 bg-black/40 hover:bg-white/5 transition relative"
+      >
+        {selectedStylePreset?.coverUrl ? (
+          <img src={selectedStylePreset.coverUrl} alt={selectedStylePreset.name} className="w-full h-full object-cover" />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center text-xs text-white/30">Click to choose a style</div>
+        )}
+
+        {selectedStylePreset ? (
+          <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/80 to-transparent">
+            <div className="text-[11px] font-bold text-white">{selectedStylePreset.name}</div>
+          </div>
+        ) : null}
+      </button>
+
+      <button
+        type="button"
+        onClick={() => setStyleModalOpen(true)}
+        className="mt-2 w-full text-[10px] font-bold py-2 rounded-xl bg-white text-black hover:scale-[1.02] transition"
+      >
+        CHOOSE
+      </button>
+    </div>
+  );
+};
 
   const RefCard = ({ slot, label, asset }: { slot: RefSlot; label: string; asset: Asset | null }) => {
     return (
@@ -297,7 +566,9 @@ const ImageGeneratorTool: React.FC = () => {
               <RefCard slot="char1" label="Character 1" asset={refs.char1} />
               <RefCard slot="char2" label="Character 2" asset={refs.char2} />
               <RefCard slot="char3" label="Character 3" asset={refs.char3} />
-              <RefCard slot="style" label="Style" asset={refs.style} />
+              <div className="col-span-2">
+                <StyleCard />
+              </div>
               <div className="col-span-2">
                 <RefCard slot="background" label="Background" asset={refs.background} />
               </div>
@@ -473,6 +744,78 @@ const ImageGeneratorTool: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Style Modal */}
+      {styleModalOpen && (
+        <div className="fixed inset-0 z-[999] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="glass-panel w-full max-w-3xl rounded-3xl border border-white/10 overflow-hidden">
+            <div className="p-4 border-b border-white/10 flex items-center justify-between">
+              <div>
+                <p className="text-sm font-bold">Choose a style</p>
+                <p className="text-[10px] text-white/40">Pick one preset and it will be added to your prompt automatically.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setStyleModalOpen(false)}
+                className="text-xs font-bold text-white/70 hover:text-white"
+              >
+                CLOSE
+              </button>
+            </div>
+
+            <div className="p-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 gap-3 max-h-[60vh] overflow-y-auto custom-scrollbar pr-1">
+                {STYLE_PRESETS.map((s) => {
+                  const isSelected = s.id === stylePresetId;
+
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => {
+                        setStylePresetId(s.id);
+                        setPrompt((prev) => applyStylePresetToPrompt(prev, s.prompt));
+                        setStyleModalOpen(false);
+                      }}
+                      className={[
+                        "group relative aspect-square rounded-2xl overflow-hidden border transition",
+                        isSelected ? "border-white/70" : "border-white/10 hover:border-white/40",
+                      ].join(" ")}
+                    >
+                      {/* Cover */}
+                      {s.coverUrl ? (
+                        <img src={s.coverUrl} alt={s.name} className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-xs text-white/30 bg-black/40">{s.name}</div>
+                      )}
+
+                      {/* Collage 2x2 (aparece al hover) */}
+                      <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="grid grid-cols-2 grid-rows-2 w-full h-full">
+                          {(s.exampleUrls ? Array.from(s.exampleUrls) : [null, null, null, null]).map((url, idx) => (
+                            <div key={idx} className="relative w-full h-full">
+                              {url ? (
+                                <img src={url} alt={`${s.name} example ${idx + 1}`} className="w-full h-full object-cover" />
+                              ) : (
+                                <div className="w-full h-full bg-white/5" />
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Name label */}
+                      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent p-2">
+                        <div className="text-[10px] font-bold text-white text-left">{s.name}</div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Picker Modal */}
       {pickerSlot && (
