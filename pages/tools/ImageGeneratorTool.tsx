@@ -3,7 +3,7 @@ import styles from "./ImageGeneratorTool.module.css";
 import { generateImageBatch } from "../../services/geminiService";
 import { deleteAsset, listMyAssets, publishAsset, unpublishAsset, uploadUserAsset } from "../../services/assetsApi";
 import { useAuth } from "../../contexts/AuthContext";
-import { Asset } from "../../types";
+import { Asset, GeminiModel } from "../../types";
 import ErrorModal from "../../components/ErrorModal";
 
 type StylePreset = {
@@ -374,10 +374,11 @@ const ImageGeneratorTool: React.FC = () => {
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
   const [prompt, setPrompt] = useState("");
-  const [model, setModel] = useState<NanoModel>(NANO_MODELS[0].id);
+  const [model, setModel] = useState<GeminiModel>(GeminiModel.IMAGE);
   const [aspectRatio, setAspectRatio] = useState("1:1");
   const [count, setCount] = useState(1);
-  const [quality, setQuality] = useState<"1K" | "2K" | "4K">("2K");
+  const [quality, setQuality] = useState<Quality>("1K");
+
 
   // Reference slots (sin STYLE aquí)
   const [refs, setRefs] = useState<Record<RefSlot, Asset | null>>({
@@ -393,6 +394,20 @@ const ImageGeneratorTool: React.FC = () => {
     if (!selectedStyleId) return "";
     return STYLE_PRESETS.find((p) => p.id === selectedStyleId)?.prompt?.trim() || "";
   }, [selectedStyleId]);
+
+  const modelLabel = model === GeminiModel.IMAGE ? "NanoBanana" : "NanoBanana Pro";
+const paramsLabel = `${aspectRatio} • ${quality} • x${count}`;
+const styleLabel = selectedStyleId
+  ? (STYLE_PRESETS.find((p) => p.id === selectedStyleId)?.name || "Selected")
+  : "None";
+
+const refLabel =
+  [
+    refs.char1 ? "C1" : null,
+    refs.char2 ? "C2" : null,
+    refs.char3 ? "C3" : null,
+    refs.background ? "BG" : null,
+  ].filter(Boolean).join(" ") || "None";
 
   // UI states
   const [panel, setPanel] = useState<Panel>(null);
@@ -477,7 +492,22 @@ const ImageGeneratorTool: React.FC = () => {
   }, [model, aspectRatio, count, quality, refs, recipeStyleName]);
 
   function setRefSlot(slot: RefSlot, asset: Asset | null) {
-    setRefs((prev) => ({ ...prev, [slot]: asset }));
+    setRefs((prev) => {
+      const next = { ...prev, [slot]: asset };
+
+      // Si borras char1, también borra char2 y char3
+      if (slot === "char1" && !asset) {
+        next.char2 = null;
+        next.char3 = null;
+      }
+
+      // Si borras char2, también borra char3
+      if (slot === "char2" && !asset) {
+        next.char3 = null;
+      }
+
+      return next;
+    });
   }
 
   async function handleUploadToSlot(slot: RefSlot, file: File) {
@@ -698,16 +728,35 @@ const ImageGeneratorTool: React.FC = () => {
 
       {/* DOCK / BARRA DE PROMPT */}
       <div className={styles.dockWrap}>
-        <div className={styles.recipeStrip}>
-          {recipeChips.map((c) => (
-            <div key={c.label} className={styles.recipeChip}>
-              <span className={styles.recipeChipLabel}>{c.label}</span>
-              <span className={styles.recipeChipValue}>{c.value}</span>
-            </div>
-          ))}
-        </div>
-
         <div className={styles.dock}>
+          {(refs.char1 || refs.char2 || refs.char3 || refs.background) && (
+            <div className={styles.refThumbStrip}>
+              {refs.char1 && (
+                <div className={styles.refMini}>
+                  <img src={refs.char1.url} alt="char1" />
+                  <span className={styles.refMiniIcon}>👤</span>
+                </div>
+              )}
+              {refs.char2 && (
+                <div className={styles.refMini}>
+                  <img src={refs.char2.url} alt="char2" />
+                  <span className={styles.refMiniIcon}>👤</span>
+                </div>
+              )}
+              {refs.char3 && (
+                <div className={styles.refMini}>
+                  <img src={refs.char3.url} alt="char3" />
+                  <span className={styles.refMiniIcon}>👤</span>
+                </div>
+              )}
+              {refs.background && (
+                <div className={styles.refMini}>
+                  <img src={refs.background.url} alt="background" />
+                  <span className={styles.refMiniIcon}>🖼️</span>
+                </div>
+              )}
+            </div>
+          )}
           <div className={styles.promptRow}>
             <textarea
               className={styles.prompt}
@@ -744,7 +793,8 @@ const ImageGeneratorTool: React.FC = () => {
                 setPickerSlot(null);
               }}
             >
-              Reference
+              <span>Reference</span>
+              <span className={styles.controlBtnMeta}>{refLabel}</span>
             </button>
 
             <button
@@ -752,7 +802,8 @@ const ImageGeneratorTool: React.FC = () => {
               className={`${styles.controlBtn} ${panel === "model" ? styles.controlBtnActive : ""}`}
               onClick={() => setPanel((p) => (p === "model" ? null : "model"))}
             >
-              Model
+              <span>Model</span>
+              <span className={styles.controlBtnMeta}>{modelLabel}</span>
             </button>
 
             <button
@@ -760,7 +811,8 @@ const ImageGeneratorTool: React.FC = () => {
               className={`${styles.controlBtn} ${panel === "parameters" ? styles.controlBtnActive : ""}`}
               onClick={() => setPanel((p) => (p === "parameters" ? null : "parameters"))}
             >
-              Parameters
+              <span>Parameters</span>
+              <span className={styles.controlBtnMeta}>{paramsLabel}</span>
             </button>
 
             <button
@@ -768,7 +820,8 @@ const ImageGeneratorTool: React.FC = () => {
               className={`${styles.controlBtn} ${panel === "styles" ? styles.controlBtnActive : ""}`}
               onClick={() => setPanel((p) => (p === "styles" ? null : "styles"))}
             >
-              Styles
+              <span>styles</span>
+              <span className={styles.controlBtnMeta}>{styleLabel}</span>
             </button>
 
             <div className={styles.creditPill}>Credits Cost: XXXX</div>
@@ -788,7 +841,13 @@ const ImageGeneratorTool: React.FC = () => {
                   </div>
 
                   <div className={styles.refSlots}>
-                    {(["char1", "char2", "char3", "background"] as RefSlot[]).map((slot) => {
+                    {(() => {
+                      const visible: RefSlot[] = ["char1"];
+                      if (refs.char1) visible.push("char2");
+                      if (refs.char2) visible.push("char3");
+                      visible.push("background");
+                      return visible;
+                    })().map((slot) => {
                       const a = refs[slot];
                       return (
                         <div key={slot} className={styles.refSlot}>
@@ -899,15 +958,18 @@ const ImageGeneratorTool: React.FC = () => {
                       className={styles.select}
                       value={model}
                       onChange={(e) => {
-                        setModel(e.target.value as NanoModel);
+                        const next = e.target.value as GeminiModel;
+                        setModel(next);
+
+                        // IMPORTANTÍSIMO:
+                        // NanoBanana (flash) solo soporta 1K, si no, el backend lo rechaza.
+                        if (next === GeminiModel.IMAGE) setQuality("1K");
+
                         setPanel(null); // auto-close
                       }}
                     >
-                      {NANO_MODELS.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.label}
-                        </option>
-                      ))}
+                      <option value={GeminiModel.IMAGE}>NanoBanana</option>
+                      <option value={GeminiModel.IMAGE_PRO}>NanoBanana Pro</option>
                     </select>
                   </div>
                 </div>
@@ -965,13 +1027,19 @@ const ImageGeneratorTool: React.FC = () => {
                         className={styles.select}
                         value={quality}
                         onChange={(e) => {
-                          setQuality(e.target.value as any);
+                          setQuality(e.target.value as Quality);
                           setPanel(null); // auto-close
                         }}
                       >
-                        <option value="1K">1K</option>
-                        <option value="2K">2K</option>
-                        <option value="4K">4K</option>
+                        {model === GeminiModel.IMAGE ? (
+                          <option value="1K">1K</option>
+                        ) : (
+                          <>
+                            <option value="1K">1K</option>
+                            <option value="2K">2K</option>
+                            <option value="4K">4K</option>
+                          </>
+                        )}
                       </select>
                     </div>
                   </div>
@@ -1095,12 +1163,7 @@ const ImageGeneratorTool: React.FC = () => {
         </div>
       )}
 
-      {error && (
-        <ErrorModal
-          message={error}
-          onClose={() => setError(null)}
-        />
-      )}
+      <ErrorModal error={error} onClose={() => setError(null)} /> 
     </div>
   );
 };

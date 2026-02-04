@@ -824,3 +824,48 @@
   padding: 10px 12px;
   outline: none;
 }
+
+.controlBtn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.controlBtnMeta {
+  font-family: var(--hud-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: rgba(241,225,148,0.82);
+  opacity: 0.9;
+}
+
+.refThumbStrip {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.refMini {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(241,225,148,0.14);
+  background: rgba(0,0,0,0.28);
+}
+
+.refMini img {
+  width: 32px;
+  height: 32px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid rgba(241,225,148,0.14);
+}
+
+.refMiniIcon {
+  font-size: 14px;
+}
