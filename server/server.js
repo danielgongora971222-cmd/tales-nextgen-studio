@@ -301,16 +301,15 @@ const ImageRequestSchema = z.object({
   model: z.string().optional(),
   aspectRatio: z.string().optional(),
 
-  // NUEVO:
-  count: z.coerce.number().int().min(1).max(4).optional().default(1),
+  // UI nueva
+  count: z.number().int().min(1).max(4).default(1),
   quality: z.enum(["1K", "2K", "4K"]).optional(),
 
-  // Tool metadata (para guardarlo como “Image Generator” en assets)
-  tool: z.string().optional(),     // ej: "image-generator"
-  nameHint: z.string().optional(), // ej: "img-gen"
+  tool: z.string().optional(),      // ej: "image-generator"
+  nameHint: z.string().optional(),  // ej: "generated"
 
-  // Referencias (assets ya subidos a Supabase Storage)
-  characterAssetIds: z.array(z.string()).max(3).optional(),
+  // Referencias por Asset IDs (opcional)
+  characterAssetIds: z.array(z.string()).max(10).optional(),
   styleAssetId: z.string().optional(),
   backgroundAssetId: z.string().optional(),
 });
@@ -685,6 +684,47 @@ app.post("/api/assets/:id/unpublish", async (req, res) => {
   return res.json({ ok: true, id: data.id, isPublic: !!data.is_public });
 });
 
+function apiError(status, code, message, details) {
+  const err = new Error(message);
+  err.status = status;
+  err.code = code;
+  if (details) err.details = details;
+  throw err;
+}
+
+function isImageGenModel(model) {
+  return (
+    typeof model === "string" &&
+    (model.includes("imagen") || model.endsWith("-image") || model.includes("-image-"))
+  );
+}
+
+async function assetIdToInlinePart(assetId, userId) {
+  const { data, error } = await supabaseAdmin
+    .from("assets")
+    .select("id, owner_id, is_public, storage_path, type")
+    .eq("id", assetId)
+    .maybeSingle();
+
+  if (error) apiError(500, "DB_ERROR", error.message);
+  if (!data) apiError(404, "ASSET_NOT_FOUND", `Asset ${assetId} no existe.`);
+  if (data.owner_id !== userId && !data.is_public) {
+    apiError(403, "ASSET_FORBIDDEN", `No tienes acceso al asset ${assetId}.`);
+  }
+  if (data.type !== "image") {
+    apiError(400, "ASSET_NOT_IMAGE", `El asset ${assetId} no es una imagen.`);
+  }
+
+  const signedUrl = await signStoragePath(data.storage_path, 60 * 10);
+  const r = await fetch(signedUrl);
+  if (!r.ok) apiError(502, "ASSET_FETCH_FAILED", `No pude leer el asset ${assetId} desde storage.`);
+
+  const mimeType = r.headers.get("content-type") || "image/png";
+  const buf = Buffer.from(await r.arrayBuffer());
+
+  return { inlineData: { mimeType, data: buf.toString("base64") } };
+}
+
 app.post("/api/ai/image", async (req, res, next) => {
   try {
     const aiClient = await ensureAI();
@@ -705,61 +745,70 @@ app.post("/api/ai/image", async (req, res, next) => {
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
 
-    const selectedModel = model || "imagen-3.0-generate-002";
-    const toolId = tool || "image-generator";     // <- NUEVO tool principal
-    const title = nameHint || "generated";
+    const selectedModel = model || "gemini-2.5-flash-image";
 
-    // Config del modelo (solo aplica imageConfig si el modelo lo soporta)
-    const config = {};
-    if (aspectRatio && selectedModel.includes("imagen")) {
-      config.imageConfig = { aspectRatio };
+    // 1) Validar que el modelo sea de imagen
+    if (!isImageGenModel(selectedModel)) {
+      apiError(
+        400,
+        "MODEL_NOT_IMAGE",
+        `El modelo "${selectedModel}" no genera imágenes. Usa "gemini-2.5-flash-image" o "gemini-3-pro-image-preview".`
+      );
     }
 
-    // Pre-armamos las referencias (1 sola vez)
-    const refParts = [];
-
-    const chars = Array.isArray(characterAssetIds) ? characterAssetIds.slice(0, 3) : [];
-    for (let i = 0; i < chars.length; i++) {
-      refParts.push({ text: `Character reference ${i + 1}:` });
-      refParts.push(await assetIdToInlineDataPart({ assetId: chars[i], requesterId: user.id }));
+    // 2) Validar quality según modelo
+    if (quality) {
+      if (selectedModel === "gemini-2.5-flash-image" && quality !== "1K") {
+        apiError(
+          400,
+          "QUALITY_NOT_SUPPORTED",
+          `Gemini 2.5 Flash Image solo soporta 1K. Usa 1K o cambia a gemini-3-pro-image-preview para 2K/4K.`
+        );
+      }
+      if (selectedModel.includes("imagen") && quality === "4K") {
+        apiError(
+          400,
+          "QUALITY_NOT_SUPPORTED",
+          `Imagen no soporta 4K aquí. Para 4K usa gemini-3-pro-image-preview.`
+        );
+      }
     }
 
-    if (styleAssetId) {
-      refParts.push({ text: "Style reference:" });
-      refParts.push(await assetIdToInlineDataPart({ assetId: styleAssetId, requesterId: user.id }));
+    // 3) Config correcta para que DEVUELVA IMAGEN
+    const config = {
+      responseModalities: ["Image"],
+      imageConfig: {},
+    };
+
+    if (aspectRatio) config.imageConfig.aspectRatio = aspectRatio;
+
+    // imageSize SOLO en gemini-3-pro-image-preview (y en imagen para 1K/2K)
+    if (selectedModel === "gemini-3-pro-image-preview" && quality) {
+      config.imageConfig.imageSize = quality; // "1K" | "2K" | "4K"
+    } else if (selectedModel.includes("imagen") && quality && quality !== "4K") {
+      config.imageConfig.imageSize = quality; // "1K" | "2K"
     }
 
-    if (backgroundAssetId) {
-      refParts.push({ text: "Background reference:" });
-      refParts.push(await assetIdToInlineDataPart({ assetId: backgroundAssetId, requesterId: user.id }));
+    // 4) Partes (texto + refs opcionales)
+    const parts = [];
+    const refs = [
+      ...((characterAssetIds || []).map((id, i) => ({ label: `Character reference ${i + 1}`, id }))),
+      ...(styleAssetId ? [{ label: "Style reference", id: styleAssetId }] : []),
+      ...(backgroundAssetId ? [{ label: "Background reference", id: backgroundAssetId }] : []),
+    ];
+
+    for (const ref of refs) {
+      parts.push({ text: `${ref.label}:` });
+      parts.push(await assetIdToInlinePart(ref.id, user.id));
     }
 
+    parts.push({ text: prompt });
+
+    // 5) Generar N imágenes (1..4)
+    const n = Math.min(Number(count || 1), 4);
     const items = [];
-    const urlExpiresInSeconds = 60 * 60;
 
-    for (let i = 0; i < count; i++) {
-      const promptText = buildPromptText({
-        prompt,
-        aspectRatio,
-        quality,
-        count,
-        index: i,
-      });
-
-      const parts = [
-        {
-          text:
-            `Generate ONE image using the prompt and the provided references.\n\n` +
-            `PROMPT:\n${promptText}\n\n` +
-            `RULES:\n` +
-            `- If character refs exist: keep identity consistent.\n` +
-            `- If style ref exists: match style, color grading, textures.\n` +
-            `- If background ref exists: match environment/lighting composition.\n` +
-            `- No text/watermarks unless user prompt requests it.\n`,
-        },
-        ...refParts,
-      ];
-
+    for (let i = 0; i < n; i++) {
       const response = await aiClient.models.generateContent({
         model: selectedModel,
         contents: [{ role: "user", parts }],
@@ -768,35 +817,38 @@ app.post("/api/ai/image", async (req, res, next) => {
 
       const dataUrl = await extractImageDataUrl(response);
 
+      const toolName = tool || "image-generator";
+      const hint = nameHint || "generated";
+
       const { storagePath } = await uploadBase64ToStorage({
         userId: user.id,
-        tool: toolId,
+        tool: toolName,
         dataUrl,
-        nameHint: title,
+        nameHint: hint,
       });
 
       const assetId = await insertAssetRow({
         ownerId: user.id,
         type: "image",
-        tool: toolId,
-        name: title,
-        prompt, // guardamos el prompt “base” (sin hints)
+        tool: toolName,
+        name: hint,
+        prompt,
         storagePath,
         isPublic: false,
       });
 
+      const urlExpiresInSeconds = 60 * 60;
       const url = await signStoragePath(storagePath, urlExpiresInSeconds);
+
       items.push({ url, assetId });
     }
 
-    // Backward compatible: seguimos devolviendo url + assetId (el primero),
-    // y además devolvemos items[] para el modo multi-variación.
     return res.json({
       ok: true,
+      items,
       url: items[0]?.url,
       assetId: items[0]?.assetId,
-      urlExpiresInSeconds,
-      items,
+      urlExpiresInSeconds: 60 * 60,
     });
   } catch (err) {
     next(err);
