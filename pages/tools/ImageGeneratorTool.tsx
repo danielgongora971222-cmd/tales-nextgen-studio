@@ -36,7 +36,12 @@ const ImageGeneratorTool: React.FC = () => {
   const [model, setModel] = useState<string>(GeminiModel.IMAGE);
   const [aspectRatio, setAspectRatio] = useState("1:1");
   const [count, setCount] = useState<number>(1);
-  const [quality, setQuality] = useState<Quality>("2K");
+  const [quality, setQuality] = useState<Quality>("1K");
+  const isNanoBanana = model === GeminiModel.IMAGE;
+
+  useEffect(() => {
+    if (isNanoBanana) setQuality("1K");
+  }, [isNanoBanana]);
 
   // Errors
   const [error, setError] = useState<string | null>(null);
@@ -112,10 +117,12 @@ const ImageGeneratorTool: React.FC = () => {
     try {
       const characterAssetIds = [refs.char1, refs.char2, refs.char3].filter(Boolean).map((a) => (a as Asset).id);
 
+      const effectiveQuality = isNanoBanana ? ("1K" as Quality) : quality;
+
       const res = await generateImageBatch(prompt, model, {
         aspectRatio,
         count,
-        quality: quality || undefined,
+        quality: effectiveQuality || undefined,
         tool: TOOL_ID,
         nameHint: "generated",
         characterAssetIds,
@@ -283,8 +290,8 @@ const ImageGeneratorTool: React.FC = () => {
                   onChange={(e) => setModel(e.target.value)}
                   className="w-full bg-black/50 border border-white/20 rounded-xl px-2 py-2 text-xs focus:border-white focus:outline-none"
                 >
-                  <option value={GeminiModel.IMAGE}>Flash</option>
-                  <option value={GeminiModel.IMAGE_PRO}>Pro</option>
+                  <option value={GeminiModel.IMAGE}>NanoBanana</option>
+                  <option value={GeminiModel.IMAGE_PRO}>NanoBanana Pro</option>
                 </select>
               </div>
 
@@ -322,7 +329,8 @@ const ImageGeneratorTool: React.FC = () => {
                 <select
                   value={quality}
                   onChange={(e) => setQuality(e.target.value as Quality)}
-                  className="w-full bg-black/50 border border-white/20 rounded-xl px-2 py-2 text-xs focus:border-white focus:outline-none"
+                  disabled={isNanoBanana}
+                  className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <option value="">Auto</option>
                   <option value="1K">1K</option>
@@ -331,6 +339,12 @@ const ImageGeneratorTool: React.FC = () => {
                 </select>
               </div>
             </div>
+
+            {isNanoBanana && (
+              <div className="mt-1 text-xs text-white/60">
+                NanoBanana genera en 1K fijo.
+              </div>
+            )}
 
             <div>
               <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Prompt</label>
