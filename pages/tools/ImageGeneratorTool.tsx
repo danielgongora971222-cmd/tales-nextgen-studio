@@ -3,7 +3,7 @@ import styles from "./ImageGeneratorTool.module.css";
 import { generateImageBatch } from "../../services/geminiService";
 import { deleteAsset, listMyAssets, publishAsset, unpublishAsset, uploadUserAsset } from "../../services/assetsApi";
 import { useAuth } from "../../contexts/AuthContext";
-import { Asset, GeminiModel } from "../../types";
+import { Asset } from "../../types";
 import ErrorModal from "../../components/ErrorModal";
 
 type StylePreset = {
@@ -239,6 +239,19 @@ BACKGROUND AUTO-RULES (only if a background reference image is provided):
 - Do not introduce new objects or change the scene layout.
 `.trim();
 
+type NanoModel = "imagen-4.0-generate-preview-06-06" | "imagen-4.0-ultra-generate-preview-06-06";
+
+const NANO_MODELS: { id: NanoModel; label: string }[] = [
+  { id: "imagen-4.0-generate-preview-06-06", label: "NanoBanana" },
+  { id: "imagen-4.0-ultra-generate-preview-06-06", label: "NanoBanana Pro" },
+];
+
+function nanoModelLabel(id: string): string {
+  return NANO_MODELS.find((m) => m.id === id)?.label ?? id;
+}
+
+
+
 type Panel = null | "reference" | "model" | "parameters" | "styles";
 type RefSlot = "char1" | "char2" | "char3" | "background";
 
@@ -361,7 +374,7 @@ const ImageGeneratorTool: React.FC = () => {
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
   const [prompt, setPrompt] = useState("");
-  const [model, setModel] = useState<GeminiModel>("imagen-4.0-generate-preview-06-06");
+  const [model, setModel] = useState<NanoModel>(NANO_MODELS[0].id);
   const [aspectRatio, setAspectRatio] = useState("1:1");
   const [count, setCount] = useState(1);
   const [quality, setQuality] = useState<"1K" | "2K" | "4K">("2K");
@@ -454,7 +467,7 @@ const ImageGeneratorTool: React.FC = () => {
     const chars = [refs.char1, refs.char2, refs.char3].filter(Boolean).length;
 
     return [
-      { label: "Model", value: model },
+      { label: "Model", value: nanoModelLabel(model) },
       { label: "Ratio", value: aspectRatio },
       { label: "Count", value: String(count) },
       { label: "Quality", value: quality },
@@ -886,13 +899,15 @@ const ImageGeneratorTool: React.FC = () => {
                       className={styles.select}
                       value={model}
                       onChange={(e) => {
-                        setModel(e.target.value as GeminiModel);
+                        setModel(e.target.value as NanoModel);
                         setPanel(null); // auto-close
                       }}
                     >
-                      <option value="imagen-4.0-generate-preview-06-06">imagen-4.0-generate-preview-06-06</option>
-                      <option value="imagen-4.0-ultra-generate-preview-06-06">imagen-4.0-ultra-generate-preview-06-06</option>
-                      <option value="imagen-3.0-generate-002">imagen-3.0-generate-002</option>
+                      {NANO_MODELS.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.label}
+                        </option>
+                      ))}
                     </select>
                   </div>
                 </div>

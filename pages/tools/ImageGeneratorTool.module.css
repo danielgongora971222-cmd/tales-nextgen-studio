@@ -272,7 +272,8 @@
     linear-gradient(180deg, rgba(0,0,0,0.55), rgba(0,0,0,0.90));
   box-shadow: var(--hud-shadow);
   backdrop-filter: blur(12px);
-  overflow: hidden;
+  position: relative;
+  overflow: visible;
   padding: 12px;
 }
 
