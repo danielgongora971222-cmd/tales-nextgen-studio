@@ -790,8 +790,8 @@
 .viewerBackdrop {
   position: fixed;
   inset: 0;
-  background: transparent !important;
-  backdrop-filter: none !important;
+  background: rgba(0,0,0,0.75);
+  backdrop-filter: blur(12px);
   display: grid;
   place-items: center;
   z-index: 999;
@@ -807,7 +807,7 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  box-shadow: none !important;
+  box-shadow: 0 50px 120px rgba(0,0,0,0.95);
 }
 
 .viewerTop {
