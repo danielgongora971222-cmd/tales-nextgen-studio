@@ -994,6 +994,96 @@ async function falResultImageToDataUrl(img) {
   return `data:${ct};base64,${buf.toString("base64")}`;
 }
 
+function bflApiKey() {
+  return process.env.BFL_API_KEY || process.env.BFL_KEY || "";
+}
+
+async function bflSubmit(modelSlug, payload) {
+  const key = bflApiKey();
+  if (!key) throw httpError(500, "BFL_KEY_MISSING", "Missing BFL_API_KEY env var (Black Forest Labs)");
+
+  const submitUrl = `https://api.bfl.ai/v1/${modelSlug}`;
+  const resp = await fetch(submitUrl, {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "Content-Type": "application/json",
+      "x-key": key,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const text = await resp.text();
+  let json;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw httpError(502, "BFL_BAD_RESPONSE", `BFL submit invalid JSON: ${text.slice(0, 200)}`);
+  }
+
+  if (!resp.ok) {
+    throw httpError(502, "BFL_SUBMIT_FAILED", json?.detail || json?.message || text);
+  }
+
+  if (!json?.polling_url) {
+    throw httpError(502, "BFL_SUBMIT_MISSING_FIELDS", "BFL submit missing polling_url");
+  }
+
+  return json;
+}
+
+async function bflPoll(pollingUrl, { timeoutMs = 180000 } = {}) {
+  const key = bflApiKey();
+  if (!key) throw httpError(500, "BFL_KEY_MISSING", "Missing BFL_API_KEY env var (Black Forest Labs)");
+
+  const started = Date.now();
+  let delay = 500;
+
+  while (true) {
+    const resp = await fetch(pollingUrl, {
+      method: "GET",
+      headers: { accept: "application/json", "x-key": key },
+    });
+
+    const text = await resp.text();
+    let json;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      throw httpError(502, "BFL_BAD_RESPONSE", `BFL poll invalid JSON: ${text.slice(0, 200)}`);
+    }
+
+    if (!resp.ok) {
+      throw httpError(502, "BFL_POLL_FAILED", json?.detail || json?.message || text);
+    }
+
+    const status = json?.status;
+
+    if (status === "Ready" || status === "completed") return json;
+    if (status === "Error" || status === "Failed") {
+      throw httpError(502, "BFL_GENERATION_FAILED", "BFL generation failed", json);
+    }
+
+    if (Date.now() - started > timeoutMs) {
+      throw httpError(504, "BFL_TIMEOUT", "BFL generation timed out");
+    }
+
+    await new Promise((r) => setTimeout(r, delay));
+    delay = Math.min(Math.round(delay * 1.5), 2000);
+  }
+}
+
+async function bflSampleToDataUrl(sampleUrl) {
+  if (!sampleUrl) throw httpError(502, "BFL_NO_SAMPLE_URL", "BFL result missing result.sample");
+
+  const r = await fetch(sampleUrl);
+  if (!r.ok) throw httpError(502, "BFL_IMAGE_DOWNLOAD_FAILED", `Failed to fetch BFL image: ${r.status}`);
+
+  const buf = Buffer.from(await r.arrayBuffer());
+  const ct = r.headers.get("content-type") || "image/png";
+  return `data:${ct};base64,${buf.toString("base64")}`;
+}
+
 async function assetIdToInlinePart(assetId, userId) {
   const { data, error } = await supabaseAdmin
     .from("assets")
@@ -1232,78 +1322,77 @@ app.post("/api/ai/image", async (req, res, next) => {
       });
     }
 
-        // =============================
-    // FAL / FLUX 2.0 (Flux 2 Max/Pro/Flex)
+    // =============================
+    // BFL / FLUX 2.0 (Max / Pro / Flex)  ✅ usa tu API key de Black Forest Labs
     // =============================
     if (selectedModel.startsWith("fal-ai/flux-2-")) {
+      const bflModel = selectedModel.replace("fal-ai/", ""); // flux-2-max | flux-2-pro | flux-2-flex
+
       const nRequested = Math.min(Number(count || 1), 4);
       const toolName = tool || "image-generator";
       const hint = nameHint || "generated";
-      const urlExpiresInSeconds = 60 * 30;
+      const urlExpiresInSeconds = 60 * 60;
 
-      const hasRefs =
-        (Array.isArray(characterAssetIds) && characterAssetIds.length > 0) ||
-        Boolean(backgroundAssetId) ||
-        Boolean(styleAssetId);
+      const dims = falDimsFromAspectQuality(aspectRatio, quality);
 
-      const endpointId = hasRefs ? `${selectedModel}/edit` : selectedModel;
+      // BFL soporta hasta 8 imágenes de referencia por request
+      const refIds = [
+        ...(Array.isArray(characterAssetIds) ? characterAssetIds : []),
+        ...(backgroundAssetId ? [backgroundAssetId] : []),
+        ...(styleAssetId ? [styleAssetId] : []),
+      ].filter(Boolean);
 
-      // Pick a concrete size based on your UI controls
-      const image_size = falDimsFromAspectQuality(aspectRatio, quality);
+      const refUrls = refIds.length
+        ? await Promise.all(refIds.slice(0, 8).map((id) => assetIdToSignedUrl(id, user.id, 60 * 10)))
+        : [];
 
-      // If refs exist, Fal needs URLs it can fetch (signed URLs are fine)
-      let image_urls = [];
-      if (hasRefs) {
-        const ids = [
-          ...(Array.isArray(characterAssetIds) ? characterAssetIds : []),
-          ...(backgroundAssetId ? [backgroundAssetId] : []),
-          ...(styleAssetId ? [styleAssetId] : []),
-        ].filter(Boolean);
-
-        image_urls = await Promise.all(
-          ids.map((id) => assetIdToSignedUrl(id, user.id, urlExpiresInSeconds))
-        );
+      let bflPrompt = prompt;
+      if (refUrls.length) {
+        // En BFL puedes referenciar "image 1", "image 2", etc.
+        bflPrompt =
+          `${prompt}\n\n` +
+          `Reference images by number: ${refUrls.map((_, i) => `image ${i + 1}`).join(", ")}.`;
       }
 
-      // Give a tiny bit of structure to prompts when refs are used
-      let falPrompt = prompt;
-      if (image_urls.length) {
-        const refs = image_urls.map((_, i) => `@Image${i + 1}`).join(", ");
-        falPrompt =
-          `${prompt}\n\n` +
-          `Reference images: ${refs}. Use them as guidance and preserve identity where relevant.`;
+      const payload = {
+        prompt: bflPrompt,
+        width: dims.width,
+        height: dims.height,
+        output_format: "png",
+        safety_tolerance: 2,
+      };
+
+      if (refUrls[0]) payload.input_image = refUrls[0];
+      for (let i = 1; i < refUrls.length && i < 8; i++) {
+        payload[`input_image_${i + 1}`] = refUrls[i];
       }
 
       const items = [];
       for (let i = 0; i < nRequested; i++) {
-        const input = {
-          prompt: falPrompt,
-          image_size,
-          output_format: "png",
-          sync_mode: true,
-          ...(image_urls.length ? { image_urls } : {}),
-        };
+        const submit = await bflSubmit(bflModel, payload);
+        const done = await bflPoll(submit.polling_url, { timeoutMs: 180000 });
 
-        const result = await falQueueRun(endpointId, input);
-        const img = Array.isArray(result?.images) ? result.images[0] : null;
-        const dataUrl = await falResultImageToDataUrl(img);
+        const sampleUrl = done?.result?.sample || done?.result?.url;
+        const dataUrl = await bflSampleToDataUrl(sampleUrl);
 
-        // Save to Supabase storage + DB
-        const storagePath = `generated/${user.id}/${hint}-${Date.now()}-${Math.random()
-          .toString(16)
-          .slice(2)}.png`;
-
-        await uploadBase64ToStorage(storagePath, dataUrl);
+        const { storagePath } = await uploadBase64ToStorage({
+          userId: user.id,
+          tool: toolName,
+          dataUrl,
+          nameHint: hint,
+        });
 
         const meta = {
+          tool: toolName,
+          provider: "bfl",
           model: selectedModel,
-          aspectRatio,
-          quality,
+          bflModel,
+          aspectRatio: aspectRatio || null,
+          quality: quality || null,
+          count: nRequested,
           characterAssetIds: Array.isArray(characterAssetIds) ? characterAssetIds : [],
           styleAssetId: styleAssetId || null,
           backgroundAssetId: backgroundAssetId || null,
-          provider: "fal",
-          falEndpoint: endpointId,
         };
 
         const assetId = await insertAssetRow({
