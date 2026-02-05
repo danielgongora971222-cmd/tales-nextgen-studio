@@ -378,7 +378,7 @@
   pointer-events: none;
   background: radial-gradient(
     800px 260px at var(--mx, 50%) var(--my, 20%),
-    rgba(161, 34, 165, 0.12),
+    rgba(241, 225, 148, 0.12),
     transparent 55%
   );
   opacity: 0.9;
@@ -790,8 +790,8 @@
 .viewerBackdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.75);
-  backdrop-filter: blur(12px);
+  background: transparent !important;
+  backdrop-filter: none !important;
   display: grid;
   place-items: center;
   z-index: 999;
@@ -807,7 +807,7 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  box-shadow: 0 50px 120px rgba(0,0,0,0.95);
+  box-shadow: none !important;
 }
 
 .viewerTop {
