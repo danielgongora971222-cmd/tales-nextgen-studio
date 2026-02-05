@@ -250,7 +250,59 @@ function nanoModelLabel(id: string): string {
   return NANO_MODELS.find((m) => m.id === id)?.label ?? id;
 }
 
+type ModelCaps = {
+  id: string;
+  label: string;
+  supportsRefs: boolean;
+  aspectRatios: { value: string; label: string }[];
+  qualities: Quality[];
+};
 
+const MODEL_CAPS: Record<string, ModelCaps> = {
+  [GeminiModel.IMAGE]: {
+    id: GeminiModel.IMAGE,
+    label: "NanoBanana",
+    supportsRefs: true,
+    aspectRatios: [
+      { value: "1:1", label: "1:1" },
+      { value: "4:5", label: "4:5" },
+      { value: "3:4", label: "3:4" },
+      { value: "16:9", label: "16:9" },
+      { value: "9:16", label: "9:16" },
+    ],
+    qualities: ["1K"],
+  },
+  [GeminiModel.IMAGE_PRO]: {
+    id: GeminiModel.IMAGE_PRO,
+    label: "NanoBanana Pro",
+    supportsRefs: true,
+    aspectRatios: [
+      { value: "1:1", label: "1:1" },
+      { value: "4:5", label: "4:5" },
+      { value: "3:4", label: "3:4" },
+      { value: "16:9", label: "16:9" },
+      { value: "9:16", label: "9:16" },
+    ],
+    qualities: ["1K", "2K", "4K"],
+  },
+
+  // ✅ NUEVO MODELO: OpenAI GPT Image
+  "openai:gpt-image-1": {
+    id: "openai:gpt-image-1",
+    label: "GPT Image (OpenAI)",
+    supportsRefs: false,
+    aspectRatios: [
+      { value: "1:1", label: "1:1 (1024x1024)" },
+      { value: "3:2", label: "3:2 (1536x1024)" },
+      { value: "2:3", label: "2:3 (1024x1536)" },
+    ],
+    qualities: ["1K"],
+  },
+};
+
+function getActiveCaps(modelId: string) {
+  return MODEL_CAPS[modelId] || MODEL_CAPS[GeminiModel.IMAGE];
+}
 
 type Panel = null | "reference" | "model" | "parameters" | "styles";
 type RefSlot = "char1" | "char2" | "char3" | "background";
@@ -392,7 +444,7 @@ const ImageGeneratorTool: React.FC = () => {
   const [myAssets, setMyAssets] = useState<Asset[]>([]);
 
   const [prompt, setPrompt] = useState("");
-  const [model, setModel] = useState<GeminiModel>(GeminiModel.IMAGE);
+  const [model, setModel] = useState<string>(GeminiModel.IMAGE);
   const [aspectRatio, setAspectRatio] = useState("1:1");
   const [count, setCount] = useState(1);
   const [quality, setQuality] = useState<Quality>("1K");
@@ -1049,12 +1101,14 @@ const refLabel =
           </div>
 
           <div className={styles.controlsRow}>
+            disabled={!getActiveCaps(model).supportsRefs}
             <button
               type="button"
               className={`${styles.controlBtn} ${panel === "reference" ? styles.controlBtnActive : ""}`}
               onClick={() => {
                 setPanel((p) => (p === "reference" ? null : "reference"));
                 setPickerSlot(null);
+                if (!getActiveCaps(model).supportsRefs) return;
               }}
             >
               <span>Reference</span>
@@ -1232,6 +1286,7 @@ const refLabel =
                     >
                       <option value={GeminiModel.IMAGE}>NanoBanana</option>
                       <option value={GeminiModel.IMAGE_PRO}>NanoBanana Pro</option>
+                      <option value="openai:gpt-image-1">GPT Image (OpenAI)</option>
                     </select>
                   </div>
                 </div>
@@ -1258,11 +1313,11 @@ const refLabel =
                           setPanel(null); // auto-close
                         }}
                       >
-                        <option value="1:1">1:1</option>
-                        <option value="4:5">4:5</option>
-                        <option value="3:4">3:4</option>
-                        <option value="16:9">16:9</option>
-                        <option value="9:16">9:16</option>
+                        {getActiveCaps(model).aspectRatios.map((ar) => (
+                          <option key={ar.value} value={ar.value}>
+                            {ar.label}
+                          </option>
+                        ))}
                       </select>
                     </div>
 
@@ -1293,15 +1348,11 @@ const refLabel =
                           setPanel(null); // auto-close
                         }}
                       >
-                        {model === GeminiModel.IMAGE ? (
-                          <option value="1K">1K</option>
-                        ) : (
-                          <>
-                            <option value="1K">1K</option>
-                            <option value="2K">2K</option>
-                            <option value="4K">4K</option>
-                          </>
-                        )}
+                        {getActiveCaps(model).qualities.map((q) => (
+                          <option key={q} value={q}>
+                            {q}
+                          </option>
+                        ))}
                       </select>
                     </div>
                   </div>

@@ -352,6 +352,65 @@ async function ensureAI() {
   return ai;
 }
 
+function ensureOpenAIKey() {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) {
+    const err = new Error("OPENAI_NOT_CONFIGURED");
+    err.status = 503;
+    err.code = "OPENAI_NOT_CONFIGURED";
+    err.details = { hint: "Falta OPENAI_API_KEY en Render" };
+    throw err;
+  }
+  return key;
+}
+
+function openaiSizeFromAspectRatio(ar) {
+  if (!ar || ar === "1:1") return "1024x1024";
+  if (ar === "3:2") return "1536x1024";
+  if (ar === "2:3") return "1024x1536";
+  return "auto";
+}
+
+async function openaiGenerateImageDataUrl({ model, prompt, size }) {
+  const key = ensureOpenAIKey();
+
+  const r = await fetch("https://api.openai.com/v1/images/generations", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${key}`,
+    },
+    body: JSON.stringify({
+      model,
+      prompt,
+      n: 1,
+      size,
+      output_format: "png",
+    }),
+  });
+
+  const data = await r.json().catch(() => null);
+
+  if (!r.ok) {
+    const msg = data?.error?.message || `OpenAI error HTTP ${r.status}`;
+    const err = new Error(msg);
+    err.status = 400;
+    err.code = "OPENAI_IMAGE_FAILED";
+    err.details = data?.error || data;
+    throw err;
+  }
+
+  const b64 = data?.data?.[0]?.b64_json;
+  if (!b64) {
+    const err = new Error("OpenAI no devolvió imagen (b64_json vacío).");
+    err.status = 500;
+    err.code = "OPENAI_EMPTY_IMAGE";
+    throw err;
+  }
+
+  return `data:image/png;base64,${b64}`;
+}
+
 async function extractImageDataUrl(response) {
   const candidates = response?.candidates || response?.response?.candidates;
   const parts = candidates?.[0]?.content?.parts || [];
@@ -840,7 +899,6 @@ app.delete("/api/assets/:id", async (req, res) => {
 
 app.post("/api/ai/image", async (req, res, next) => {
   try {
-    const aiClient = await ensureAI();
 
     const {
       prompt,
@@ -859,6 +917,91 @@ app.post("/api/ai/image", async (req, res, next) => {
     if (error) return res.status(401).json({ ok: false, error });
 
     const selectedModel = model || "gemini-2.5-flash-image";
+
+    // =============================
+    // OPENAI GPT IMAGE
+    // =============================
+    if (selectedModel.startsWith("openai:")) {
+      const openaiModel = selectedModel.split(":")[1] || "gpt-image-1";
+
+      // refs (por ahora) NO soportadas en esta ruta
+      const refs = [
+        ...((characterAssetIds || []).map((id, i) => ({ label: `Character reference ${i + 1}`, id }))),
+        ...(styleAssetId ? [{ label: "Style reference", id: styleAssetId }] : []),
+        ...(backgroundAssetId ? [{ label: "Background reference", id: backgroundAssetId }] : []),
+      ];
+      if (refs.length) {
+        throw httpError(400, "REFS_NOT_SUPPORTED", "GPT Image (OpenAI) aún no usa refs en este endpoint.");
+      }
+
+      // Limitar aspect ratios soportados
+      if (aspectRatio && !["1:1", "3:2", "2:3"].includes(aspectRatio)) {
+        throw httpError(
+          400,
+          "ASPECT_RATIO_NOT_SUPPORTED",
+          `GPT Image solo soporta 1:1, 3:2, 2:3. Recibí: ${aspectRatio}`
+        );
+      }
+
+      // Quality: por ahora 1K solamente
+      if (quality && quality !== "1K") {
+        throw httpError(400, "QUALITY_NOT_SUPPORTED", "GPT Image en esta tool solo usará 1K por ahora.");
+      }
+
+      const nRequested = Math.min(Number(count || 1), 4);
+      const toolName = tool || "image-generator";
+      const hint = nameHint || "generated";
+      const items = [];
+      const urlExpiresInSeconds = 60 * 60;
+
+      const size = openaiSizeFromAspectRatio(aspectRatio);
+
+      for (let i = 0; i < nRequested; i++) {
+        const dataUrl = await openaiGenerateImageDataUrl({
+          model: openaiModel,
+          prompt,
+          size,
+        });
+
+        const { storagePath } = await uploadBase64ToStorage({
+          userId: user.id,
+          tool: toolName,
+          dataUrl,
+          nameHint: hint,
+        });
+
+        const assetId = await insertAssetRow({
+          ownerId: user.id,
+          type: "image",
+          tool: toolName,
+          name: hint,
+          prompt,
+          storagePath,
+          isPublic: false,
+          meta: {
+            tool: toolName,
+            model: selectedModel,
+            aspectRatio: aspectRatio || null,
+            quality: quality || "1K",
+            count: nRequested,
+            characterAssetIds: [],
+            styleAssetId: null,
+            backgroundAssetId: null,
+          },
+        });
+
+        const url = await signStoragePath(storagePath, urlExpiresInSeconds);
+        items.push({ url, assetId });
+      }
+
+      return res.json({
+        ok: true,
+        items,
+        url: items[0]?.url,
+        assetId: items[0]?.assetId,
+        urlExpiresInSeconds,
+      });
+    }
 
     // 1) Validar que el modelo sea de imagen
     if (!isImageGenModel(selectedModel)) {
