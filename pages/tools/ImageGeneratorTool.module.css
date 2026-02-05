@@ -341,15 +341,15 @@
 /* --- DOCK / RIGHT PANEL --- */
 .dock {
   position: relative;
-  background: rgba(12, 10, 12, 0.92); /* mate, sólido */
+  background: rgba(213, 161, 65, 0.749); /* mate, sólido */
   backdrop-filter: blur(22px) saturate(170%);
   border: none; /* sin marco */
   border-radius: 24px;
   padding: 12px;
   box-shadow:
-    0 22px 70px rgba(0,0,0,0.72),
-    inset 0 1px 0 rgba(255,255,255,0.06),
-    inset 0 -14px 30px rgba(0,0,0,0.6);
+    0 22px 70px rgba(189, 167, 66, 0.72),
+    inset 0 1px 0 rgba(122, 87, 0, 0.441),
+    inset 0 -14px 30px rgba(96, 85, 14, 0.6);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -379,7 +379,7 @@
   pointer-events: none;
   background: radial-gradient(
     800px 260px at var(--mx, 50%) var(--my, 20%),
-    rgba(241, 225, 148, 0.12),
+    rgba(135, 123, 63, 0.489),
     transparent 55%
   );
   opacity: 0.9;
