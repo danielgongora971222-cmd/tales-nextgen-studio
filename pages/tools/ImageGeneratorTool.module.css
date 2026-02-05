@@ -48,36 +48,47 @@
 
 /* --- ANIMATED COSMOS BACKGROUND --- */
 
-
-/* Aurora Cosmos (reemplaza Nebula Glow) */
-.root::after {
+/* Distant Stars */
+.root::before {
   content: "";
   position: absolute;
-  inset: -25%;
-
-  /* 3 “blobs” principales + 2 halos extra (similar al ejemplo HTML) */
-  background:
-    radial-gradient(circle at 18% 20%, rgba(0, 255, 200, 0.16) 0%, rgba(0, 150, 255, 0.00) 60%),
-    radial-gradient(circle at 82% 82%, rgba(140, 0, 255, 0.15) 0%, rgba(0, 0, 0, 0.00) 62%),
-    radial-gradient(circle at 52% 52%, rgba(45, 253, 218, 0.12) 0%, rgba(0, 0, 0, 0.00) 58%),
-    radial-gradient(circle at 32% 72%, rgba(0, 150, 255, 0.08) 0%, rgba(0, 0, 0, 0.00) 62%),
-    radial-gradient(circle at 70% 28%, rgba(140, 0, 255, 0.07) 0%, rgba(0, 0, 0, 0.00) 62%);
-
-  filter: blur(80px) saturate(140%);
-  opacity: 0.60;
-
-  /* hace que se sienta como “luz” en vez de “mancha” */
-  mix-blend-mode: screen;
-
-  animation: auroraFloat 28s ease-in-out infinite alternate;
+  inset: 0;
+  background-image: 
+    radial-gradient(1px 1px at 10% 10%, rgba(255,255,255,0.8), transparent),
+    radial-gradient(1px 1px at 20% 80%, rgba(255,255,255,0.6), transparent),
+    radial-gradient(1px 1px at 40% 30%, rgba(255,255,255,0.7), transparent),
+    radial-gradient(1px 1px at 65% 15%, rgba(255,255,255,0.9), transparent),
+    radial-gradient(1px 1px at 80% 70%, rgba(255,255,255,0.5), transparent),
+    radial-gradient(1px 1px at 90% 40%, rgba(255,255,255,0.6), transparent);
+  background-size: 250px 250px;
+  opacity: 0.25;
+  animation: driftStars 60s linear infinite;
   pointer-events: none;
   z-index: 0;
 }
+@keyframes driftStars {
+  from { transform: translate3d(0,0,0); }
+  to { transform: translate3d(-250px, -250px, 0); }
+}
 
-@keyframes auroraFloat {
-  0%   { transform: translate3d(0, 0, 0) scale(1.00); opacity: 0.45; }
-  50%  { transform: translate3d(20px, 42px, 0) scale(1.10) rotate(1.6deg); opacity: 0.65; }
-  100% { transform: translate3d(-22px, 10px, 0) scale(0.94) rotate(-1.2deg); opacity: 0.55; }
+/* Nebula Glow */
+.root::after {
+  content: "";
+  position: absolute;
+  inset: -20%;
+  background:
+    radial-gradient(circle at 25% 30%, rgba(74, 68, 68, 0.121), transparent 55%),
+    radial-gradient(circle at 70% 60%, rgba(241, 225, 148, 0.05), transparent 60%),
+    radial-gradient(circle at 55% 15%, rgba(121, 118, 119, 0.053), transparent 55%);
+  filter: blur(50px);
+  opacity: 0.65;
+  animation: nebulaPulse 12s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+@keyframes nebulaPulse {
+  0%, 100% { transform: scale(1) rotate(0deg); opacity: 0.6; }
+  50% { transform: scale(1.06) rotate(3deg); opacity: 0.85; }
 }
 
 
