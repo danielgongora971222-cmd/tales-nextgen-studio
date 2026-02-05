@@ -139,13 +139,15 @@
   flex: 1;
   border-radius: var(--r-xl);
   border: none;
-  /* menos "cristal" para que se aprecie el background animado */
-  background: rgba(0,0,0,0.12);
+
+  /* ✅ elimina el “cristal” */
+  background: transparent;
   backdrop-filter: none;
+  box-shadow: none;
+
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  box-shadow: 0 24px 70px rgba(0,0,0,0.55);
   min-height: 0;
 }
 
@@ -154,9 +156,10 @@
   justify-content: space-between;
   align-items: center;
   padding: 12px 20px;
-  border-bottom: none; /* sin marcos */
-  background: rgba(0,0,0,0.18);
-  box-shadow: inset 0 -1px 0 rgba(255,255,255,0.06);
+
+  background: transparent;
+  box-shadow: none;
+  border-bottom: none;
 }
 
 .sectionTitle {
