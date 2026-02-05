@@ -1045,8 +1045,6 @@ const refLabel =
                 <span className={styles.generateLabel}>{isGenerating ? "GENERATING" : "GENERATE"}</span>
                 {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
               </button>
-
-              <div className={styles.creditUnderGenerate}>Credits Cost: XXXX</div>
             </div>
           </div>
 

@@ -361,7 +361,7 @@
   position: absolute;
   left: 12px;
   right: 12px;
-  bottom: 20px;
+  bottom: 25px;
   z-index: 300;
   pointer-events: none; /* click-through excepto en el dock */
 }
@@ -396,7 +396,7 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 14px 20px 250px; /* deja espacio para el dock superpuesto */
+  padding: 14px 20px 270px; /* deja espacio para el dock superpuesto */
 }
 
 .controlBtn {
