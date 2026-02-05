@@ -648,11 +648,11 @@ app.post("/api/assets/upload", async (req, res, next) => {
     const assetType = type || "image";
 
     const { storagePath } = await uploadBase64ToStorage({
-      userId: user.id,
-      tool: toolName,
-      dataUrl,
-      nameHint: name || "upload",
-    });
+    userId: user.id,
+    tool: toolName,
+    dataUrl,
+    nameHint: name || "upload",
+  });
 
     const meta = {
       tool: toolName,
@@ -666,15 +666,15 @@ app.post("/api/assets/upload", async (req, res, next) => {
     };
 
     const assetId = await insertAssetRow({
-      ownerId: user.id,
-      type: "image",
-      tool: toolName,
-      name: hint,
-      prompt,
-      storagePath,
-      isPublic: false,
-      meta,
-    });
+    ownerId: user.id,
+    type: assetType,
+    tool: toolName,
+    name: name || "upload",
+    prompt: null,
+    storagePath,
+    isPublic: false,
+    meta: { tool: toolName, source: "user-upload" },
+  });
 
     const url = await signStoragePath(storagePath);
 
