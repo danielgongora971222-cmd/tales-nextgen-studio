@@ -435,6 +435,7 @@ const refLabel =
   const [viewer, setViewer] = useState<Asset | null>(null);
 
   const [isGenerating, setIsGenerating] = useState(false);
+  const [pendingSlots, setPendingSlots] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
     // Cache de dimensiones por imagen (para layout del historial y viewer responsive)
   const [imgDims, setImgDims] = useState<Record<string, { w: number; h: number }>>({});
@@ -493,14 +494,13 @@ const refLabel =
   async function reloadHistory() {
     setIsLoadingHistory(true);
     try {
-      const assets = await listMyAssets({ type: "image", limit: 80 });
+      // Importante:
+      // - myAssets se usa como "biblioteca" para el picker y para reconstruir la receta (refs).
+      // - NO filtramos las imágenes subidas como referencia aquí, porque si no, la receta no puede
+      //   encontrar las miniaturas (characterAssetIds/backgroundAssetId) al abrir el viewer.
+      const assets = await listMyAssets({ type: "image", limit: 300 });
 
-      const filtered = assets.filter((a: any) => {
-        const t = a?.meta?.tool;
-        return t !== "image-generator-ref";
-      });
-
-      const sorted = [...filtered].sort((a: any, b: any) => {
+      const sorted = [...assets].sort((a: any, b: any) => {
         const ta = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
         const tb = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
         return tb - ta;
@@ -518,6 +518,7 @@ const refLabel =
       setIsLoadingHistory(false);
     }
   }
+
 
   useEffect(() => {
     setRootGlow(50, 20);
@@ -669,6 +670,12 @@ const refLabel =
     if (!basePrompt) return;
 
     setIsGenerating(true);
+    // crea "slots" temporales en el historial (uno por imagen a generar)
+    {
+      const n = Math.max(1, Math.min(4, Number(count) || 1));
+      const stamp = Date.now();
+      setPendingSlots(Array.from({ length: n }, (_, i) => `pending-${stamp}-${i}`));
+    }
     setError(null);
 
     try {
@@ -704,6 +711,7 @@ const refLabel =
       setError(e?.message || "Failed to generate image.");
     } finally {
       setIsGenerating(false);
+      setPendingSlots([]);
     }
   }
 
@@ -763,13 +771,68 @@ const refLabel =
     const raw = asset.prompt || "";
     if (!raw.trim()) return;
 
+    // 1) prompt (incluye bloque de style si venía guardado)
     setPrompt(raw);
 
-    // Si el prompt trae un bloque de style, intentamos “reconocer” el preset (solo para UI)
+    // 2) receta (model/ratio/count/quality + refs)
+    const meta = (asset as any).meta || {};
+
+    // model
+    const metaModel = typeof meta.model === "string" ? meta.model : null;
+    if (metaModel) {
+      setModel(metaModel as GeminiModel);
+
+      // NanoBanana (flash) solo soporta 1K
+      if (metaModel === GeminiModel.IMAGE) setQuality("1K");
+    }
+
+    // aspect ratio
+    if (typeof meta.aspectRatio === "string") {
+      setAspectRatio(meta.aspectRatio);
+    }
+
+    // count
+    const metaCount =
+      typeof meta.count === "number"
+        ? meta.count
+        : typeof meta.count === "string"
+          ? parseInt(meta.count, 10)
+          : null;
+    if (metaCount != null && !Number.isNaN(metaCount)) {
+      setCount(Math.max(1, Math.min(4, metaCount)));
+    }
+
+    // quality
+    if (typeof meta.quality === "string") {
+      const q = meta.quality.toUpperCase();
+      if (q === "1K" || q === "2K" || q === "4K") {
+        if (metaModel === GeminiModel.IMAGE) setQuality("1K");
+        else setQuality(q as any);
+      }
+    }
+
+    // refs (ids -> assets)
+    const charIds: string[] = Array.isArray(meta.characterAssetIds)
+      ? meta.characterAssetIds.filter((x: any) => typeof x === "string")
+      : [];
+    const bgId = typeof meta.backgroundAssetId === "string" ? meta.backgroundAssetId : null;
+
+    const findAsset = (id: string) => myAssets.find((a) => a.id === id) || null;
+
+    const c1 = charIds[0] ? findAsset(charIds[0]) : null;
+    const c2 = charIds[1] ? findAsset(charIds[1]) : null;
+    const c3 = charIds[2] ? findAsset(charIds[2]) : null;
+    const bg = bgId ? findAsset(bgId) : null;
+
+    setRefs({ char1: c1, char2: c2, char3: c3, background: bg });
+
+    // 3) UI: si el prompt trae un bloque de style, intentamos “reconocer” el preset
     const inside = extractStyleBlock(raw) || "";
     if (inside) {
       const match = STYLE_PRESETS.find((p) => (p.prompt || "").trim() === inside.trim());
       setSelectedStyleId(match ? match.id : null);
+    } else {
+      setSelectedStyleId(null);
     }
 
     setPanel(null);
@@ -797,13 +860,23 @@ const refLabel =
         </div>
 
         <div className={styles.historyGrid}>
-          {history.length === 0 ? (
+          {history.length === 0 && pendingSlots.length === 0 ? (
             <div className={styles.emptyState}>
               <div className={styles.emptyCode}>NO GENERATIONS</div>
               <div className={styles.emptyText}>Genera tu primera imagen para ver el historial aquí.</div>
             </div>
           ) : (
             <div className={styles.grid}>
+              {pendingSlots.map((id) => (
+                <div key={id} className={`${styles.tile} ${styles.tilePending}`} aria-label="Generating...">
+                  <div className={styles.pendingFrame}>
+                    <div className={styles.pendingShimmer} />
+                    <div className={styles.pendingSpinner} />
+                    <div className={styles.pendingLabel}>GENERATING</div>
+                  </div>
+                </div>
+              ))}
+
               {history.map((asset) => {
                 const caption = removeStylePresetBlock(asset.prompt || "") || asset.name || "—";
                 return (
@@ -961,22 +1034,20 @@ const refLabel =
               rows={2}
             />
 
-            <button
-              type="button"
-              className={styles.generateBtn}
-              disabled={isGenerating || !prompt.trim()}
-              onClick={handleGenerate}
-            >
-              {isGenerating ? (
-                <span className={styles.loadingInline}>
-                  <span className={styles.loaderDot} />
-                  <span className={styles.loaderDot} />
-                  <span className={styles.loaderDot} />
-                </span>
-              ) : (
-                "GENERATE"
-              )}
-            </button>
+            <div className={styles.generateCol}>
+              <button
+                type="button"
+                className={styles.generateBtn}
+                disabled={isGenerating || !prompt.trim()}
+                onClick={handleGenerate}
+                data-loading={isGenerating ? "true" : "false"}
+              >
+                <span className={styles.generateLabel}>{isGenerating ? "GENERATING" : "GENERATE"}</span>
+                {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
+              </button>
+
+              <div className={styles.creditUnderGenerate}>Credits Cost: XXXX</div>
+            </div>
           </div>
 
           <div className={styles.controlsRow}>
