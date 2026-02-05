@@ -44,9 +44,6 @@
   background-color: var(--void-bg);
   color: var(--text-main);
   font-family: var(--sans);
-  
-  /* Subtle Vignette */
-  box-shadow: inset 0 0 100px rgba(0,0,0,0.8);
 }
 
 /* --- ANIMATED COSMOS BACKGROUND --- */
@@ -72,6 +69,26 @@
 @keyframes driftStars {
   from { transform: translate3d(0,0,0); }
   to { transform: translate3d(-250px, -250px, 0); }
+}
+
+/* Nebula Glow */
+.root::after {
+  content: "";
+  position: absolute;
+  inset: -20%;
+  background:
+    radial-gradient(circle at 25% 30%, rgba(91,14,20,0.32), transparent 55%),
+    radial-gradient(circle at 70% 60%, rgba(241,225,148,0.20), transparent 60%),
+    radial-gradient(circle at 55% 15%, rgba(91,14,20,0.22), transparent 55%);
+  filter: blur(50px);
+  opacity: 0.65;
+  animation: nebulaPulse 12s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+@keyframes nebulaPulse {
+  0%, 100% { transform: scale(1) rotate(0deg); opacity: 0.6; }
+  50% { transform: scale(1.06) rotate(3deg); opacity: 0.85; }
 }
 
 /* --- TOP BAR / HEADER --- */
