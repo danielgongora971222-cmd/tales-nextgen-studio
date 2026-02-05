@@ -365,7 +365,9 @@ function ensureOpenAIKey() {
 }
 
 function openaiSizeFromAspectRatio(ar) {
-  if (!ar || ar === "1:1") return "1024x1024";
+  // OpenAI Images API: size puede ser "auto" o un tamaño fijo.
+  if (!ar || ar === "auto") return "auto";
+  if (ar === "1:1") return "1024x1024";
   if (ar === "3:2") return "1536x1024";
   if (ar === "2:3") return "1024x1536";
   return "auto";
@@ -856,6 +858,20 @@ function isImageGenModel(model) {
   );
 }
 
+function maxCountForImageModel(model) {
+  // Reglas de negocio (frontend también las aplica):
+  // - NanoBanana Pro, Flux 2.0 Max, GPT 1.5 / GPT 1.5-high => solo 1
+  // - Flux 2.0 Pro => 1 o 2
+  // - NanoBanana (flash) y Flux 2.0 Flex => hasta 4
+  if (model === "gemini-3-pro-image-preview") return 1; // NanoBanana Pro
+  if (model === "fal-ai/flux-2-max") return 1;
+  if (model === "fal-ai/flux-2-pro") return 2;
+  if (model === "fal-ai/flux-2-flex") return 4;
+  if (model && model.startsWith("openai:")) return 1; // GPT Image
+  if (model === "gemini-2.5-flash-image") return 4; // NanoBanana
+  return 4;
+}
+
 // =============================
 // Fal.ai helpers (Flux 2.0)
 // =============================
@@ -1233,6 +1249,17 @@ app.post("/api/ai/image", async (req, res, next) => {
     if (error) return res.status(401).json({ ok: false, error });
 
     const selectedModel = model || "gemini-2.5-flash-image";
+    const maxCount = maxCountForImageModel(selectedModel);
+    if (count > maxCount) {
+      throw httpError(
+        400,
+        "COUNT_NOT_SUPPORTED",
+        `This model supports up to ${maxCount} image(s) per request.`
+      );
+    }
+
+    // "auto" en UI = dejar que el modelo use su default (excepto OpenAI, que sí soporta size="auto")
+    const arNonOpenAI = aspectRatio === "auto" ? undefined : aspectRatio;
 
     // =============================
     // OPENAI GPT IMAGE
@@ -1247,7 +1274,7 @@ app.post("/api/ai/image", async (req, res, next) => {
       ];
 
       // Limitar aspect ratios soportados
-      if (aspectRatio && !["1:1", "3:2", "2:3"].includes(aspectRatio)) {
+      if (aspectRatio && aspectRatio !== "auto" && !["1:1", "3:2", "2:3"].includes(aspectRatio)) {
         throw httpError(
           400,
           "ASPECT_RATIO_NOT_SUPPORTED",
@@ -1260,7 +1287,7 @@ app.post("/api/ai/image", async (req, res, next) => {
         throw httpError(400, "QUALITY_NOT_SUPPORTED", "GPT 1.5 en esta tool solo usará 1K por ahora.");
       }
 
-      const nRequested = Math.min(Number(count || 1), 4);
+      const nRequested = Math.min(Number(count || 1), maxCount);
       const toolName = tool || "image-generator";
       const hint = nameHint || "generated";
       const items = [];
@@ -1328,7 +1355,7 @@ app.post("/api/ai/image", async (req, res, next) => {
     if (selectedModel.startsWith("fal-ai/flux-2-")) {
       const bflModel = selectedModel.replace("fal-ai/", ""); // flux-2-max | flux-2-pro | flux-2-flex
 
-      const nRequested = Math.min(Number(count || 1), 4);
+      const nRequested = Math.min(Number(count || 1), maxCount);
       const toolName = tool || "image-generator";
       const hint = nameHint || "generated";
       const urlExpiresInSeconds = 60 * 60;
@@ -1452,7 +1479,7 @@ app.post("/api/ai/image", async (req, res, next) => {
       imageConfig: {},
     };
 
-    if (aspectRatio) config.imageConfig.aspectRatio = aspectRatio;
+    if (arNonOpenAI) config.imageConfig.aspectRatio = arNonOpenAI;
 
     // imageSize SOLO en gemini-3-pro-image-preview (y en imagen para 1K/2K)
     if (selectedModel === "gemini-3-pro-image-preview" && quality) {
@@ -1470,7 +1497,7 @@ app.post("/api/ai/image", async (req, res, next) => {
     const hasRefs = refs.length > 0;
 
     // 5) Generar N imágenes (1..4)
-    const nRequested = Math.min(Number(count || 1), 4);
+    const nRequested = Math.min(Number(count || 1), maxCount);
     const toolName = tool || "image-generator";
     const hint = nameHint || "generated";
     const items = [];

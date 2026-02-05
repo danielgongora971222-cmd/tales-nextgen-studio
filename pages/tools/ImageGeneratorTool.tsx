@@ -256,6 +256,7 @@ type ModelCaps = {
   supportsRefs: boolean;
   aspectRatios: { value: string; label: string }[];
   qualities: Quality[];
+  countOptions: number[];
 };
 
 const MODEL_CAPS: Record<string, ModelCaps> = {
@@ -264,6 +265,7 @@ const MODEL_CAPS: Record<string, ModelCaps> = {
     label: "NanoBanana",
     supportsRefs: true,
     aspectRatios: [
+      { value: "auto", label: "Auto" },
       { value: "1:1", label: "1:1" },
       { value: "4:5", label: "4:5" },
       { value: "3:4", label: "3:4" },
@@ -271,12 +273,15 @@ const MODEL_CAPS: Record<string, ModelCaps> = {
       { value: "9:16", label: "9:16" },
     ],
     qualities: ["1K"],
+    countOptions: [1, 2, 3, 4],
   },
+
   [GeminiModel.IMAGE_PRO]: {
     id: GeminiModel.IMAGE_PRO,
     label: "NanoBanana Pro",
     supportsRefs: true,
     aspectRatios: [
+      { value: "auto", label: "Auto" },
       { value: "1:1", label: "1:1" },
       { value: "4:5", label: "4:5" },
       { value: "3:4", label: "3:4" },
@@ -284,72 +289,83 @@ const MODEL_CAPS: Record<string, ModelCaps> = {
       { value: "9:16", label: "9:16" },
     ],
     qualities: ["1K", "2K", "4K"],
+    countOptions: [1],
   },
 
-    // ✅ FLUX 2.0 (Fal.ai)
-  "fal-ai/flux-2-max": {
-    id: "fal-ai/flux-2-max",
-    label: "Flux 2.0 Max",
-    supportsRefs: true,
-    aspectRatios: [
-      { value: "1:1", label: "1:1" },
-      { value: "4:5", label: "4:5" },
-      { value: "3:4", label: "3:4" },
-      { value: "16:9", label: "16:9" },
-      { value: "9:16", label: "9:16" },
-    ],
-    qualities: ["1K", "2K", "4K"],
-  },
-  "fal-ai/flux-2-pro": {
-    id: "fal-ai/flux-2-pro",
-    label: "Flux 2.0 Pro",
-    supportsRefs: true,
-    aspectRatios: [
-      { value: "1:1", label: "1:1" },
-      { value: "4:5", label: "4:5" },
-      { value: "3:4", label: "3:4" },
-      { value: "16:9", label: "16:9" },
-      { value: "9:16", label: "9:16" },
-    ],
-    qualities: ["1K", "2K", "4K"],
-  },
-  "fal-ai/flux-2-flex": {
-    id: "fal-ai/flux-2-flex",
-    label: "Flux 2.0 Flex",
-    supportsRefs: true,
-    aspectRatios: [
-      { value: "1:1", label: "1:1" },
-      { value: "4:5", label: "4:5" },
-      { value: "3:4", label: "3:4" },
-      { value: "16:9", label: "16:9" },
-      { value: "9:16", label: "9:16" },
-    ],
-    qualities: ["1K", "2K", "4K"],
-  },
-
-  // ✅ NUEVO MODELO: OpenAI GPT Image
-  // ✅ OpenAI (los 2 que vamos a usar)
   "openai:gpt-image-1.5": {
     id: "openai:gpt-image-1.5",
     label: "GPT 1.5",
     supportsRefs: true,
     aspectRatios: [
-      { value: "1:1", label: "1:1 (1024×1024)" },
-      { value: "3:2", label: "3:2 (1536×1024)" },
-      { value: "2:3", label: "2:3 (1024×1536)" },
+      { value: "auto", label: "Auto" },
+      { value: "1:1", label: "1:1" },
+      { value: "3:2", label: "3:2" },
+      { value: "2:3", label: "2:3" },
     ],
     qualities: ["1K"],
+    countOptions: [1],
   },
+
   "openai:gpt-image-1.5-high": {
     id: "openai:gpt-image-1.5-high",
     label: "GPT 1.5 - high",
     supportsRefs: true,
     aspectRatios: [
-      { value: "1:1", label: "1:1 (1024×1024)" },
-      { value: "3:2", label: "3:2 (1536×1024)" },
-      { value: "2:3", label: "2:3 (1024×1536)" },
+      { value: "auto", label: "Auto" },
+      { value: "1:1", label: "1:1" },
+      { value: "3:2", label: "3:2" },
+      { value: "2:3", label: "2:3" },
     ],
     qualities: ["1K"],
+    countOptions: [1],
+  },
+
+  "fal-ai/flux-2-max": {
+    id: "fal-ai/flux-2-max",
+    label: "Flux 2.0 Max",
+    supportsRefs: true,
+    aspectRatios: [
+      { value: "auto", label: "Auto" },
+      { value: "1:1", label: "1:1" },
+      { value: "4:5", label: "4:5" },
+      { value: "3:4", label: "3:4" },
+      { value: "16:9", label: "16:9" },
+      { value: "9:16", label: "9:16" },
+    ],
+    qualities: ["1K", "2K", "4K"],
+    countOptions: [1],
+  },
+
+  "fal-ai/flux-2-pro": {
+    id: "fal-ai/flux-2-pro",
+    label: "Flux 2.0 Pro",
+    supportsRefs: true,
+    aspectRatios: [
+      { value: "auto", label: "Auto" },
+      { value: "1:1", label: "1:1" },
+      { value: "4:5", label: "4:5" },
+      { value: "3:4", label: "3:4" },
+      { value: "16:9", label: "16:9" },
+      { value: "9:16", label: "9:16" },
+    ],
+    qualities: ["1K", "2K", "4K"],
+    countOptions: [1, 2],
+  },
+
+  "fal-ai/flux-2-flex": {
+    id: "fal-ai/flux-2-flex",
+    label: "Flux 2.0 Flex",
+    supportsRefs: true,
+    aspectRatios: [
+      { value: "auto", label: "Auto" },
+      { value: "1:1", label: "1:1" },
+      { value: "4:5", label: "4:5" },
+      { value: "3:4", label: "3:4" },
+      { value: "16:9", label: "16:9" },
+      { value: "9:16", label: "9:16" },
+    ],
+    qualities: ["1K", "2K", "4K"],
+    countOptions: [1, 2, 3, 4],
   },
 };
 
@@ -498,7 +514,7 @@ const ImageGeneratorTool: React.FC = () => {
 
   const [prompt, setPrompt] = useState("");
   const [model, setModel] = useState<string>(GeminiModel.IMAGE);
-  const [aspectRatio, setAspectRatio] = useState("1:1");
+  const [aspectRatio, setAspectRatio] = useState("auto");
   const [count, setCount] = useState(1);
   const [quality, setQuality] = useState<Quality>("1K");
 
@@ -518,11 +534,35 @@ const ImageGeneratorTool: React.FC = () => {
     return STYLE_PRESETS.find((p) => p.id === selectedStyleId)?.prompt?.trim() || "";
   }, [selectedStyleId]);
 
-  const modelLabel = getActiveCaps(model).label;
+  const activeCaps = useMemo(() => getActiveCaps(model), [model]);
+  const modelLabel = activeCaps.label;
   const paramsLabel = `${aspectRatio} • ${quality} • x${count}`;
   const styleLabel = selectedStyleId
     ? (STYLE_PRESETS.find((p) => p.id === selectedStyleId)?.name || "Selected")
     : "None";
+
+    // Mantener aspect ratio / quality / count válidos según el modelo
+    useEffect(() => {
+      // Aspect ratio
+      if (!activeCaps.aspectRatios.some((ar) => ar.value === aspectRatio)) {
+        setAspectRatio(activeCaps.aspectRatios[0]?.value || "auto");
+      }
+
+      // Quality
+      if (!activeCaps.qualities.includes(quality)) {
+        setQuality(activeCaps.qualities[0] || "1K");
+      }
+
+      // Count
+      if (!activeCaps.countOptions.includes(count)) {
+        setCount(activeCaps.countOptions[0] || 1);
+      }
+
+      // Regla dura: NanoBanana (flash) solo soporta 1K (el backend lo rechaza si no)
+      if (model === GeminiModel.IMAGE && quality !== "1K") {
+        setQuality("1K");
+      }
+    }, [activeCaps, aspectRatio, quality, count, model]);
 
   const refLabel =
     [
@@ -1326,7 +1366,18 @@ const ImageGeneratorTool: React.FC = () => {
                       value={model}
                       onChange={(e) => {
                         const next = e.target.value;
+                        const nextCaps = getActiveCaps(next);
+
                         setModel(next);
+
+                        // ✅ defaults (por requerimiento)
+                        setAspectRatio("auto");
+                        setCount(1);
+
+                        // Quality válida para el modelo elegido
+                        if (!nextCaps.qualities.includes(quality)) {
+                          setQuality(nextCaps.qualities[0] || "1K");
+                        }
 
                         // IMPORTANTÍSIMO:
                         // NanoBanana (flash) solo soporta 1K, si no, el backend lo rechaza.
@@ -1335,13 +1386,21 @@ const ImageGeneratorTool: React.FC = () => {
                         setPanel(null); // auto-close
                       }}
                     >
-                      <option value={GeminiModel.IMAGE}>NanoBanana</option>
-                      <option value={GeminiModel.IMAGE_PRO}>NanoBanana Pro</option>
-                      <option value="openai:gpt-image-1.5">GPT 1.5</option>
-                      <option value="openai:gpt-image-1.5-high">GPT 1.5 - high</option>
-                      <option value="fal-ai/flux-2-max">Flux 2.0 Max</option>
-                      <option value="fal-ai/flux-2-pro">Flux 2.0 Pro</option>
-                      <option value="fal-ai/flux-2-flex">Flux 2.0 Flex</option>
+                      <optgroup label="Google NanoBanana">
+                        <option value={GeminiModel.IMAGE}>NanoBanana</option>
+                        <option value={GeminiModel.IMAGE_PRO}>NanoBanana Pro</option>
+                      </optgroup>
+
+                      <optgroup label="Flux 2.0">
+                        <option value="fal-ai/flux-2-max">Flux 2.0 Max</option>
+                        <option value="fal-ai/flux-2-pro">Flux 2.0 Pro</option>
+                        <option value="fal-ai/flux-2-flex">Flux 2.0 Flex</option>
+                      </optgroup>
+
+                      <optgroup label="GPT - Image">
+                        <option value="openai:gpt-image-1.5">GPT 1.5</option>
+                        <option value="openai:gpt-image-1.5-high">GPT 1.5 - high</option>
+                      </optgroup>
                     </select>
                   </div>
                 </div>
@@ -1381,15 +1440,17 @@ const ImageGeneratorTool: React.FC = () => {
                       <select
                         className={styles.select}
                         value={count}
+                        disabled={activeCaps.countOptions.length === 1}
                         onChange={(e) => {
                           setCount(Number(e.target.value));
                           setPanel(null); // auto-close
                         }}
                       >
-                        <option value={1}>1</option>
-                        <option value={2}>2</option>
-                        <option value={3}>3</option>
-                        <option value={4}>4</option>
+                        {activeCaps.countOptions.map((n) => (
+                          <option key={n} value={n}>
+                            {n}
+                          </option>
+                        ))}
                       </select>
                     </div>
 
