@@ -545,7 +545,7 @@ app.get("/api/community", async (req, res, next) => {
     // Trae SOLO públicos
     const { data, error } = await supabaseAdmin
       .from("assets")
-      .select("id, url, storage_path, type, name, prompt, created_at, owner_id, is_public")
+      .select("id, url, storage_path, type, name, prompt, created_at, owner_id, is_public, meta")
       .eq("is_public", true)
       .eq("type", type)
       .order("created_at", { ascending: false })
@@ -654,14 +654,26 @@ app.post("/api/assets/upload", async (req, res, next) => {
       nameHint: name || "upload",
     });
 
+    const meta = {
+      tool: toolName,
+      model: selectedModel,
+      aspectRatio: aspectRatio || null,
+      quality: quality || null,
+      count: n,
+      characterAssetIds: characterAssetIds || [],
+      styleAssetId: styleAssetId || null,
+      backgroundAssetId: backgroundAssetId || null,
+    };
+
     const assetId = await insertAssetRow({
       ownerId: user.id,
-      type: assetType,
+      type: "image",
       tool: toolName,
-      name: name || "upload",
-      prompt: null,
+      name: hint,
+      prompt,
       storagePath,
       isPublic: false,
+      meta,
     });
 
     const url = await signStoragePath(storagePath);

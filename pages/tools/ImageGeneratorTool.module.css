@@ -315,6 +315,19 @@
   transition: transform 0.25s var(--ease-smooth);
   transform: translateZ(0);
 }
+.dockWrap {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 300;
+  pointer-events: none; /* deja pasar clicks al historial */
+}
+
+/* solo el dock recibe clicks */
+.dockWrap .dock {
+  pointer-events: auto;
+}
 .dock::before {
   content: "";
   position: absolute;

@@ -18,15 +18,16 @@ function mapRowToAsset(row: any): Asset {
 
   return {
     id: row.id,
-    url: row.url || "",
-    type: row.type === "video" ? "video" : "image",
-    name: row.name || `Generation ${String(row.id || "").slice(0, 4)}`,
-    prompt: row.prompt ?? undefined,
-    createdAt,
-    ownerId,
-    isPublic,
-    likes: [],
-    comments: [],
+    url: row.url,
+    type: row.type,
+    name: row.name,
+    prompt: row.prompt,
+    createdAt: row.createdAt,
+    meta: (row as any).meta ?? undefined,
+    ownerId: row.ownerId,
+    isPublic: row.isPublic,
+    likes: row.likes || [],
+    comments: row.comments || []
   };
 }
 

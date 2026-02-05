@@ -39,6 +39,8 @@ export interface Asset {
   name: string;
   prompt?: string;
   createdAt: number;
+
+  meta?: any;
   
   // Social & Privacy
   ownerId: string;
