@@ -847,8 +847,151 @@ function httpError(status, code, message, details) {
 function isImageGenModel(model) {
   return (
     typeof model === "string" &&
-    (model.includes("imagen") || model.endsWith("-image") || model.includes("-image-"))
+    (
+      model.includes("imagen") ||
+      model.endsWith("-image") ||
+      model.includes("-image-") ||
+      model.startsWith("fal-ai/flux-2-")
+    )
   );
+}
+
+// =============================
+// Fal.ai helpers (Flux 2.0)
+// =============================
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function falAuthHeader() {
+  const key = process.env.FAL_KEY;
+  if (!key) return null;
+  return `Key ${key}`;
+}
+
+function falDimsFromAspectQuality(aspectRatio, quality) {
+  // Map your UI quality to a base long-side pixel size
+  const base =
+    quality === "4K" ? 2048 :
+    quality === "2K" ? 1536 :
+    1024;
+
+  if (typeof aspectRatio !== "string" || !aspectRatio.includes(":")) {
+    return { width: base, height: base };
+  }
+
+  const [wStr, hStr] = aspectRatio.split(":");
+  const w = Number(wStr);
+  const h = Number(hStr);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) {
+    return { width: base, height: base };
+  }
+
+  const long = base;
+  const shortRaw = Math.round((base * Math.min(w, h)) / Math.max(w, h));
+
+  // Fal performs best with sizes divisible by 8
+  const short = Math.max(64, Math.round(shortRaw / 8) * 8);
+
+  if (w >= h) return { width: long, height: short };
+  return { width: short, height: long };
+}
+
+async function falQueueRun(endpointId, input) {
+  const auth = falAuthHeader();
+  if (!auth) {
+    throw httpError(500, "FAL_KEY_MISSING", "Missing FAL_KEY env var (Fal.ai)");
+  }
+
+  const submitUrl = `https://queue.fal.run/${endpointId}`;
+  const submitResp = await fetch(submitUrl, {
+    method: "POST",
+    headers: {
+      Authorization: auth,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  const submitText = await submitResp.text();
+  let submitJson;
+  try {
+    submitJson = JSON.parse(submitText);
+  } catch {
+    throw httpError(502, "FAL_BAD_RESPONSE", `Fal submit invalid JSON: ${submitText.slice(0, 200)}`);
+  }
+  if (!submitResp.ok) {
+    throw httpError(502, "FAL_SUBMIT_FAILED", submitJson?.detail || submitJson?.message || submitText);
+  }
+
+  const statusUrl = submitJson?.status_url;
+  const requestId = submitJson?.request_id;
+  if (!statusUrl || !requestId) {
+    throw httpError(502, "FAL_SUBMIT_MISSING_FIELDS", "Fal submit missing status_url/request_id");
+  }
+
+  // Poll until COMPLETED
+  const t0 = Date.now();
+  while (true) {
+    const statusResp = await fetch(statusUrl, {
+      headers: { Authorization: auth },
+    });
+    const statusText = await statusResp.text();
+    let statusJson;
+    try {
+      statusJson = JSON.parse(statusText);
+    } catch {
+      throw httpError(502, "FAL_BAD_STATUS", `Fal status invalid JSON: ${statusText.slice(0, 200)}`);
+    }
+    if (!statusResp.ok) {
+      throw httpError(502, "FAL_STATUS_FAILED", statusJson?.detail || statusJson?.message || statusText);
+    }
+
+    const st = statusJson?.status;
+    if (st === "COMPLETED") break;
+    if (st === "FAILED") {
+      throw httpError(502, "FAL_FAILED", statusJson?.error || statusJson?.detail || "Fal request failed");
+    }
+
+    if (Date.now() - t0 > 120000) {
+      throw httpError(504, "FAL_TIMEOUT", "Fal request timed out");
+    }
+    await sleep(800);
+  }
+
+  // Fetch final result
+  const resultUrl = `https://queue.fal.run/${endpointId}/requests/${requestId}`;
+  const resultResp = await fetch(resultUrl, { headers: { Authorization: auth } });
+  const resultText = await resultResp.text();
+  let resultJson;
+  try {
+    resultJson = JSON.parse(resultText);
+  } catch {
+    throw httpError(502, "FAL_BAD_RESULT", `Fal result invalid JSON: ${resultText.slice(0, 200)}`);
+  }
+  if (!resultResp.ok) {
+    throw httpError(502, "FAL_RESULT_FAILED", resultJson?.detail || resultJson?.message || resultText);
+  }
+  return resultJson;
+}
+
+async function falResultImageToDataUrl(img) {
+  if (!img) throw httpError(502, "FAL_NO_IMAGE", "Fal result missing image");
+  const contentType = img.content_type || "image/png";
+
+  // When sync_mode=true, fal may return file_data (data URI or base64)
+  if (img.file_data) {
+    if (typeof img.file_data === "string" && img.file_data.startsWith("data:")) return img.file_data;
+    if (typeof img.file_data === "string") return `data:${contentType};base64,${img.file_data}`;
+  }
+
+  // Otherwise, download from url
+  if (!img.url) throw httpError(502, "FAL_NO_URL", "Fal image has no url");
+  const r = await fetch(img.url);
+  if (!r.ok) throw httpError(502, "FAL_IMAGE_DOWNLOAD_FAILED", `Failed to fetch fal image: ${r.status}`);
+  const buf = Buffer.from(await r.arrayBuffer());
+  const ct = r.headers.get("content-type") || contentType;
+  return `data:${ct};base64,${buf.toString("base64")}`;
 }
 
 async function assetIdToInlinePart(assetId, userId) {
@@ -876,6 +1019,25 @@ async function assetIdToInlinePart(assetId, userId) {
 
   return { inlineData: { mimeType, data: buf.toString("base64") } };
 }
+
+async function assetIdToSignedUrl(assetId, userId, expiresInSeconds = 600) {
+  const { data, error } = await supabaseAdmin
+    .from("assets")
+    .select("id, owner_id, is_public, storage_path, type")
+    .eq("id", assetId)
+    .single();
+
+  if (error || !data) throw httpError(404, "ASSET_NOT_FOUND", "Asset not found");
+
+  const isOwner = data.owner_id === userId;
+  if (!isOwner && !data.is_public) {
+    throw httpError(403, "FORBIDDEN", "You do not have access to this asset");
+  }
+
+  // signed URL so Fal.ai can fetch it
+  return await signStoragePath(data.storage_path, expiresInSeconds);
+}
+
 
 async function assetIdToImageFile(assetId, userId) {
   const part = await assetIdToInlinePart(assetId, userId);
@@ -1055,6 +1217,104 @@ app.post("/api/ai/image", async (req, res, next) => {
             styleAssetId: styleAssetId || null,
             backgroundAssetId: backgroundAssetId || null,
           },
+        });
+
+        const url = await signStoragePath(storagePath, urlExpiresInSeconds);
+        items.push({ url, assetId });
+      }
+
+      return res.json({
+        ok: true,
+        items,
+        url: items[0]?.url,
+        assetId: items[0]?.assetId,
+        urlExpiresInSeconds,
+      });
+    }
+
+        // =============================
+    // FAL / FLUX 2.0 (Flux 2 Max/Pro/Flex)
+    // =============================
+    if (selectedModel.startsWith("fal-ai/flux-2-")) {
+      const nRequested = Math.min(Number(count || 1), 4);
+      const toolName = tool || "image-generator";
+      const hint = nameHint || "generated";
+      const urlExpiresInSeconds = 60 * 30;
+
+      const hasRefs =
+        (Array.isArray(characterAssetIds) && characterAssetIds.length > 0) ||
+        Boolean(backgroundAssetId) ||
+        Boolean(styleAssetId);
+
+      const endpointId = hasRefs ? `${selectedModel}/edit` : selectedModel;
+
+      // Pick a concrete size based on your UI controls
+      const image_size = falDimsFromAspectQuality(aspectRatio, quality);
+
+      // If refs exist, Fal needs URLs it can fetch (signed URLs are fine)
+      let image_urls = [];
+      if (hasRefs) {
+        const ids = [
+          ...(Array.isArray(characterAssetIds) ? characterAssetIds : []),
+          ...(backgroundAssetId ? [backgroundAssetId] : []),
+          ...(styleAssetId ? [styleAssetId] : []),
+        ].filter(Boolean);
+
+        image_urls = await Promise.all(
+          ids.map((id) => assetIdToSignedUrl(id, user.id, urlExpiresInSeconds))
+        );
+      }
+
+      // Give a tiny bit of structure to prompts when refs are used
+      let falPrompt = prompt;
+      if (image_urls.length) {
+        const refs = image_urls.map((_, i) => `@Image${i + 1}`).join(", ");
+        falPrompt =
+          `${prompt}\n\n` +
+          `Reference images: ${refs}. Use them as guidance and preserve identity where relevant.`;
+      }
+
+      const items = [];
+      for (let i = 0; i < nRequested; i++) {
+        const input = {
+          prompt: falPrompt,
+          image_size,
+          output_format: "png",
+          sync_mode: true,
+          ...(image_urls.length ? { image_urls } : {}),
+        };
+
+        const result = await falQueueRun(endpointId, input);
+        const img = Array.isArray(result?.images) ? result.images[0] : null;
+        const dataUrl = await falResultImageToDataUrl(img);
+
+        // Save to Supabase storage + DB
+        const storagePath = `generated/${user.id}/${hint}-${Date.now()}-${Math.random()
+          .toString(16)
+          .slice(2)}.png`;
+
+        await uploadBase64ToStorage(storagePath, dataUrl);
+
+        const meta = {
+          model: selectedModel,
+          aspectRatio,
+          quality,
+          characterAssetIds: Array.isArray(characterAssetIds) ? characterAssetIds : [],
+          styleAssetId: styleAssetId || null,
+          backgroundAssetId: backgroundAssetId || null,
+          provider: "fal",
+          falEndpoint: endpointId,
+        };
+
+        const assetId = await insertAssetRow({
+          ownerId: user.id,
+          type: "image",
+          tool: toolName,
+          name: hint,
+          prompt,
+          storagePath,
+          isPublic: false,
+          meta,
         });
 
         const url = await signStoragePath(storagePath, urlExpiresInSeconds);

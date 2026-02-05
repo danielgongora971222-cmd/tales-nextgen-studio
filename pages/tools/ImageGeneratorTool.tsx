@@ -286,6 +286,47 @@ const MODEL_CAPS: Record<string, ModelCaps> = {
     qualities: ["1K", "2K", "4K"],
   },
 
+    // ✅ FLUX 2.0 (Fal.ai)
+  "fal-ai/flux-2-max": {
+    id: "fal-ai/flux-2-max",
+    label: "Flux 2.0 Max",
+    supportsRefs: true,
+    aspectRatios: [
+      { value: "1:1", label: "1:1" },
+      { value: "4:5", label: "4:5" },
+      { value: "3:4", label: "3:4" },
+      { value: "16:9", label: "16:9" },
+      { value: "9:16", label: "9:16" },
+    ],
+    qualities: ["1K", "2K", "4K"],
+  },
+  "fal-ai/flux-2-pro": {
+    id: "fal-ai/flux-2-pro",
+    label: "Flux 2.0 Pro",
+    supportsRefs: true,
+    aspectRatios: [
+      { value: "1:1", label: "1:1" },
+      { value: "4:5", label: "4:5" },
+      { value: "3:4", label: "3:4" },
+      { value: "16:9", label: "16:9" },
+      { value: "9:16", label: "9:16" },
+    ],
+    qualities: ["1K", "2K", "4K"],
+  },
+  "fal-ai/flux-2-flex": {
+    id: "fal-ai/flux-2-flex",
+    label: "Flux 2.0 Flex",
+    supportsRefs: true,
+    aspectRatios: [
+      { value: "1:1", label: "1:1" },
+      { value: "4:5", label: "4:5" },
+      { value: "3:4", label: "3:4" },
+      { value: "16:9", label: "16:9" },
+      { value: "9:16", label: "9:16" },
+    ],
+    qualities: ["1K", "2K", "4K"],
+  },
+
   // ✅ NUEVO MODELO: OpenAI GPT Image
   // ✅ OpenAI (los 2 que vamos a usar)
   "openai:gpt-image-1.5": {
@@ -364,8 +405,8 @@ function getStyleNameFromPrompt(prompt: string): string {
 
 function prettyModelLabel(modelId: string | null): string {
   if (!modelId) return "Unknown";
-  if (modelId === GeminiModel.IMAGE) return "NanoBanana";
-  if (modelId === GeminiModel.IMAGE_PRO) return "NanoBanana Pro";
+  const caps = (MODEL_CAPS as Record<string, ModelCaps | undefined>)[modelId];
+  if (caps?.label) return caps.label;
   return nanoModelLabel(modelId);
 }
 
@@ -677,7 +718,7 @@ const ImageGeneratorTool: React.FC = () => {
     const chars = [refs.char1, refs.char2, refs.char3].filter(Boolean).length;
 
     return [
-      { label: "Model", value: nanoModelLabel(model) },
+      { label: "Model", value: modelLabel },
       { label: "Ratio", value: aspectRatio },
       { label: "Count", value: String(count) },
       { label: "Quality", value: quality },
@@ -1298,6 +1339,9 @@ const ImageGeneratorTool: React.FC = () => {
                       <option value={GeminiModel.IMAGE_PRO}>NanoBanana Pro</option>
                       <option value="openai:gpt-image-1.5">GPT 1.5</option>
                       <option value="openai:gpt-image-1.5-high">GPT 1.5 - high</option>
+                      <option value="fal-ai/flux-2-max">Flux 2.0 Max</option>
+                      <option value="fal-ai/flux-2-pro">Flux 2.0 Pro</option>
+                      <option value="fal-ai/flux-2-flex">Flux 2.0 Flex</option>
                     </select>
                   </div>
                 </div>
