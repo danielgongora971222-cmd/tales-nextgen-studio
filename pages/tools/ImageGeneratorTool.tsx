@@ -287,14 +287,26 @@ const MODEL_CAPS: Record<string, ModelCaps> = {
   },
 
   // ✅ NUEVO MODELO: OpenAI GPT Image
-  "openai:gpt-image-1": {
-    id: "openai:gpt-image-1",
-    label: "GPT Image (OpenAI)",
-    supportsRefs: false,
+  // ✅ OpenAI (los 2 que vamos a usar)
+  "openai:gpt-image-1.5": {
+    id: "openai:gpt-image-1.5",
+    label: "GPT 1.5",
+    supportsRefs: true,
     aspectRatios: [
-      { value: "1:1", label: "1:1 (1024x1024)" },
-      { value: "3:2", label: "3:2 (1536x1024)" },
-      { value: "2:3", label: "2:3 (1024x1536)" },
+      { value: "1:1", label: "1:1 (1024×1024)" },
+      { value: "3:2", label: "3:2 (1536×1024)" },
+      { value: "2:3", label: "2:3 (1024×1536)" },
+    ],
+    qualities: ["1K"],
+  },
+  "openai:gpt-image-1.5-high": {
+    id: "openai:gpt-image-1.5-high",
+    label: "GPT 1.5 - high",
+    supportsRefs: true,
+    aspectRatios: [
+      { value: "1:1", label: "1:1 (1024×1024)" },
+      { value: "3:2", label: "3:2 (1536×1024)" },
+      { value: "2:3", label: "2:3 (1024×1536)" },
     ],
     qualities: ["1K"],
   },
@@ -465,19 +477,19 @@ const ImageGeneratorTool: React.FC = () => {
     return STYLE_PRESETS.find((p) => p.id === selectedStyleId)?.prompt?.trim() || "";
   }, [selectedStyleId]);
 
-  const modelLabel = model === GeminiModel.IMAGE ? "NanoBanana" : "NanoBanana Pro";
-const paramsLabel = `${aspectRatio} • ${quality} • x${count}`;
-const styleLabel = selectedStyleId
-  ? (STYLE_PRESETS.find((p) => p.id === selectedStyleId)?.name || "Selected")
-  : "None";
+  const modelLabel = getActiveCaps(model).label;
+  const paramsLabel = `${aspectRatio} • ${quality} • x${count}`;
+  const styleLabel = selectedStyleId
+    ? (STYLE_PRESETS.find((p) => p.id === selectedStyleId)?.name || "Selected")
+    : "None";
 
-const refLabel =
-  [
-    refs.char1 ? "C1" : null,
-    refs.char2 ? "C2" : null,
-    refs.char3 ? "C3" : null,
-    refs.background ? "BG" : null,
-  ].filter(Boolean).join(" ") || "None";
+  const refLabel =
+    [
+      refs.char1 ? "C1" : null,
+      refs.char2 ? "C2" : null,
+      refs.char3 ? "C3" : null,
+      refs.background ? "BG" : null,
+    ].filter(Boolean).join(" ") || "None";
 
   // UI states
   const [panel, setPanel] = useState<Panel>(null);
@@ -1101,14 +1113,12 @@ const refLabel =
           </div>
 
           <div className={styles.controlsRow}>
-            disabled={!getActiveCaps(model).supportsRefs}
             <button
               type="button"
               className={`${styles.controlBtn} ${panel === "reference" ? styles.controlBtnActive : ""}`}
               onClick={() => {
                 setPanel((p) => (p === "reference" ? null : "reference"));
                 setPickerSlot(null);
-                if (!getActiveCaps(model).supportsRefs) return;
               }}
             >
               <span>Reference</span>
@@ -1274,7 +1284,7 @@ const refLabel =
                       className={styles.select}
                       value={model}
                       onChange={(e) => {
-                        const next = e.target.value as GeminiModel;
+                        const next = e.target.value;
                         setModel(next);
 
                         // IMPORTANTÍSIMO:
@@ -1286,7 +1296,8 @@ const refLabel =
                     >
                       <option value={GeminiModel.IMAGE}>NanoBanana</option>
                       <option value={GeminiModel.IMAGE_PRO}>NanoBanana Pro</option>
-                      <option value="openai:gpt-image-1">GPT Image (OpenAI)</option>
+                      <option value="openai:gpt-image-1.5">GPT 1.5</option>
+                      <option value="openai:gpt-image-1.5-high">GPT 1.5 - high</option>
                     </select>
                   </div>
                 </div>

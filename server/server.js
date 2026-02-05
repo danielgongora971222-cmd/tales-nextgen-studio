@@ -371,25 +371,68 @@ function openaiSizeFromAspectRatio(ar) {
   return "auto";
 }
 
-async function openaiGenerateImageDataUrl({ model, prompt, size }) {
+function parseOpenAIImageModel(selectedModel) {
+  const token = String(selectedModel || "").replace(/^openai:/, "");
+  let quality = "auto";
+  let model = token || "gpt-image-1.5";
+
+  const m = model.match(/-(high|medium|low)$/);
+  if (m) {
+    quality = m[1];
+    model = model.replace(/-(high|medium|low)$/, "");
+  }
+  return { model, quality };
+}
+
+async function openaiGenerateImageDataUrl({ model, prompt, size, quality = "auto", images = [] }) {
   const key = ensureOpenAIKey();
+  const hasImages = Array.isArray(images) && images.length > 0;
 
-  const r = await fetch("https://api.openai.com/v1/images/generations", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${key}`,
-    },
-    body: JSON.stringify({
-      model,
-      prompt,
-      n: 1,
-      size,
-      output_format: "png",
-    }),
-  });
+  let r;
+  let data;
 
-  const data = await r.json().catch(() => null);
+  if (hasImages) {
+    // Con refs: usamos /v1/images/edits (multipart/form-data)
+    const fd = new FormData();
+    fd.append("model", model);
+    fd.append("prompt", prompt);
+    fd.append("n", "1");
+    if (size) fd.append("size", size);
+    if (quality) fd.append("quality", quality);
+    fd.append("output_format", "png");
+
+    for (const img of images) {
+      const blob = new Blob([img.buffer], { type: img.mimeType || "image/png" });
+      fd.append("image[]", blob, img.filename || "ref.png");
+    }
+
+    r = await fetch("https://api.openai.com/v1/images/edits", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}` },
+      body: fd,
+    });
+
+    data = await r.json().catch(() => null);
+  } else {
+    // Sin refs: /v1/images/generations (JSON)
+    r = await fetch("https://api.openai.com/v1/images/generations", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${key}`,
+      },
+      body: JSON.stringify({
+        model,
+        prompt,
+        n: 1,
+        size: size || "auto",
+        quality: quality || "auto",
+        output_format: "png",
+      }),
+    });
+
+    data = await r.json().catch(() => null);
+  }
 
   if (!r.ok) {
     const msg = data?.error?.message || `OpenAI error HTTP ${r.status}`;
@@ -793,6 +836,14 @@ function apiError(status, code, message, details) {
   throw err;
 }
 
+function httpError(status, code, message, details) {
+  const err = new Error(message);
+  err.status = status;
+  err.code = code;
+  if (details) err.details = details;
+  return err;
+}
+
 function isImageGenModel(model) {
   return (
     typeof model === "string" &&
@@ -824,6 +875,19 @@ async function assetIdToInlinePart(assetId, userId) {
   const buf = Buffer.from(await r.arrayBuffer());
 
   return { inlineData: { mimeType, data: buf.toString("base64") } };
+}
+
+async function assetIdToImageFile(assetId, userId) {
+  const part = await assetIdToInlinePart(assetId, userId);
+  const mimeType = part?.inlineData?.mimeType || "image/png";
+  const buffer = Buffer.from(part.inlineData.data, "base64");
+
+  let ext = "png";
+  if (mimeType.includes("jpeg") || mimeType.includes("jpg")) ext = "jpg";
+  else if (mimeType.includes("webp")) ext = "webp";
+  else if (mimeType.includes("png")) ext = "png";
+
+  return { mimeType, buffer, filename: `${assetId}.${ext}` };
 }
 
 // ===============================
@@ -921,31 +985,27 @@ app.post("/api/ai/image", async (req, res, next) => {
     // =============================
     // OPENAI GPT IMAGE
     // =============================
-    if (selectedModel.startsWith("openai:")) {
-      const openaiModel = selectedModel.split(":")[1] || "gpt-image-1";
+        if (selectedModel.startsWith("openai:")) {
+      const { model: openaiModel, quality: openaiQuality } = parseOpenAIImageModel(selectedModel);
 
-      // refs (por ahora) NO soportadas en esta ruta
       const refs = [
         ...((characterAssetIds || []).map((id, i) => ({ label: `Character reference ${i + 1}`, id }))),
         ...(styleAssetId ? [{ label: "Style reference", id: styleAssetId }] : []),
         ...(backgroundAssetId ? [{ label: "Background reference", id: backgroundAssetId }] : []),
       ];
-      if (refs.length) {
-        throw httpError(400, "REFS_NOT_SUPPORTED", "GPT Image (OpenAI) aún no usa refs en este endpoint.");
-      }
 
       // Limitar aspect ratios soportados
       if (aspectRatio && !["1:1", "3:2", "2:3"].includes(aspectRatio)) {
         throw httpError(
           400,
           "ASPECT_RATIO_NOT_SUPPORTED",
-          `GPT Image solo soporta 1:1, 3:2, 2:3. Recibí: ${aspectRatio}`
+          `GPT 1.5 solo soporta 1:1, 3:2, 2:3. Recibí: ${aspectRatio}`
         );
       }
 
-      // Quality: por ahora 1K solamente
+      // Quality/resolución UI: por ahora 1K solamente
       if (quality && quality !== "1K") {
-        throw httpError(400, "QUALITY_NOT_SUPPORTED", "GPT Image en esta tool solo usará 1K por ahora.");
+        throw httpError(400, "QUALITY_NOT_SUPPORTED", "GPT 1.5 en esta tool solo usará 1K por ahora.");
       }
 
       const nRequested = Math.min(Number(count || 1), 4);
@@ -956,11 +1016,18 @@ app.post("/api/ai/image", async (req, res, next) => {
 
       const size = openaiSizeFromAspectRatio(aspectRatio);
 
+      // ✅ Si hay referencias, las mandamos como images[] usando /v1/images/edits
+      const imageFiles = refs.length
+        ? await Promise.all(refs.map((r) => assetIdToImageFile(r.id, user.id)))
+        : [];
+
       for (let i = 0; i < nRequested; i++) {
         const dataUrl = await openaiGenerateImageDataUrl({
-          model: openaiModel,
+          model: openaiModel,         // gpt-image-1.5
           prompt,
           size,
+          quality: openaiQuality,     // auto | high
+          images: imageFiles,         // refs
         });
 
         const { storagePath } = await uploadBase64ToStorage({
@@ -984,9 +1051,9 @@ app.post("/api/ai/image", async (req, res, next) => {
             aspectRatio: aspectRatio || null,
             quality: quality || "1K",
             count: nRequested,
-            characterAssetIds: [],
-            styleAssetId: null,
-            backgroundAssetId: null,
+            characterAssetIds: characterAssetIds || [],
+            styleAssetId: styleAssetId || null,
+            backgroundAssetId: backgroundAssetId || null,
           },
         });
 
@@ -1061,6 +1128,7 @@ app.post("/api/ai/image", async (req, res, next) => {
     const urlExpiresInSeconds = 60 * 60;
 
     // --- Imagen models: usar generateImages (generateContent NO devuelve bytes de imagen) ---
+    const aiClient = await ensureAI();
     if (selectedModel.includes("imagen")) {
       if (hasRefs) {
         throw httpError(
