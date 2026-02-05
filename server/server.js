@@ -647,34 +647,33 @@ app.post("/api/assets/upload", async (req, res, next) => {
     const toolName = tool || "upload";
     const assetType = type || "image";
 
-    const { storagePath } = await uploadBase64ToStorage({
-    userId: user.id,
-    tool: toolName,
-    dataUrl,
-    nameHint: name || "upload",
-  });
-
-    const meta = {
+    const { storagePath, mimeType, sizeBytes } = await uploadBase64ToStorage({
+      userId: user.id,
       tool: toolName,
-      model: selectedModel,
-      aspectRatio: aspectRatio || null,
-      quality: quality || null,
-      count: n,
-      characterAssetIds: characterAssetIds || [],
-      styleAssetId: styleAssetId || null,
-      backgroundAssetId: backgroundAssetId || null,
+      dataUrl,
+      nameHint: name || "upload",
+    });
+
+    // Este endpoint es SOLO para subir un asset (por ejemplo, una referencia).
+    // No está ligado a la generación.
+    const meta = {
+      source: "upload",
+      tool: toolName,
+      mimeType: mimeType || null,
+      sizeBytes: typeof sizeBytes === "number" ? sizeBytes : null,
+      uploadedAt: new Date().toISOString(),
     };
 
     const assetId = await insertAssetRow({
-    ownerId: user.id,
-    type: assetType,
-    tool: toolName,
-    name: name || "upload",
-    prompt: null,
-    storagePath,
-    isPublic: false,
-    meta: { tool: toolName, source: "user-upload" },
-  });
+      ownerId: user.id,
+      type: assetType,
+      tool: toolName,
+      name: name || "upload",
+      prompt: null,
+      storagePath,
+      isPublic: false,
+      meta,
+    });
 
     const url = await signStoragePath(storagePath);
 
@@ -903,24 +902,117 @@ app.post("/api/ai/image", async (req, res, next) => {
       config.imageConfig.imageSize = quality; // "1K" | "2K"
     }
 
-    // 4) Partes (texto + refs opcionales)
-    const parts = [];
+    // 4) Referencias opcionales (IDs de assets guardados en tu DB)
     const refs = [
       ...((characterAssetIds || []).map((id, i) => ({ label: `Character reference ${i + 1}`, id }))),
       ...(styleAssetId ? [{ label: "Style reference", id: styleAssetId }] : []),
       ...(backgroundAssetId ? [{ label: "Background reference", id: backgroundAssetId }] : []),
     ];
+    const hasRefs = refs.length > 0;
 
+    // 5) Generar N imágenes (1..4)
+    const nRequested = Math.min(Number(count || 1), 4);
+    const toolName = tool || "image-generator";
+    const hint = nameHint || "generated";
+    const items = [];
+    const urlExpiresInSeconds = 60 * 60;
+
+    // --- Imagen models: usar generateImages (generateContent NO devuelve bytes de imagen) ---
+    if (selectedModel.includes("imagen")) {
+      if (hasRefs) {
+        throw httpError(
+          400,
+          "REFS_NOT_SUPPORTED",
+          "Los modelos Imagen no aceptan imágenes de referencia en este endpoint. Selecciona NanoBanana / NanoBanana Pro para usar referencias."
+        );
+      }
+
+      const n = selectedModel.includes("ultra") ? 1 : nRequested;
+
+      const imgConfig = {
+        numberOfImages: n,
+      };
+
+      if (aspectRatio) imgConfig.aspectRatio = aspectRatio;
+      if (quality && quality !== "4K") imgConfig.imageSize = quality; // Imagen: 1K | 2K
+
+      const response = await aiClient.models.generateImages({
+        model: selectedModel,
+        prompt,
+        config: imgConfig,
+      });
+
+      const generated = Array.isArray(response?.generatedImages) ? response.generatedImages : [];
+      if (!generated.length) {
+        throw httpError(500, "GENERATION_REJECTED", "No image generated.", {
+          hasGeneratedImages: false,
+          generatedCount: 0,
+        });
+      }
+
+      for (const g of generated) {
+        const b64 = g?.image?.imageBytes;
+        if (!b64) continue;
+
+        const dataUrl = `data:image/png;base64,${b64}`;
+
+        const { storagePath } = await uploadBase64ToStorage({
+          userId: user.id,
+          tool: toolName,
+          dataUrl,
+          nameHint: hint,
+        });
+
+        const assetId = await insertAssetRow({
+          ownerId: user.id,
+          type: "image",
+          tool: toolName,
+          name: hint,
+          prompt,
+          storagePath,
+          isPublic: false,
+          meta: {
+            tool: toolName,
+            model: selectedModel,
+            aspectRatio: aspectRatio || null,
+            quality: quality || null,
+            count: generated.length,
+            characterAssetIds: [],
+            styleAssetId: null,
+            backgroundAssetId: null,
+          },
+        });
+
+        const url = await signStoragePath(storagePath, urlExpiresInSeconds);
+        items.push({ url, assetId });
+      }
+
+      if (!items.length) {
+        throw httpError(500, "GENERATION_REJECTED", "No image generated.", {
+          hasGeneratedImages: true,
+          generatedCount: generated.length,
+          savedCount: 0,
+        });
+      }
+
+      return res.json({
+        ok: true,
+        items,
+        url: items[0]?.url,
+        assetId: items[0]?.assetId,
+        urlExpiresInSeconds,
+      });
+    }
+
+    // --- Gemini image models: generateContent con partes (texto + refs) ---
+    const parts = [];
     for (const ref of refs) {
       parts.push({ text: `${ref.label}:` });
       parts.push(await assetIdToInlinePart(ref.id, user.id));
     }
-
     parts.push({ text: prompt });
 
-    // 5) Generar N imágenes (1..4)
-    const n = Math.min(Number(count || 1), 4);
-    const items = [];
+    const n = nRequested;
 
     for (let i = 0; i < n; i++) {
       const response = await aiClient.models.generateContent({
@@ -930,9 +1022,6 @@ app.post("/api/ai/image", async (req, res, next) => {
       });
 
       const dataUrl = await extractImageDataUrl(response);
-
-      const toolName = tool || "image-generator";
-      const hint = nameHint || "generated";
 
       const { storagePath } = await uploadBase64ToStorage({
         userId: user.id,
@@ -954,16 +1043,14 @@ app.post("/api/ai/image", async (req, res, next) => {
           model: selectedModel,
           aspectRatio: aspectRatio || null,
           quality: quality || null,
-          count: n, // cantidad real generada en la request
+          count: n,
           characterAssetIds: characterAssetIds || [],
           styleAssetId: styleAssetId || null,
           backgroundAssetId: backgroundAssetId || null,
         },
       });
 
-      const urlExpiresInSeconds = 60 * 60;
       const url = await signStoragePath(storagePath, urlExpiresInSeconds);
-
       items.push({ url, assetId });
     }
 
@@ -972,7 +1059,7 @@ app.post("/api/ai/image", async (req, res, next) => {
       items,
       url: items[0]?.url,
       assetId: items[0]?.assetId,
-      urlExpiresInSeconds: 60 * 60,
+      urlExpiresInSeconds,
     });
   } catch (err) {
     next(err);

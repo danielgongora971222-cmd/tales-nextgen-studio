@@ -471,7 +471,13 @@ const refLabel =
     setIsLoadingHistory(true);
     try {
       const assets = await listMyAssets({ type: "image", limit: 80 });
-      const sorted = [...assets].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+      const filtered = assets.filter((a: any) => {
+        const t = a?.meta?.tool;
+        return t !== "image-generator-ref";
+      });
+
+      const sorted = [...filtered].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
       setHistory(sorted);
     } catch (e: any) {
       setError(e?.message || "No se pudo cargar el historial.");
@@ -608,7 +614,6 @@ const refLabel =
       setPanel(null); // auto-close
       setPickerSlot(null);
       setPickerQuery("");
-      await reloadHistory();
     } catch (e: any) {
       setError(e?.message || "Upload falló.");
     }
@@ -1203,7 +1208,7 @@ const refLabel =
       {/* VIEWER OVERLAY (al click en imagen) */}
       {viewer && (
         <div className={styles.viewerBackdrop} onClick={() => setViewer(null)}>
-          <div className={`${styles.viewer} ${viewerPortrait ? styles.viewerPortrait : ""}`} onClick={(e) => e.stopPropagation()}>
+          <div className={styles.viewer} onClick={(e) => e.stopPropagation()}>
             <div className={styles.viewerTop}>
               <div className={styles.viewerTitle}>
                 <span className={styles.viewerKicker}>GENERATION</span>
@@ -1314,12 +1319,8 @@ const refLabel =
                   </div>
                 </div>
 
-                <div className={styles.recipeBlock}>
-                  <div className={styles.recipeLabel}>Full prompt</div>
-                  <pre className={styles.viewerPrompt}>{viewer.prompt || ""}</pre>
-                </div>
+                
               </div>
-                <div className={styles.viewerRecipeTitle}>RECIPE</div>
             </div>
           </div>
         </div>
