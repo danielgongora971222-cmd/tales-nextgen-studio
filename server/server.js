@@ -474,7 +474,7 @@ app.get("/api/assets", async (req, res) => {
   // 3) pedir assets del usuario a la DB
   let q = supabaseAdmin
     .from("assets")
-    .select("id, url, storage_path, type, name, prompt, created_at, owner_id, is_public")
+    .select("id, url, storage_path, type, name, prompt, created_at, owner_id, is_public, meta")
     .order("created_at", { ascending: false })
     .limit(limit);
 
@@ -520,6 +520,7 @@ app.get("/api/assets", async (req, res) => {
         type: row.type === "video" ? "video" : "image",
         name: row.name || `Generation ${String(row.id).slice(0, 4)}`,
         prompt: row.prompt || undefined,
+        meta: row.meta ?? null,
         createdAt,
         ownerId: row.owner_id,
         isPublic: !!row.is_public,
@@ -936,6 +937,16 @@ app.post("/api/ai/image", async (req, res, next) => {
         prompt,
         storagePath,
         isPublic: false,
+        meta: {
+          tool: toolName,
+          model: selectedModel,
+          aspectRatio: aspectRatio || null,
+          quality: quality || null,
+          count: n, // cantidad real generada en la request
+          characterAssetIds: characterAssetIds || [],
+          styleAssetId: styleAssetId || null,
+          backgroundAssetId: backgroundAssetId || null,
+        },
       });
 
       const urlExpiresInSeconds = 60 * 60;

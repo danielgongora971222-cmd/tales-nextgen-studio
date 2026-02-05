@@ -291,6 +291,21 @@ function getStyleNameFromPromptOrSelection(opts: {
   return inside ? "Custom" : "None";
 }
 
+function getStyleNameFromPrompt(prompt: string): string {
+  const inside = extractStyleBlock(prompt || "");
+  if (!inside) return "None";
+  const match = STYLE_PRESETS.find((p) => (p.prompt || "").trim() === inside.trim());
+  return match?.name || "Custom";
+}
+
+function prettyModelLabel(modelId: string | null): string {
+  if (!modelId) return "Unknown";
+  if (modelId === GeminiModel.IMAGE) return "NanoBanana";
+  if (modelId === GeminiModel.IMAGE_PRO) return "NanoBanana Pro";
+  return nanoModelLabel(modelId);
+}
+
+
 // Iconitos (SVG inline) — nada externo
 function Icon({ name }: { name: "heart" | "share" | "download" | "trash" | "copy" | "reuse" | "close" }) {
   switch (name) {
@@ -418,6 +433,15 @@ const refLabel =
 
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+    // Cache de dimensiones por imagen (para layout del historial y viewer responsive)
+  const [imgDims, setImgDims] = useState<Record<string, { w: number; h: number }>>({});
+
+  function rememberImgDims(assetId: string, img: HTMLImageElement) {
+    const w = img.naturalWidth || 0;
+    const h = img.naturalHeight || 0;
+    if (!w || !h) return;
+    setImgDims((prev) => (prev[assetId] ? prev : { ...prev, [assetId]: { w, h } }));
+  }
 
   const popoverRef = useRef<HTMLDivElement>(null);
 
@@ -440,9 +464,6 @@ const refLabel =
   }
 
   function handleRootMouseLeave() {
-    useEffect(() => {
-    setRootGlow(50, 20);
-  }, []);
     setRootGlow(50, 20);
   }
 
@@ -460,9 +481,54 @@ const refLabel =
   }
 
   useEffect(() => {
+    setRootGlow(50, 20);
     reloadHistory();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const viewerPortrait = useMemo(() => {
+    if (!viewer) return false;
+    const d = imgDims[viewer.id];
+    if (!d) return false;
+    return d.w / d.h < 0.85; // 9:16 y similares => apilar la receta abajo
+  }, [viewer, imgDims]);
+
+  const viewerRecipeInfo = useMemo(() => {
+    if (!viewer) return null;
+
+    const meta = (viewer as any).meta || {};
+    const modelId = typeof meta.model === "string" ? meta.model : null;
+
+    const aspectRatio = typeof meta.aspectRatio === "string" ? meta.aspectRatio : null;
+    const quality = typeof meta.quality === "string" ? meta.quality : null;
+
+    const count =
+      typeof meta.count === "number"
+        ? meta.count
+        : typeof meta.count === "string"
+          ? parseInt(meta.count, 10)
+          : null;
+
+    const characterAssetIds = Array.isArray(meta.characterAssetIds) ? meta.characterAssetIds : [];
+    const backgroundAssetId = typeof meta.backgroundAssetId === "string" ? meta.backgroundAssetId : null;
+    const styleAssetId = typeof meta.styleAssetId === "string" ? meta.styleAssetId : null;
+
+    const findAsset = (id: string) => history.find((a) => a.id === id) || null;
+
+    return {
+      modelId,
+      aspectRatio,
+      quality,
+      count,
+      styleName: getStyleNameFromPrompt(viewer.prompt || ""),
+      refs: {
+        chars: characterAssetIds.map(findAsset).filter(Boolean) as Asset[],
+        bg: backgroundAssetId ? findAsset(backgroundAssetId) : null,
+        style: styleAssetId ? findAsset(styleAssetId) : null,
+        raw: { characterAssetIds, backgroundAssetId, styleAssetId },
+      },
+    };
+  }, [viewer, history]);
 
   // cerrar panel al click afuera
   useEffect(() => {
@@ -703,7 +769,14 @@ const refLabel =
                     onClick={() => setViewer(asset)}
                     title="Click para ver detalles"
                   >
-                    <img className={styles.tileImg} src={asset.url} alt={asset.name} loading="lazy" decoding="async" />
+                    <img
+                      className={styles.tileImg}
+                      src={asset.url}
+                      alt={asset.name}
+                      loading="lazy"
+                      decoding="async"
+                      onLoad={(e) => rememberImgDims(asset.id, e.currentTarget)}
+                    />
 
                     <div className={styles.tileMeta}>
                       <span className={styles.tileCaption}>{caption}</span>
@@ -1130,7 +1203,7 @@ const refLabel =
       {/* VIEWER OVERLAY (al click en imagen) */}
       {viewer && (
         <div className={styles.viewerBackdrop} onClick={() => setViewer(null)}>
-          <div className={styles.viewer} onClick={(e) => e.stopPropagation()}>
+          <div className={`${styles.viewer} ${viewerPortrait ? styles.viewerPortrait : ""}`} onClick={(e) => e.stopPropagation()}>
             <div className={styles.viewerTop}>
               <div className={styles.viewerTitle}>
                 <span className={styles.viewerKicker}>GENERATION</span>
@@ -1172,22 +1245,81 @@ const refLabel =
               <div className={styles.viewerRecipe}>
                 <div className={styles.viewerRecipeTitle}>RECIPE</div>
 
-                <div className={styles.viewerRecipeRow}>
-                  <div className={styles.viewerRecipeChip}>
-                    <span className={styles.viewerRecipeLabel}>Prompt</span>
-                    <span className={styles.viewerRecipeValue}>
-                      {removeStylePresetBlock(viewer.prompt || "") || "—"}
-                    </span>
+                <div className={styles.recipeGrid}>
+                  <div className={styles.recipeItem}>
+                    <div className={styles.recipeLabel}>Model</div>
+                    <div className={styles.recipeValue}>
+                      {prettyModelLabel(viewerRecipeInfo?.modelId || null)}
+                    </div>
+                  </div>
+
+                  <div className={styles.recipeItem}>
+                    <div className={styles.recipeLabel}>Aspect</div>
+                    <div className={styles.recipeValue}>{viewerRecipeInfo?.aspectRatio || "—"}</div>
+                  </div>
+
+                  <div className={styles.recipeItem}>
+                    <div className={styles.recipeLabel}>Quality</div>
+                    <div className={styles.recipeValue}>{viewerRecipeInfo?.quality || "—"}</div>
+                  </div>
+
+                  <div className={styles.recipeItem}>
+                    <div className={styles.recipeLabel}>Count</div>
+                    <div className={styles.recipeValue}>
+                      {viewerRecipeInfo?.count != null ? String(viewerRecipeInfo.count) : "—"}
+                    </div>
+                  </div>
+
+                  <div className={styles.recipeItemWide}>
+                    <div className={styles.recipeLabel}>Style</div>
+                    <div className={styles.recipeValue}>{viewerRecipeInfo?.styleName || "None"}</div>
                   </div>
                 </div>
 
-                <div className={styles.viewerRecipeRow}>
-                  <div className={styles.viewerRecipeChip}>
-                    <span className={styles.viewerRecipeLabel}>Full Prompt</span>
-                    <textarea className={styles.viewerPrompt} readOnly value={viewer.prompt || ""} />
+                <div className={styles.recipeRefs}>
+                  <div className={styles.recipeLabel}>References</div>
+
+                  <div className={styles.recipeRefStrip}>
+                    {(viewerRecipeInfo?.refs?.chars?.length || 0) > 0 ? (
+                      viewerRecipeInfo!.refs.chars.map((a, i) => (
+                        <div key={a.id} className={styles.recipeRefThumb} title={`Character ${i + 1}`}>
+                          <img src={a.url} alt={`Character ${i + 1}`} />
+                          <span className={styles.recipeRefTag}>C{i + 1}</span>
+                        </div>
+                      ))
+                    ) : (
+                      <div className={styles.recipeEmpty}>No saved refs (legacy)</div>
+                    )}
+
+                    {viewerRecipeInfo?.refs?.bg ? (
+                      <div className={styles.recipeRefThumb} title="Background">
+                        <img src={viewerRecipeInfo.refs.bg.url} alt="Background" />
+                        <span className={styles.recipeRefTag}>BG</span>
+                      </div>
+                    ) : null}
+
+                    {viewerRecipeInfo?.refs?.style ? (
+                      <div className={styles.recipeRefThumb} title="Style reference">
+                        <img src={viewerRecipeInfo.refs.style.url} alt="Style reference" />
+                        <span className={styles.recipeRefTag}>STYLE</span>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
+
+                <div className={styles.recipeBlock}>
+                  <div className={styles.recipeLabel}>Prompt</div>
+                  <div className={styles.recipeValue}>
+                    {removeStylePresetBlock(viewer.prompt || "") || "—"}
+                  </div>
+                </div>
+
+                <div className={styles.recipeBlock}>
+                  <div className={styles.recipeLabel}>Full prompt</div>
+                  <pre className={styles.viewerPrompt}>{viewer.prompt || ""}</pre>
+                </div>
               </div>
+                <div className={styles.viewerRecipeTitle}>RECIPE</div>
             </div>
           </div>
         </div>
