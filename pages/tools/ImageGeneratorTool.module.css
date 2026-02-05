@@ -378,7 +378,7 @@
   pointer-events: none;
   background: radial-gradient(
     800px 260px at var(--mx, 50%) var(--my, 20%),
-    rgba(241, 225, 148, 0.12),
+    rgba(161, 34, 165, 0.12),
     transparent 55%
   );
   opacity: 0.9;
