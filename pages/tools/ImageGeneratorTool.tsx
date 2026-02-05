@@ -421,6 +421,28 @@ const refLabel =
 
   const popoverRef = useRef<HTMLDivElement>(null);
 
+    const rootRef = useRef<HTMLDivElement>(null);
+
+  function setRootGlow(xPct: number, yPct: number) {
+    const el = rootRef.current;
+    if (!el) return;
+    el.style.setProperty("--mx", `${xPct}%`);
+    el.style.setProperty("--my", `${yPct}%`);
+  }
+
+  function handleRootMouseMove(e: React.MouseEvent<HTMLDivElement>) {
+    const el = rootRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * 100;
+    const y = ((e.clientY - rect.top) / rect.height) * 100;
+    setRootGlow(x, y);
+  }
+
+  function handleRootMouseLeave() {
+    setRootGlow(50, 20);
+  }
+
   async function reloadHistory() {
     setIsLoadingHistory(true);
     try {
@@ -641,7 +663,12 @@ const refLabel =
   }
 
   return (
-    <div className={styles.root}>
+    <div
+      ref={rootRef}
+      className={styles.root}
+      onMouseMove={handleRootMouseMove}
+      onMouseLeave={handleRootMouseLeave}
+    >
       {/* HISTORIAL (único contenido visible arriba) */}
       <div className={styles.stage}>
         <div className={styles.historyHeader}>
