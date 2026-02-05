@@ -421,7 +421,7 @@ const refLabel =
 
   const popoverRef = useRef<HTMLDivElement>(null);
 
-    const rootRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   function setRootGlow(xPct: number, yPct: number) {
     const el = rootRef.current;
@@ -440,6 +440,9 @@ const refLabel =
   }
 
   function handleRootMouseLeave() {
+    useEffect(() => {
+    setRootGlow(50, 20);
+  }, []);
     setRootGlow(50, 20);
   }
 
