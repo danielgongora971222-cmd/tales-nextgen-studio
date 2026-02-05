@@ -388,6 +388,9 @@ const ImageGeneratorTool: React.FC = () => {
   const [history, setHistory] = useState<Asset[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
+  // "library": todas tus imágenes (generadas + subidas) para el picker y recipe
+  const [myAssets, setMyAssets] = useState<Asset[]>([]);
+
   const [prompt, setPrompt] = useState("");
   const [model, setModel] = useState<GeminiModel>(GeminiModel.IMAGE);
   const [aspectRatio, setAspectRatio] = useState("1:1");
@@ -467,6 +470,26 @@ const refLabel =
     setRootGlow(50, 20);
   }
 
+  function isGeneratedHistoryItem(a: Asset): boolean {
+    const meta = (a as any).meta || {};
+    const metaTool = typeof meta.tool === "string" ? meta.tool : null;
+    const source = typeof meta.source === "string" ? meta.source : null;
+    const model = typeof meta.model === "string" ? meta.model : null;
+
+    const hasPrompt = typeof a.prompt === "string" && a.prompt.trim().length > 0;
+
+    // ✅ Regla dura: el historial SOLO muestra generaciones reales
+    // - nunca uploads
+    // - solo tool = image-generator
+    // - y debe tener model (los uploads no lo tienen)
+    if (source === "upload") return false;
+    if (metaTool !== TOOL_ID) return false;
+    if (!model) return false;
+    if (!hasPrompt) return false;
+
+    return true;
+  }
+
   async function reloadHistory() {
     setIsLoadingHistory(true);
     try {
@@ -477,8 +500,18 @@ const refLabel =
         return t !== "image-generator-ref";
       });
 
-      const sorted = [...filtered].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-      setHistory(sorted);
+      const sorted = [...filtered].sort((a: any, b: any) => {
+        const ta = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const tb = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return tb - ta;
+      });
+
+      // 1) librería completa (para picker + recipe)
+      setMyAssets(sorted);
+
+      // 2) historial: SOLO generaciones de esta herramienta
+      const onlyGenerated = sorted.filter(isGeneratedHistoryItem);
+      setHistory(onlyGenerated);
     } catch (e: any) {
       setError(e?.message || "No se pudo cargar el historial.");
     } finally {
@@ -519,7 +552,7 @@ const refLabel =
     const backgroundAssetId = typeof meta.backgroundAssetId === "string" ? meta.backgroundAssetId : null;
     const styleAssetId = typeof meta.styleAssetId === "string" ? meta.styleAssetId : null;
 
-    const findAsset = (id: string) => history.find((a) => a.id === id) || null;
+    const findAsset = (id: string) => myAssets.find((a) => a.id === id) || null;
 
     return {
       modelId,
@@ -534,7 +567,7 @@ const refLabel =
         raw: { characterAssetIds, backgroundAssetId, styleAssetId },
       },
     };
-  }, [viewer, history]);
+  }, [viewer, myAssets]);
 
   // cerrar panel al click afuera
   useEffect(() => {
@@ -562,12 +595,12 @@ const refLabel =
 
   const filteredPickerAssets = useMemo(() => {
     const q = pickerQuery.trim().toLowerCase();
-    if (!q) return history;
-    return history.filter((a) => {
+    if (!q) return myAssets;
+    return myAssets.filter((a) => {
       const caption = removeStylePresetBlock(a.prompt || "").toLowerCase();
       return (a.name || "").toLowerCase().includes(q) || caption.includes(q);
     });
-  }, [history, pickerQuery]);
+  }, [myAssets, pickerQuery]);
 
   const recipeStyleName = useMemo(() => {
     return getStyleNameFromPromptOrSelection({ prompt, selectedStyleId });
@@ -590,26 +623,33 @@ const refLabel =
 
   function setRefSlot(slot: RefSlot, asset: Asset | null) {
     setRefs((prev) => {
-      const next = { ...prev, [slot]: asset };
-
-      // Si borras char1, también borra char2 y char3
-      if (slot === "char1" && !asset) {
-        next.char2 = null;
-        next.char3 = null;
+      // Background es independiente
+      if (slot === "background") {
+        return { ...prev, background: asset };
       }
 
-      // Si borras char2, también borra char3
-      if (slot === "char2" && !asset) {
-        next.char3 = null;
-      }
+      // Character slots: siempre compactamos a la izquierda (char1 -> char2 -> char3)
+      const current: (Asset | null)[] = [prev.char1, prev.char2, prev.char3];
+      const idx = slot === "char1" ? 0 : slot === "char2" ? 1 : 2;
 
-      return next;
+      const next = [...current];
+      next[idx] = asset;
+
+      // Compactar: elimina huecos (null) y vuelve a llenar 3 slots
+      const packed = next.filter(Boolean) as Asset[];
+
+      return {
+        ...prev,
+        char1: packed[0] || null,
+        char2: packed[1] || null,
+        char3: packed[2] || null,
+      };
     });
   }
 
   async function handleUploadToSlot(slot: RefSlot, file: File) {
     try {
-      const uploaded = await uploadUserAsset(file, "image-generator");
+      const uploaded = await uploadUserAsset(file, REF_TOOL_ID);
       setRefSlot(slot, uploaded);
       setPanel(null); // auto-close
       setPickerSlot(null);
@@ -840,27 +880,74 @@ const refLabel =
           {(refs.char1 || refs.char2 || refs.char3 || refs.background) && (
             <div className={styles.refThumbStrip}>
               {refs.char1 && (
-                <div className={styles.refMini}>
+                <div className={styles.refMini} title="Character 1">
                   <img src={refs.char1.url} alt="char1" />
-                  <span className={styles.refMiniIcon}>👤</span>
+                  <span className={styles.refMiniIcon}>C1</span>
+                  <button
+                    type="button"
+                    className={styles.refMiniRemove}
+                    aria-label="Remove Character 1"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setRefSlot("char1", null);
+                    }}
+                  >
+                    ×
+                  </button>
                 </div>
               )}
+
               {refs.char2 && (
-                <div className={styles.refMini}>
+                <div className={styles.refMini} title="Character 2">
                   <img src={refs.char2.url} alt="char2" />
-                  <span className={styles.refMiniIcon}>👤</span>
+                  <span className={styles.refMiniIcon}>C2</span>
+                  <button
+                    type="button"
+                    className={styles.refMiniRemove}
+                    aria-label="Remove Character 2"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setRefSlot("char2", null);
+                    }}
+                  >
+                    ×
+                  </button>
                 </div>
               )}
+
               {refs.char3 && (
-                <div className={styles.refMini}>
+                <div className={styles.refMini} title="Character 3">
                   <img src={refs.char3.url} alt="char3" />
-                  <span className={styles.refMiniIcon}>👤</span>
+                  <span className={styles.refMiniIcon}>C3</span>
+                  <button
+                    type="button"
+                    className={styles.refMiniRemove}
+                    aria-label="Remove Character 3"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setRefSlot("char3", null);
+                    }}
+                  >
+                    ×
+                  </button>
                 </div>
               )}
+
               {refs.background && (
-                <div className={styles.refMini}>
+                <div className={styles.refMini} title="Background">
                   <img src={refs.background.url} alt="background" />
-                  <span className={styles.refMiniIcon}>🖼️</span>
+                  <span className={styles.refMiniIcon}>BG</span>
+                  <button
+                    type="button"
+                    className={styles.refMiniRemove}
+                    aria-label="Remove Background"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setRefSlot("background", null);
+                    }}
+                  >
+                    ×
+                  </button>
                 </div>
               )}
             </div>
