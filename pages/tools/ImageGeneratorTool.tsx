@@ -1087,8 +1087,6 @@ const refLabel =
               <span>styles</span>
               <span className={styles.controlBtnMeta}>{styleLabel}</span>
             </button>
-
-            <div className={styles.creditPill}>Credits Cost: XXXX</div>
           </div>
 
           {/* POPOVERS */}
