@@ -1303,23 +1303,43 @@ async function deleteStoragePaths(paths) {
   if (error) throw new Error(error.message);
 }
 
-function resolveKlingCreateElementUrl() {
-  // ✅ RECOMENDADO: usar URL completa en env
-  const direct = process.env.KLING_ELEMENT_CREATE_URL;
-  if (direct) return direct.replace(/\/+$/g, "");
+  function resolveKlingCreateElementUrl() {
+    const directRaw = (process.env.KLING_ELEMENT_CREATE_URL || "").toString().trim();
 
-  // fallback: base + path
-  let baseUrl = (process.env.KLING_BASE_URL || "https://api.klingai.com").replace(/\/+$/g, "");
-  if (!baseUrl.endsWith("/v1")) baseUrl += "/v1";
+    // Si te dieron una URL completa, úsala.
+    if (directRaw) {
+      if (/^https?:\/\//i.test(directRaw)) return directRaw.replace(/\/+$/g, "");
+      // Si pusiste "api.klingai.com/v1/..." sin https, lo arreglamos.
+      if (/^api\.klingai\.com/i.test(directRaw)) return `https://${directRaw}`.replace(/\/+$/g, "");
+      // Si pusiste un PATH (ej: "/v1/general/custom-elements"), lo tratamos como PATH.
+      process.env.KLING_ELEMENT_CREATE_PATH = directRaw;
+    }
 
-  const path = (process.env.KLING_ELEMENT_CREATE_PATH || "/elements")
-    .toString()
-    .trim()
-    .replace(/\s+/g, "")
-    .replace(/^([^/])/, "/$1");
+    let baseUrl = (process.env.KLING_BASE_URL || "https://api.klingai.com")
+      .toString()
+      .trim()
+      .replace(/\/+$/g, "");
 
-  return `${baseUrl}${path}`;
-}
+    // Fuerza /v1 en base
+    if (!/\/v1$/i.test(baseUrl)) baseUrl += "/v1";
+
+    let pathRaw = (process.env.KLING_ELEMENT_CREATE_PATH || "/general/custom-elements")
+      .toString()
+      .trim()
+      .replace(/\s+/g, "");
+
+    // Si alguien pone una URL completa aquí, la usamos.
+    if (/^https?:\/\//i.test(pathRaw)) return pathRaw.replace(/\/+$/g, "");
+
+    // Asegura slash inicial
+    if (!pathRaw.startsWith("/")) pathRaw = "/" + pathRaw;
+
+    // Evita duplicar /v1 si el path viene como "/v1/..."
+    if (pathRaw.startsWith("/v1/")) pathRaw = pathRaw.slice(3);
+
+    return `${baseUrl}${pathRaw}`.replace(/\/+$/g, "");
+  }
+
 
 async function klingCreateElement({ name, tag, imageUrls }) {
   const accessKey = process.env.KLING_ACCESS_KEY;
@@ -1338,6 +1358,13 @@ async function klingCreateElement({ name, tag, imageUrls }) {
       ...(tag ? { tag } : {}),
       image_list: imageUrls.map((u) => ({ image: u })),
     },
+
+        {
+      ...base,
+      ...(tag ? { tag } : {}),
+      image_list: imageUrls.map((u) => ({ url: u })),
+    },
+
     // Alternativa (cover + extras)
     {
       ...base,
@@ -1355,20 +1382,25 @@ async function klingCreateElement({ name, tag, imageUrls }) {
 
   let lastErr = null;
 
-  for (const payload of payloads) {
+    for (const payload of payloads) {
     try {
       const resp = await fetch(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          Accept: "application/json",
           Authorization: `Bearer ${makeKlingJwt(accessKey, secretKey, 300)}`,
         },
         body: JSON.stringify(payload),
       });
 
-      const json = await resp.json().catch(() => null);
+      const text = await resp.text();
+      let json = null;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch {}
 
-      if (resp.ok && json && (json.code === 0 || json.code === undefined)) {
+      if (resp.ok && json && (json.code === 0 || json.code === undefined || json.success === true)) {
         const data = json.data || json;
         const elementId =
           data.element_id ||
@@ -1380,8 +1412,17 @@ async function klingCreateElement({ name, tag, imageUrls }) {
         if (elementId) return { elementId, raw: json };
       }
 
-      const msg = json?.message || json?.error?.message || resp.statusText || "Kling create element failed";
-      lastErr = new Error(msg);
+      const msgFromJson =
+        json?.message ||
+        json?.msg ||
+        json?.error?.message ||
+        json?.error ||
+        null;
+
+      const statusLine = `HTTP ${resp.status}${resp.statusText ? ` ${resp.statusText}` : ""}`;
+      const snippet = (text || "").slice(0, 280);
+
+      lastErr = new Error(`${msgFromJson || statusLine}${snippet ? ` | body: ${snippet}` : ""}`);
     } catch (e) {
       lastErr = e;
     }
@@ -1390,7 +1431,7 @@ async function klingCreateElement({ name, tag, imageUrls }) {
   throw httpError(
     502,
     "KLING_CREATE_ELEMENT_FAILED",
-    `Kling no aceptó el payload para crear el Element. Revisa tu KLING_ELEMENT_CREATE_URL/PATH. Detalles: ${lastErr?.message || "unknown"}`
+    `Kling no aceptó el payload para crear el Element. URL usada: ${url}. Detalles: ${lastErr?.message || "unknown"}`
   );
 }
 
