@@ -7,7 +7,7 @@ import dotenv from "dotenv";
 import { z } from "zod";
 import { GoogleGenAI } from "@google/genai";
 import { createClient } from "@supabase/supabase-js";
-import { createHmac } from "crypto";
+import { createHmac, randomUUID } from "crypto";
 
 
 dotenv.config();
@@ -313,6 +313,9 @@ const ImageRequestSchema = z.object({
   characterAssetIds: z.array(z.string()).max(10).optional(),
   styleAssetId: z.string().optional(),
   backgroundAssetId: z.string().optional(),
+    // ✅ Kling-only (Element Library): IDs UUID de tu tabla public.kling_elements
+  // (estos NO son los element_id bigint que devuelve Kling)
+  klingElementIds: z.array(z.string().uuid()).max(5).optional(),
 });
 
 const Base64ImageSchema = z
@@ -1260,6 +1263,315 @@ app.delete("/api/assets/:id", async (req, res) => {
   return res.json({ ok: true, id: assetId });
 });
 
+// ===============================
+// KLING - Element Library (per user)
+// ===============================
+
+const KlingElementImageSchema = z.union([
+  z.object({ assetId: z.string().uuid() }),
+  z.object({ dataUrl: z.string().min(20) }),
+]);
+
+const CreateKlingElementRequestSchema = z.object({
+  name: z.string().min(1).max(80),
+  tag: z.string().optional(), // e.g. "character" | "object" | "scene" (depende de Kling)
+  images: z.array(KlingElementImageSchema).min(1).max(4),
+});
+
+function buildKlingElementStoragePath({ userId, elementUuid, index, mimeType }) {
+  const ext = extFromMime(mimeType || "image/png");
+  return `${userId}/kling-element/${elementUuid}-${index}.${ext}`;
+}
+
+async function uploadBytesToStorageAtPath({ storagePath, bytes, mimeType }) {
+  const up = await supabaseAdmin.storage
+    .from(SUPABASE_BUCKET)
+    .upload(storagePath, bytes, { contentType: mimeType || "image/png", upsert: false });
+
+  if (up.error) throw new Error(up.error.message);
+  return storagePath;
+}
+
+async function deleteStoragePaths(paths) {
+  const unique = [...new Set((paths || []).filter(Boolean))];
+  if (!unique.length) return;
+
+  const { error } = await supabaseAdmin.storage
+    .from(SUPABASE_BUCKET)
+    .remove(unique);
+
+  if (error) throw new Error(error.message);
+}
+
+function resolveKlingCreateElementUrl() {
+  // ✅ RECOMENDADO: usar URL completa en env
+  const direct = process.env.KLING_ELEMENT_CREATE_URL;
+  if (direct) return direct.replace(/\/+$/g, "");
+
+  // fallback: base + path
+  let baseUrl = (process.env.KLING_BASE_URL || "https://api.klingai.com").replace(/\/+$/g, "");
+  if (!baseUrl.endsWith("/v1")) baseUrl += "/v1";
+
+  const path = (process.env.KLING_ELEMENT_CREATE_PATH || "/elements")
+    .toString()
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(/^([^/])/, "/$1");
+
+  return `${baseUrl}${path}`;
+}
+
+async function klingCreateElement({ name, tag, imageUrls }) {
+  const accessKey = process.env.KLING_ACCESS_KEY;
+  const secretKey = process.env.KLING_SECRET_KEY;
+  if (!accessKey || !secretKey) {
+    throw httpError(500, "KLING_NOT_CONFIGURED", "Faltan KLING_ACCESS_KEY / KLING_SECRET_KEY en el backend.");
+  }
+
+  const url = resolveKlingCreateElementUrl();
+
+  const base = { name };
+  const payloads = [
+    // Formato común (lista)
+    {
+      ...base,
+      ...(tag ? { tag } : {}),
+      image_list: imageUrls.map((u) => ({ image: u })),
+    },
+    // Alternativa (cover + extras)
+    {
+      ...base,
+      ...(tag ? { tag } : {}),
+      coverImage: imageUrls[0],
+      images: imageUrls,
+    },
+    // Alternativa (array simple)
+    {
+      ...base,
+      ...(tag ? { tag } : {}),
+      image_urls: imageUrls,
+    },
+  ];
+
+  let lastErr = null;
+
+  for (const payload of payloads) {
+    try {
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${makeKlingJwt(accessKey, secretKey, 300)}`,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const json = await resp.json().catch(() => null);
+
+      if (resp.ok && json && (json.code === 0 || json.code === undefined)) {
+        const data = json.data || json;
+        const elementId =
+          data.element_id ||
+          data.elementId ||
+          data.id ||
+          data.element?.id ||
+          data.element?.element_id;
+
+        if (elementId) return { elementId, raw: json };
+      }
+
+      const msg = json?.message || json?.error?.message || resp.statusText || "Kling create element failed";
+      lastErr = new Error(msg);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+
+  throw httpError(
+    502,
+    "KLING_CREATE_ELEMENT_FAILED",
+    `Kling no aceptó el payload para crear el Element. Revisa tu KLING_ELEMENT_CREATE_URL/PATH. Detalles: ${lastErr?.message || "unknown"}`
+  );
+}
+
+// GET /api/kling/elements  -> lista elementos del usuario
+app.get("/api/kling/elements", async (req, res) => {
+  const { user, error } = await requireUser(req);
+  if (error) return res.status(401).json({ ok: false, error });
+
+  const { data, error: dbErr } = await supabaseAdmin
+    .from("kling_elements")
+    .select("id, name, kling_element_id, preview_path, image_paths, created_at")
+    .eq("owner_id", user.id)
+    .order("created_at", { ascending: false });
+
+  if (dbErr) {
+    return res.status(500).json({ ok: false, error: { code: "DB_SELECT_FAILED", message: dbErr.message } });
+  }
+
+  const items = await Promise.all(
+    (data || []).map(async (row) => {
+      const previewUrl = row.preview_path ? await signStoragePath(row.preview_path, 60 * 60) : null;
+      const imageUrls = Array.isArray(row.image_paths)
+        ? await Promise.all(row.image_paths.map((p) => signStoragePath(p, 60 * 60)))
+        : [];
+
+      return {
+        id: row.id,
+        name: row.name,
+        klingElementId: row.kling_element_id || null,
+        createdAt: row.created_at,
+        previewUrl,
+        imageUrls,
+      };
+    })
+  );
+
+  return res.json({ ok: true, items });
+});
+
+// POST /api/kling/elements  -> crea elemento (1-4 imágenes) + crea en Kling + guarda en DB
+app.post("/api/kling/elements", async (req, res, next) => {
+  try {
+    const { user, error } = await requireUser(req);
+    if (error) return res.status(401).json({ ok: false, error });
+
+    const { name, tag, images } = CreateKlingElementRequestSchema.parse(req.body);
+
+    const elementUuid = randomUUID();
+
+    // 1) Subir imágenes a Storage bajo /<userId>/kling-element/<uuid>-N.ext
+    const imagePaths = [];
+    for (let i = 0; i < images.length; i++) {
+      const item = images[i];
+
+      let bytes;
+      let mimeType = "image/png";
+
+      if ("assetId" in item) {
+        const file = await assetIdToImageFile(item.assetId, user.id);
+        bytes = file.buffer;
+        mimeType = file.mimeType || "image/png";
+      } else {
+        const parsed = parseDataUrl(item.dataUrl);
+        mimeType = parsed.mimeType || "image/png";
+        bytes = Buffer.from(parsed.base64, "base64");
+      }
+
+      const storagePath = buildKlingElementStoragePath({
+        userId: user.id,
+        elementUuid,
+        index: i + 1,
+        mimeType,
+      });
+
+      await uploadBytesToStorageAtPath({ storagePath, bytes, mimeType });
+      imagePaths.push(storagePath);
+    }
+
+    // 2) Firmar URLs (para que Kling pueda descargar)
+    const signedImageUrls = await Promise.all(imagePaths.map((p) => signStoragePath(p, 60 * 30)));
+
+    // 3) Crear Element en Kling (endpoint configurable via env)
+    const { elementId } = await klingCreateElement({
+      name,
+      tag: tag || "character",
+      imageUrls: signedImageUrls,
+    });
+
+    // 4) Guardar en DB (paths, no URLs firmadas)
+    const previewPath = imagePaths[0];
+
+    const { data: row, error: insErr } = await supabaseAdmin
+      .from("kling_elements")
+      .insert({
+        owner_id: user.id,
+        name,
+        kling_element_id: String(elementId),
+        image_paths: imagePaths,
+        preview_path: previewPath,
+      })
+      .select("id, name, kling_element_id, preview_path, image_paths, created_at")
+      .single();
+
+    if (insErr) {
+      // Si falla DB, intentamos limpiar storage para no dejar basura
+      try {
+        await deleteStoragePaths(imagePaths);
+      } catch {}
+      return res.status(500).json({ ok: false, error: { code: "DB_INSERT_FAILED", message: insErr.message } });
+    }
+
+    const previewUrl = await signStoragePath(row.preview_path, 60 * 60);
+    const imageUrls = await Promise.all((row.image_paths || []).map((p) => signStoragePath(p, 60 * 60)));
+
+    return res.status(201).json({
+      ok: true,
+      item: {
+        id: row.id,
+        name: row.name,
+        klingElementId: row.kling_element_id,
+        createdAt: row.created_at,
+        previewUrl,
+        imageUrls,
+      },
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// DELETE /api/kling/elements/:id -> borra fila (solo owner) + borra archivos (recomendado)
+app.delete("/api/kling/elements/:id", async (req, res) => {
+  const { user, error } = await requireUser(req);
+  if (error) return res.status(401).json({ ok: false, error });
+
+  const id = req.params.id;
+
+  // 1) Buscar fila (para conocer paths) y validar ownership
+  const { data: row, error: getErr } = await supabaseAdmin
+    .from("kling_elements")
+    .select("id, owner_id, preview_path, image_paths")
+    .eq("id", id)
+    .single();
+
+  if (getErr || !row) {
+    return res.status(404).json({ ok: false, error: { code: "NOT_FOUND", message: "Element no encontrado." } });
+  }
+  if (row.owner_id !== user.id) {
+    return res.status(403).json({ ok: false, error: { code: "FORBIDDEN", message: "No tienes permiso." } });
+  }
+
+  // 2) Borrar fila en DB
+  const { error: delErr } = await supabaseAdmin
+    .from("kling_elements")
+    .delete()
+    .eq("id", id)
+    .eq("owner_id", user.id);
+
+  if (delErr) {
+    return res.status(500).json({ ok: false, error: { code: "DB_DELETE_FAILED", message: delErr.message } });
+  }
+
+  // 3) Borrar archivos en Storage (opcional pero recomendado)
+  const pathsToDelete = [
+    row.preview_path,
+    ...(Array.isArray(row.image_paths) ? row.image_paths : []),
+  ];
+  try {
+    await deleteStoragePaths(pathsToDelete);
+  } catch (e) {
+    return res.json({
+      ok: true,
+      id,
+      storageDeleted: false,
+      warning: "Fila borrada, pero falló el borrado de archivos en Storage.",
+    });
+  }
+
+  return res.json({ ok: true, id, storageDeleted: true });
+});
+
 
 app.post("/api/ai/image", async (req, res, next) => {
   try {
@@ -1272,6 +1584,7 @@ app.post("/api/ai/image", async (req, res, next) => {
       quality,
       tool,
       nameHint,
+      klingElementIds,
       characterAssetIds,
       styleAssetId,
       backgroundAssetId,
@@ -1545,12 +1858,114 @@ app.post("/api/ai/image", async (req, res, next) => {
 
           const image_list = refUrls.map((u) => ({ image: u }));
 
+          // ✅ Elements (Kling Element Library) -> element_list
+          // Nota: element_id puede ser "long" (18+ dígitos), NO lo conviertas a Number (pierde precisión).
+          let element_list = [];
+          let element_recipe = []; // para guardar en meta (IDs + name + preview_path)
+          if (Array.isArray(klingElementIds) && klingElementIds.length) {
+            if (klingElementIds.length > 5) {
+              throw httpError(400, "KLING_TOO_MANY_ELEMENTS", "No puedes usar más de 5 elements a la vez.", {
+                max: 5,
+                received: klingElementIds.length,
+              });
+            }
+
+            const { data: rows, error: rowsErr } = await supabaseAdmin
+              .from("kling_elements")
+              .select("id, kling_element_id, name, preview_path")
+              .eq("owner_id", user.id)
+              .in("id", klingElementIds);
+
+            if (rowsErr) {
+              throw httpError(500, "DB_SELECT_FAILED", "No se pudieron leer tus Kling elements.", {
+                table: "kling_elements",
+                error: rowsErr,
+              });
+            }
+
+            const byId = new Map((rows || []).map((r) => [r.id, r]));
+            const missing = klingElementIds.filter((id) => !byId.has(id));
+            if (missing.length) {
+              throw httpError(404, "KLING_ELEMENTS_NOT_FOUND", "Algunos elements no existen o no te pertenecen.", { missing });
+            }
+
+            // Mantener el orden exacto que envía el frontend
+            const ordered = klingElementIds.map((id) => byId.get(id));
+
+            // para "receta" (front-end puede renderizar nombres rápido)
+            element_recipe = ordered.map((r) => ({
+              id: r.id,
+              name: r.name || null,
+              preview_path: r.preview_path || null,
+            }));
+
+            element_list = ordered
+              .map((r) => String(r.kling_element_id || "").trim())
+              .filter(Boolean)
+              .map((eid) => ({ element_id: eid }));
+          }
+
+          // ✅ Validación: images + elements comparten el pool de 10 slots
+          if (image_list.length + element_list.length > 10) {
+            throw httpError(400, "KLING_TOO_MANY_REFERENCES", "La suma de referencias (images + elements) no puede ser mayor que 10.", {
+              images: image_list.length,
+              elements: element_list.length,
+              maxTotal: 10,
+            });
+          }
+
+          // (Opcional) firmar previews para render rápido en "receta".
+          // OJO: URLs firmadas expiran; por eso también guardamos preview_path + name.
+          let klingElementPreviewUrls = [];
+          if (Array.isArray(element_recipe) && element_recipe.length) {
+            klingElementPreviewUrls = await Promise.all(
+              element_recipe.map(async (r) => {
+                const p = r?.preview_path;
+                return p ? await signStoragePath(p, urlExpiresInSeconds) : null;
+              })
+            );
+          }
+
+          const klingElementRecipe = Array.isArray(element_recipe)
+            ? element_recipe.map((r, i) => ({
+                id: r?.id,
+                name: r?.name || null,
+                previewPath: r?.preview_path || null,
+                previewUrl: klingElementPreviewUrls[i] || null,
+              }))
+            : [];
+
           // Si hay imágenes y el prompt NO trae <<<image_#>>>, añadimos placeholders automáticamente
           let promptForKling = String(prompt || "");
           if (image_list.length) {
             const hasPlaceholders = /<<<\s*image_\d+\s*>>>/i.test(promptForKling);
             if (!hasPlaceholders) {
               const placeholders = image_list.map((_, i) => `<<<image_${i + 1}>>>`).join(" ");
+              promptForKling = `${promptForKling}\n\n${placeholders}`.trim();
+            }
+          }
+
+          // ✅ Prompt templating para elements:
+          // Si el usuario no incluyó referencias, auto-agrega <<<element_1>>> ... según selección.
+          // (y si ya lo escribió, no lo duplicamos)
+          if (element_list.length) {
+            const used = new Set();
+
+            // Detecta <<<element_1>>> ...
+            const reRich = /<<<\s*element_(\d+)\s*>>>/gi;
+            for (const m of promptForKling.matchAll(reRich)) used.add(Number(m[1]));
+
+            // Detecta @element_1 ... (por si el usuario lo escribe así)
+            const reAt = /@element_(\d+)/gi;
+            for (const m of promptForKling.matchAll(reAt)) used.add(Number(m[1]));
+
+            const missingNums = [];
+            for (let i = 1; i <= element_list.length; i++) {
+              if (!used.has(i)) missingNums.push(i);
+            }
+
+            if (missingNums.length) {
+              const placeholders = missingNums.map((i) => `<<<element_${i}>>>`).join(" ");
               promptForKling = `${promptForKling}\n\n${placeholders}`.trim();
             }
           }
@@ -1568,6 +1983,7 @@ app.post("/api/ai/image", async (req, res, next) => {
           };
 
           if (image_list.length) createPayload.image_list = image_list;
+          if (element_list.length) createPayload.element_list = element_list;
 
           const createResp = await fetch(`${baseUrl}/images/omni-image`, {
             method: "POST",
@@ -1701,6 +2117,9 @@ app.post("/api/ai/image", async (req, res, next) => {
               characterAssetIds: Array.isArray(characterAssetIds) ? characterAssetIds : [],
               styleAssetId: styleAssetId || null,
               backgroundAssetId: backgroundAssetId || null,
+              klingElementIds: Array.isArray(klingElementIds) ? klingElementIds : [],
+              // "Receta" opcional para render rápido (los previewUrl expiran).
+              klingElementRecipe,
             };
 
             const assetId = await insertAssetRow({

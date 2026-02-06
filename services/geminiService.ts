@@ -99,6 +99,8 @@ export type GenerateImageBatchOptions = {
   quality?: ImageGenQuality;
   tool?: string;
   nameHint?: string;
+  // Kling-only (Element Library)
+  klingElementIds?: string[];
 
   // refs (IDs de assets guardados en tu DB)
   characterAssetIds?: string[];
@@ -127,6 +129,8 @@ export const generateImageBatch = async (
     characterAssetIds: options?.characterAssetIds,
     styleAssetId: options?.styleAssetId,
     backgroundAssetId: options?.backgroundAssetId,
+    // Kling-only
+    klingElementIds: options?.klingElementIds,
   });
 
   const items: ImageGenItem[] = Array.isArray(res?.items) ? res.items : [];

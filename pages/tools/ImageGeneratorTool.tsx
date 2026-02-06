@@ -3,6 +3,7 @@ import styles from "./ImageGeneratorTool.module.css";
 import { generateImageBatch } from "../../services/geminiService";
 import { deleteAsset, listMyAssets, publishAsset, unpublishAsset, uploadUserAsset } from "../../services/assetsApi";
 import { useAuth } from "../../contexts/AuthContext";
+import { supabase } from "../../services/supabaseClient";
 import { Asset, GeminiModel } from "../../types";
 import ErrorModal from "../../components/ErrorModal";
 
@@ -12,6 +13,15 @@ type StylePreset = {
   prompt: string;
   coverUrl?: string;
   exampleUrls?: [string, string, string, string];
+};
+
+type KlingElementItem = {
+  id: string;
+  name: string;
+  klingElementId: string | null;
+  createdAt: string;
+  previewUrl: string | null;
+  imageUrls: string[];
 };
 
 const STYLE_PRESET_BLOCK_START = "[[STYLE_PRESET_START]]";
@@ -246,7 +256,6 @@ const KLING_PROMPT_MAX = 2500;
 function isKlingModel(modelId: string) {
   return (modelId || "").startsWith("kling:");
 }
-
 
 function makeKlingSafeStyle(styleId: string | null, stylePrompt: string): string {
   const p = (stylePrompt || "").trim();
@@ -590,6 +599,15 @@ const ImageGeneratorTool: React.FC = () => {
     background: null,
   });
 
+  // ===============================
+  // Kling-only: Element/Person Library
+  // (solo se usa cuando isKlingModel(model) === true)
+  // ===============================
+  const [klingElements, setKlingElements] = useState<KlingElementItem[]>([]);
+  const [selectedKlingElementIds, setSelectedKlingElementIds] = useState<string[]>([]); // máx 5
+  const [isElementCreateOpen, setIsElementCreateOpen] = useState(false);
+  const [isElementAllOpen, setIsElementAllOpen] = useState(false);
+
   // Styles (solo aquí)
   const [selectedStyleId, setSelectedStyleId] = useState<string | null>(null);
   const selectedStylePrompt = useMemo(() => {
@@ -733,6 +751,52 @@ const ImageGeneratorTool: React.FC = () => {
     reloadHistory();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ===============================
+  // Kling Elements: cargar solo cuando el modelo seleccionado es Kling
+  // ===============================
+  useEffect(() => {
+    let cancelled = false;
+
+    async function run() {
+      const kling = isKlingModel(model);
+
+      // Si NO es Kling: ocultamos UI y limpiamos selección
+      if (!kling) {
+        setKlingElements([]);
+        setSelectedKlingElementIds([]);
+        setIsElementCreateOpen(false);
+        setIsElementAllOpen(false);
+        return;
+      }
+
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const token = sessionData.session?.access_token;
+
+        const headers: Record<string, string> = {};
+        if (token) headers["Authorization"] = `Bearer ${token}`;
+
+        const resp = await fetch("/api/kling/elements", { method: "GET", headers });
+        const data = await resp.json().catch(() => null);
+
+        if (!resp.ok || data?.ok === false) {
+          throw new Error(data?.error?.message || `Error listando Elements (${resp.status}).`);
+        }
+
+        if (cancelled) return;
+        setKlingElements(Array.isArray(data?.items) ? data.items : []);
+      } catch (e: any) {
+        if (cancelled) return;
+        setError(e?.message || "No se pudieron cargar tus Elements de Kling.");
+      }
+    }
+
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [model]);
 
   const viewerPortrait = useMemo(() => {
     if (!viewer) return false;
@@ -894,6 +958,9 @@ const ImageGeneratorTool: React.FC = () => {
       // Prompt final (receta real): base + background rules + style block
       const kling = isKlingModel(model);
 
+      // Kling-only: elements seleccionados (máx 5)
+      const klingElementIds = kling ? selectedKlingElementIds.slice(0, 5) : [];
+
       // Kling: si el prompt trae un bloque de estilo guardado (por “Reuse prompt”),
       // lo limpiamos y re-adjuntamos una versión corta para no romper el límite.
       const split = kling ? splitStyleBlock(basePrompt) : { cleaned: basePrompt, style: null };
@@ -931,6 +998,7 @@ const ImageGeneratorTool: React.FC = () => {
         nameHint: "generated",
         characterAssetIds,
         backgroundAssetId,
+        ...(klingElementIds.length ? { klingElementIds } : {}),
       });
 
       await reloadHistory();
@@ -1052,6 +1120,17 @@ const ImageGeneratorTool: React.FC = () => {
     const bg = bgId ? findAsset(bgId) : null;
 
     setRefs({ char1: c1, char2: c2, char3: c3, background: bg });
+    // 2.1) Kling-only: restaurar Elements usados (solo si el modelo reusado es Kling)
+    const klingIds: string[] = Array.isArray(meta.klingElementIds)
+      ? meta.klingElementIds.filter((x: any) => typeof x === "string")
+      : [];
+
+    if (metaModel && isKlingModel(metaModel)) {
+      setSelectedKlingElementIds(klingIds.slice(0, 5));
+    } else {
+      setSelectedKlingElementIds([]);
+    }
+
 
     // 3) UI: si el prompt trae un bloque de style, intentamos “reconocer” el preset
     const inside = extractStyleBlock(raw) || "";
