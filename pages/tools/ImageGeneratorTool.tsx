@@ -247,6 +247,7 @@ function isKlingModel(modelId: string) {
   return (modelId || "").startsWith("kling:");
 }
 
+
 function makeKlingSafeStyle(styleId: string | null, stylePrompt: string): string {
   const p = (stylePrompt || "").trim();
   if (!p) return "";

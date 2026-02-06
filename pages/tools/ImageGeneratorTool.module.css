@@ -1160,3 +1160,120 @@
   line-clamp: 2;
   overflow: hidden;
 }
+
+/* ============================
+   Kling Element/Person UI
+============================ */
+
+.elementDock {
+  position: absolute;
+  left: 16px;
+  top: -16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  z-index: 40;
+}
+
+.elementBtn {
+  padding: 10px 14px;
+  border-radius: 14px;
+  font-weight: 800;
+  letter-spacing: .4px;
+  background: linear-gradient(90deg, rgba(255,80,180,.95), rgba(90,170,255,.95));
+  color: white;
+  border: 1px solid rgba(255,255,255,.25);
+  box-shadow: 0 10px 30px rgba(255,80,180,.25);
+  cursor: pointer;
+  transition: transform .18s ease, box-shadow .18s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.elementBtn:hover {
+  transform: translateY(-1px) scale(1.02);
+  box-shadow: 0 16px 38px rgba(255,80,180,.35);
+}
+
+.elementBtn::after {
+  content: "";
+  position: absolute;
+  inset: -40%;
+  background: radial-gradient(circle, rgba(255,255,255,.35), transparent 60%);
+  transform: translateX(-60%);
+  animation: elementGlow 2.2s ease-in-out infinite;
+}
+
+@keyframes elementGlow {
+  0% { transform: translateX(-60%); opacity: .25; }
+  50% { transform: translateX(0%); opacity: .4; }
+  100% { transform: translateX(60%); opacity: .25; }
+}
+
+.elementRail {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  opacity: 0;
+  transform: translateX(-10px);
+  pointer-events: none;
+  transition: opacity .22s ease, transform .22s ease;
+}
+
+.elementRailOpen {
+  opacity: 1;
+  transform: translateX(0);
+  pointer-events: auto;
+}
+
+.elementAllBtn {
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: rgba(255,255,255,.08);
+  border: 1px solid rgba(255,255,255,.12);
+  color: white;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.elementChip {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.15);
+  overflow: hidden;
+  cursor: pointer;
+  background: rgba(255,255,255,.04);
+  transition: transform .15s ease, border-color .15s ease;
+}
+
+.elementChip:hover {
+  transform: translateY(-1px);
+  border-color: rgba(255,255,255,.35);
+}
+
+.elementChipActive {
+  outline: 2px solid rgba(255,80,180,.9);
+}
+
+/* modal */
+.elementModalBackdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 80;
+}
+
+.elementModal {
+  width: min(900px, 92vw);
+  max-height: 86vh;
+  overflow: auto;
+  background: rgba(22,22,28,.96);
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 18px;
+  padding: 18px;
+  box-shadow: 0 30px 90px rgba(0,0,0,.6);
+}
