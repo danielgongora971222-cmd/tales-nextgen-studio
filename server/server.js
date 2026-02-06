@@ -1495,7 +1495,7 @@ app.post("/api/ai/image", async (req, res, next) => {
       const modelName =
         selectedModel.split(":")[1] ||
         process.env.KLING_IMAGE_MODEL_NAME ||
-        "kling-image-o3";
+        "kling-image-o1";
 
       const nRequested = Math.min(Number(count || 1), maxCount);
       const toolName = tool || "image-generator";
