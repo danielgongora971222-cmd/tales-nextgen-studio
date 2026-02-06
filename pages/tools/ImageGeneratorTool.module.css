@@ -509,6 +509,35 @@
   display: flex;
   align-items: flex-end;
   gap: 10px;
+  position: relative;
+  overflow: visible;
+}
+
+/* Wrapper que contiene el dock de Kling + el textarea (así no invade el prompt) */
+.promptInputWrap{
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  position: relative;
+  overflow: visible;
+}
+
+/* Dock (botones/miniaturas) pegado al lado izquierdo del prompt */
+.klingDock{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  transform: translateY(-10px); /* “ligeramente arriba” del borde del prompt */
+  z-index: 5;
+}
+
+.klingThumbRow{
+  display: flex;
+  gap: 6px;
+  align-items: center;
 }
 
 .prompt {
