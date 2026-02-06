@@ -1478,229 +1478,254 @@ app.post("/api/ai/image", async (req, res, next) => {
       });
     }
 
-    // =============================
-    // KLING (Image) — KLING_V3_OMNI
-    // =============================
-    if (selectedModel.startsWith("kling:")) {
-      const accessKey = process.env.KLING_ACCESS_KEY;
-      const secretKey = process.env.KLING_SECRET_KEY;
-      if (!accessKey || !secretKey) {
-        throw httpError(
-          503,
-          "KLING_NOT_CONFIGURED",
-          "Faltan KLING_ACCESS_KEY y/o KLING_SECRET_KEY en el servidor (Render)."
-        );
-      }
+        // =============================
+        // KLING (Image) — Omni-Image (O1)
+        // Docs: POST /v1/images/omni-image  |  GET /v1/images/omni-image/{task_id}
+        // model_name: kling-image-o1
+        // =============================
+        if (selectedModel.startsWith("kling:")) {
+          const accessKey = process.env.KLING_ACCESS_KEY;
+          const secretKey = process.env.KLING_SECRET_KEY;
+          if (!accessKey || !secretKey) {
+            throw httpError(
+              503,
+              "KLING_NOT_CONFIGURED",
+              "Faltan KLING_ACCESS_KEY y/o KLING_SECRET_KEY en el servidor (Render)."
+            );
+          }
 
-      const modelName =
-        selectedModel.split(":")[1] ||
-        process.env.KLING_IMAGE_MODEL_NAME ||
-        "kling-image-o1";
+          const modelName =
+            selectedModel.split(":")[1] ||
+            process.env.KLING_IMAGE_MODEL_NAME ||
+            "kling-image-o1";
 
-      const nRequested = Math.min(Number(count || 1), maxCount);
-      const toolName = tool || "image-generator";
-      const hint = nameHint || "generated";
-      const urlExpiresInSeconds = 60 * 60;
+          // Kling permite n [1..9]. Tus reglas de negocio lo limitan por modelo (maxCount).
+          const nRequested = Math.max(1, Math.min(Number(count || 1), 9, maxCount));
 
-      const ar = aspectRatio === "auto" ? undefined : aspectRatio;
+          const toolName = tool || "image-generator";
+          const hint = nameHint || "generated";
+          const urlExpiresInSeconds = 60 * 60;
 
-      // Referencias (por ahora: usamos la primera como guía principal si la API lo soporta)
-      const refIds = [
-        ...(Array.isArray(characterAssetIds) ? characterAssetIds : []),
-        ...(backgroundAssetId ? [backgroundAssetId] : []),
-        ...(styleAssetId ? [styleAssetId] : []),
-      ].filter(Boolean);
+          // Calidad UI -> resolution Kling (1k / 2k)
+          const klingResolution = String(quality || "")
+            .toUpperCase()
+            .trim() === "2K"
+            ? "2k"
+            : "1k";
 
-      const refUrls = refIds.length
-        ? await Promise.all(
-            refIds.slice(0, 1).map((id) => assetIdToSignedUrl(id, user.id, 60 * 10))
-          )
-        : [];
+          // Aspect ratio soportado por Kling (NO incluye 4:5)
+          const allowedAspectRatios = new Set([
+            "16:9",
+            "9:16",
+            "1:1",
+            "4:3",
+            "3:4",
+            "3:2",
+            "2:3",
+            "21:9",
+            "auto",
+          ]);
 
-      const baseUrl = (process.env.KLING_BASE_URL || "https://api.klingai.com/v1").replace(
-        /\/+$/g,
-        ""
-      );
+          const rawAR = (aspectRatio || "auto").trim();
+          const mappedAR = rawAR === "4:5" ? "3:4" : rawAR; // 4:5 -> 3:4 (lo más cercano)
+          const klingAspectRatio = allowedAspectRatios.has(mappedAR) ? mappedAR : "auto";
 
-      const createPayload = {
-        model_name: modelName,
-        prompt,
-        n: nRequested,
-      };
+          // Referencias -> image_list (máx 10)
+          const refIds = [
+            ...(Array.isArray(characterAssetIds) ? characterAssetIds : []),
+            ...(backgroundAssetId ? [backgroundAssetId] : []),
+            ...(styleAssetId ? [styleAssetId] : []),
+          ]
+            .filter(Boolean)
+            .slice(0, 10);
 
-      if (ar) createPayload.aspect_ratio = ar;
+          const refUrls = refIds.length
+            ? await Promise.all(refIds.map((id) => assetIdToSignedUrl(id, user.id, 60 * 10)))
+            : [];
 
-      // Modo "img2img" simple (si hay referencia)
-      if (refUrls[0]) createPayload.image = refUrls[0];
+          const image_list = refUrls.map((u) => ({ image: u }));
 
-      const createResp = await fetch(`${baseUrl}/images/generations`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${makeKlingJwt(accessKey, secretKey, 300)}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(createPayload),
-      });
+          // Si hay imágenes y el prompt NO trae <<<image_#>>>, añadimos placeholders automáticamente
+          let promptForKling = String(prompt || "");
+          if (image_list.length) {
+            const hasPlaceholders = /<<<\s*image_\d+\s*>>>/i.test(promptForKling);
+            if (!hasPlaceholders) {
+              const placeholders = image_list.map((_, i) => `<<<image_${i + 1}>>>`).join(" ");
+              promptForKling = `${promptForKling}\n\n${placeholders}`.trim();
+            }
+          }
 
-      const createText = await createResp.text();
-      let createJson;
-      try {
-        createJson = JSON.parse(createText);
-      } catch {
-        createJson = null;
-      }
+          // Base URL robusta (acepta que pongas https://api.klingai.com o https://api.klingai.com/v1)
+          let baseUrl = (process.env.KLING_BASE_URL || "https://api.klingai.com").replace(/\/+$/g, "");
+          if (!/\/v1$/.test(baseUrl)) baseUrl = `${baseUrl}/v1`;
 
-      if (!createResp.ok) {
-        throw httpError(
-          502,
-          "KLING_SUBMIT_FAILED",
-          `Kling: error al crear tarea (${createResp.status}).`,
-          { response: createJson || createText }
-        );
-      }
+          const createPayload = {
+            model_name: modelName,          // kling-image-o1
+            prompt: promptForKling,         // <= 2500 chars (tu frontend ya lo limita)
+            n: nRequested,                  // 1..9
+            aspect_ratio: klingAspectRatio, // auto | 1:1 | 3:4 | ...
+            resolution: klingResolution,    // 1k | 2k
+          };
 
-      const taskId =
-        createJson?.data?.task_id ||
-        createJson?.data?.id ||
-        createJson?.task_id ||
-        createJson?.id;
+          if (image_list.length) createPayload.image_list = image_list;
 
-      if (!taskId) {
-        throw httpError(502, "KLING_BAD_RESPONSE", "Kling no devolvió task_id.", {
-          response: createJson || createText,
-        });
-      }
+          const createResp = await fetch(`${baseUrl}/images/omni-image`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${makeKlingJwt(accessKey, secretKey, 300)}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(createPayload),
+          });
 
-      // Poll hasta completar
-      let finalJson = null;
-      const maxPolls = 60; // ~2 min
-      for (let attempt = 0; attempt < maxPolls; attempt++) {
-        await sleep(2000);
+          const createText = await createResp.text();
+          let createJson;
+          try {
+            createJson = JSON.parse(createText);
+          } catch {
+            createJson = null;
+          }
 
-        const pollResp = await fetch(`${baseUrl}/images/generations/${taskId}`, {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${makeKlingJwt(accessKey, secretKey, 300)}`,
-          },
-        });
+          // Kling puede devolver HTTP 200 con code != 0, validamos ambos
+          if (!createResp.ok || (createJson && typeof createJson.code === "number" && createJson.code !== 0)) {
+            throw httpError(
+              502,
+              "KLING_SUBMIT_FAILED",
+              `Kling: error al crear tarea (${createResp.status}).`,
+              { response: createJson || createText }
+            );
+          }
 
-        const pollText = await pollResp.text();
-        let pollJson;
-        try {
-          pollJson = JSON.parse(pollText);
-        } catch {
-          pollJson = null;
-        }
+          const taskId = createJson?.data?.task_id || createJson?.task_id || createJson?.data?.id || createJson?.id;
 
-        if (!pollResp.ok) {
-          throw httpError(
-            502,
-            "KLING_POLL_FAILED",
-            `Kling: error al consultar tarea (${pollResp.status}).`,
-            { response: pollJson || pollText }
-          );
-        }
+          if (!taskId) {
+            throw httpError(502, "KLING_BAD_RESPONSE", "Kling no devolvió task_id.", {
+              response: createJson || createText,
+            });
+          }
 
-        const status =
-          pollJson?.data?.task_status ||
-          pollJson?.data?.status ||
-          pollJson?.task_status ||
-          pollJson?.status;
+          // Poll hasta completar (submitted -> processing -> succeed/failed)
+          let finalJson = null;
+          const maxPolls = 90; // ~3 min (2s por poll)
+          for (let attempt = 0; attempt < maxPolls; attempt++) {
+            await sleep(2000);
 
-        if (status === "succeed" || status === "success" || status === "completed") {
-          finalJson = pollJson;
-          break;
-        }
+            const pollResp = await fetch(`${baseUrl}/images/omni-image/${taskId}`, {
+              method: "GET",
+              headers: {
+                Authorization: `Bearer ${makeKlingJwt(accessKey, secretKey, 300)}`,
+                "Content-Type": "application/json",
+              },
+            });
 
-        if (status === "failed" || status === "error") {
-          throw httpError(502, "KLING_TASK_FAILED", "Kling: la tarea falló.", {
-            response: pollJson,
+            const pollText = await pollResp.text();
+            let pollJson;
+            try {
+              pollJson = JSON.parse(pollText);
+            } catch {
+              pollJson = null;
+            }
+
+            if (!pollResp.ok || (pollJson && typeof pollJson.code === "number" && pollJson.code !== 0)) {
+              throw httpError(
+                502,
+                "KLING_POLL_FAILED",
+                `Kling: error al consultar tarea (${pollResp.status}).`,
+                { response: pollJson || pollText }
+              );
+            }
+
+            const status = pollJson?.data?.task_status || pollJson?.task_status;
+
+            if (status === "succeed") {
+              finalJson = pollJson;
+              break;
+            }
+
+            if (status === "failed") {
+              throw httpError(502, "KLING_TASK_FAILED", "Kling: la tarea falló.", {
+                response: pollJson,
+              });
+            }
+          }
+
+          if (!finalJson) {
+            throw httpError(504, "KLING_TIMEOUT", "Kling: timeout esperando el resultado.", { taskId });
+          }
+
+          const imagesArr = finalJson?.data?.task_result?.images || [];
+
+          const urls = imagesArr
+            .map((x) => x?.url)
+            .filter(Boolean)
+            .slice(0, nRequested);
+
+          if (!urls.length) {
+            throw httpError(502, "KLING_NO_IMAGES", "Kling: tarea completada pero sin URLs de imagen.", {
+              response: finalJson,
+            });
+          }
+
+          const items = [];
+          for (const imageUrl of urls) {
+            const imgRes = await fetch(imageUrl);
+            if (!imgRes.ok) {
+              throw httpError(
+                502,
+                "KLING_IMAGE_DOWNLOAD_FAILED",
+                `Kling: no pude descargar la imagen final (${imgRes.status}).`,
+                { imageUrl }
+              );
+            }
+
+            const buf = Buffer.from(await imgRes.arrayBuffer());
+            const mime = imgRes.headers.get("content-type") || "image/png";
+            const dataUrl = `data:${mime};base64,${buf.toString("base64")}`;
+
+            const { storagePath } = await uploadBase64ToStorage({
+              userId: user.id,
+              tool: toolName,
+              dataUrl,
+              nameHint: hint,
+            });
+
+            const meta = {
+              tool: toolName,
+              provider: "kling",
+              model: selectedModel,
+              klingModelName: modelName,
+              klingTaskId: taskId,
+              aspectRatio: klingAspectRatio,
+              quality: klingResolution,
+              count: nRequested,
+              characterAssetIds: Array.isArray(characterAssetIds) ? characterAssetIds : [],
+              styleAssetId: styleAssetId || null,
+              backgroundAssetId: backgroundAssetId || null,
+            };
+
+            const assetId = await insertAssetRow({
+              ownerId: user.id,
+              type: "image",
+              tool: toolName,
+              name: hint,
+              prompt,
+              storagePath,
+              isPublic: false,
+              meta,
+            });
+
+            const url = await signStoragePath(storagePath, urlExpiresInSeconds);
+            items.push({ url, assetId });
+          }
+
+          return res.json({
+            ok: true,
+            items,
+            url: items[0]?.url,
+            assetId: items[0]?.assetId,
+            urlExpiresInSeconds,
           });
         }
-      }
-
-      if (!finalJson) {
-        throw httpError(504, "KLING_TIMEOUT", "Kling: timeout esperando el resultado.", { taskId });
-      }
-
-      const imagesArr =
-        finalJson?.data?.task_result?.images ||
-        finalJson?.data?.images ||
-        finalJson?.task_result?.images ||
-        finalJson?.images ||
-        [];
-
-      const urls = imagesArr
-        .map((x) => x?.url || x?.image_url)
-        .filter(Boolean)
-        .slice(0, nRequested);
-
-      if (!urls.length) {
-        throw httpError(502, "KLING_NO_IMAGES", "Kling: tarea completada pero sin URLs de imagen.", {
-          response: finalJson,
-        });
-      }
-
-      const items = [];
-      for (const imageUrl of urls) {
-        const imgRes = await fetch(imageUrl);
-        if (!imgRes.ok) {
-          throw httpError(
-            502,
-            "KLING_IMAGE_DOWNLOAD_FAILED",
-            `Kling: no pude descargar la imagen final (${imgRes.status}).`,
-            { imageUrl }
-          );
-        }
-
-        const buf = Buffer.from(await imgRes.arrayBuffer());
-        const mime = imgRes.headers.get("content-type") || "image/png";
-        const dataUrl = `data:${mime};base64,${buf.toString("base64")}`;
-
-        const { storagePath } = await uploadBase64ToStorage({
-          userId: user.id,
-          tool: toolName,
-          dataUrl,
-          nameHint: hint,
-        });
-
-        const meta = {
-          tool: toolName,
-          provider: "kling",
-          model: selectedModel,
-          klingModelName: modelName,
-          klingTaskId: taskId,
-          aspectRatio: aspectRatio || null,
-          quality: quality || null,
-          count: nRequested,
-          characterAssetIds: Array.isArray(characterAssetIds) ? characterAssetIds : [],
-          styleAssetId: styleAssetId || null,
-          backgroundAssetId: backgroundAssetId || null,
-        };
-
-        const assetId = await insertAssetRow({
-          ownerId: user.id,
-          type: "image",
-          tool: toolName,
-          name: hint,
-          prompt,
-          storagePath,
-          isPublic: false,
-          meta,
-        });
-
-        const url = await signStoragePath(storagePath, urlExpiresInSeconds);
-        items.push({ url, assetId });
-      }
-
-      return res.json({
-        ok: true,
-        items,
-        url: items[0]?.url,
-        assetId: items[0]?.assetId,
-        urlExpiresInSeconds,
-      });
-    }
 
     // 1) Validar que el modelo sea de imagen
     if (!isImageGenModel(selectedModel)) {

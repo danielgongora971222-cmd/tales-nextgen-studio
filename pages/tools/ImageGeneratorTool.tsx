@@ -411,24 +411,25 @@ const MODEL_CAPS: Record<string, ModelCaps> = {
     countOptions: [1, 2, 3, 4],
   },
 
-  "kling:kling-image-o1": {
-    id: "kling:kling-image-o1",
-    label: "Kling V3 Omni",
-    supportsRefs: true,
-    aspectRatios: [
-      { value: "auto", label: "Auto" },
-      { value: "1:1", label: "1:1" },
-      { value: "4:5", label: "4:5" },
-      { value: "3:4", label: "3:4" },
-      { value: "16:9", label: "16:9" },
-      { value: "9:16", label: "9:16" },
-      { value: "3:2", label: "3:2" },
-      { value: "2:3", label: "2:3" },
-    ],
-    qualities: ["1K"],
-    countOptions: [1],
-  },
-};
+    "kling:kling-image-o1": {
+      id: "kling:kling-image-o1",
+      label: "Kling V3 Omni",
+      supportsRefs: true,
+      aspectRatios: [
+        { value: "auto", label: "Auto" },
+        { value: "1:1", label: "1:1" },
+        { value: "4:3", label: "4:3" },
+        { value: "3:4", label: "3:4" },
+        { value: "3:2", label: "3:2" },
+        { value: "2:3", label: "2:3" },
+        { value: "16:9", label: "16:9" },
+        { value: "9:16", label: "9:16" },
+        { value: "21:9", label: "21:9" },
+      ],
+      qualities: ["1K", "2K"],
+      countOptions: [1],
+    },
+  };
 
 function getActiveCaps(modelId: string) {
   return MODEL_CAPS[modelId] || MODEL_CAPS[GeminiModel.IMAGE];
