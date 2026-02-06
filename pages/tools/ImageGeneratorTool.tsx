@@ -368,8 +368,8 @@ const MODEL_CAPS: Record<string, ModelCaps> = {
     countOptions: [1, 2, 3, 4],
   },
 
-  "kling:KLING_V3_OMNI": {
-    id: "kling:KLING_V3_OMNI",
+  "kling:kling-image-o3": {
+    id: "kling:kling-image-o3",
     label: "Kling V3 Omni",
     supportsRefs: true,
     aspectRatios: [
@@ -1410,7 +1410,7 @@ const ImageGeneratorTool: React.FC = () => {
                       </optgroup>
 
                       <optgroup label="Kling">
-                        <option value="kling:KLING_V3_OMNI">Kling V3 Omni</option>
+                        <option value="kling:kling-image-o3">Kling V3 Omni</option>
                       </optgroup>
 
                       <optgroup label="Flux 2.0">
