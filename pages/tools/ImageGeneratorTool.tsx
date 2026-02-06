@@ -238,6 +238,49 @@ BACKGROUND AUTO-RULES (only if a background reference image is provided):
 - Apply the selected style/preset consistently to the background.
 - Do not introduce new objects or change the scene layout.
 `.trim();
+// Kling tiene un límite duro en el tamaño del prompt.
+// Si además usas presets largos (como Live Action), puede romper el límite.
+// Por eso forzamos un máximo y usamos una versión “corta” de los estilos.
+const KLING_PROMPT_MAX = 2500;
+
+function isKlingModel(modelId: string) {
+  return (modelId || "").startsWith("kling:");
+}
+
+function makeKlingSafeStyle(styleId: string | null, stylePrompt: string): string {
+  const p = (stylePrompt || "").trim();
+  if (!p) return "";
+
+  switch (styleId) {
+    case "live_action":
+      return [
+        "STYLE: Cinematic live-action photorealism.",
+        "Lighting: film lighting, natural soft shadows, realistic materials and textures.",
+        "Color: natural/balanced, subtle depth of field, no oversaturation.",
+        "Rules: keep identity and composition consistent with references; do not add new objects.",
+      ].join("\n");
+
+    case "luxury_product":
+      return [
+        "STYLE: Luxury product advertising in a clean studio.",
+        "Lighting: controlled specular highlights, soft gradients, premium reflections; no harsh glare.",
+        "Composition: centered hero shot, elegant negative space, minimal clutter.",
+        "Quality: sharp micro-detail, commercial polish.",
+      ].join("\n");
+
+    case "pixar_3d":
+      return [
+        "STYLE: High-quality 3D animated look (Pixar-ish, family-friendly, stylized).",
+        "Lighting: soft bounce light, clean render, gentle bloom.",
+        "Materials: smooth but detailed shaders; vibrant but balanced colors.",
+        "Rules: avoid uncanny realism and noisy artifacts; keep shapes clean.",
+      ].join("\n");
+
+    default:
+      // Fallback: si el estilo viene “custom” o es muy largo, lo recortamos.
+      return p.length <= 700 ? p : p.slice(0, 700);
+  }
+}
 
 type NanoModel = "imagen-4.0-generate-preview-06-06" | "imagen-4.0-ultra-generate-preview-06-06";
 
@@ -846,17 +889,36 @@ const ImageGeneratorTool: React.FC = () => {
       const characterAssetIds = [refs.char1?.id, refs.char2?.id, refs.char3?.id].filter(Boolean) as string[];
       const backgroundAssetId = refs.background?.id;
 
-      // Prompt final (receta real): base + background rules + style block (si se eligió)
-      let finalPrompt = basePrompt;
+      // Prompt final (receta real): base + background rules + style block
+      const kling = isKlingModel(model);
+
+      // Kling: si el prompt trae un bloque de estilo guardado (por “Reuse prompt”),
+      // lo limpiamos y re-adjuntamos una versión corta para no romper el límite.
+      const split = kling ? splitStyleBlock(basePrompt) : { cleaned: basePrompt, style: null };
+      let finalPrompt = kling ? split.cleaned : basePrompt;
 
       if (backgroundAssetId) {
         finalPrompt = `${finalPrompt}\n\n${BACKGROUND_AUTO_PROMPT}`.trim();
       }
 
       // Solo aplica preset si el usuario eligió uno en Styles.
-      // (Si el prompt ya trae un bloque guardado, se respeta tal cual si NO eliges estilo nuevo.)
+      // Si NO eliges estilo nuevo, para Kling reusamos el estilo embebido (pero “corto”).
       if (selectedStylePrompt) {
-        finalPrompt = applyStylePresetToPrompt(finalPrompt, selectedStylePrompt);
+        const styleForModel = kling ? makeKlingSafeStyle(selectedStyleId, selectedStylePrompt) : selectedStylePrompt;
+        finalPrompt = applyStylePresetToPrompt(finalPrompt, styleForModel);
+      } else if (kling && split.style) {
+        const embeddedId =
+          STYLE_PRESETS.find((p) => (p.prompt || "").trim() === (split.style || "").trim())?.id || null;
+        const styleForModel = makeKlingSafeStyle(embeddedId, split.style);
+        finalPrompt = applyStylePresetToPrompt(finalPrompt, styleForModel);
+      }
+
+      // Guardrail: Kling limita el prompt completo a 2500 caracteres.
+      if (kling && finalPrompt.length > KLING_PROMPT_MAX) {
+        throw new Error(
+          `Kling limita el prompt a ${KLING_PROMPT_MAX} caracteres. Tu prompt final tiene ${finalPrompt.length}. ` +
+            `Reduce el texto (o quita Style/Background) y vuelve a intentar.`
+        );
       }
 
       await generateImageBatch(finalPrompt, model, {
