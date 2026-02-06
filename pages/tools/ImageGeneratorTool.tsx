@@ -253,8 +253,22 @@ BACKGROUND AUTO-RULES (only if a background reference image is provided):
 // Por eso forzamos un máximo y usamos una versión “corta” de los estilos.
 const KLING_PROMPT_MAX = 2500;
 
-function isKlingModel(modelId: string) {
-  return (modelId || "").startsWith("kling:");
+function isKlingModel(model: any): boolean {
+  // Soporta: string ("kling:kling-image-o1") o objeto ({ id, value, name, provider })
+  const provider = (model?.provider ?? "").toString().toLowerCase();
+
+  const id =
+    typeof model === "string"
+      ? model
+      : (model?.id ?? model?.value ?? model?.key ?? model?.name ?? "").toString();
+
+  const s = `${provider} ${id}`.toLowerCase();
+
+  if (provider === "kling") return true;
+  if (s.includes("kling")) return true;
+  if (s.includes("omni-image")) return true;
+
+  return false;
 }
 
 function makeKlingSafeStyle(styleId: string | null, stylePrompt: string): string {
@@ -607,6 +621,10 @@ const ImageGeneratorTool: React.FC = () => {
   const [selectedKlingElementIds, setSelectedKlingElementIds] = useState<string[]>([]); // máx 5
   const [isElementCreateOpen, setIsElementCreateOpen] = useState(false);
   const [isElementAllOpen, setIsElementAllOpen] = useState(false);
+  useEffect(() => {
+    // @ts-ignore
+    console.log("[KLING DEBUG] model =", model, "isKling =", isKlingModel(model));
+  }, [model]);
 
   // Styles (solo aquí)
   const [selectedStyleId, setSelectedStyleId] = useState<string | null>(null);
@@ -1331,7 +1349,111 @@ const ImageGeneratorTool: React.FC = () => {
               )}
             </div>
           )}
-          <div className={styles.promptRow}>
+          <div className={styles.promptRow} style={{ position: "relative", overflow: "visible" }}>
+            {isKlingModel(model) && (
+              <div
+                style={{
+                  position: "absolute",
+                  top: -14,
+                  left: 0,
+                  zIndex: 50,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  pointerEvents: "auto",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => setIsElementCreateOpen(true)}
+                  style={{
+                    height: 26,
+                    padding: "0 12px",
+                    borderRadius: 999,
+                    border: "none",
+                    background: "rgba(91, 14, 20, 0.65)",
+                    color: "rgba(255,255,255,0.92)",
+                    fontWeight: 800,
+                    fontSize: 11,
+                    letterSpacing: "0.08em",
+                    cursor: "pointer",
+                    boxShadow: "0 14px 28px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.06)",
+                  }}
+                  title="Crear / administrar Elements de Kling"
+                >
+                  Element/Person
+                  {selectedKlingElementIds.length > 0 ? ` (${selectedKlingElementIds.length}/5)` : ""}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIsElementAllOpen(true)}
+                  style={{
+                    height: 26,
+                    padding: "0 10px",
+                    borderRadius: 999,
+                    border: "none",
+                    background: "rgba(241, 225, 148, 0.20)",
+                    color: "rgba(241,225,148,0.92)",
+                    fontWeight: 700,
+                    fontSize: 11,
+                    cursor: "pointer",
+                    boxShadow: "0 14px 28px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.06)",
+                  }}
+                  title="Ver todos tus Elements"
+                >
+                  All
+                </button>
+
+                {klingElements.length > 0 && (
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    {klingElements.slice(0, 6).map((el) => {
+                      const active = selectedKlingElementIds.includes(el.id);
+                      const src = el.previewUrl || el.imageUrls?.[0] || "";
+                      return (
+                        <button
+                          key={el.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedKlingElementIds((prev) => {
+                              const has = prev.includes(el.id);
+                              if (has) return prev.filter((x) => x !== el.id);
+                              if (prev.length >= 5) {
+                                setError("Kling permite seleccionar máximo 5 Elements a la vez.");
+                                return prev;
+                              }
+                              return [el.id, ...prev];
+                            });
+                          }}
+                          title={el.name}
+                          style={{
+                            width: 26,
+                            height: 26,
+                            borderRadius: 9,
+                            border: active ? "2px solid rgba(241,225,148,0.75)" : "1px solid rgba(255,255,255,0.12)",
+                            background: "rgba(0,0,0,0.25)",
+                            overflow: "hidden",
+                            padding: 0,
+                            cursor: "pointer",
+                            boxShadow: "0 14px 28px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.06)",
+                            opacity: active ? 1 : 0.9,
+                          }}
+                        >
+                          {src ? (
+                            <img
+                              src={src}
+                              alt={el.name}
+                              style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                            />
+                          ) : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
             <textarea
               className={styles.prompt}
               value={prompt}
