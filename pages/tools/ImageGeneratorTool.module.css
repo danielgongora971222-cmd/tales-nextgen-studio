@@ -534,6 +534,182 @@
   z-index: 5;
 }
 
+/* ===== Kling Hover Popover ===== */
+
+.klingElementBtn{
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  border: 1px solid rgba(241,225,148,0.14);
+  background: rgba(91, 14, 20, 0.45);
+  color: rgba(255,255,255,0.92);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  position: relative;
+  box-shadow: 0 14px 28px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.06);
+  transition: transform 0.18s var(--ease-spring), box-shadow 0.18s var(--ease-spring), filter 0.18s var(--ease-spring);
+}
+
+.klingElementBtn:hover{
+  transform: translateY(-1px);
+  filter: brightness(1.05);
+  box-shadow: 0 18px 44px rgba(0,0,0,0.62), inset 0 1px 0 rgba(255,255,255,0.08);
+}
+
+/* (ETAPA 2) Clase que usaremos para la animación CTA */
+.klingElementBtnCta{
+  /* CTA (llamativo): se activa 60s al elegir Kling, o se apaga al primer click */
+  animation: klingCtaGlow 1.15s ease-in-out infinite;
+}
+
+.klingElementBtnCta::after{
+  content: "";
+  position: absolute;
+  inset: -10px;
+  border-radius: 18px;
+  border: 1px solid rgba(241,225,148,0.38);
+  box-shadow: 0 0 0 0 rgba(241,225,148,0.0);
+  opacity: 0;
+  pointer-events: none;
+  animation: klingCtaRing 1.6s ease-out infinite;
+}
+
+@keyframes klingCtaGlow{
+  0%, 100%{
+    filter: brightness(1);
+    box-shadow: 0 14px 28px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.06);
+  }
+  50%{
+    filter: brightness(1.14);
+    box-shadow:
+      0 18px 44px rgba(0,0,0,0.62),
+      0 0 28px rgba(241,225,148,0.28),
+      inset 0 1px 0 rgba(255,255,255,0.10);
+  }
+}
+
+@keyframes klingCtaRing{
+  0%{
+    opacity: 0.0;
+    transform: scale(0.86);
+    box-shadow: 0 0 0 0 rgba(241,225,148,0.0);
+  }
+  35%{
+    opacity: 0.55;
+  }
+  100%{
+    opacity: 0.0;
+    transform: scale(1.22);
+    box-shadow: 0 0 0 14px rgba(241,225,148,0.0);
+  }
+}
+
+/* badge */
+.klingBadge{
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(241,225,148,0.95);
+  color: #1a0805;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 12px 22px rgba(0,0,0,0.55);
+}
+
+/* popover hidden by default */
+.klingPopover{
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 0;
+  min-width: 260px;
+  padding: 12px;
+  border-radius: 16px;
+  background: rgba(10, 5, 6, 0.88);
+  border: 1px solid rgba(241,225,148,0.14);
+  box-shadow: 0 18px 50px rgba(0,0,0,0.68);
+  backdrop-filter: blur(16px) saturate(160%);
+
+  opacity: 0;
+  pointer-events: none;
+  transform: translate3d(-8px, 0, 0) scale(0.98);
+  transition: opacity 0.18s var(--ease-smooth), transform 0.18s var(--ease-smooth);
+  z-index: 30;
+}
+
+.klingDock:hover .klingPopover{
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate3d(0, 0, 0) scale(1);
+}
+
+.klingPopoverTop{
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  margin-bottom: 10px;
+}
+
+.klingAllBtn{
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(241,225,148,0.18);
+  background: rgba(241, 225, 148, 0.12);
+  color: rgba(241,225,148,0.92);
+  font-weight: 800;
+  font-size: 11px;
+  cursor: pointer;
+  box-shadow: 0 14px 28px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.06);
+}
+
+.klingPopoverThumbRow{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.klingThumbBtn{
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(0,0,0,0.25);
+  overflow: hidden;
+  padding: 0;
+  cursor: pointer;
+  box-shadow: 0 14px 28px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.06);
+  opacity: 0.92;
+}
+
+.klingThumbBtnActive{
+  border: 2px solid rgba(241,225,148,0.75);
+  opacity: 1;
+}
+
+.klingThumbImg{
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.klingEmpty{
+  font-size: 12px;
+  color: rgba(255,255,255,0.55);
+  padding: 6px 2px 2px;
+}
+
 .klingThumbRow{
   display: flex;
   gap: 6px;
@@ -1188,4 +1364,280 @@
   -webkit-line-clamp: 2;
   line-clamp: 2;
   overflow: hidden;
+}
+
+/* =========================================
+   KLING ELEMENTS: MODALES (Create / All)
+   ========================================= */
+
+.elementBackdrop{
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.78);
+  backdrop-filter: blur(12px);
+  display: grid;
+  place-items: center;
+  z-index: 1001;
+  padding: 18px;
+}
+
+.elementModal{
+  width: 100%;
+  max-width: 860px;
+  max-height: 90vh;
+  background: rgba(10, 5, 6, 0.96);
+  border-radius: 18px;
+  overflow: hidden;
+  box-shadow: 0 50px 120px rgba(0,0,0,0.95);
+  display: flex;
+  flex-direction: column;
+}
+
+.elementHeader{
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: inset 0 -1px 0 rgba(255,255,255,0.06);
+}
+
+.elementTitle{
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(241,225,148,0.9);
+}
+
+.elementBody{
+  padding: 14px 16px 18px;
+  overflow: auto;
+}
+
+.elementFormRow{
+  display: grid;
+  grid-template-columns: 1fr 220px;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+@media (max-width: 560px){
+  .elementFormRow{ grid-template-columns: 1fr; }
+}
+
+.elementField{
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.elementLabel{
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.75);
+}
+
+.elementSlots{
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 560px){
+  .elementSlots{ grid-template-columns: 1fr; }
+}
+
+.elementSlotCard{
+  background: rgba(0,0,0,0.20);
+  border-radius: 16px;
+  padding: 10px;
+  box-shadow: 0 18px 44px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.06);
+}
+
+.elementSlotThumb{
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 14px;
+  overflow: hidden;
+  background: rgba(255,255,255,0.05);
+  display: grid;
+  place-items: center;
+}
+
+.elementSlotThumb img{
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.elementSlotEmpty{
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: rgba(255,255,255,0.35);
+}
+
+.elementSlotActions{
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.elementPicker{
+  margin-top: 16px;
+  border-top: 1px solid rgba(241,225,148,0.10);
+  padding-top: 14px;
+}
+
+.elementPickerTop{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.elementPickerTitle{
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(241,225,148,0.85);
+}
+
+.elementPickerEmpty{
+  font-size: 12px;
+  color: rgba(255,255,255,0.55);
+  padding: 10px 2px;
+}
+
+.elementFooter{
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.elementPrimaryBtn{
+  height: 40px;
+  padding: 0 18px;
+  border-radius: 14px;
+  border: none;
+  background: rgba(241, 225, 148, 0.96);
+  color: #1a0805;
+  font-weight: 800;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: 0 16px 30px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.35);
+  transition: transform 0.18s var(--ease-spring), filter 0.18s var(--ease-spring);
+}
+.elementPrimaryBtn:hover{ transform: translateY(-1px); filter: brightness(1.05); }
+.elementPrimaryBtn:disabled{
+  background: rgba(255,255,255,0.12);
+  color: rgba(255,255,255,0.35);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.elementHint{
+  margin-top: 10px;
+  font-size: 12px;
+  color: rgba(255,255,255,0.62);
+  line-height: 1.4;
+}
+
+/* ---- All modal ---- */
+.elementAllTop{
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+@media (max-width: 560px){
+  .elementAllTop{ flex-direction: column; align-items: stretch; }
+}
+
+.elementAllMeta{
+  font-size: 12px;
+  color: rgba(255,255,255,0.72);
+  flex-shrink: 0;
+}
+
+.elementAllGrid{
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 900px){
+  .elementAllGrid{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 560px){
+  .elementAllGrid{ grid-template-columns: 1fr; }
+}
+
+.elementAllCard{
+  background: rgba(0,0,0,0.20);
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 18px 44px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.06);
+}
+
+.elementAllCardActive{
+  box-shadow: 0 18px 44px rgba(0,0,0,0.6), 0 0 0 2px rgba(241,225,148,0.28), inset 0 1px 0 rgba(255,255,255,0.06);
+}
+
+.elementAllThumb{
+  position: relative;
+  width: 100%;
+  border: none;
+  padding: 0;
+  background: rgba(0,0,0,0.22);
+  cursor: pointer;
+}
+
+.elementAllThumb img{
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  display: block;
+}
+
+.elementAllBadge{
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  background: rgba(10, 5, 6, 0.78);
+  color: rgba(241,225,148,0.92);
+  border: 1px solid rgba(241,225,148,0.18);
+  backdrop-filter: blur(10px);
+}
+
+.elementAllName{
+  padding: 10px 12px 0;
+  font-size: 12px;
+  color: rgba(255,255,255,0.9);
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.elementAllActions{
+  padding: 10px 12px 12px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
 }

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import styles from "./ImageGeneratorTool.module.css";
 import { generateImageBatch } from "../../services/geminiService";
 import { deleteAsset, listMyAssets, publishAsset, unpublishAsset, uploadUserAsset } from "../../services/assetsApi";
@@ -23,6 +23,10 @@ type KlingElementItem = {
   previewUrl: string | null;
   imageUrls: string[];
 };
+
+type KlingElementImageInput =
+  | { kind: "asset"; assetId: string; previewUrl: string; label: string }
+  | { kind: "dataUrl"; dataUrl: string; previewUrl: string; label: string };
 
 const STYLE_PRESET_BLOCK_START = "[[STYLE_PRESET_START]]";
 const STYLE_PRESET_BLOCK_END = "[[STYLE_PRESET_END]]";
@@ -621,6 +625,46 @@ const ImageGeneratorTool: React.FC = () => {
   const [selectedKlingElementIds, setSelectedKlingElementIds] = useState<string[]>([]); // máx 5
   const [isElementCreateOpen, setIsElementCreateOpen] = useState(false);
   const [isElementAllOpen, setIsElementAllOpen] = useState(false);
+  const [klingElementCtaActive, setKlingElementCtaActive] = useState(false);
+    // ===============================
+  // Kling Elements: modales (Create / All)
+  // ===============================
+  const [elementCreateName, setElementCreateName] = useState("");
+  const [elementCreateTag, setElementCreateTag] = useState("character");
+  const [elementCreateSlots, setElementCreateSlots] = useState<Array<KlingElementImageInput | null>>([null, null, null, null]);
+  const [elementCreatePickerSlot, setElementCreatePickerSlot] = useState<number | null>(null);
+  const [elementCreatePickerQuery, setElementCreatePickerQuery] = useState("");
+  const elementFileInputsRef = useRef<Array<HTMLInputElement | null>>([]);
+  const [isCreatingElement, setIsCreatingElement] = useState(false);
+
+  const [elementAllQuery, setElementAllQuery] = useState("");
+  const [deletingElementId, setDeletingElementId] = useState<string | null>(null);
+
+  const elementPickerCandidates = useMemo(() => {
+    const q = (elementCreatePickerQuery || "").trim().toLowerCase();
+    const imgs = (myAssets || []).filter((a: any) => a?.type === "image" && a?.url);
+    if (!q) return imgs;
+    return imgs.filter((a: any) => {
+      const n = String(a?.name || "").toLowerCase();
+      const p = String(a?.prompt || "").toLowerCase();
+      return n.includes(q) || p.includes(q);
+    });
+  }, [myAssets, elementCreatePickerQuery]);
+
+  useEffect(() => {
+    // Si NO es Kling: apagamos CTA y salimos
+    if (!isKlingModel(model)) {
+      setKlingElementCtaActive(false);
+      return;
+    }
+
+    // Si ES Kling: encendemos CTA y programamos apagado a 60s
+    setKlingElementCtaActive(true);
+    const t = setTimeout(() => setKlingElementCtaActive(false), 60_000);
+
+    return () => clearTimeout(t);
+  }, [model]);
+
   useEffect(() => {
     // @ts-ignore
     console.log("[KLING DEBUG] model =", model, "isKling =", isKlingModel(model));
@@ -770,23 +814,22 @@ const ImageGeneratorTool: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ===============================
-  // Kling Elements: cargar solo cuando el modelo seleccionado es Kling
-  // ===============================
-  useEffect(() => {
-    let cancelled = false;
+    // ===============================
+    // Kling Elements: cargar solo cuando el modelo seleccionado es Kling
+    // (y exponer un "reload" reutilizable para Create/Delete)
+    // ===============================
+    const klingElementsAbortRef = useRef<AbortController | null>(null);
 
-    async function run() {
-      const kling = isKlingModel(model);
+    const reloadKlingElements = useCallback(async () => {
+      // seguridad: solo aplica cuando el modelo seleccionado es Kling
+      if (!isKlingModel(model)) return;
 
-      // Si NO es Kling: ocultamos UI y limpiamos selección
-      if (!kling) {
-        setKlingElements([]);
-        setSelectedKlingElementIds([]);
-        setIsElementCreateOpen(false);
-        setIsElementAllOpen(false);
-        return;
-      }
+      // cancela una carga anterior si existe
+      try {
+        klingElementsAbortRef.current?.abort();
+      } catch {}
+      const controller = new AbortController();
+      klingElementsAbortRef.current = controller;
 
       try {
         const { data: sessionData } = await supabase.auth.getSession();
@@ -795,26 +838,204 @@ const ImageGeneratorTool: React.FC = () => {
         const headers: Record<string, string> = {};
         if (token) headers["Authorization"] = `Bearer ${token}`;
 
-        const resp = await fetch("/api/kling/elements", { method: "GET", headers });
+        const resp = await fetch("/api/kling/elements", { method: "GET", headers, signal: controller.signal });
         const data = await resp.json().catch(() => null);
 
         if (!resp.ok || data?.ok === false) {
           throw new Error(data?.error?.message || `Error listando Elements (${resp.status}).`);
         }
 
-        if (cancelled) return;
-        setKlingElements(Array.isArray(data?.items) ? data.items : []);
+        const items: KlingElementItem[] = Array.isArray(data?.items) ? data.items : [];
+        setKlingElements(items);
+
+        // Mantener selección siempre sincronizada (sin IDs fantasmas)
+        setSelectedKlingElementIds((prev) => {
+          const allowed = new Set(items.map((x) => x.id));
+          return prev.filter((id) => allowed.has(id)).slice(0, 5);
+        });
       } catch (e: any) {
-        if (cancelled) return;
+        if (e?.name === "AbortError") return;
         setError(e?.message || "No se pudieron cargar tus Elements de Kling.");
       }
+    }, [model]);
+
+    useEffect(() => {
+      // Si NO es Kling: ocultamos UI y limpiamos selección
+      if (!isKlingModel(model)) {
+        try {
+          klingElementsAbortRef.current?.abort();
+        } catch {}
+        setKlingElements([]);
+        setSelectedKlingElementIds([]);
+        setIsElementCreateOpen(false);
+        setIsElementAllOpen(false);
+        return;
+      }
+
+      reloadKlingElements();
+
+      return () => {
+        try {
+          klingElementsAbortRef.current?.abort();
+        } catch {}
+      };
+    }, [model, reloadKlingElements]);
+
+    // ===============================
+  // Kling Elements: helpers (Create / Delete)
+  // ===============================
+  function readFileAsDataUrl(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(new Error("No se pudo leer el archivo"));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function klingAuthHeadersJson(): Promise<Record<string, string>> {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    return headers;
+  }
+
+  async function klingAuthHeaders(): Promise<Record<string, string>> {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+
+    const headers: Record<string, string> = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    return headers;
+  }
+
+  function setCreateSlot(index: number, value: KlingElementImageInput | null) {
+    setElementCreateSlots((prev) => {
+      const next = [...prev];
+      next[index] = value;
+      return next;
+    });
+  }
+
+  function resetCreateModal() {
+    setElementCreateName("");
+    setElementCreateTag("character");
+    setElementCreateSlots([null, null, null, null]);
+    setElementCreatePickerSlot(null);
+    setElementCreatePickerQuery("");
+  }
+
+  function closeCreateModal() {
+    setIsElementCreateOpen(false);
+    setElementCreatePickerSlot(null);
+  }
+
+  function closeAllModal() {
+    setIsElementAllOpen(false);
+  }
+
+  async function handleCreateElement() {
+    const name = (elementCreateName || "").trim();
+    const imagesInputs = elementCreateSlots.filter(Boolean) as KlingElementImageInput[];
+
+    if (!name) {
+      setError("Ponle un nombre al Element/Person (obligatorio).");
+      return;
+    }
+    if (imagesInputs.length < 1) {
+      setError("Selecciona o sube al menos 1 imagen (máximo 4).");
+      return;
+    }
+    if (imagesInputs.length > 4) {
+      setError("Máximo 4 imágenes por Element/Person.");
+      return;
     }
 
-    run();
-    return () => {
-      cancelled = true;
-    };
-  }, [model]);
+    setIsCreatingElement(true);
+    try {
+      const headers = await klingAuthHeadersJson();
+
+      const body = {
+        name,
+        tag: (elementCreateTag || "").trim() || undefined,
+        images: imagesInputs.map((it) => (it.kind === "asset" ? { assetId: it.assetId } : { dataUrl: it.dataUrl })),
+      };
+
+      const resp = await fetch("/api/kling/elements", {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      });
+
+      const data = await resp.json().catch(() => null);
+      if (!resp.ok || data?.ok === false) {
+        throw new Error(data?.error?.message || `Error creando Element (${resp.status}).`);
+      }
+
+      const item: KlingElementItem = data.item;
+
+      // opcional: autoseleccionar si hay espacio
+      setSelectedKlingElementIds((prev) => {
+        if (prev.includes(item.id)) return prev;
+        if (prev.length >= 5) return prev;
+        return [item.id, ...prev];
+      });
+
+      closeCreateModal();
+      resetCreateModal();
+
+      // Reload desde el backend (evita desincronización)
+      await reloadKlingElements();
+
+      // aparece al instante en popover + en modal All
+      setKlingElements((prev) => [item, ...prev]);
+
+      // opcional: autoseleccionar si hay espacio
+      setSelectedKlingElementIds((prev) => {
+        if (prev.includes(item.id)) return prev;
+        if (prev.length >= 5) return prev;
+        return [item.id, ...prev];
+      });
+
+      closeCreateModal();
+      resetCreateModal();
+    } catch (e: any) {
+      setError(e?.message || "No se pudo crear el Element/Person.");
+    } finally {
+      setIsCreatingElement(false);
+    }
+  }
+
+  async function handleDeleteElement(id: string) {
+    const ok = window.confirm("¿Borrar este Element/Person? (No se puede deshacer)");
+    if (!ok) return;
+
+          setSelectedKlingElementIds((prev) => prev.filter((x) => x !== id));
+
+      // Reload desde el backend (evita desincronización)
+      await reloadKlingElements();
+
+    setDeletingElementId(id);
+    try {
+      const headers = await klingAuthHeaders();
+
+      const resp = await fetch(`/api/kling/elements/${id}`, { method: "DELETE", headers });
+      const data = await resp.json().catch(() => null);
+
+      if (!resp.ok || data?.ok === false) {
+        throw new Error(data?.error?.message || `Error borrando Element (${resp.status}).`);
+      }
+
+      setKlingElements((prev) => prev.filter((x) => x.id !== id));
+      setSelectedKlingElementIds((prev) => prev.filter((x) => x !== id));
+    } catch (e: any) {
+      setError(e?.message || "No se pudo borrar el Element/Person.");
+    } finally {
+      setDeletingElementId(null);
+    }
+  }
 
   const viewerPortrait = useMemo(() => {
     if (!viewer) return false;
@@ -1353,94 +1574,77 @@ const ImageGeneratorTool: React.FC = () => {
             <div className={styles.promptInputWrap}>
               {isKlingModel(model) && (
                 <div className={styles.klingDock}>
+                  {/* Botón 1x1 (solo visible por defecto) */}
                   <button
                     type="button"
-                    onClick={() => setIsElementCreateOpen(true)}
-                    style={{
-                      height: 26,
-                      padding: "0 12px",
-                      borderRadius: 999,
-                      border: "none",
-                      background: "rgba(91, 14, 20, 0.65)",
-                      color: "rgba(255,255,255,0.92)",
-                      fontWeight: 800,
-                      fontSize: 11,
-                      letterSpacing: "0.08em",
-                      cursor: "pointer",
-                      boxShadow: "0 14px 28px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.06)",
+                    className={`${styles.klingElementBtn} ${klingElementCtaActive ? styles.klingElementBtnCta : ""}`}
+                    onClick={() => {
+                      setKlingElementCtaActive(false); // apaga CTA al click (ETAPA 2)
+                      setIsElementCreateOpen(true);
                     }}
-                    title="Crear / administrar Elements de Kling"
+                    title="Element/Person (Kling)"
+                    aria-label="Element/Person"
                   >
-                    Element/Person
-                    {selectedKlingElementIds.length > 0 ? ` (${selectedKlingElementIds.length}/5)` : ""}
+                    {/* ícono “scan” */}
+                    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                      <path
+                        fill="currentColor"
+                        d="M7 3H5a2 2 0 0 0-2 2v2h2V5h2V3zm14 4V5a2 2 0 0 0-2-2h-2v2h2v2h2zM5 19v-2H3v2a2 2 0 0 0 2 2h2v-2H5zm16-2v2h-2v2h2a2 2 0 0 0 2-2v-2h-2zM7 8h10v2H7V8zm0 6h10v2H7v-2z"
+                      />
+                    </svg>
+
+                    {/* badge con número si hay selección */}
+                    {selectedKlingElementIds.length > 0 && (
+                      <span className={styles.klingBadge}>{selectedKlingElementIds.length}</span>
+                    )}
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={() => setIsElementAllOpen(true)}
-                    style={{
-                      height: 26,
-                      padding: "0 10px",
-                      borderRadius: 999,
-                      border: "none",
-                      background: "rgba(241, 225, 148, 0.20)",
-                      color: "rgba(241,225,148,0.92)",
-                      fontWeight: 700,
-                      fontSize: 11,
-                      cursor: "pointer",
-                      boxShadow: "0 14px 28px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.06)",
-                    }}
-                    title="Ver todos tus Elements"
-                  >
-                    All
-                  </button>
-
-                  {klingElements.length > 0 && (
-                    <div className={styles.klingThumbRow}>
-                      {klingElements.slice(0, 6).map((el) => {
-                        const active = selectedKlingElementIds.includes(el.id);
-                        const src = el.previewUrl || el.imageUrls?.[0] || "";
-                        return (
-                          <button
-                            key={el.id}
-                            type="button"
-                            onClick={() => {
-                              setSelectedKlingElementIds((prev) => {
-                                const has = prev.includes(el.id);
-                                if (has) return prev.filter((x) => x !== el.id);
-                                if (prev.length >= 5) {
-                                  setError("Kling permite seleccionar máximo 5 Elements a la vez.");
-                                  return prev;
-                                }
-                                return [el.id, ...prev];
-                              });
-                            }}
-                            title={el.name}
-                            style={{
-                              width: 26,
-                              height: 26,
-                              borderRadius: 9,
-                              border: active ? "2px solid rgba(241,225,148,0.75)" : "1px solid rgba(255,255,255,0.12)",
-                              background: "rgba(0,0,0,0.25)",
-                              overflow: "hidden",
-                              padding: 0,
-                              cursor: "pointer",
-                              boxShadow: "0 14px 28px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.06)",
-                              opacity: active ? 1 : 0.9,
-                            }}
-                          >
-                            {src ? (
-                              <img
-                                src={src}
-                                alt={el.name}
-                                style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-                              />
-                            ) : null}
-                          </button>
-                        );
-                      })}
+                  {/* Popover: aparece SOLO al hover del botón */}
+                  <div className={styles.klingPopover}>
+                    <div className={styles.klingPopoverTop}>
+                      <button
+                        type="button"
+                        className={styles.klingAllBtn}
+                        onClick={() => setIsElementAllOpen(true)}
+                        title="Ver todos tus Elements"
+                      >
+                        All
+                      </button>
                     </div>
-                  )}
+
+                    {klingElements.length > 0 ? (
+                      <div className={styles.klingPopoverThumbRow}>
+                        {klingElements.slice(0, 6).map((el) => {
+                          const active = selectedKlingElementIds.includes(el.id);
+                          const src = el.previewUrl || el.imageUrls?.[0] || "";
+                          return (
+                            <button
+                              key={el.id}
+                              type="button"
+                              className={`${styles.klingThumbBtn} ${active ? styles.klingThumbBtnActive : ""}`}
+                              onClick={() => {
+                                setSelectedKlingElementIds((prev) => {
+                                  const has = prev.includes(el.id);
+                                  if (has) return prev.filter((x) => x !== el.id);
+                                  if (prev.length >= 5) {
+                                    setError("Kling permite seleccionar máximo 5 Elements a la vez.");
+                                    return prev;
+                                  }
+                                  return [el.id, ...prev];
+                                });
+                              }}
+                              title={el.name}
+                              aria-label={el.name}
+                            >
+                              {src ? <img src={src} alt={el.name} className={styles.klingThumbImg} /> : null}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className={styles.klingEmpty}>No elements yet</div>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -1919,6 +2123,284 @@ const ImageGeneratorTool: React.FC = () => {
                 </div>
 
                 
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+            {/* =============================== */}
+      {/* KLING: Create Element modal */}
+      {/* =============================== */}
+      {isElementCreateOpen && (
+        <div
+          className={styles.elementBackdrop}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) closeCreateModal();
+          }}
+        >
+          <div className={styles.elementModal} onMouseDown={(e) => e.stopPropagation()}>
+            <div className={styles.elementHeader}>
+              <div className={styles.elementTitle}>Create Element/Person</div>
+              <button type="button" className={styles.iconBtn} onClick={closeCreateModal} title="Close">
+                <Icon name="close" />
+              </button>
+            </div>
+
+            <div className={styles.elementBody}>
+              <div className={styles.elementFormRow}>
+                <div className={styles.elementField}>
+                  <div className={styles.elementLabel}>Name *</div>
+                  <input
+                    className={styles.search}
+                    value={elementCreateName}
+                    onChange={(e) => setElementCreateName(e.target.value)}
+                    placeholder='Ej: "Wow Poppy"'
+                  />
+                </div>
+
+                <div className={styles.elementField}>
+                  <div className={styles.elementLabel}>Tag (optional)</div>
+                  <select className={styles.select} value={elementCreateTag} onChange={(e) => setElementCreateTag(e.target.value)}>
+                    <option value="character">character</option>
+                    <option value="object">object</option>
+                    <option value="product">product</option>
+                    <option value="style">style</option>
+                    <option value="other">other</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className={styles.elementLabel}>Images (1–4)</div>
+
+              <div className={styles.elementSlots}>
+                {elementCreateSlots.map((slot, idx) => (
+                  <div key={idx} className={styles.elementSlotCard}>
+                    <div className={styles.elementSlotThumb} data-empty={slot ? "false" : "true"}>
+                      {slot ? (
+                        <img src={slot.previewUrl} alt={slot.label} />
+                      ) : (
+                        <div className={styles.elementSlotEmpty}>Slot {idx + 1}</div>
+                      )}
+                    </div>
+
+                    <div className={styles.elementSlotActions}>
+                      <button
+                        type="button"
+                        className={styles.smallBtn}
+                        onClick={() => setElementCreatePickerSlot(idx)}
+                        title="Elegir desde tu librería"
+                      >
+                        Library
+                      </button>
+
+                      <button
+                        type="button"
+                        className={styles.smallBtn}
+                        onClick={() => elementFileInputsRef.current[idx]?.click()}
+                        title="Subir desde tu PC"
+                      >
+                        Upload
+                      </button>
+
+                      {slot && (
+                        <button type="button" className={styles.smallBtnGhost} onClick={() => setCreateSlot(idx, null)}>
+                          Clear
+                        </button>
+                      )}
+                    </div>
+
+                    <input
+                      ref={(el) => {
+                        elementFileInputsRef.current[idx] = el;
+                      }}
+                      type="file"
+                      accept="image/*"
+                      style={{ display: "none" }}
+                      onChange={async (e) => {
+                        const f = e.currentTarget.files?.[0];
+                        if (!f) return;
+                        try {
+                          const dataUrl = await readFileAsDataUrl(f);
+                          setCreateSlot(idx, { kind: "dataUrl", dataUrl, previewUrl: dataUrl, label: f.name });
+                        } catch (err: any) {
+                          setError(err?.message || "No se pudo leer la imagen.");
+                        } finally {
+                          e.currentTarget.value = "";
+                        }
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+
+              {elementCreatePickerSlot !== null && (
+                <div className={styles.elementPicker}>
+                  <div className={styles.elementPickerTop}>
+                    <div className={styles.elementPickerTitle}>Pick from your library</div>
+                    <button type="button" className={styles.smallBtnGhost} onClick={() => setElementCreatePickerSlot(null)}>
+                      Close
+                    </button>
+                  </div>
+
+                  <input
+                    className={styles.search}
+                    value={elementCreatePickerQuery}
+                    onChange={(e) => setElementCreatePickerQuery(e.target.value)}
+                    placeholder="Search images..."
+                  />
+
+                  <div className={styles.pickerArea}>
+                    <div className={styles.pickerGrid}>
+                      {elementPickerCandidates.slice(0, 60).map((a: any) => (
+                        <button
+                          key={a.id}
+                          type="button"
+                          className={styles.pickerTile}
+                          onClick={() => {
+                            const i = elementCreatePickerSlot;
+                            if (i == null) return;
+                            setCreateSlot(i, { kind: "asset", assetId: a.id, previewUrl: a.url, label: a.name || a.id });
+                            setElementCreatePickerSlot(null);
+                          }}
+                        >
+                          <img src={a.url} alt={a.name || "asset"} />
+                          <div className={styles.pickerTileCap}>{a.name || "Untitled"}</div>
+                        </button>
+                      ))}
+
+                      {elementPickerCandidates.length === 0 && (
+                        <div className={styles.elementPickerEmpty}>No images found</div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className={styles.elementFooter}>
+                <button type="button" className={styles.smallBtnGhost} onClick={closeCreateModal} disabled={isCreatingElement}>
+                  Cancel
+                </button>
+
+                <button type="button" className={styles.elementPrimaryBtn} onClick={handleCreateElement} disabled={isCreatingElement}>
+                  {isCreatingElement ? "Creating..." : "Create"}
+                </button>
+              </div>
+
+              <div className={styles.elementHint}>
+                Tip: puedes mezclar <b>Library</b> y <b>Upload</b>. Kling acepta 1–4 imágenes.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =============================== */}
+      {/* KLING: All Elements modal */}
+      {/* =============================== */}
+      {isElementAllOpen && (
+        <div
+          className={styles.elementBackdrop}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) closeAllModal();
+          }}
+        >
+          <div className={styles.elementModal} onMouseDown={(e) => e.stopPropagation()}>
+            <div className={styles.elementHeader}>
+              <div className={styles.elementTitle}>All Elements</div>
+              <button type="button" className={styles.iconBtn} onClick={closeAllModal} title="Close">
+                <Icon name="close" />
+              </button>
+            </div>
+
+            <div className={styles.elementBody}>
+              <div className={styles.elementAllTop}>
+                <div className={styles.elementAllMeta}>
+                  Selected: <b>{selectedKlingElementIds.length}</b>/5
+                </div>
+
+                <input
+                  className={styles.search}
+                  value={elementAllQuery}
+                  onChange={(e) => setElementAllQuery(e.target.value)}
+                  placeholder="Search elements..."
+                />
+              </div>
+
+              <div className={styles.elementAllGrid}>
+                {klingElements
+                  .filter((el) => {
+                    const q = (elementAllQuery || "").trim().toLowerCase();
+                    if (!q) return true;
+                    return String(el?.name || "").toLowerCase().includes(q);
+                  })
+                  .map((el) => {
+                    const active = selectedKlingElementIds.includes(el.id);
+                    const src = el.previewUrl || el.imageUrls?.[0] || "";
+                    return (
+                      <div key={el.id} className={`${styles.elementAllCard} ${active ? styles.elementAllCardActive : ""}`}>
+                        <button
+                          type="button"
+                          className={styles.elementAllThumb}
+                          onClick={() => {
+                            setSelectedKlingElementIds((prev) => {
+                              const has = prev.includes(el.id);
+                              if (has) return prev.filter((x) => x !== el.id);
+                              if (prev.length >= 5) {
+                                setError("Kling permite seleccionar máximo 5 Elements a la vez.");
+                                return prev;
+                              }
+                              return [el.id, ...prev];
+                            });
+                          }}
+                          title={el.name}
+                        >
+                          {src ? <img src={src} alt={el.name} /> : null}
+                          <span className={styles.elementAllBadge}>{active ? "SELECTED" : "SELECT"}</span>
+                        </button>
+
+                        <div className={styles.elementAllName}>{el.name}</div>
+
+                        <div className={styles.elementAllActions}>
+                          <button
+                            type="button"
+                            className={styles.smallBtn}
+                            onClick={() => {
+                              setSelectedKlingElementIds((prev) => {
+                                const has = prev.includes(el.id);
+                                if (has) return prev.filter((x) => x !== el.id);
+                                if (prev.length >= 5) {
+                                  setError("Kling permite seleccionar máximo 5 Elements a la vez.");
+                                  return prev;
+                                }
+                                return [el.id, ...prev];
+                              });
+                            }}
+                          >
+                            {active ? "Deselect" : "Select"}
+                          </button>
+
+                          <button
+                            type="button"
+                            className={styles.smallBtnGhost}
+                            onClick={() => handleDeleteElement(el.id)}
+                            disabled={deletingElementId === el.id}
+                            title="Borrar este Element"
+                          >
+                            {deletingElementId === el.id ? "Deleting..." : "Delete"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+
+              {klingElements.length === 0 && <div className={styles.elementPickerEmpty}>No elements yet</div>}
+
+              <div className={styles.elementFooter}>
+                <button type="button" className={styles.elementPrimaryBtn} onClick={closeAllModal}>
+                  Done
+                </button>
               </div>
             </div>
           </div>
