@@ -151,7 +151,7 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
               <img
                 src={asset.url}
                 alt={asset.name}
-                className={generatorStyles.tileImg}
+                className={`${generatorStyles.tileImg} ${styles.feedImage}`}
                 loading="lazy"
                 decoding="async"
               />

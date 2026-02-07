@@ -16,7 +16,7 @@
   border-radius: 28px;
   padding: 28px 30px;
   border: 1px solid rgba(255,255,255,0.12);
-  background: rgba(5,6,12,0.9);
+  background: rgba(7,8,16,0.96);
   text-align: left;
   min-height: 220px;
   display: flex;
@@ -27,27 +27,26 @@
 
 .heroCard:hover {
   transform: translateY(-4px);
-  box-shadow: 0 24px 54px rgba(0,0,0,0.55);
+  box-shadow:
+    0 24px 54px rgba(0,0,0,0.55),
+    0 0 28px var(--card-glow);
 }
 
 .heroCard::before {
   content: "";
   position: absolute;
-  inset: -30%;
-  background-image:
-    repeating-linear-gradient(0deg, transparent 0 2px, var(--noise-color) 2px 3px),
-    repeating-linear-gradient(90deg, transparent 0 2px, var(--noise-color) 2px 3px);
-  opacity: 0.35;
-  mix-blend-mode: screen;
-  animation: staticShift 1.6s steps(8) infinite;
+  inset: 0;
+  background:
+    radial-gradient(circle at top left, rgba(255,255,255,0.18), transparent 55%),
+    linear-gradient(120deg, transparent 0%, rgba(255,255,255,0.08) 45%, transparent 60%);
+  opacity: 0.7;
+  transform: translateX(-20%);
+  transition: transform 0.8s ease, opacity 0.4s ease;
 }
 
-.heroCard::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(circle at top left, var(--noise-glow) 0%, transparent 55%);
-  opacity: 0.8;
+.heroCard:hover::before {
+  transform: translateX(0%);
+  opacity: 0.9;
 }
 
 .heroContent {
@@ -124,18 +123,15 @@
 }
 
 .heroCardImage {
-  --noise-color: rgba(241, 225, 148, 0.5);
-  --noise-glow: rgba(241, 225, 148, 0.35);
+  --card-glow: rgba(255, 214, 102, 0.6);
 }
 
 .heroCardVideo {
-  --noise-color: rgba(128, 84, 255, 0.55);
-  --noise-glow: rgba(128, 84, 255, 0.35);
+  --card-glow: rgba(112, 73, 255, 0.55);
 }
 
 .heroCardCredits {
-  --noise-color: rgba(255, 247, 233, 0.4);
-  --noise-glow: rgba(255, 247, 233, 0.35);
+  --card-glow: rgba(255, 244, 230, 0.55);
 }
 
 .feedGrid {
@@ -144,6 +140,10 @@
 
 .feedTile {
   min-height: 0;
+}
+
+.feedImage {
+  border-radius: 18px;
 }
 
 .feedOwner {
@@ -272,12 +272,4 @@
 .viewerCommentButton:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-@keyframes staticShift {
-  0% { transform: translate3d(0,0,0); }
-  25% { transform: translate3d(6px,-8px,0); }
-  50% { transform: translate3d(-4px,6px,0); }
-  75% { transform: translate3d(8px,4px,0); }
-  100% { transform: translate3d(0,0,0); }
 }
