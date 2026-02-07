@@ -2308,7 +2308,7 @@ app.post("/api/ai/image", async (req, res, next) => {
       }
 
       // Ejecutar en Fal Queue
-      const falJson = await falQueueRun(selectedModel, { input: falInput });
+      const falJson = await falQueueRun(selectedModel, falInput);
       const images = falJson?.images || falJson?.data?.images || [];
       const urls = (Array.isArray(images) ? images : [])
         .map((x) => x?.url)
