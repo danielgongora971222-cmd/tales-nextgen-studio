@@ -125,6 +125,19 @@ async function uploadBase64ToStorage({ userId, tool, dataUrl, nameHint }) {
   return { storagePath: path, mimeType, sizeBytes: bytes.length };
 }
 
+async function uploadBufferToStorage({ userId, tool, buffer, mimeType, nameHint }) {
+  if (!buffer) throw new Error("Missing buffer");
+  const ct = mimeType || "application/octet-stream";
+  const path = buildAssetPath({ userId, tool, mimeType: ct, nameHint });
+
+  const up = await supabaseAdmin.storage
+    .from(SUPABASE_BUCKET)
+    .upload(path, buffer, { contentType: ct, upsert: false });
+
+  if (up.error) throw new Error(up.error.message);
+  return { storagePath: path, mimeType: ct, sizeBytes: buffer.length };
+}
+
 async function signStoragePath(storagePath, expiresSeconds = 60 * 60) {
   const { data, error } = await supabaseAdmin.storage
     .from(SUPABASE_BUCKET)
@@ -326,6 +339,26 @@ const ImageRequestSchema = z.object({
     // ✅ Kling-only (Element Library): IDs UUID de tu tabla public.kling_elements
   // (estos NO son los element_id bigint que devuelve Kling)
   klingElementIds: z.array(z.string().uuid()).max(5).optional(),
+});
+
+const VideoRequestSchema = z.object({
+  prompt: z.string().min(1).max(14000),
+  model: z.string().optional(),
+
+  // Solo aplica cuando NO hay firstFrame
+  aspectRatio: z.enum(["16:9", "9:16"]).optional(),
+
+  // Params Veo
+  resolution: z.enum(["720p", "1080p", "4k"]).optional(),
+  durationSeconds: z.union([z.number(), z.string()]).optional(),
+  count: z.number().int().min(1).max(4).default(1),
+
+  tool: z.string().optional(),
+  nameHint: z.string().optional(),
+
+  // Frame assets (opcionales)
+  firstFrameAssetId: z.string().uuid().nullable().optional(),
+  lastFrameAssetId: z.string().uuid().nullable().optional(),
 });
 
 const Base64ImageSchema = z
@@ -539,6 +572,11 @@ async function assetIdToInlineDataPart({ assetId, requesterId }) {
     e.status = 404;
     e.code = "ASSET_NOT_FOUND";
     throw e;
+  }
+
+  async function assetIdToGenAIImage({ assetId, requesterId }) {
+    const part = await assetIdToInlineDataPart({ assetId, requesterId });
+    return { imageBytes: part.inlineData.data, mimeType: part.inlineData.mimeType };
   }
 
   if (row.type !== "image") {
@@ -1185,6 +1223,15 @@ async function assetIdToInlinePart(assetId, userId) {
 
   return { inlineData: { mimeType, data: buf.toString("base64") } };
 }
+
+async function assetIdToImageObject(assetId, userId) {
+  const part = await assetIdToInlinePart(assetId, userId);
+  return {
+    imageBytes: part.inlineData.data,
+    mimeType: part.inlineData.mimeType,
+  };
+}
+
 
 async function assetIdToSignedUrl(assetId, userId, expiresInSeconds = 600) {
   const { data, error } = await supabaseAdmin
@@ -2768,14 +2815,175 @@ app.post("/api/ai/upscale", async (req, res, next) => {
   }
 });
 
-// Note: video generation is intentionally not exposed yet because returning URLs can leak API keys.
-// Add it once we implement server-side streaming/proxy storage.
-app.post("/api/ai/video", (_req, res) => {
-  res.status(501).json({
-    ok: false,
-    error:
-      "Video generation is disabled in the backend proxy for now. Enable it after implementing server-side streaming/storage to avoid exposing API keys.",
-  });
+
+app.post("/api/ai/video", async (req, res, next) => {
+  try {
+    const aiClient = await ensureAI();
+
+    const {
+      prompt,
+      model,
+      aspectRatio,
+      resolution,
+      durationSeconds,
+      count,
+      tool,
+      nameHint,
+      firstFrameAssetId,
+      lastFrameAssetId,
+    } = VideoRequestSchema.parse(req.body);
+
+    const { user, error } = await requireUser(req);
+    if (error) return res.status(401).json({ ok: false, error });
+
+    const toolName = tool || "video-generator";
+    const hint = nameHint || "generated-video";
+
+    const hasFirst = Boolean(firstFrameAssetId);
+    const hasLast = Boolean(lastFrameAssetId);
+
+    if (hasLast && !hasFirst) {
+      throw httpError(
+        400,
+        "MISSING_FIRST_FRAME",
+        "lastFrameAssetId requiere firstFrameAssetId."
+      );
+    }
+
+    // Si usan frames, forzamos Veo 3.1 (más compatible con interpolación/frames)
+    let selectedModel = model || "veo-3.1-generate-preview";
+    if ((hasFirst || hasLast) && selectedModel === "veo-3.0-generate-preview") {
+      selectedModel = "veo-3.1-generate-preview";
+    }
+
+    const cfg = {};
+
+    // numberOfVideos (count)
+    cfg.numberOfVideos = Math.max(1, Math.min(Number(count || 1), 4));
+
+    // resolution
+    if (resolution) cfg.resolution = resolution;
+
+    // durationSeconds: Veo 3/3.1 acepta 4/6/8 (y fuerza 8 con 1080p/4k o con frames)
+    let dur = durationSeconds != null ? Number(durationSeconds) : 4;
+    if (![4, 6, 8].includes(dur)) dur = 4;
+
+    if ((cfg.resolution && cfg.resolution !== "720p") || hasFirst || hasLast) dur = 8;
+    cfg.durationSeconds = String(dur);
+
+    // aspectRatio solo si NO hay first frame
+    if (!hasFirst) {
+      cfg.aspectRatio = aspectRatio || "16:9";
+    }
+
+    // Construir image / lastFrame si aplica
+    let firstImage = null;
+    if (hasFirst) {
+      firstImage = await assetIdToGenAIImage({
+        assetId: firstFrameAssetId,
+        requesterId: user.id,
+      });
+    }
+
+    if (hasLast) {
+      cfg.lastFrame = await assetIdToGenAIImage({
+        assetId: lastFrameAssetId,
+        requesterId: user.id,
+      });
+    }
+
+    // 1) iniciar operación
+    let operation = await aiClient.models.generateVideos({
+      model: selectedModel,
+      prompt,
+      ...(firstImage ? { image: firstImage } : {}),
+      config: cfg,
+    });
+
+    // 2) polling hasta done (máx 6 min)
+    const start = Date.now();
+    const maxWaitMs = 6 * 60 * 1000;
+
+    while (!operation.done) {
+      if (Date.now() - start > maxWaitMs) {
+        throw httpError(504, "VIDEO_TIMEOUT", "La generación de video tardó demasiado. Intenta otra vez.", {
+          operationName: operation?.name || null,
+        });
+      }
+      await sleep(5000);
+      operation = await aiClient.operations.getVideosOperation({ operation });
+    }
+
+    const generated = operation?.response?.generatedVideos || [];
+    if (!generated.length) {
+      throw httpError(500, "NO_VIDEO_RETURNED", "Veo no devolvió videos en la respuesta.", {
+        model: selectedModel,
+      });
+    }
+
+    // 3) descargar mp4, subir a Supabase Storage, crear asset row
+    const urlExpiresInSeconds = 60 * 60;
+    const items = [];
+
+    for (let i = 0; i < generated.length; i++) {
+      const tmpPath = pathJoin(os.tmpdir(), `veo_${Date.now()}_${i}.mp4`);
+
+      try {
+        await aiClient.files.download({
+          file: generated[i].video,
+          downloadPath: tmpPath,
+        });
+
+        const bytes = await fs.readFile(tmpPath);
+        const mimeType = "video/mp4";
+        const storagePath = buildAssetPath({
+          userId: user.id,
+          tool: toolName,
+          mimeType,
+          nameHint: hint,
+        });
+
+        await uploadBytesToStorageAtPath({ storagePath, bytes, mimeType });
+
+        const meta = {
+          tool: toolName,
+          model: selectedModel,
+          aspectRatio: hasFirst ? null : (cfg.aspectRatio || null),
+          resolution: cfg.resolution || "720p",
+          durationSeconds: cfg.durationSeconds,
+          count: cfg.numberOfVideos,
+          firstFrameAssetId: firstFrameAssetId || null,
+          lastFrameAssetId: lastFrameAssetId || null,
+        };
+
+        const assetId = await insertAssetRow({
+          ownerId: user.id,
+          type: "video",
+          tool: toolName,
+          name: hint,
+          prompt,
+          storagePath,
+          isPublic: false,
+          meta,
+        });
+
+        const url = await signStoragePath(storagePath, urlExpiresInSeconds);
+        items.push({ url, assetId });
+      } finally {
+        fs.unlink(tmpPath).catch(() => {});
+      }
+    }
+
+    return res.json({
+      ok: true,
+      items,
+      url: items[0]?.url,
+      assetId: items[0]?.assetId,
+      urlExpiresInSeconds,
+    });
+  } catch (err) {
+    next(err);
+  }
 });
 
 // In production, the API can also serve the built frontend (dist/) with static hosting.
