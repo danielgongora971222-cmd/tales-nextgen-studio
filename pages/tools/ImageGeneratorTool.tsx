@@ -15,16 +15,16 @@ type StylePreset = {
   exampleUrls?: [string, string, string, string];
 };
 
-type KlingElementItem = {
+type ElementItem = {
+  // Guardamos como Asset (upload normal), no depende de ninguna IA.
+  // id === assetId
   id: string;
   name: string;
-  klingElementId: string | null;
   createdAt: string;
-  previewUrl: string | null;
-  imageUrls: string[];
+  url: string; // mosaico 2x2 (también lo usamos como thumbnail, recortando el cuadrante 1)
 };
 
-type KlingElementImageInput =
+type ElementImageInput =
   | { kind: "asset"; assetId: string; previewUrl: string; label: string }
   | { kind: "dataUrl"; dataUrl: string; previewUrl: string; label: string };
 
@@ -607,6 +607,9 @@ const ImageGeneratorTool: React.FC = () => {
   const [aspectRatio, setAspectRatio] = useState("auto");
   const [count, setCount] = useState(1);
   const [quality, setQuality] = useState<Quality>("1K");
+  // Helper: ¿modelo actual es Kling?
+  const kling = isKlingModel(model);
+
 
 
   // Reference slots (sin STYLE aquí)
@@ -621,21 +624,23 @@ const ImageGeneratorTool: React.FC = () => {
   // Kling-only: Element/Person Library
   // (solo se usa cuando isKlingModel(model) === true)
   // ===============================
-  const [klingElements, setKlingElements] = useState<KlingElementItem[]>([]);
-  const [selectedKlingElementIds, setSelectedKlingElementIds] = useState<string[]>([]); // máx 5
+  const [elements, setElements] = useState<ElementItem[]>([]);
+  const [selectedElementAssetIds, setSelectedElementAssetIds] = useState<string[]>([]);
   const [isElementCreateOpen, setIsElementCreateOpen] = useState(false);
   const [isElementAllOpen, setIsElementAllOpen] = useState(false);
-  const [klingElementCtaActive, setKlingElementCtaActive] = useState(false);
+  const [elementCtaActive, setElementCtaActive] = useState(false);
     // ===============================
   // Kling Elements: modales (Create / All)
   // ===============================
   const [elementCreateName, setElementCreateName] = useState("");
   const [elementCreateTag, setElementCreateTag] = useState("character");
-  const [elementCreateSlots, setElementCreateSlots] = useState<Array<KlingElementImageInput | null>>([null, null, null, null]);
+  const [elementCreateSlots, setElementCreateSlots] = useState<Array<ElementImageInput | null>>([null, null, null, null]);
   const [elementCreatePickerSlot, setElementCreatePickerSlot] = useState<number | null>(null);
   const [elementCreatePickerQuery, setElementCreatePickerQuery] = useState("");
   const elementFileInputsRef = useRef<Array<HTMLInputElement | null>>([]);
   const [isCreatingElement, setIsCreatingElement] = useState(false);
+  const elementPickerRef = useRef<HTMLDivElement | null>(null);
+  const elementPickerAreaRef = useRef<HTMLDivElement | null>(null);
 
   const [elementAllQuery, setElementAllQuery] = useState("");
   const [deletingElementId, setDeletingElementId] = useState<string | null>(null);
@@ -651,17 +656,22 @@ const ImageGeneratorTool: React.FC = () => {
     });
   }, [myAssets, elementCreatePickerQuery]);
 
+  // Al abrir el picker de Library dentro de "Create Element":
+  // hacemos scroll suave hasta el panel y reiniciamos el scroll interno arriba.
   useEffect(() => {
-    // Si NO es Kling: apagamos CTA y salimos
-    if (!isKlingModel(model)) {
-      setKlingElementCtaActive(false);
-      return;
-    }
+    if (elementCreatePickerSlot === null) return;
 
-    // Si ES Kling: encendemos CTA y programamos apagado a 60s
-    setKlingElementCtaActive(true);
-    const t = setTimeout(() => setKlingElementCtaActive(false), 60_000);
+    requestAnimationFrame(() => {
+      elementPickerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      elementPickerAreaRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    });
+  }, [elementCreatePickerSlot]);
 
+  useEffect(() => {
+    // CTA suave: 60s después de cambiar de modelo (cualquiera).
+    // Se apaga también al hacer click en el botón.
+    setElementCtaActive(true);
+    const t = setTimeout(() => setElementCtaActive(false), 60_000);
     return () => clearTimeout(t);
   }, [model]);
 
@@ -808,78 +818,36 @@ const ImageGeneratorTool: React.FC = () => {
   }
 
 
+  // ===============================
+  // Element/Person Library (GLOBAL):
+  // - No depende de Kling ni de IA.
+  // - Se construye desde tus uploads guardados como assets con meta.tool = "element-library".
+  // ===============================
   useEffect(() => {
-    setRootGlow(50, 20);
-    reloadHistory();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    const items: ElementItem[] = (myAssets || [])
+      .filter((a: any) => {
+        if (a?.type && a.type !== "image") return false;
+        const meta = (a as any)?.meta || {};
+        return meta?.tool === "element-library" || meta?.isElement === true;
+      })
+      .sort((a: any, b: any) => {
+        const ta = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const tb = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return tb - ta;
+      })
+      .map((a: any) => ({
+        id: a.id,
+        name: a.name || "Element",
+        createdAt: a.createdAt || "",
+        url: a.url,
+      }));
 
-    // ===============================
-    // Kling Elements: cargar solo cuando el modelo seleccionado es Kling
-    // (y exponer un "reload" reutilizable para Create/Delete)
-    // ===============================
-    const klingElementsAbortRef = useRef<AbortController | null>(null);
+    setElements(items);
 
-    const reloadKlingElements = useCallback(async () => {
-      // seguridad: solo aplica cuando el modelo seleccionado es Kling
-      if (!isKlingModel(model)) return;
+    // Limpia selección si borraste elementos
+    setSelectedElementAssetIds((prev) => prev.filter((id) => items.some((x) => x.id === id)));
+  }, [myAssets]);
 
-      // cancela una carga anterior si existe
-      try {
-        klingElementsAbortRef.current?.abort();
-      } catch {}
-      const controller = new AbortController();
-      klingElementsAbortRef.current = controller;
-
-      try {
-        const { data: sessionData } = await supabase.auth.getSession();
-        const token = sessionData.session?.access_token;
-
-        const headers: Record<string, string> = {};
-        if (token) headers["Authorization"] = `Bearer ${token}`;
-
-        const resp = await fetch("/api/kling/elements", { method: "GET", headers, signal: controller.signal });
-        const data = await resp.json().catch(() => null);
-
-        if (!resp.ok || data?.ok === false) {
-          throw new Error(data?.error?.message || `Error listando Elements (${resp.status}).`);
-        }
-
-        const items: KlingElementItem[] = Array.isArray(data?.items) ? data.items : [];
-        setKlingElements(items);
-
-        // Mantener selección siempre sincronizada (sin IDs fantasmas)
-        setSelectedKlingElementIds((prev) => {
-          const allowed = new Set(items.map((x) => x.id));
-          return prev.filter((id) => allowed.has(id)).slice(0, 5);
-        });
-      } catch (e: any) {
-        if (e?.name === "AbortError") return;
-        setError(e?.message || "No se pudieron cargar tus Elements de Kling.");
-      }
-    }, [model]);
-
-    useEffect(() => {
-      // Si NO es Kling: ocultamos UI y limpiamos selección
-      if (!isKlingModel(model)) {
-        try {
-          klingElementsAbortRef.current?.abort();
-        } catch {}
-        setKlingElements([]);
-        setSelectedKlingElementIds([]);
-        setIsElementCreateOpen(false);
-        setIsElementAllOpen(false);
-        return;
-      }
-
-      reloadKlingElements();
-
-      return () => {
-        try {
-          klingElementsAbortRef.current?.abort();
-        } catch {}
-      };
-    }, [model, reloadKlingElements]);
 
     // ===============================
   // Kling Elements: helpers (Create / Delete)
@@ -891,6 +859,129 @@ const ImageGeneratorTool: React.FC = () => {
       reader.onerror = () => reject(new Error("No se pudo leer el archivo"));
       reader.readAsDataURL(file);
     });
+  }
+
+  // ===============================
+  // Element/Person: crear mosaico 2x2 (sin IA)
+  // - Slot1: arriba-izquierda (y define el aspect ratio / tamaño de celda)
+  // - Slot2: arriba-derecha
+  // - Slot3: abajo-izquierda
+  // - Slot4: abajo-derecha
+  // ===============================
+
+  function slugifyName(s: string): string {
+    return (s || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9\s_-]/g, "")
+      .replace(/\s+/g, "_")
+      .replace(/_+/g, "_")
+      .slice(0, 60);
+  }
+
+  async function resolveInputToUrl(input: ElementImageInput): Promise<string> {
+    if (input.kind === "dataUrl") return input.dataUrl;
+
+    // kind === "asset"
+    const a = myAssets.find((x) => x.id === input.assetId);
+    return a?.url || input.previewUrl;
+  }
+
+  async function loadImageViaObjectUrl(src: string): Promise<{ img: HTMLImageElement; revoke?: () => void }> {
+    // Para evitar canvas tainted por CORS, convertimos http(s) -> blob -> objectURL
+    const isDataUrl = src.startsWith("data:");
+    const img = new Image();
+
+    if (isDataUrl) {
+      img.src = src;
+      await new Promise<void>((res, rej) => {
+        img.onload = () => res();
+        img.onerror = () => rej(new Error("No se pudo cargar la imagen."));
+      });
+      return { img };
+    }
+
+    const resp = await fetch(src);
+    if (!resp.ok) throw new Error(`No se pudo descargar una imagen (${resp.status}).`);
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+
+    img.src = url;
+    await new Promise<void>((res, rej) => {
+      img.onload = () => res();
+      img.onerror = () => rej(new Error("No se pudo cargar la imagen."));
+    });
+
+    return { img, revoke: () => URL.revokeObjectURL(url) };
+  }
+
+  function drawContain(ctx: CanvasRenderingContext2D, img: HTMLImageElement, x: number, y: number, w: number, h: number) {
+    const iw = img.naturalWidth || (img as any).width || 1;
+    const ih = img.naturalHeight || (img as any).height || 1;
+
+    const scale = Math.min(w / iw, h / ih);
+    const dw = iw * scale;
+    const dh = ih * scale;
+    const dx = x + (w - dw) / 2;
+    const dy = y + (h - dh) / 2;
+
+    ctx.drawImage(img, dx, dy, dw, dh);
+  }
+
+  async function buildMosaic2x2(inputs: (ElementImageInput | null)[]): Promise<File> {
+    // Slot 1 obligatorio (define aspect ratio)
+    const s1 = inputs[0];
+    if (!s1) throw new Error("Slot 1 es obligatorio (define el aspecto del mosaico).");
+
+    const url1 = await resolveInputToUrl(s1);
+    const loaded1 = await loadImageViaObjectUrl(url1);
+
+    // Tamaño base de la celda según Slot1, con límite (para no explotar memoria)
+    const w1 = loaded1.img.naturalWidth || 1024;
+    const h1 = loaded1.img.naturalHeight || 1024;
+
+    const MAX_CELL = 1280; // ajustable
+    const down = Math.min(1, MAX_CELL / Math.max(w1, h1));
+    const cellW = Math.max(1, Math.round(w1 * down));
+    const cellH = Math.max(1, Math.round(h1 * down));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = cellW * 2;
+    canvas.height = cellH * 2;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("No se pudo crear el canvas.");
+
+    // Fondo negro
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Dibuja slot1
+    drawContain(ctx, loaded1.img, 0, 0, cellW, cellH);
+    loaded1.revoke?.();
+
+    const coords = [
+      { x: 0, y: 0 },
+      { x: cellW, y: 0 },
+      { x: 0, y: cellH },
+      { x: cellW, y: cellH },
+    ];
+
+    for (let i = 1; i < 4; i++) {
+      const input = inputs[i];
+      if (!input) continue;
+
+      const url = await resolveInputToUrl(input);
+      const loaded = await loadImageViaObjectUrl(url);
+      drawContain(ctx, loaded.img, coords[i].x, coords[i].y, cellW, cellH);
+      loaded.revoke?.();
+    }
+
+    const blob: Blob = await new Promise((resolve, reject) => {
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("No se pudo exportar el mosaico."))), "image/jpeg", 0.92);
+    });
+
+    return new File([blob], `element_${Date.now()}.jpg`, { type: "image/jpeg" });
   }
 
   async function klingAuthHeadersJson(): Promise<Record<string, string>> {
@@ -911,7 +1002,7 @@ const ImageGeneratorTool: React.FC = () => {
     return headers;
   }
 
-  function setCreateSlot(index: number, value: KlingElementImageInput | null) {
+  function setCreateSlot(index: number, value: ElementImageInput | null) {
     setElementCreateSlots((prev) => {
       const next = [...prev];
       next[index] = value;
@@ -938,71 +1029,50 @@ const ImageGeneratorTool: React.FC = () => {
 
   async function handleCreateElement() {
     const name = (elementCreateName || "").trim();
-    const imagesInputs = elementCreateSlots.filter(Boolean) as KlingElementImageInput[];
+
+    // Slot 1 define el aspecto => obligatorio
+    if (!elementCreateSlots[0]) {
+      setError("Para crear un Element/Person, el Slot 1 es obligatorio (define el aspecto del mosaico).");
+      return;
+    }
+
+    const imagesCount = elementCreateSlots.filter(Boolean).length;
 
     if (!name) {
       setError("Ponle un nombre al Element/Person (obligatorio).");
       return;
     }
-    if (imagesInputs.length < 1) {
+    if (imagesCount < 1) {
       setError("Selecciona o sube al menos 1 imagen (máximo 4).");
-      return;
-    }
-    if (imagesInputs.length > 4) {
-      setError("Máximo 4 imágenes por Element/Person.");
       return;
     }
 
     setIsCreatingElement(true);
     try {
-      const headers = await klingAuthHeadersJson();
+      // 1) mosaico 2x2 (sin IA)
+      const base = await buildMosaic2x2(elementCreateSlots);
 
-      const body = {
-        name,
-        tag: (elementCreateTag || "").trim() || undefined,
-        images: imagesInputs.map((it) => (it.kind === "asset" ? { assetId: it.assetId } : { dataUrl: it.dataUrl })),
-      };
+      // 2) nombre bonito para el asset
+      const slug = slugifyName(name);
+      const fileName = slug ? `${slug}.jpg` : `element_${Date.now()}.jpg`;
+      const mosaicFile = new File([base], fileName, { type: "image/jpeg" });
 
-      const resp = await fetch("/api/kling/elements", {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-      });
+      // 3) subir como asset normal (global para todos los modelos)
+      const uploaded = await uploadUserAsset(mosaicFile, "element-library");
 
-      const data = await resp.json().catch(() => null);
-      if (!resp.ok || data?.ok === false) {
-        throw new Error(data?.error?.message || `Error creando Element (${resp.status}).`);
-      }
+      // 4) refrescar + seleccionar
+      await reloadHistory();
 
-      const item: KlingElementItem = data.item;
-
-      // opcional: autoseleccionar si hay espacio
-      setSelectedKlingElementIds((prev) => {
-        if (prev.includes(item.id)) return prev;
-        if (prev.length >= 5) return prev;
-        return [item.id, ...prev];
-      });
-
-      closeCreateModal();
-      resetCreateModal();
-
-      // Reload desde el backend (evita desincronización)
-      await reloadKlingElements();
-
-      // aparece al instante en popover + en modal All
-      setKlingElements((prev) => [item, ...prev]);
-
-      // opcional: autoseleccionar si hay espacio
-      setSelectedKlingElementIds((prev) => {
-        if (prev.includes(item.id)) return prev;
-        if (prev.length >= 5) return prev;
-        return [item.id, ...prev];
+      setSelectedElementAssetIds((prev) => {
+        if (prev.includes(uploaded.id)) return prev;
+        const next = [uploaded.id, ...prev];
+        return next.slice(0, 5);
       });
 
       closeCreateModal();
       resetCreateModal();
     } catch (e: any) {
-      setError(e?.message || "No se pudo crear el Element/Person.");
+      setError(e?.message || "No se pudo crear el Element/Person (mosaico 2x2).");
     } finally {
       setIsCreatingElement(false);
     }
@@ -1012,24 +1082,14 @@ const ImageGeneratorTool: React.FC = () => {
     const ok = window.confirm("¿Borrar este Element/Person? (No se puede deshacer)");
     if (!ok) return;
 
-          setSelectedKlingElementIds((prev) => prev.filter((x) => x !== id));
-
-      // Reload desde el backend (evita desincronización)
-      await reloadKlingElements();
-
     setDeletingElementId(id);
     try {
-      const headers = await klingAuthHeaders();
+      await deleteAsset(id);
 
-      const resp = await fetch(`/api/kling/elements/${id}`, { method: "DELETE", headers });
-      const data = await resp.json().catch(() => null);
-
-      if (!resp.ok || data?.ok === false) {
-        throw new Error(data?.error?.message || `Error borrando Element (${resp.status}).`);
-      }
-
-      setKlingElements((prev) => prev.filter((x) => x.id !== id));
-      setSelectedKlingElementIds((prev) => prev.filter((x) => x !== id));
+      // UI instantánea
+      setMyAssets((prev) => prev.filter((a) => a.id !== id));
+      setElements((prev) => prev.filter((x) => x.id !== id));
+      setSelectedElementAssetIds((prev) => prev.filter((x) => x !== id));
     } catch (e: any) {
       setError(e?.message || "No se pudo borrar el Element/Person.");
     } finally {
@@ -1060,7 +1120,12 @@ const ImageGeneratorTool: React.FC = () => {
           ? parseInt(meta.count, 10)
           : null;
 
-    const characterAssetIds = Array.isArray(meta.characterAssetIds) ? meta.characterAssetIds : [];
+    const allRefIds: string[] = Array.isArray(meta.characterAssetIds)
+      ? meta.characterAssetIds.filter((x: any) => typeof x === "string")
+      : [];
+
+    const charRefIds = allRefIds.slice(0, 3);
+    const elementRefIds = allRefIds.slice(3);
     const backgroundAssetId = typeof meta.backgroundAssetId === "string" ? meta.backgroundAssetId : null;
     const styleAssetId = typeof meta.styleAssetId === "string" ? meta.styleAssetId : null;
 
@@ -1073,10 +1138,11 @@ const ImageGeneratorTool: React.FC = () => {
       count,
       styleName: getStyleNameFromPrompt(viewer.prompt || ""),
       refs: {
-        chars: characterAssetIds.map(findAsset).filter(Boolean) as Asset[],
+        chars: charRefIds.map(findAsset).filter(Boolean) as Asset[],
+        elements: elementRefIds.map(findAsset).filter(Boolean) as Asset[],
         bg: backgroundAssetId ? findAsset(backgroundAssetId) : null,
         style: styleAssetId ? findAsset(styleAssetId) : null,
-        raw: { characterAssetIds, backgroundAssetId, styleAssetId },
+        raw: { characterAssetIds: allRefIds, backgroundAssetId, styleAssetId },
       },
     };
   }, [viewer, myAssets]);
@@ -1194,11 +1260,16 @@ const ImageGeneratorTool: React.FC = () => {
       const characterAssetIds = [refs.char1?.id, refs.char2?.id, refs.char3?.id].filter(Boolean) as string[];
       const backgroundAssetId = refs.background?.id;
 
-      // Prompt final (receta real): base + background rules + style block
-      const kling = isKlingModel(model);
+      // Elements (GLOBAL): mosaicos seleccionados (máx 5)
+      const elementAssetIds = selectedElementAssetIds.slice(0, 5);
 
-      // Kling-only: elements seleccionados (máx 5)
-      const klingElementIds = kling ? selectedKlingElementIds.slice(0, 5) : [];
+      // Se anexan detrás de los "character slots"
+      const mergedCharacterAssetIds = [...characterAssetIds, ...elementAssetIds];
+
+      // Guardrail total referencias
+      if (mergedCharacterAssetIds.length + (backgroundAssetId ? 1 : 0) > 10) {
+        throw new Error("Demasiadas referencias: usa menos Elements o menos imágenes de personaje/fondo.");
+      }
 
       // Kling: si el prompt trae un bloque de estilo guardado (por “Reuse prompt”),
       // lo limpiamos y re-adjuntamos una versión corta para no romper el límite.
@@ -1235,9 +1306,8 @@ const ImageGeneratorTool: React.FC = () => {
         quality,
         tool: "image-generator",
         nameHint: "generated",
-        characterAssetIds,
+        characterAssetIds: mergedCharacterAssetIds,
         backgroundAssetId,
-        ...(klingElementIds.length ? { klingElementIds } : {}),
       });
 
       await reloadHistory();
@@ -1345,10 +1415,23 @@ const ImageGeneratorTool: React.FC = () => {
       }
     }
 
-    // refs (ids -> assets)
-    const charIds: string[] = Array.isArray(meta.characterAssetIds)
+    // refs (ids -> assets) + Elements (compat)
+    // meta.characterAssetIds ahora puede traer:
+    // [char1, char2, char3, element1, element2, ...]
+    const allIds: string[] = Array.isArray(meta.characterAssetIds)
       ? meta.characterAssetIds.filter((x: any) => typeof x === "string")
       : [];
+
+    const charIds = allIds.slice(0, 3);
+    const elementIdsFromCharArray = allIds.slice(3);
+
+    // legacy fallback (por si tienes assets viejos que guardaban meta.klingElementIds)
+    const legacyElementIds: string[] = Array.isArray(meta.klingElementIds)
+      ? meta.klingElementIds.filter((x: any) => typeof x === "string")
+      : [];
+
+    const finalElementIds = elementIdsFromCharArray.length > 0 ? elementIdsFromCharArray : legacyElementIds;
+
     const bgId = typeof meta.backgroundAssetId === "string" ? meta.backgroundAssetId : null;
 
     const findAsset = (id: string) => myAssets.find((a) => a.id === id) || null;
@@ -1359,17 +1442,9 @@ const ImageGeneratorTool: React.FC = () => {
     const bg = bgId ? findAsset(bgId) : null;
 
     setRefs({ char1: c1, char2: c2, char3: c3, background: bg });
-    // 2.1) Kling-only: restaurar Elements usados (solo si el modelo reusado es Kling)
-    const klingIds: string[] = Array.isArray(meta.klingElementIds)
-      ? meta.klingElementIds.filter((x: any) => typeof x === "string")
-      : [];
 
-    if (metaModel && isKlingModel(metaModel)) {
-      setSelectedKlingElementIds(klingIds.slice(0, 5));
-    } else {
-      setSelectedKlingElementIds([]);
-    }
-
+    // restaurar Elements (global)
+    setSelectedElementAssetIds(finalElementIds.slice(0, 5));
 
     // 3) UI: si el prompt trae un bloque de style, intentamos “reconocer” el preset
     const inside = extractStyleBlock(raw) || "";
@@ -1572,81 +1647,79 @@ const ImageGeneratorTool: React.FC = () => {
           )}
           <div className={styles.promptRow}>
             <div className={styles.promptInputWrap}>
-              {isKlingModel(model) && (
-                <div className={styles.klingDock}>
-                  {/* Botón 1x1 (solo visible por defecto) */}
-                  <button
-                    type="button"
-                    className={`${styles.klingElementBtn} ${klingElementCtaActive ? styles.klingElementBtnCta : ""}`}
-                    onClick={() => {
-                      setKlingElementCtaActive(false); // apaga CTA al click (ETAPA 2)
-                      setIsElementCreateOpen(true);
-                    }}
-                    title="Element/Person (Kling)"
-                    aria-label="Element/Person"
-                  >
-                    {/* ícono “scan” */}
-                    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-                      <path
-                        fill="currentColor"
-                        d="M7 3H5a2 2 0 0 0-2 2v2h2V5h2V3zm14 4V5a2 2 0 0 0-2-2h-2v2h2v2h2zM5 19v-2H3v2a2 2 0 0 0 2 2h2v-2H5zm16-2v2h-2v2h2a2 2 0 0 0 2-2v-2h-2zM7 8h10v2H7V8zm0 6h10v2H7v-2z"
-                      />
-                    </svg>
+              <div className={styles.klingDock}>
+                {/* Botón 1x1 */}
+                <button
+                  type="button"
+                  className={`${styles.klingElementBtn} ${elementCtaActive ? styles.klingElementBtnCta : ""}`}
+                  onClick={() => {
+                    setElementCtaActive(false); // apaga CTA al click
+                    setIsElementCreateOpen(true);
+                  }}
+                  title="Element/Person"
+                  aria-label="Element/Person"
+                >
+                  {/* ícono “scan” */}
+                  <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                    <path
+                      fill="currentColor"
+                      d="M7 3H5a2 2 0 0 0-2 2v2h2V5h2V3zm14 4V5a2 2 0 0 0-2-2h-2v2h2v2h2zM5 19v-2H3v2a2 2 0 0 0 2 2h2v-2H5zm16-2v2h-2v2h2a2 2 0 0 0 2-2v-2h-2zM7 8h10v2H7V8zm0 6h10v2H7v-2z"
+                    />
+                  </svg>
 
-                    {/* badge con número si hay selección */}
-                    {selectedKlingElementIds.length > 0 && (
-                      <span className={styles.klingBadge}>{selectedKlingElementIds.length}</span>
-                    )}
-                  </button>
+                  {/* badge con número si hay selección */}
+                  {selectedElementAssetIds.length > 0 && (
+                    <span className={styles.klingBadge}>{selectedElementAssetIds.length}</span>
+                  )}
+                </button>
 
-                  {/* Popover: aparece SOLO al hover del botón */}
-                  <div className={styles.klingPopover}>
-                    <div className={styles.klingPopoverTop}>
-                      <button
-                        type="button"
-                        className={styles.klingAllBtn}
-                        onClick={() => setIsElementAllOpen(true)}
-                        title="Ver todos tus Elements"
-                      >
-                        All
-                      </button>
-                    </div>
-
-                    {klingElements.length > 0 ? (
-                      <div className={styles.klingPopoverThumbRow}>
-                        {klingElements.slice(0, 6).map((el) => {
-                          const active = selectedKlingElementIds.includes(el.id);
-                          const src = el.previewUrl || el.imageUrls?.[0] || "";
-                          return (
-                            <button
-                              key={el.id}
-                              type="button"
-                              className={`${styles.klingThumbBtn} ${active ? styles.klingThumbBtnActive : ""}`}
-                              onClick={() => {
-                                setSelectedKlingElementIds((prev) => {
-                                  const has = prev.includes(el.id);
-                                  if (has) return prev.filter((x) => x !== el.id);
-                                  if (prev.length >= 5) {
-                                    setError("Kling permite seleccionar máximo 5 Elements a la vez.");
-                                    return prev;
-                                  }
-                                  return [el.id, ...prev];
-                                });
-                              }}
-                              title={el.name}
-                              aria-label={el.name}
-                            >
-                              {src ? <img src={src} alt={el.name} className={styles.klingThumbImg} /> : null}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div className={styles.klingEmpty}>No elements yet</div>
-                    )}
+                {/* Popover al hover */}
+                <div className={styles.klingPopover}>
+                  <div className={styles.klingPopoverTop}>
+                    <button
+                      type="button"
+                      className={styles.klingAllBtn}
+                      onClick={() => setIsElementAllOpen(true)}
+                      title="Ver todos tus Elements"
+                    >
+                      All
+                    </button>
                   </div>
+
+                  {elements.length > 0 ? (
+                    <div className={styles.klingPopoverThumbRow}>
+                      {elements.slice(0, 6).map((el) => {
+                        const active = selectedElementAssetIds.includes(el.id);
+                        const src = el.url || "";
+                        return (
+                          <button
+                            key={el.id}
+                            type="button"
+                            className={`${styles.klingThumbBtn} ${active ? styles.klingThumbBtnActive : ""}`}
+                            onClick={() => {
+                              setSelectedElementAssetIds((prev) => {
+                                const has = prev.includes(el.id);
+                                if (has) return prev.filter((x) => x !== el.id);
+                                if (prev.length >= 5) {
+                                  setError("Máximo 5 Elements a la vez.");
+                                  return prev;
+                                }
+                                return [el.id, ...prev];
+                              });
+                            }}
+                            title={el.name}
+                            aria-label={el.name}
+                          >
+                            {src ? <img src={src} alt={el.name} className={styles.klingThumbImg} /> : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className={styles.klingEmpty}>No elements yet</div>
+                  )}
                 </div>
-              )}
+              </div>           
 
               <textarea
                 className={styles.prompt}
@@ -2099,6 +2172,15 @@ const ImageGeneratorTool: React.FC = () => {
                       <div className={styles.recipeEmpty}>No saved refs (legacy)</div>
                     )}
 
+                    {(viewerRecipeInfo?.refs?.elements?.length || 0) > 0
+                      ? viewerRecipeInfo!.refs.elements.map((a, i) => (
+                          <div key={a.id} className={styles.recipeRefThumb} title={`Element ${i + 1}`}>
+                            <img src={a.url} alt={`Element ${i + 1}`} />
+                            <span className={styles.recipeRefTag}>E{i + 1}</span>
+                          </div>
+                        ))
+                      : null}
+
                     {viewerRecipeInfo?.refs?.bg ? (
                       <div className={styles.recipeRefThumb} title="Background">
                         <img src={viewerRecipeInfo.refs.bg.url} alt="Background" />
@@ -2235,7 +2317,7 @@ const ImageGeneratorTool: React.FC = () => {
               </div>
 
               {elementCreatePickerSlot !== null && (
-                <div className={styles.elementPicker}>
+                <div ref={elementPickerRef} className={styles.elementPicker}>
                   <div className={styles.elementPickerTop}>
                     <div className={styles.elementPickerTitle}>Pick from your library</div>
                     <button type="button" className={styles.smallBtnGhost} onClick={() => setElementCreatePickerSlot(null)}>
@@ -2250,7 +2332,7 @@ const ImageGeneratorTool: React.FC = () => {
                     placeholder="Search images..."
                   />
 
-                  <div className={styles.pickerArea}>
+                  <div ref={elementPickerAreaRef} className={styles.pickerArea}>
                     <div className={styles.pickerGrid}>
                       {elementPickerCandidates.slice(0, 60).map((a: any) => (
                         <button
@@ -2316,7 +2398,7 @@ const ImageGeneratorTool: React.FC = () => {
             <div className={styles.elementBody}>
               <div className={styles.elementAllTop}>
                 <div className={styles.elementAllMeta}>
-                  Selected: <b>{selectedKlingElementIds.length}</b>/5
+                  Selected: <b>{selectedElementAssetIds.length}</b>/5
                 </div>
 
                 <input
@@ -2328,22 +2410,22 @@ const ImageGeneratorTool: React.FC = () => {
               </div>
 
               <div className={styles.elementAllGrid}>
-                {klingElements
+                {elements
                   .filter((el) => {
                     const q = (elementAllQuery || "").trim().toLowerCase();
                     if (!q) return true;
                     return String(el?.name || "").toLowerCase().includes(q);
                   })
                   .map((el) => {
-                    const active = selectedKlingElementIds.includes(el.id);
-                    const src = el.previewUrl || el.imageUrls?.[0] || "";
+                    const active = selectedElementAssetIds.includes(el.id);
+                    const src = el.url || "";
                     return (
                       <div key={el.id} className={`${styles.elementAllCard} ${active ? styles.elementAllCardActive : ""}`}>
                         <button
                           type="button"
                           className={styles.elementAllThumb}
                           onClick={() => {
-                            setSelectedKlingElementIds((prev) => {
+                            setSelectedElementAssetIds((prev) => {
                               const has = prev.includes(el.id);
                               if (has) return prev.filter((x) => x !== el.id);
                               if (prev.length >= 5) {
@@ -2366,7 +2448,7 @@ const ImageGeneratorTool: React.FC = () => {
                             type="button"
                             className={styles.smallBtn}
                             onClick={() => {
-                              setSelectedKlingElementIds((prev) => {
+                              setSelectedElementAssetIds((prev) => {
                                 const has = prev.includes(el.id);
                                 if (has) return prev.filter((x) => x !== el.id);
                                 if (prev.length >= 5) {
@@ -2395,7 +2477,7 @@ const ImageGeneratorTool: React.FC = () => {
                   })}
               </div>
 
-              {klingElements.length === 0 && <div className={styles.elementPickerEmpty}>No elements yet</div>}
+              {elements.length === 0 && <div className={styles.elementPickerEmpty}>No elements yet</div>}
 
               <div className={styles.elementFooter}>
                 <button type="button" className={styles.elementPrimaryBtn} onClick={closeAllModal}>

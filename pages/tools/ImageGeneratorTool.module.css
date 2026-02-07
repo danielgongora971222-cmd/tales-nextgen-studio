@@ -702,6 +702,8 @@
   height: 100%;
   object-fit: cover;
   display: block;
+  transform: scale(2);
+  transform-origin: top left;
 }
 
 .klingEmpty{
@@ -1491,6 +1493,7 @@
   margin-top: 16px;
   border-top: 1px solid rgba(241,225,148,0.10);
   padding-top: 14px;
+  animation: elementPickerIn 180ms ease-out;
 }
 
 .elementPickerTop{
@@ -1607,6 +1610,8 @@
   aspect-ratio: 1 / 1;
   object-fit: cover;
   display: block;
+  transform: scale(2);
+  transform-origin: top left;
 }
 
 .elementAllBadge{
@@ -1640,4 +1645,9 @@
   gap: 8px;
   align-items: center;
   justify-content: space-between;
+}
+
+@keyframes elementPickerIn{
+  from{ opacity: 0; transform: translateY(-6px); }
+  to{ opacity: 1; transform: translateY(0); }
 }
