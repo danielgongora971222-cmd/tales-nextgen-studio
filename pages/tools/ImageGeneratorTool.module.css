@@ -1011,6 +1011,11 @@
     inset 0 -12px 22px rgba(0,0,0,0.7);
 }
 .prompt::placeholder { color: rgba(255,255,255,0.25); }
+.promptHint {
+  margin-top: 6px;
+  font-size: 11px;
+  color: rgba(255,255,255,0.45);
+}
 
 .generateCol{
   display:flex;
@@ -1300,6 +1305,7 @@
   box-shadow: 0 12px 22px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.06);
 }
 .refMini img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.refMini video { width: 100%; height: 100%; object-fit: cover; display: block; }
 
 .smallBtnGhost {
   background: rgba(0,0,0,0.22);
@@ -1590,8 +1596,17 @@
   flex-shrink:0;
 }
 .refSlotThumb img { width:100%; height:100%; object-fit:cover; display:block; }
+.refSlotThumb video { width:100%; height:100%; object-fit:cover; display:block; }
 .refSlotEmpty { width:100%; height:100%; display:grid; place-items:center; font-family: var(--mono); font-size:10px; letter-spacing:0.12em; color: rgba(255,255,255,0.35); }
 .refSlotRight { display:flex; gap:8px; align-items:center; }
+.refSlotDisabled {
+  opacity: 0.55;
+}
+.refSlotDisabled .smallBtn,
+.refSlotDisabled .smallBtnGhost {
+  pointer-events: none;
+  opacity: 0.6;
+}
 
 .presetGrid {
   padding:12px 16px 16px;
@@ -1647,6 +1662,9 @@
   max-height: 420px;
   overflow: auto;
 }
+.pickerTop{
+  margin-bottom: 10px;
+}
 
 .pickerGrid{
   display: grid;
@@ -1671,6 +1689,12 @@
 }
 .pickerTile:hover{ transform: translateY(-2px); }
 .pickerTile img{
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  display: block;
+}
+.pickerVideo{
   width: 100%;
   aspect-ratio: 1 / 1;
   object-fit: cover;
