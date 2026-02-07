@@ -101,13 +101,15 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
 
   const handleImageMenuEnter = (event: React.MouseEvent<HTMLDivElement>) => {
     if (imageMenuTimer.current) window.clearTimeout(imageMenuTimer.current);
+    if (videoMenuTimer.current) window.clearTimeout(videoMenuTimer.current);
     const sidebarEl = sidebarRef.current;
     if (sidebarEl) {
       const itemRect = event.currentTarget.getBoundingClientRect();
       const sidebarRect = sidebarEl.getBoundingClientRect();
       setImageFlyoutTop(itemRect.top - sidebarRect.top);
     }
-    if (sidebarOpen) setImageMenuOpen(true);
+    setVideoMenuOpen(false);
+    setImageMenuOpen(true);
   };
 
   const handleImageMenuLeave = () => {
@@ -117,13 +119,15 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
 
   const handleVideoMenuEnter = (event: React.MouseEvent<HTMLDivElement>) => {
     if (videoMenuTimer.current) window.clearTimeout(videoMenuTimer.current);
+    if (imageMenuTimer.current) window.clearTimeout(imageMenuTimer.current);
     const sidebarEl = sidebarRef.current;
     if (sidebarEl) {
       const itemRect = event.currentTarget.getBoundingClientRect();
       const sidebarRect = sidebarEl.getBoundingClientRect();
       setVideoFlyoutTop(itemRect.top - sidebarRect.top);
     }
-    if (sidebarOpen) setVideoMenuOpen(true);
+    setImageMenuOpen(false);
+    setVideoMenuOpen(true);
   };
 
   const handleVideoMenuLeave = () => {
@@ -220,12 +224,13 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
           </div>
         </nav>
 
-        {sidebarOpen && imageMenuOpen && imageFlyoutTop !== null && (
+        {imageMenuOpen && imageFlyoutTop !== null && (
           <div
-            className="absolute left-full z-50 ml-3 w-64 rounded-2xl border border-white/10 bg-black/70 backdrop-blur-xl shadow-[0_20px_40px_rgba(0,0,0,0.45)] p-3 space-y-1 animate-in fade-in slide-in-from-left-2 duration-200"
+            className="absolute left-full z-50 ml-3 w-64 rounded-2xl border border-white/10 bg-black shadow-[0_20px_40px_rgba(0,0,0,0.45)] p-3 space-y-1 animate-in fade-in slide-in-from-left-2 duration-200"
             style={{ top: imageFlyoutTop }}
             onMouseEnter={() => {
               if (imageMenuTimer.current) window.clearTimeout(imageMenuTimer.current);
+              setVideoMenuOpen(false);
               setImageMenuOpen(true);
             }}
             onMouseLeave={handleImageMenuLeave}
@@ -254,12 +259,13 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
           </div>
         )}
 
-        {sidebarOpen && videoMenuOpen && videoFlyoutTop !== null && (
+        {videoMenuOpen && videoFlyoutTop !== null && (
           <div
-            className="absolute left-full z-50 ml-3 w-60 rounded-2xl border border-white/10 bg-black/70 backdrop-blur-xl shadow-[0_20px_40px_rgba(0,0,0,0.45)] p-3 space-y-1 animate-in fade-in slide-in-from-left-2 duration-200"
+            className="absolute left-full z-50 ml-3 w-60 rounded-2xl border border-white/10 bg-black shadow-[0_20px_40px_rgba(0,0,0,0.45)] p-3 space-y-1 animate-in fade-in slide-in-from-left-2 duration-200"
             style={{ top: videoFlyoutTop }}
             onMouseEnter={() => {
               if (videoMenuTimer.current) window.clearTimeout(videoMenuTimer.current);
+              setImageMenuOpen(false);
               setVideoMenuOpen(true);
             }}
             onMouseLeave={handleVideoMenuLeave}
