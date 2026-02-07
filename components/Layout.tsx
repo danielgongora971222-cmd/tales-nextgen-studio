@@ -54,15 +54,19 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [imageMenuOpen, setImageMenuOpen] = useState(false);
   const [videoMenuOpen, setVideoMenuOpen] = useState(false);
+  const [myCreationsMenuOpen, setMyCreationsMenuOpen] = useState(false);
   const [imageMenuVisible, setImageMenuVisible] = useState(false);
   const [videoMenuVisible, setVideoMenuVisible] = useState(false);
+  const [myCreationsMenuVisible, setMyCreationsMenuVisible] = useState(false);
   const [imageFlyoutTop, setImageFlyoutTop] = useState<number | null>(null);
   const [videoFlyoutTop, setVideoFlyoutTop] = useState<number | null>(null);
+  const [myCreationsFlyoutTop, setMyCreationsFlyoutTop] = useState<number | null>(null);
   const { user, logout } = useAuth();
 
   const sidebarRef = useRef<HTMLElement | null>(null);
   const imageMenuTimer = useRef<number | null>(null);
   const videoMenuTimer = useRef<number | null>(null);
+  const myCreationsMenuTimer = useRef<number | null>(null);
 
   const isImageTool =
     TOOLS_REGISTRY.some((tool) => tool.route === currentRoute) || currentRoute === AppRoute.IMAGE_GEN_ROOT;
@@ -77,6 +81,18 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
       label: 'Motion Control',
       status: 'beta' as const
     }
+  ];
+  const myCreationsFilters = [
+    { key: 'all', label: 'Todos' },
+    { key: 'favorites', label: 'Favoritos' },
+    { key: 'image', label: 'Solo Imagen' },
+    { key: 'video', label: 'Solo Video' },
+    { key: 'lip-sync', label: 'Lip-Sync' },
+    { key: 'motion-control', label: 'Motion Control' },
+    { key: 'element', label: 'Element' },
+    { key: 'reference', label: 'Reference' },
+    { key: 'audio', label: 'Audio' },
+    { key: 'extras', label: 'Extras' }
   ];
 
   // Auto-collapse sidebar when clicking outside (matches your mock)
@@ -98,6 +114,7 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
     return () => {
       if (imageMenuTimer.current) window.clearTimeout(imageMenuTimer.current);
       if (videoMenuTimer.current) window.clearTimeout(videoMenuTimer.current);
+      if (myCreationsMenuTimer.current) window.clearTimeout(myCreationsMenuTimer.current);
     };
   }, []);
   useEffect(() => {
@@ -122,9 +139,21 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
     }
   }, [videoMenuOpen, videoMenuVisible]);
 
+  useEffect(() => {
+    if (myCreationsMenuOpen) {
+      setMyCreationsMenuVisible(true);
+      return;
+    }
+    if (myCreationsMenuVisible) {
+      const timer = window.setTimeout(() => setMyCreationsMenuVisible(false), 200);
+      return () => window.clearTimeout(timer);
+    }
+  }, [myCreationsMenuOpen, myCreationsMenuVisible]);
+
   const handleImageMenuEnter = (event: React.MouseEvent<HTMLDivElement>) => {
     if (imageMenuTimer.current) window.clearTimeout(imageMenuTimer.current);
     if (videoMenuTimer.current) window.clearTimeout(videoMenuTimer.current);
+    if (myCreationsMenuTimer.current) window.clearTimeout(myCreationsMenuTimer.current);
     const sidebarEl = sidebarRef.current;
     if (sidebarEl) {
       const itemRect = event.currentTarget.getBoundingClientRect();
@@ -132,6 +161,7 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
       setImageFlyoutTop(itemRect.top - sidebarRect.top);
     }
     setVideoMenuOpen(false);
+    setMyCreationsMenuOpen(false);
     setImageMenuOpen(true);
   };
 
@@ -143,6 +173,7 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
   const handleVideoMenuEnter = (event: React.MouseEvent<HTMLDivElement>) => {
     if (videoMenuTimer.current) window.clearTimeout(videoMenuTimer.current);
     if (imageMenuTimer.current) window.clearTimeout(imageMenuTimer.current);
+    if (myCreationsMenuTimer.current) window.clearTimeout(myCreationsMenuTimer.current);
     const sidebarEl = sidebarRef.current;
     if (sidebarEl) {
       const itemRect = event.currentTarget.getBoundingClientRect();
@@ -150,12 +181,33 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
       setVideoFlyoutTop(itemRect.top - sidebarRect.top);
     }
     setImageMenuOpen(false);
+    setMyCreationsMenuOpen(false);
     setVideoMenuOpen(true);
   };
 
   const handleVideoMenuLeave = () => {
     if (videoMenuTimer.current) window.clearTimeout(videoMenuTimer.current);
     videoMenuTimer.current = window.setTimeout(() => setVideoMenuOpen(false), 700);
+  };
+
+  const handleMyCreationsEnter = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (myCreationsMenuTimer.current) window.clearTimeout(myCreationsMenuTimer.current);
+    if (imageMenuTimer.current) window.clearTimeout(imageMenuTimer.current);
+    if (videoMenuTimer.current) window.clearTimeout(videoMenuTimer.current);
+    const sidebarEl = sidebarRef.current;
+    if (sidebarEl) {
+      const itemRect = event.currentTarget.getBoundingClientRect();
+      const sidebarRect = sidebarEl.getBoundingClientRect();
+      setMyCreationsFlyoutTop(itemRect.top - sidebarRect.top);
+    }
+    setImageMenuOpen(false);
+    setVideoMenuOpen(false);
+    setMyCreationsMenuOpen(true);
+  };
+
+  const handleMyCreationsLeave = () => {
+    if (myCreationsMenuTimer.current) window.clearTimeout(myCreationsMenuTimer.current);
+    myCreationsMenuTimer.current = window.setTimeout(() => setMyCreationsMenuOpen(false), 700);
   };
 
   return (
@@ -210,22 +262,45 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
             }
           />
 
-          <div className="relative mx-1">
-            <div className="sidebar-galaxy rounded-2xl border border-white/10" />
-          </div>
-
           <NavItem
-            label={sidebarOpen ? 'My Creations' : ''}
-            active={currentRoute === AppRoute.MY_CREATIONS}
-            onClick={() => onNavigate(AppRoute.MY_CREATIONS)}
+            label={sidebarOpen ? 'Trends' : ''}
+            active={false}
+            onClick={() => {}}
             icon={
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M3 3h5l2 3h11v13a2 2 0 0 1-2 2H3V3z" />
-                <path d="M7 11h8" />
-                <path d="M7 15h5" />
+                <path d="M3 17l6-6 4 4 7-7" />
+                <path d="M14 8h7v7" />
               </svg>
             }
           />
+
+          <NavItem
+            label={sidebarOpen ? 'Projects' : ''}
+            active={false}
+            onClick={() => {}}
+            icon={
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 7h6l2 2h10v10a2 2 0 0 1-2 2H3V7z" />
+                <path d="M3 7V5a2 2 0 0 1 2-2h5l2 2h9" />
+              </svg>
+            }
+          />
+
+          <div className="relative" onMouseEnter={handleMyCreationsEnter} onMouseLeave={handleMyCreationsLeave}>
+            <NavItem
+              label={sidebarOpen ? 'My Creations' : ''}
+              active={currentRoute === AppRoute.MY_CREATIONS}
+              onClick={() => onNavigate(AppRoute.MY_CREATIONS)}
+              expanded={sidebarOpen ? myCreationsMenuOpen : undefined}
+              icon={
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 3h5l2 3h11v13a2 2 0 0 1-2 2H3V3z" />
+                  <path d="M7 11h8" />
+                  <path d="M7 15h5" />
+                </svg>
+              }
+            />
+          </div>
 
           <div className="hud-divider my-4 mx-2" />
 
@@ -262,7 +337,84 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
               }
             />
           </div>
+
+          <NavItem
+            label={sidebarOpen ? 'Smart Assistant' : ''}
+            active={false}
+            onClick={() => {}}
+            icon={
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 2a7 7 0 0 0-4 12.7V18a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-3.3A7 7 0 0 0 12 2z" />
+                <path d="M9 22h6" />
+              </svg>
+            }
+          />
+
+          <NavItem
+            label={sidebarOpen ? 'Audio' : ''}
+            active={false}
+            onClick={() => {}}
+            icon={
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 18V5l12-2v13" />
+                <circle cx="6" cy="18" r="3" />
+                <circle cx="18" cy="16" r="3" />
+              </svg>
+            }
+          />
+
+          <NavItem
+            label={sidebarOpen ? 'Extras' : ''}
+            active={false}
+            onClick={() => {}}
+            icon={
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 2v20" />
+                <path d="M2 12h20" />
+              </svg>
+            }
+          />
+
+          <NavItem
+            label={sidebarOpen ? 'All Tools' : ''}
+            active={false}
+            onClick={() => {}}
+            icon={
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect width="7" height="7" x="3" y="3" rx="1" />
+                <rect width="7" height="7" x="14" y="3" rx="1" />
+                <rect width="7" height="7" x="3" y="14" rx="1" />
+                <rect width="7" height="7" x="14" y="14" rx="1" />
+              </svg>
+            }
+          />
         </nav>
+
+        {myCreationsMenuVisible && myCreationsFlyoutTop !== null && (
+          <div
+            className={`absolute left-full z-50 ml-3 w-64 rounded-2xl border border-white/10 bg-black shadow-[0_20px_40px_rgba(0,0,0,0.45)] p-3 space-y-1 transition-all duration-200 ${
+              myCreationsMenuOpen ? 'opacity-100 translate-x-0 scale-100' : 'opacity-0 -translate-x-2 scale-95 pointer-events-none'
+            }`}
+            style={{ top: myCreationsFlyoutTop }}
+            onMouseEnter={() => {
+              if (myCreationsMenuTimer.current) window.clearTimeout(myCreationsMenuTimer.current);
+              setImageMenuOpen(false);
+              setVideoMenuOpen(false);
+              setMyCreationsMenuOpen(true);
+            }}
+            onMouseLeave={handleMyCreationsLeave}
+          >
+            {myCreationsFilters.map((filter) => (
+              <button
+                key={filter.key}
+                onClick={() => onNavigate(AppRoute.MY_CREATIONS)}
+                className="w-full text-left px-3 py-2 rounded-xl text-xs font-medium transition-all border border-transparent text-white/60 hover:text-white hover:bg-white/5"
+              >
+                {filter.label}
+              </button>
+            ))}
+          </div>
+        )}
 
         {imageMenuVisible && imageFlyoutTop !== null && (
           <div
@@ -273,6 +425,7 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
             onMouseEnter={() => {
               if (imageMenuTimer.current) window.clearTimeout(imageMenuTimer.current);
               setVideoMenuOpen(false);
+              setMyCreationsMenuOpen(false);
               setImageMenuOpen(true);
             }}
             onMouseLeave={handleImageMenuLeave}
@@ -310,6 +463,7 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
             onMouseEnter={() => {
               if (videoMenuTimer.current) window.clearTimeout(videoMenuTimer.current);
               setImageMenuOpen(false);
+              setMyCreationsMenuOpen(false);
               setVideoMenuOpen(true);
             }}
             onMouseLeave={handleVideoMenuLeave}
