@@ -210,6 +210,23 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
             }
           />
 
+          <div className="relative mx-1">
+            <div className="sidebar-galaxy rounded-2xl border border-white/10" />
+          </div>
+
+          <NavItem
+            label={sidebarOpen ? 'My Creations' : ''}
+            active={currentRoute === AppRoute.MY_CREATIONS}
+            onClick={() => onNavigate(AppRoute.MY_CREATIONS)}
+            icon={
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 3h5l2 3h11v13a2 2 0 0 1-2 2H3V3z" />
+                <path d="M7 11h8" />
+                <path d="M7 15h5" />
+              </svg>
+            }
+          />
+
           <div className="hud-divider my-4 mx-2" />
 
           <div className="relative" onMouseEnter={handleImageMenuEnter} onMouseLeave={handleImageMenuLeave}>

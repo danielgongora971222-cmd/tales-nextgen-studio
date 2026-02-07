@@ -117,6 +117,42 @@ body::before {
   background: linear-gradient(90deg, transparent, rgba(241,225,148,0.18), transparent);
 }
 
+.sidebar-galaxy {
+  height: 86px;
+  background:
+    radial-gradient(120px 60px at 15% 30%, rgba(103, 232, 249, 0.25), transparent 60%),
+    radial-gradient(140px 80px at 85% 70%, rgba(168, 85, 247, 0.22), transparent 65%),
+    linear-gradient(180deg, rgba(8, 10, 20, 0.95), rgba(6, 8, 16, 0.9));
+  position: relative;
+  overflow: hidden;
+}
+
+.sidebar-galaxy::before,
+.sidebar-galaxy::after {
+  content: "";
+  position: absolute;
+  inset: -40%;
+  background-image:
+    radial-gradient(2px 2px at 20% 30%, rgba(255,255,255,0.7), transparent 60%),
+    radial-gradient(1.5px 1.5px at 40% 80%, rgba(255,255,255,0.8), transparent 60%),
+    radial-gradient(1px 1px at 70% 20%, rgba(255,255,255,0.6), transparent 60%),
+    radial-gradient(1.2px 1.2px at 85% 60%, rgba(255,255,255,0.7), transparent 60%),
+    radial-gradient(1px 1px at 55% 45%, rgba(255,255,255,0.5), transparent 60%);
+  opacity: 0.7;
+  animation: galaxyDrift 6s linear infinite;
+}
+
+.sidebar-galaxy::after {
+  animation: galaxyDrift 10s linear infinite reverse;
+  opacity: 0.4;
+}
+
+@keyframes galaxyDrift {
+  0% { transform: translate3d(0, 0, 0); }
+  50% { transform: translate3d(6px, -6px, 0); }
+  100% { transform: translate3d(0, 0, 0); }
+}
+
 /* Button base (works even without Tailwind) */
 .hud-btn {
   border: 1px solid rgba(241,225,148,0.18);

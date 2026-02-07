@@ -3,6 +3,7 @@ import Layout from './components/Layout';
 import Home from './pages/Home';
 import Login from './pages/Login';
 import ImageGenHub from './pages/ImageGenHub';
+import MyCreations from './pages/MyCreations';
 import ImageGeneratorTool from './pages/tools/ImageGeneratorTool';
 import RestylerTool from './pages/tools/RestylerTool';
 import FaceSwapTool from './pages/tools/FaceSwapTool';
@@ -79,6 +80,8 @@ const AppContent: React.FC = () => {
 
       case AppRoute.VIDEO_GEN:
         return <VideoGenerator />;
+      case AppRoute.MY_CREATIONS:
+        return <MyCreations />;
       case AppRoute.CHAT:
         return (
           <div className="flex items-center justify-center h-full text-gray-500">
