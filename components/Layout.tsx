@@ -189,7 +189,7 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
               }
             />
             {sidebarOpen && imageMenuOpen && (
-              <div className="absolute left-full top-0 ml-3 w-64 rounded-2xl border border-white/10 bg-black/70 backdrop-blur-xl shadow-[0_20px_40px_rgba(0,0,0,0.45)] p-3 space-y-1 animate-in fade-in slide-in-from-left-2 duration-200">
+              <div className="absolute left-full top-0 z-50 ml-3 w-64 rounded-2xl border border-white/10 bg-black/70 backdrop-blur-xl shadow-[0_20px_40px_rgba(0,0,0,0.45)] p-3 space-y-1 animate-in fade-in slide-in-from-left-2 duration-200">
                 {TOOLS_REGISTRY.map((tool) => {
                   const isPrimary = tool.id === 'generator';
                   return (
@@ -229,7 +229,7 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
               }
             />
             {sidebarOpen && videoMenuOpen && (
-              <div className="absolute left-full top-0 ml-3 w-60 rounded-2xl border border-white/10 bg-black/70 backdrop-blur-xl shadow-[0_20px_40px_rgba(0,0,0,0.45)] p-3 space-y-1 animate-in fade-in slide-in-from-left-2 duration-200">
+              <div className="absolute left-full top-0 z-50 ml-3 w-60 rounded-2xl border border-white/10 bg-black/70 backdrop-blur-xl shadow-[0_20px_40px_rgba(0,0,0,0.45)] p-3 space-y-1 animate-in fade-in slide-in-from-left-2 duration-200">
                 {videoTools.map((tool) => {
                   const isPrimary = tool.id === 'general-video';
                   return (
