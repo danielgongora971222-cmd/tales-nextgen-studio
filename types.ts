@@ -5,6 +5,7 @@ export enum AppRoute {
   // Tool Categories
   IMAGE_GEN_ROOT = 'image-gen-root',
   VIDEO_GEN = 'video-gen',
+  MY_CREATIONS = 'my-creations',
   
   // Specific Tools
   TOOL_GENERATOR = 'tool-generator',

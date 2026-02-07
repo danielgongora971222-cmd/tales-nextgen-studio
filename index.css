@@ -117,6 +117,7 @@ body::before {
   background: linear-gradient(90deg, transparent, rgba(241,225,148,0.18), transparent);
 }
 
+
 /* Button base (works even without Tailwind) */
 .hud-btn {
   border: 1px solid rgba(241,225,148,0.18);

@@ -1,0 +1,72 @@
+.root {
+  display: grid;
+  gap: 24px;
+  padding-bottom: 48px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.kicker {
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.45);
+  font-family: var(--hud-mono);
+}
+
+.title {
+  font-size: 28px;
+  font-weight: 700;
+  margin-top: 6px;
+}
+
+.count {
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.8);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.filterChip {
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(0,0,0,0.4);
+  color: rgba(255,255,255,0.7);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  transition: all 0.2s ease;
+}
+
+.filterChip:hover {
+  border-color: rgba(241,225,148,0.35);
+  color: #fff;
+}
+
+.filterChipActive {
+  border-color: rgba(241,225,148,0.6);
+  background: rgba(241,225,148,0.12);
+  color: #fff;
+}
+
+.emptyState {
+  padding: 40px;
+  text-align: center;
+  border-radius: 18px;
+  border: 1px dashed rgba(255,255,255,0.15);
+  color: rgba(255,255,255,0.55);
+}

@@ -2187,6 +2187,179 @@ app.post("/api/ai/image", async (req, res, next) => {
           });
         }
 
+    // =============================
+    // KLING 3.0 (Fal.ai) — kling-image/v3 + kling-image/o3
+    // Docs (Fal):
+    // - fal-ai/kling-image/v3/text-to-image
+    // - fal-ai/kling-image/o3/image-to-image
+    // =============================
+    if (selectedModel.startsWith("fal-ai/kling-image/")) {
+      const nRequested = Math.max(1, Math.min(Number(count || 1), 9, maxCount));
+      const toolName = tool || "image-generator";
+      const hint = nameHint || "generated";
+      const urlExpiresInSeconds = 60 * 60;
+
+      // Referencias (máx 10 para O3)
+      const refIds = [
+        ...(Array.isArray(characterAssetIds) ? characterAssetIds : []),
+        ...(backgroundAssetId ? [backgroundAssetId] : []),
+        ...(styleAssetId ? [styleAssetId] : []),
+      ]
+        .filter(Boolean)
+        .slice(0, 10);
+
+      const refUrls = refIds.length
+        ? await Promise.all(refIds.map((id) => assetIdToSignedUrl(id, user.id, 60 * 10)))
+        : [];
+
+      const allowedAR = new Set(["16:9", "9:16", "1:1", "4:3", "3:4", "3:2", "2:3", "21:9", "auto"]);
+      const rawAR = (aspectRatio || "auto").trim();
+      const mappedAR = rawAR === "4:5" ? "3:4" : rawAR;
+      const falAspectRatio = allowedAR.has(mappedAR) ? mappedAR : "auto";
+
+      const falResolution = String(quality || "1K").toUpperCase().trim();
+      const isO3 = selectedModel.includes("/o3/");
+      const isV3 = selectedModel.includes("/v3/");
+
+      // V3 Standard no soporta 4K (solo 1K/2K)
+      const resolutionForModel = isV3 && falResolution === "4K" ? "2K" : falResolution;
+
+      function ensureO3Prompt(p, nImages) {
+        const base = String(p || "").trim();
+        if (!base) return base;
+        if (/@Image\d+/i.test(base)) return base;
+        const tags = Array.from({ length: nImages }, (_, i) => `@Image${i + 1}`).join(", ");
+        return `${base}\n\nUse the reference images ${tags} as visual guidance.`;
+      }
+
+      let falInput = {};
+
+      // O3: image-to-image (multi-ref)
+      if (isO3 && selectedModel.endsWith("/image-to-image")) {
+        if (!refUrls.length) {
+          throw httpError(
+            400,
+            "FAL_KLING_MISSING_REFERENCE",
+            "Kling O3 (Fal) necesita al menos 1 imagen de referencia. Agrega una Reference o usa el modelo de texto (V3)."
+          );
+        }
+
+        const safePrompt = ensureO3Prompt(prompt, refUrls.length);
+
+        falInput = {
+          prompt: safePrompt,
+          image_urls: refUrls,
+          resolution: resolutionForModel === "4K" || resolutionForModel === "2K" ? resolutionForModel : "1K",
+          num_images: nRequested,
+          // "auto" está permitido en O3 (detección inteligente)
+          aspect_ratio: falAspectRatio,
+          output_format: "png",
+          // Para que responda imágenes sueltas (no serie)
+          result_type: "single",
+        };
+      }
+
+      // V3: text-to-image
+      else if (isV3 && selectedModel.endsWith("/text-to-image")) {
+        falInput = {
+          prompt: String(prompt || "").trim(),
+          resolution: resolutionForModel === "2K" ? "2K" : "1K",
+          num_images: nRequested,
+          // V3 no documenta "auto"; usamos default si viene "auto"
+          ...(falAspectRatio !== "auto" ? { aspect_ratio: falAspectRatio } : {}),
+          output_format: "png",
+        };
+      }
+
+      // V3: image-to-image (1 sola referencia)
+      else if (isV3 && selectedModel.endsWith("/image-to-image")) {
+        if (!refUrls[0]) {
+          throw httpError(
+            400,
+            "FAL_KLING_MISSING_REFERENCE",
+            "Kling V3 image-to-image (Fal) necesita 1 imagen de referencia."
+          );
+        }
+        falInput = {
+          prompt: String(prompt || "").trim(),
+          image_url: refUrls[0],
+          resolution: resolutionForModel === "2K" ? "2K" : "1K",
+          num_images: nRequested,
+          ...(falAspectRatio !== "auto" ? { aspect_ratio: falAspectRatio } : {}),
+          output_format: "png",
+        };
+      } else {
+        throw httpError(400, "MODEL_NOT_SUPPORTED", `Fal Kling model not supported: ${selectedModel}`);
+      }
+
+      // Ejecutar en Fal Queue
+      const falJson = await falQueueRun(selectedModel, { input: falInput });
+      const images = falJson?.images || falJson?.data?.images || [];
+      const urls = (Array.isArray(images) ? images : [])
+        .map((x) => x?.url)
+        .filter(Boolean)
+        .slice(0, nRequested);
+
+      if (!urls.length) {
+        throw httpError(502, "FAL_NO_IMAGES", "Fal: tarea completada pero sin URLs de imagen.", { response: falJson });
+      }
+
+      const items = [];
+      for (const imageUrl of urls) {
+        const imgRes = await fetch(imageUrl);
+        if (!imgRes.ok) {
+          throw httpError(502, "FAL_IMAGE_DOWNLOAD_FAILED", `Fal: no pude descargar la imagen final (${imgRes.status}).`, {
+            imageUrl,
+          });
+        }
+
+        const buf = Buffer.from(await imgRes.arrayBuffer());
+        const mime = imgRes.headers.get("content-type") || "image/png";
+        const dataUrl = `data:${mime};base64,${buf.toString("base64")}`;
+
+        const { storagePath } = await uploadBase64ToStorage({
+          userId: user.id,
+          tool: toolName,
+          dataUrl,
+          nameHint: hint,
+        });
+
+        const meta = {
+          tool: toolName,
+          provider: "fal",
+          model: selectedModel,
+          aspectRatio: falAspectRatio,
+          quality: resolutionForModel,
+          count: nRequested,
+          characterAssetIds: Array.isArray(characterAssetIds) ? characterAssetIds : [],
+          styleAssetId: styleAssetId || null,
+          backgroundAssetId: backgroundAssetId || null,
+        };
+
+        const assetId = await insertAssetRow({
+          ownerId: user.id,
+          type: "image",
+          tool: toolName,
+          name: hint,
+          prompt,
+          storagePath,
+          isPublic: false,
+          meta,
+        });
+
+        const url = await signStoragePath(storagePath, urlExpiresInSeconds);
+        items.push({ url, assetId });
+      }
+
+      return res.json({
+        ok: true,
+        items,
+        url: items[0]?.url,
+        assetId: items[0]?.assetId,
+        urlExpiresInSeconds,
+      });
+    }
+
     // 1) Validar que el modelo sea de imagen
     if (!isImageGenModel(selectedModel)) {
       apiError(

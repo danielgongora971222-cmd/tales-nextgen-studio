@@ -1,7 +1,9 @@
-import React, { useEffect, useState } from 'react';
-import { AppRoute, Asset, User } from '../types';
+import React, { useEffect, useMemo, useState } from 'react';
+import { AppRoute, Asset } from '../types';
 import { backend } from '../services/backendService';
 import { useAuth } from '../contexts/AuthContext';
+import styles from './Home.module.css';
+import generatorStyles from './tools/ImageGeneratorTool.module.css';
 
 interface HomeProps {
   onNavigate: (route: AppRoute) => void;
@@ -11,6 +13,30 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
   const { user } = useAuth();
   const [feed, setFeed] = useState<Asset[]>([]);
   const [commentText, setCommentText] = useState<{[key:string]: string}>({}); // Map assetId -> text
+  const [viewer, setViewer] = useState<Asset | null>(null);
+
+  function escapeRegExp(input: string) {
+    return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  function removeStylePresetBlock(input: string) {
+    let out = input;
+    const pairs = [
+      { start: '[[STYLE_PRESET_START]]', end: '[[STYLE_PRESET_END]]' },
+      { start: '/* STYLE_PRESET_START */', end: '/* STYLE_PRESET_END */' }
+    ];
+
+    for (const { start, end } of pairs) {
+      const re = new RegExp(`${escapeRegExp(start)}[\\s\\S]*?${escapeRegExp(end)}\\n*`, 'g');
+      out = out.replace(re, '');
+    }
+    return out.trim();
+  }
+
+  function prettyModelLabel(modelId: string | null) {
+    if (!modelId) return 'Unknown';
+    return modelId.replace(/[-_]/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase());
+  }
 
   useEffect(() => {
     loadFeed();
@@ -36,25 +62,72 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
       loadFeed();
   };
 
+  const viewerRecipeInfo = useMemo(() => {
+    if (!viewer) return null;
+    const meta = (viewer as any).meta || {};
+    const modelId = typeof meta.model === 'string' ? meta.model : null;
+    const aspectRatio = typeof meta.aspectRatio === 'string' ? meta.aspectRatio : null;
+    const quality = typeof meta.quality === 'string' ? meta.quality : null;
+    const count =
+      typeof meta.count === 'number'
+        ? meta.count
+        : typeof meta.count === 'string'
+          ? parseInt(meta.count, 10)
+          : null;
+
+    return {
+      modelId,
+      aspectRatio,
+      quality,
+      count,
+      styleName: removeStylePresetBlock(viewer.prompt || '') ? 'Custom' : 'None'
+    };
+  }, [viewer]);
+
   return (
     <div className="space-y-12 pb-20">
       {/* Hero Section */}
-      <section className="relative overflow-hidden rounded-3xl border border-white/10 glass-panel p-12 text-center md:text-left">
-        <div className="relative z-10 max-w-3xl">
-          <h1 className="text-4xl md:text-6xl font-bold tracking-tighter mb-4 bg-gradient-to-r from-white via-gray-400 to-gray-600 bg-clip-text text-transparent">
-            WELCOME, {user?.username.toUpperCase()}.
-          </h1>
-          <p className="text-lg text-gray-400 mb-8 max-w-xl leading-relaxed">
-            Explore the community creations or start your own masterpiece. 
-            All your generations are saved privately until you choose to share.
-          </p>
-          <div className="flex flex-wrap gap-4 justify-center md:justify-start">
-            <button 
-              onClick={() => onNavigate(AppRoute.TOOL_GENERATOR)}
-              className="px-8 py-4 bg-white text-black rounded-full font-bold hover:scale-105 transition-transform shadow-[0_0_30px_rgba(255,255,255,0.2)]"
-            >
-              Start Creating
-            </button>
+      <section className={styles.heroGrid}>
+        <button
+          type="button"
+          onClick={() => onNavigate(AppRoute.TOOL_GENERATOR)}
+          className={`${styles.heroCard} ${styles.heroCardImage}`}
+        >
+          <div className={styles.heroContent}>
+            <span className={styles.heroEyebrow}>GENERAL IMAGE GENERATOR</span>
+            <h2 className={styles.heroTitle}>Create Images</h2>
+            <p className={styles.heroCopy}>Launch your next visual with cinematic presets and community-ready output.</p>
+            <span className={styles.heroCta}>Open Image Generator</span>
+          </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onNavigate(AppRoute.VIDEO_GEN)}
+          className={`${styles.heroCard} ${styles.heroCardVideo}`}
+        >
+          <div className={styles.heroContent}>
+            <span className={styles.heroEyebrow}>GENERAL VIDEO GENERATOR</span>
+            <h2 className={styles.heroTitle}>Create Videos</h2>
+            <p className={styles.heroCopy}>Produce motion-ready scenes with rich detail and cinematic pacing.</p>
+            <span className={styles.heroCta}>Open Video Generator</span>
+          </div>
+        </button>
+
+        <div className={`${styles.heroCard} ${styles.heroCardCredits}`}>
+          <div className={styles.heroContent}>
+            <span className={styles.heroEyebrow}>WELCOME</span>
+            <h2 className={styles.heroTitle}>{user?.username || 'Creator'}</h2>
+            <p className={styles.heroCopy}>Track your available credits and upgrade when you need more power.</p>
+            <div className={styles.heroCreditsRow}>
+              <div>
+                <div className={styles.heroCreditsLabel}>Credits</div>
+                <div className={styles.heroCreditsValue}>0</div>
+              </div>
+              <button type="button" className={styles.heroCreditsButton}>
+                Get More Credits
+              </button>
+            </div>
           </div>
         </div>
       </section>
@@ -67,66 +140,50 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
           </h2>
         </div>
         
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+        <div className={`${generatorStyles.grid} ${styles.feedGrid}`}>
           {feed.map((asset) => (
-            <div key={asset.id} className="glass-panel rounded-2xl overflow-hidden border border-white/10 flex flex-col">
-              {/* Image Header */}
-              <div className="relative aspect-square bg-black/50 group">
-                 <img 
-                    src={asset.url} 
-                    alt={asset.name} 
-                    className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
-                 />
-                 <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent opacity-60"></div>
-                 <div className="absolute bottom-4 left-4 right-4">
-                    <p className="text-white font-bold text-sm truncate">{asset.prompt || "Untitled Creation"}</p>
-                    <p className="text-xs text-gray-400">by User_{asset.ownerId.slice(0,4)}</p>
-                 </div>
+            <button
+              key={asset.id}
+              type="button"
+              className={`${generatorStyles.tile} ${styles.feedTile}`}
+              onClick={() => setViewer(asset)}
+            >
+              <img
+                src={asset.url}
+                alt={asset.name}
+                className={`${generatorStyles.tileImg} ${styles.feedImage}`}
+                loading="lazy"
+                decoding="async"
+              />
+
+              <div className={generatorStyles.tileMeta}>
+                <span className={generatorStyles.tileCaption}>
+                  {removeStylePresetBlock(asset.prompt || '') || asset.name || '—'}
+                </span>
+                <span className={styles.feedOwner}>by User_{asset.ownerId.slice(0,4)}</span>
               </div>
 
-              {/* Actions */}
-              <div className="p-4 border-t border-white/5 bg-black/20">
-                 <div className="flex items-center justify-between mb-4">
-                    <button 
-                        onClick={() => handleLike(asset.id)}
-                        className={`flex items-center gap-2 text-xs font-bold transition-colors ${
-                            user && asset.likes.includes(user.id) ? 'text-red-500' : 'text-gray-400 hover:text-white'
-                        }`}
-                    >
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill={user && asset.likes.includes(user.id) ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
-                        {asset.likes.length} Likes
-                    </button>
-                    <span className="text-xs text-gray-500">{asset.comments.length} Comments</span>
-                 </div>
-
-                 {/* Comments Preview */}
-                 <div className="space-y-2 mb-4 max-h-24 overflow-y-auto custom-scrollbar">
-                    {asset.comments.map(c => (
-                        <div key={c.id} className="text-xs">
-                            <span className="font-bold text-gray-300">{c.username}:</span> <span className="text-gray-500">{c.text}</span>
-                        </div>
-                    ))}
-                 </div>
-
-                 {/* Add Comment */}
-                 <div className="flex gap-2">
-                    <input 
-                        type="text" 
-                        value={commentText[asset.id] || ''}
-                        onChange={(e) => setCommentText(prev => ({...prev, [asset.id]: e.target.value}))}
-                        placeholder="Leave a thought..."
-                        className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:border-white/40 focus:outline-none"
-                    />
-                    <button 
-                        onClick={() => handleComment(asset.id)}
-                        disabled={!commentText[asset.id]}
-                        className="text-xs font-bold bg-white text-black px-3 rounded-lg hover:bg-gray-200 disabled:opacity-50"
-                    >
-                        Post
-                    </button>
-                 </div>
+              <div className={styles.feedActions} onClick={(event) => event.stopPropagation()}>
+                <button
+                  type="button"
+                  onClick={() => handleLike(asset.id)}
+                  className={styles.feedActionButton}
+                >
+                  <span className={styles.feedActionLabel}>
+                    {user && asset.likes.includes(user.id) ? 'Liked' : 'Like'}
+                  </span>
+                  <span className={styles.feedActionCount}>{asset.likes.length}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewer(asset)}
+                  className={styles.feedActionButton}
+                >
+                  <span className={styles.feedActionLabel}>Comments</span>
+                  <span className={styles.feedActionCount}>{asset.comments.length}</span>
+                </button>
               </div>
-            </div>
+            </button>
           ))}
 
           {feed.length === 0 && (
@@ -136,6 +193,115 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
           )}
         </div>
       </section>
+
+      {viewer && (
+        <div className={generatorStyles.viewerBackdrop} onClick={() => setViewer(null)}>
+          <div className={generatorStyles.viewer} onClick={(event) => event.stopPropagation()}>
+            <div className={generatorStyles.viewerTop}>
+              <div className={generatorStyles.viewerTitle}>
+                <span className={generatorStyles.viewerKicker}>COMMUNITY</span>
+                <span className={generatorStyles.viewerSub}>PUBLIC</span>
+              </div>
+              <div className={generatorStyles.viewerTopActions}>
+                <button
+                  type="button"
+                  className={generatorStyles.iconBtn}
+                  onClick={() => handleLike(viewer.id)}
+                  title="Like"
+                >
+                  ❤
+                </button>
+                <button type="button" className={generatorStyles.closeBtn} onClick={() => setViewer(null)} title="Cerrar">
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            <div className={generatorStyles.viewerBody}>
+              <div className={generatorStyles.viewerImageWrap}>
+                <img className={generatorStyles.viewerImage} src={viewer.url} alt={viewer.name} />
+              </div>
+
+              <div className={generatorStyles.viewerRecipe}>
+                <div className={generatorStyles.viewerRecipeTitle}>RECIPE</div>
+                <div className={generatorStyles.recipeGrid}>
+                  <div className={generatorStyles.recipeItem}>
+                    <div className={generatorStyles.recipeLabel}>Model</div>
+                    <div className={generatorStyles.recipeValue}>
+                      {prettyModelLabel(viewerRecipeInfo?.modelId || null)}
+                    </div>
+                  </div>
+                  <div className={generatorStyles.recipeItem}>
+                    <div className={generatorStyles.recipeLabel}>Aspect</div>
+                    <div className={generatorStyles.recipeValue}>{viewerRecipeInfo?.aspectRatio || '—'}</div>
+                  </div>
+                  <div className={generatorStyles.recipeItem}>
+                    <div className={generatorStyles.recipeLabel}>Quality</div>
+                    <div className={generatorStyles.recipeValue}>{viewerRecipeInfo?.quality || '—'}</div>
+                  </div>
+                  <div className={generatorStyles.recipeItem}>
+                    <div className={generatorStyles.recipeLabel}>Count</div>
+                    <div className={generatorStyles.recipeValue}>
+                      {viewerRecipeInfo?.count != null ? String(viewerRecipeInfo.count) : '—'}
+                    </div>
+                  </div>
+                  <div className={generatorStyles.recipeItemWide}>
+                    <div className={generatorStyles.recipeLabel}>Style</div>
+                    <div className={generatorStyles.recipeValue}>{viewerRecipeInfo?.styleName || 'None'}</div>
+                  </div>
+                </div>
+
+                <div className={generatorStyles.recipeBlock}>
+                  <div className={generatorStyles.recipeLabel}>Prompt</div>
+                  <div className={generatorStyles.recipeValue}>
+                    {removeStylePresetBlock(viewer.prompt || '') || '—'}
+                  </div>
+                </div>
+
+                <div className={styles.viewerSocial}>
+                  <div className={styles.viewerSocialHeader}>
+                    <div>
+                      <div className={styles.viewerSocialLabel}>Likes</div>
+                      <div className={styles.viewerSocialValue}>{viewer.likes.length}</div>
+                    </div>
+                    <div>
+                      <div className={styles.viewerSocialLabel}>Comments</div>
+                      <div className={styles.viewerSocialValue}>{viewer.comments.length}</div>
+                    </div>
+                  </div>
+
+                  <div className={styles.viewerComments}>
+                    {viewer.comments.map((comment) => (
+                      <div key={comment.id} className={styles.viewerComment}>
+                        <span className={styles.viewerCommentAuthor}>{comment.username}</span>
+                        <span className={styles.viewerCommentText}>{comment.text}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className={styles.viewerCommentInput}>
+                    <input
+                      type="text"
+                      value={commentText[viewer.id] || ''}
+                      onChange={(event) => setCommentText(prev => ({ ...prev, [viewer.id]: event.target.value }))}
+                      placeholder="Leave a thought..."
+                      className={styles.viewerCommentField}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleComment(viewer.id)}
+                      disabled={!commentText[viewer.id]}
+                      className={styles.viewerCommentButton}
+                    >
+                      Post
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
