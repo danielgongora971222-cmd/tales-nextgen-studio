@@ -465,13 +465,6 @@ function getActiveCaps(modelId: string) {
 
 type Panel = null | "reference" | "model" | "parameters" | "styles";
 type RefSlot = "char1" | "char2" | "char3" | "background";
-type PromptTag = {
-  id: string;
-  label: string;
-  kind: "ref" | "element";
-  refSlot?: RefSlot;
-  elementId?: string;
-};
 
 const SLOT_LABEL: Record<RefSlot, string> = {
   char1: "Reference 1",
@@ -755,6 +748,15 @@ const ImageGeneratorTool: React.FC = () => {
     // Cache de dimensiones por imagen (para layout del historial y viewer responsive)
   const [imgDims, setImgDims] = useState<Record<string, { w: number; h: number }>>({});
 
+  function appendPromptTag(tag: string) {
+    if (!tag) return;
+    setPrompt((prev) => {
+      const next = prev || "";
+      const trimmed = next.replace(/\s+$/g, "");
+      return trimmed.length > 0 ? `${trimmed} ${tag}` : tag;
+    });
+  }
+
   function rememberImgDims(assetId: string, img: HTMLImageElement) {
     const w = img.naturalWidth || 0;
     const h = img.naturalHeight || 0;
@@ -912,6 +914,19 @@ const ImageGeneratorTool: React.FC = () => {
       .replace(/\s+/g, "_")
       .replace(/_+/g, "_")
       .slice(0, 60);
+  }
+
+  function makeElementTag(name: string): string | null {
+    const slug = slugifyName(name || "");
+    if (!slug) return null;
+    return `@${slug}`;
+  }
+
+  function getRefTag(slot: RefSlot): string {
+    if (slot === "background") return "@background";
+    if (slot === "char1") return "@reference1";
+    if (slot === "char2") return "@reference2";
+    return "@reference3";
   }
 
   async function resolveInputToUrl(input: ElementImageInput): Promise<string> {
@@ -1120,6 +1135,8 @@ const ImageGeneratorTool: React.FC = () => {
         const next = [uploaded.id, ...prev];
         return next.slice(0, 5);
       });
+      const tag = makeElementTag(name);
+      if (tag) appendPromptTag(tag);
 
       closeCreateModal();
       resetCreateModal();
@@ -1223,10 +1240,6 @@ const ImageGeneratorTool: React.FC = () => {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  function stripPromptTags(text: string): string {
-    return (text || "").replace(/@\w+/g, "").replace(/\s+/g, " ").trim();
-  }
-
   const filteredPickerAssets = useMemo(() => {
     const q = pickerQuery.trim().toLowerCase();
     if (!q) return history;
@@ -1235,32 +1248,6 @@ const ImageGeneratorTool: React.FC = () => {
       return (a.name || "").toLowerCase().includes(q) || caption.includes(q);
     });
   }, [history, pickerQuery]);
-
-  const elementNameById = useMemo(() => {
-    return new Map(elements.map((el) => [el.id, el.name]));
-  }, [elements]);
-
-  const promptTags = useMemo(() => {
-    const tags: PromptTag[] = [];
-    if (refs.char1) tags.push({ id: "ref-char1", label: "@reference1", kind: "ref", refSlot: "char1" });
-    if (refs.char2) tags.push({ id: "ref-char2", label: "@reference2", kind: "ref", refSlot: "char2" });
-    if (refs.char3) tags.push({ id: "ref-char3", label: "@reference3", kind: "ref", refSlot: "char3" });
-    if (refs.background) tags.push({ id: "ref-background", label: "@background", kind: "ref", refSlot: "background" });
-
-    selectedElementAssetIds.forEach((id) => {
-      const name = elementNameById.get(id) || "";
-      const slug = slugifyName(name);
-      if (!slug) return;
-      tags.push({ id: `element-${id}`, label: `@${slug}`, kind: "element", elementId: id });
-    });
-
-    return tags;
-  }, [refs, selectedElementAssetIds, elementNameById]);
-
-  const promptWithTags = useMemo(() => {
-    const tagsText = promptTags.map((tag) => tag.label).join(" ");
-    return [tagsText, prompt].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
-  }, [promptTags, prompt]);
 
   const recipeStyleName = useMemo(() => {
     return getStyleNameFromPromptOrSelection({ prompt, selectedStyleId });
@@ -1281,18 +1268,11 @@ const ImageGeneratorTool: React.FC = () => {
     ];
   }, [model, aspectRatio, count, quality, refs, recipeStyleName]);
 
-  function removePromptTag(tag: PromptTag) {
-    if (tag.kind === "ref" && tag.refSlot) {
-      setRefSlot(tag.refSlot, null);
-      return;
-    }
-    if (tag.kind === "element" && tag.elementId) {
-      setSelectedElementAssetIds((prev) => prev.filter((id) => id !== tag.elementId));
-    }
-  }
-
   function setRefSlot(slot: RefSlot, asset: Asset | null) {
     setRefs((prev) => {
+      if (asset) {
+        appendPromptTag(getRefTag(slot));
+      }
       // Background es independiente
       if (slot === "background") {
         return { ...prev, background: asset };
@@ -1335,7 +1315,7 @@ const ImageGeneratorTool: React.FC = () => {
       return;
     }
 
-    const basePrompt = (promptWithTags || "").trim();
+    const basePrompt = (prompt || "").trim();
     if (!basePrompt) return;
 
     setIsGenerating(true);
@@ -1427,13 +1407,22 @@ const ImageGeneratorTool: React.FC = () => {
     }
   }
 
-  function handleDownload(asset: Asset) {
-    const a = document.createElement("a");
-    a.href = asset.url;
-    a.download = asset.name || "image";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+  async function handleDownload(asset: Asset) {
+    try {
+      const resp = await fetch(asset.url);
+      if (!resp.ok) throw new Error("No se pudo descargar la imagen.");
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = asset.name || "image";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setError(e?.message || "No se pudo descargar la imagen.");
+    }
   }
 
   async function handleDelete(asset: Asset) {
@@ -1468,7 +1457,7 @@ const ImageGeneratorTool: React.FC = () => {
     if (!raw.trim()) return;
 
     // 1) prompt (incluye bloque de style si venía guardado)
-    setPrompt(stripPromptTags(raw));
+    setPrompt(raw);
 
     // 2) receta (model/ratio/count/quality + refs)
     const meta = (asset as any).meta || {};
@@ -1786,29 +1775,46 @@ const ImageGeneratorTool: React.FC = () => {
                           const active = selectedElementAssetIds.includes(el.id);
                           const src = el.url || "";
                           return (
-                            <button
-                              key={el.id}
-                              type="button"
-                              className={`${styles.klingThumbBtn} ${active ? styles.klingThumbBtnActive : ""}`}
-                              onClick={() => {
-                                setSelectedElementAssetIds((prev) => {
-                                  const has = prev.includes(el.id);
-                                  if (has) return prev.filter((x) => x !== el.id);
-                                if (prev.length >= 5) {
-                                  setError("Máximo 5 Elements a la vez.");
-                                  return prev;
-                                }
-                                return [el.id, ...prev];
-                              });
-                            }}
-                              title={el.name}
-                              aria-label={el.name}
-                            >
-                              {src ? <img src={src} alt={el.name} className={styles.klingThumbImg} /> : null}
-                            </button>
+                            <div key={el.id} className={styles.klingThumbWrap}>
+                              <button
+                                type="button"
+                                className={`${styles.klingThumbBtn} ${active ? styles.klingThumbBtnActive : ""}`}
+                                onClick={() => {
+                                  setSelectedElementAssetIds((prev) => {
+                                    const has = prev.includes(el.id);
+                                    if (has) {
+                                      const tag = makeElementTag(el.name);
+                                      if (tag) appendPromptTag(tag);
+                                      return prev;
+                                    }
+                                    if (prev.length >= 5) {
+                                      setError("Máximo 5 Elements a la vez.");
+                                      return prev;
+                                    }
+                                    const tag = makeElementTag(el.name);
+                                    if (tag) appendPromptTag(tag);
+                                    return [el.id, ...prev];
+                                  });
+                                }}
+                                title={el.name}
+                                aria-label={el.name}
+                              >
+                                {src ? <img src={src} alt={el.name} className={styles.klingThumbImg} /> : null}
+                              </button>
+                              {active && (
+                                <button
+                                  type="button"
+                                  className={styles.klingThumbRemove}
+                                  onClick={() => setSelectedElementAssetIds((prev) => prev.filter((x) => x !== el.id))}
+                                  aria-label={`Deselect ${el.name}`}
+                                >
+                                  ×
+                                </button>
+                              )}
+                            </div>
                           );
                         })}
-                      </div>
+                    </div>
                     ) : (
                       <div className={styles.klingEmpty}>No elements yet</div>
                     )}
@@ -1817,35 +1823,10 @@ const ImageGeneratorTool: React.FC = () => {
               </div>           
 
               <div className={styles.promptEditor}>
-                {promptTags.length > 0 && (
-                  <div className={styles.promptTags}>
-                    {promptTags.map((tag) => (
-                      <button
-                        key={tag.id}
-                        type="button"
-                        className={styles.promptTag}
-                        onClick={() => removePromptTag(tag)}
-                        aria-label={`Remove ${tag.label}`}
-                      >
-                        <span>{tag.label}</span>
-                        <span className={styles.promptTagRemove}>×</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-
                 <textarea
                   className={styles.prompt}
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key !== "Backspace") return;
-                    if (prompt.trim().length > 0) return;
-                    if (promptTags.length === 0) return;
-                    e.preventDefault();
-                    const last = promptTags[promptTags.length - 1];
-                    removePromptTag(last);
-                  }}
                   placeholder="Escribe tu prompt y comienza a crear..."
                   rows={2}
                 />
@@ -1856,7 +1837,7 @@ const ImageGeneratorTool: React.FC = () => {
               <button
                 type="button"
                 className={styles.generateBtn}
-                disabled={isGenerating || !promptWithTags.trim()}
+                disabled={isGenerating || !prompt.trim()}
                 onClick={handleGenerate}
                 data-loading={isGenerating ? "true" : "false"}
               >
@@ -2549,11 +2530,17 @@ const ImageGeneratorTool: React.FC = () => {
                           onClick={() => {
                             setSelectedElementAssetIds((prev) => {
                               const has = prev.includes(el.id);
-                              if (has) return prev.filter((x) => x !== el.id);
+                              if (has) {
+                                const tag = makeElementTag(el.name);
+                                if (tag) appendPromptTag(tag);
+                                return prev;
+                              }
                               if (prev.length >= 5) {
                                 setError("Kling permite seleccionar máximo 5 Elements a la vez.");
                                 return prev;
                               }
+                              const tag = makeElementTag(el.name);
+                              if (tag) appendPromptTag(tag);
                               return [el.id, ...prev];
                             });
                           }}
@@ -2562,6 +2549,16 @@ const ImageGeneratorTool: React.FC = () => {
                           {src ? <img src={src} alt={el.name} /> : null}
                           <span className={styles.elementAllBadge}>{active ? "SELECTED" : "SELECT"}</span>
                         </button>
+                        {active && (
+                          <button
+                            type="button"
+                            className={styles.elementAllDeselect}
+                            onClick={() => setSelectedElementAssetIds((prev) => prev.filter((x) => x !== el.id))}
+                            aria-label={`Deselect ${el.name}`}
+                          >
+                            ×
+                          </button>
+                        )}
 
                         <div className={styles.elementAllName}>{el.name}</div>
 
@@ -2572,16 +2569,22 @@ const ImageGeneratorTool: React.FC = () => {
                             onClick={() => {
                               setSelectedElementAssetIds((prev) => {
                                 const has = prev.includes(el.id);
-                                if (has) return prev.filter((x) => x !== el.id);
+                                if (has) {
+                                  const tag = makeElementTag(el.name);
+                                  if (tag) appendPromptTag(tag);
+                                  return prev;
+                                }
                                 if (prev.length >= 5) {
                                   setError("Kling permite seleccionar máximo 5 Elements a la vez.");
                                   return prev;
                                 }
+                                const tag = makeElementTag(el.name);
+                                if (tag) appendPromptTag(tag);
                                 return [el.id, ...prev];
                               });
                             }}
                           >
-                            {active ? "Deselect" : "Select"}
+                            {active ? "Insert tag" : "Select"}
                           </button>
 
                           <button
