@@ -457,7 +457,49 @@ const MODEL_CAPS: Record<string, ModelCaps> = {
       qualities: ["1K", "2K"],
       countOptions: [1],
     },
+
+    // ✅ Kling 3.0 (Fal.ai)
+    // Text-to-image (sin referencias)
+    "fal-ai/kling-image/v3/text-to-image": {
+      id: "fal-ai/kling-image/v3/text-to-image",
+      label: "Kling 3.0 (V3)",
+      supportsRefs: false,
+      aspectRatios: [
+        { value: "16:9", label: "16:9" },
+        { value: "9:16", label: "9:16" },
+        { value: "1:1", label: "1:1" },
+        { value: "4:3", label: "4:3" },
+        { value: "3:4", label: "3:4" },
+        { value: "3:2", label: "3:2" },
+        { value: "2:3", label: "2:3" },
+        { value: "21:9", label: "21:9" },
+      ],
+      qualities: ["1K", "2K"],
+      countOptions: [1, 2, 3, 4],
+    },
+
+    // Omni image-to-image (con referencias)
+    "fal-ai/kling-image/o3/image-to-image": {
+      id: "fal-ai/kling-image/o3/image-to-image",
+      label: "Kling 3.0 (Omni O3)",
+      supportsRefs: true,
+      aspectRatios: [
+        { value: "auto", label: "Auto" },
+        { value: "16:9", label: "16:9" },
+        { value: "9:16", label: "9:16" },
+        { value: "1:1", label: "1:1" },
+        { value: "4:3", label: "4:3" },
+        { value: "3:4", label: "3:4" },
+        { value: "3:2", label: "3:2" },
+        { value: "2:3", label: "2:3" },
+        { value: "21:9", label: "21:9" },
+      ],
+      qualities: ["1K", "2K", "4K"],
+      countOptions: [1, 2, 3, 4],
+    },
   };
+
+  
 
 function getActiveCaps(modelId: string) {
   return MODEL_CAPS[modelId] || MODEL_CAPS[GeminiModel.IMAGE];
@@ -467,9 +509,9 @@ type Panel = null | "reference" | "model" | "parameters" | "styles";
 type RefSlot = "char1" | "char2" | "char3" | "background";
 
 const SLOT_LABEL: Record<RefSlot, string> = {
-  char1: "Character 1",
-  char2: "Character 2",
-  char3: "Character 3",
+  char1: "Reference 1",
+  char2: "Reference 2",
+  char3: "Reference 3",
   background: "Background",
 };
 
@@ -598,6 +640,10 @@ const ImageGeneratorTool: React.FC = () => {
 
   const [history, setHistory] = useState<Asset[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [visibleHistory, setVisibleHistory] = useState<Asset[]>([]);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const historyLoadMoreRef = useRef<HTMLDivElement | null>(null);
 
   // "library": todas tus imágenes (generadas + subidas) para el picker y recipe
   const [myAssets, setMyAssets] = useState<Asset[]>([]);
@@ -629,6 +675,8 @@ const ImageGeneratorTool: React.FC = () => {
   const [isElementCreateOpen, setIsElementCreateOpen] = useState(false);
   const [isElementAllOpen, setIsElementAllOpen] = useState(false);
   const [elementCtaActive, setElementCtaActive] = useState(false);
+  const [isElementHovering, setIsElementHovering] = useState(false);
+  const elementHoverTimeoutRef = useRef<number | null>(null);
     // ===============================
   // Kling Elements: modales (Create / All)
   // ===============================
@@ -676,6 +724,14 @@ const ImageGeneratorTool: React.FC = () => {
   }, [model]);
 
   useEffect(() => {
+    return () => {
+      if (elementHoverTimeoutRef.current) {
+        window.clearTimeout(elementHoverTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     // @ts-ignore
     console.log("[KLING DEBUG] model =", model, "isKling =", isKlingModel(model));
   }, [model]);
@@ -693,6 +749,39 @@ const ImageGeneratorTool: React.FC = () => {
   const styleLabel = selectedStyleId
     ? (STYLE_PRESETS.find((p) => p.id === selectedStyleId)?.name || "Selected")
     : "None";
+
+  const modelGroups = [
+    {
+      label: "Google NanoBanana",
+      options: [
+        { value: GeminiModel.IMAGE, label: "NanoBanana" },
+        { value: GeminiModel.IMAGE_PRO, label: "NanoBanana Pro" },
+      ],
+    },
+    {
+      label: "Kling",
+      options: [
+        { value: "kling:kling-image-o1", label: "Kling o1 (API)" },
+        { value: "fal-ai/kling-image/v3/text-to-image", label: "Kling 3.0 (V3)" },
+        { value: "fal-ai/kling-image/o3/image-to-image", label: "Kling 3.0 (Omni O3)" },
+      ],
+    },
+    {
+      label: "Flux 2.0",
+      options: [
+        { value: "fal-ai/flux-2-max", label: "Flux 2.0 Max" },
+        { value: "fal-ai/flux-2-pro", label: "Flux 2.0 Pro" },
+        { value: "fal-ai/flux-2-flex", label: "Flux 2.0 Flex" },
+      ],
+    },
+    {
+      label: "GPT - Image",
+      options: [
+        { value: "openai:gpt-image-1.5", label: "GPT 1.5" },
+        { value: "openai:gpt-image-1.5-high", label: "GPT 1.5 - high" },
+      ],
+    },
+  ];
 
     // Mantener aspect ratio / quality / count válidos según el modelo
     useEffect(() => {
@@ -717,11 +806,32 @@ const ImageGeneratorTool: React.FC = () => {
       }
     }, [activeCaps, aspectRatio, quality, count, model]);
 
+  function handleModelSelect(next: string) {
+    const nextCaps = getActiveCaps(next);
+
+    setModel(next);
+
+    // ✅ defaults (por requerimiento)
+    setAspectRatio("auto");
+    setCount(1);
+
+    // Quality válida para el modelo elegido
+    if (!nextCaps.qualities.includes(quality)) {
+      setQuality(nextCaps.qualities[0] || "1K");
+    }
+
+    // IMPORTANTÍSIMO:
+    // NanoBanana (flash) solo soporta 1K, si no, el backend lo rechaza.
+    if (next === GeminiModel.IMAGE) setQuality("1K");
+
+    setPanel(null); // auto-close
+  }
+
   const refLabel =
     [
-      refs.char1 ? "C1" : null,
-      refs.char2 ? "C2" : null,
-      refs.char3 ? "C3" : null,
+      refs.char1 ? "R1" : null,
+      refs.char2 ? "R2" : null,
+      refs.char3 ? "R3" : null,
       refs.background ? "BG" : null,
     ].filter(Boolean).join(" ") || "None";
 
@@ -737,6 +847,15 @@ const ImageGeneratorTool: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
     // Cache de dimensiones por imagen (para layout del historial y viewer responsive)
   const [imgDims, setImgDims] = useState<Record<string, { w: number; h: number }>>({});
+
+  function appendPromptTag(tag: string) {
+    if (!tag) return;
+    setPrompt((prev) => {
+      const next = prev || "";
+      const trimmed = next.replace(/\s+$/g, "");
+      return trimmed.length > 0 ? `${trimmed} ${tag}` : tag;
+    });
+  }
 
   function rememberImgDims(assetId: string, img: HTMLImageElement) {
     const w = img.naturalWidth || 0;
@@ -767,6 +886,24 @@ const ImageGeneratorTool: React.FC = () => {
 
   function handleRootMouseLeave() {
     setRootGlow(50, 20);
+  }
+
+  function handleElementHoverStart() {
+    if (elementHoverTimeoutRef.current) {
+      window.clearTimeout(elementHoverTimeoutRef.current);
+      elementHoverTimeoutRef.current = null;
+    }
+    setIsElementHovering(true);
+  }
+
+  function handleElementHoverEnd() {
+    if (elementHoverTimeoutRef.current) {
+      window.clearTimeout(elementHoverTimeoutRef.current);
+    }
+    elementHoverTimeoutRef.current = window.setTimeout(() => {
+      setIsElementHovering(false);
+      elementHoverTimeoutRef.current = null;
+    }, 700);
   }
 
   function isGeneratedHistoryItem(a: Asset): boolean {
@@ -810,12 +947,47 @@ const ImageGeneratorTool: React.FC = () => {
       // 2) historial: SOLO generaciones de esta herramienta
       const onlyGenerated = sorted.filter(isGeneratedHistoryItem);
       setHistory(onlyGenerated);
+      setHistoryPage(1);
+      setVisibleHistory(onlyGenerated.slice(0, 12));
     } catch (e: any) {
       setError(e?.message || "No se pudo cargar el historial.");
     } finally {
       setIsLoadingHistory(false);
     }
   }
+
+  useEffect(() => {
+    reloadHistory();
+  }, []);
+
+  const hasMoreHistory = visibleHistory.length < history.length;
+
+  useEffect(() => {
+    const target = historyLoadMoreRef.current;
+    if (!target) return;
+    if (!hasMoreHistory) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries[0]?.isIntersecting) return;
+        if (isLoadingMore) return;
+        setIsLoadingMore(true);
+        window.setTimeout(() => {
+          setHistoryPage((prev) => {
+            const nextPage = prev + 1;
+            const nextVisible = history.slice(0, nextPage * 12);
+            setVisibleHistory(nextVisible);
+            return nextPage;
+          });
+          setIsLoadingMore(false);
+        }, 700);
+      },
+      { threshold: 0.2 }
+    );
+
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [hasMoreHistory, history, isLoadingMore]);
 
 
   // ===============================
@@ -877,6 +1049,19 @@ const ImageGeneratorTool: React.FC = () => {
       .replace(/\s+/g, "_")
       .replace(/_+/g, "_")
       .slice(0, 60);
+  }
+
+  function makeElementTag(name: string): string | null {
+    const slug = slugifyName(name || "");
+    if (!slug) return null;
+    return `@${slug}`;
+  }
+
+  function getRefTag(slot: RefSlot): string {
+    if (slot === "background") return "@background";
+    if (slot === "char1") return "@reference1";
+    if (slot === "char2") return "@reference2";
+    return "@reference3";
   }
 
   async function resolveInputToUrl(input: ElementImageInput): Promise<string> {
@@ -984,6 +1169,20 @@ const ImageGeneratorTool: React.FC = () => {
     return new File([blob], `element_${Date.now()}.jpg`, { type: "image/jpeg" });
   }
 
+  async function buildSingleElementFile(input: ElementImageInput): Promise<File> {
+    if (input.kind === "dataUrl") {
+      const resp = await fetch(input.dataUrl);
+      const blob = await resp.blob();
+      return new File([blob], `element_${Date.now()}.jpg`, { type: blob.type || "image/jpeg" });
+    }
+
+    const src = await resolveInputToUrl(input);
+    const resp = await fetch(src);
+    if (!resp.ok) throw new Error(`No se pudo descargar la imagen (${resp.status}).`);
+    const blob = await resp.blob();
+    return new File([blob], `element_${Date.now()}.jpg`, { type: blob.type || "image/jpeg" });
+  }
+
   async function klingAuthHeadersJson(): Promise<Record<string, string>> {
     const { data: sessionData } = await supabase.auth.getSession();
     const token = sessionData.session?.access_token;
@@ -1049,13 +1248,16 @@ const ImageGeneratorTool: React.FC = () => {
 
     setIsCreatingElement(true);
     try {
-      // 1) mosaico 2x2 (sin IA)
-      const base = await buildMosaic2x2(elementCreateSlots);
+      // 1) generar archivo (mosaico 2x2 o imagen única)
+      const base =
+        imagesCount === 1 && elementCreateSlots[0]
+          ? await buildSingleElementFile(elementCreateSlots[0])
+          : await buildMosaic2x2(elementCreateSlots);
 
       // 2) nombre bonito para el asset
       const slug = slugifyName(name);
       const fileName = slug ? `${slug}.jpg` : `element_${Date.now()}.jpg`;
-      const mosaicFile = new File([base], fileName, { type: "image/jpeg" });
+      const mosaicFile = new File([base], fileName, { type: base.type || "image/jpeg" });
 
       // 3) subir como asset normal (global para todos los modelos)
       const uploaded = await uploadUserAsset(mosaicFile, "element-library");
@@ -1068,6 +1270,8 @@ const ImageGeneratorTool: React.FC = () => {
         const next = [uploaded.id, ...prev];
         return next.slice(0, 5);
       });
+      const tag = makeElementTag(name);
+      if (tag) appendPromptTag(tag);
 
       closeCreateModal();
       resetCreateModal();
@@ -1173,12 +1377,12 @@ const ImageGeneratorTool: React.FC = () => {
 
   const filteredPickerAssets = useMemo(() => {
     const q = pickerQuery.trim().toLowerCase();
-    if (!q) return myAssets;
-    return myAssets.filter((a) => {
+    if (!q) return history;
+    return history.filter((a) => {
       const caption = removeStylePresetBlock(a.prompt || "").toLowerCase();
       return (a.name || "").toLowerCase().includes(q) || caption.includes(q);
     });
-  }, [myAssets, pickerQuery]);
+  }, [history, pickerQuery]);
 
   const recipeStyleName = useMemo(() => {
     return getStyleNameFromPromptOrSelection({ prompt, selectedStyleId });
@@ -1201,6 +1405,9 @@ const ImageGeneratorTool: React.FC = () => {
 
   function setRefSlot(slot: RefSlot, asset: Asset | null) {
     setRefs((prev) => {
+      if (asset) {
+        appendPromptTag(getRefTag(slot));
+      }
       // Background es independiente
       if (slot === "background") {
         return { ...prev, background: asset };
@@ -1335,13 +1542,22 @@ const ImageGeneratorTool: React.FC = () => {
     }
   }
 
-  function handleDownload(asset: Asset) {
-    const a = document.createElement("a");
-    a.href = asset.url;
-    a.download = asset.name || "image";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+  async function handleDownload(asset: Asset) {
+    try {
+      const resp = await fetch(asset.url);
+      if (!resp.ok) throw new Error("No se pudo descargar la imagen.");
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = asset.name || "image";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setError(e?.message || "No se pudo descargar la imagen.");
+    }
   }
 
   async function handleDelete(asset: Asset) {
@@ -1350,7 +1566,11 @@ const ImageGeneratorTool: React.FC = () => {
 
     try {
       await deleteAsset(asset.id);
-      setHistory((prev) => prev.filter((x) => x.id !== asset.id));
+      setHistory((prev) => {
+        const next = prev.filter((x) => x.id !== asset.id);
+        setVisibleHistory(next.slice(0, historyPage * 12));
+        return next;
+      });
       if (viewer?.id === asset.id) setViewer(null);
     } catch (e: any) {
       setError(e?.message || "No se pudo eliminar.");
@@ -1471,7 +1691,16 @@ const ImageGeneratorTool: React.FC = () => {
         <div className={styles.historyHeader}>
           <div className={styles.historyTitle}>
             <span className={styles.kicker}>IMAGE GENERATOR</span>
-            <span className={styles.subKicker}>{isLoadingHistory ? "Loading history..." : `History · ${history.length}`}</span>
+            <div className={styles.historyMeta}>
+              {isLoadingHistory ? (
+                <span className={styles.subKicker}>Loading history...</span>
+              ) : (
+                <>
+                  <span className={styles.subKicker}>History</span>
+                  <span className={styles.historyCount}>{history.length}</span>
+                </>
+              )}
+            </div>
           </div>
 
           <button className={styles.ghostBtn} onClick={reloadHistory} type="button" disabled={isLoadingHistory}>
@@ -1482,8 +1711,16 @@ const ImageGeneratorTool: React.FC = () => {
         <div className={styles.historyGrid}>
           {history.length === 0 && pendingSlots.length === 0 ? (
             <div className={styles.emptyState}>
-              <div className={styles.emptyCode}>NO GENERATIONS</div>
-              <div className={styles.emptyText}>Genera tu primera imagen para ver el historial aquí.</div>
+              <div className={styles.emptyAnimator}>
+                <div className={styles.emptyGrid} />
+                <div className={styles.emptyGlow} />
+                <div className={styles.emptyScan} />
+                <div className={styles.emptyOrb} />
+              </div>
+              <div className={styles.emptyCopy}>
+                <div className={styles.emptyCode}>NO GENERATIONS</div>
+                <div className={styles.emptyText}>Genera tu primera imagen para ver el historial aquí.</div>
+              </div>
             </div>
           ) : (
             <div className={styles.grid}>
@@ -1497,7 +1734,7 @@ const ImageGeneratorTool: React.FC = () => {
                 </div>
               ))}
 
-              {history.map((asset) => {
+              {visibleHistory.map((asset) => {
                 const caption = removeStylePresetBlock(asset.prompt || "") || asset.name || "—";
                 return (
                   <button
@@ -1564,6 +1801,12 @@ const ImageGeneratorTool: React.FC = () => {
               })}
             </div>
           )}
+          {hasMoreHistory && (
+            <div className={styles.historyLoader} ref={historyLoadMoreRef}>
+              <div className={styles.historyLoaderSpinner} aria-hidden="true" />
+              <span>{isLoadingMore ? "Cargando más..." : "Desliza para cargar más"}</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1573,13 +1816,13 @@ const ImageGeneratorTool: React.FC = () => {
           {(refs.char1 || refs.char2 || refs.char3 || refs.background) && (
             <div className={styles.refThumbStrip}>
               {refs.char1 && (
-                <div className={styles.refMini} title="Character 1">
+                <div className={styles.refMini} title="Reference 1">
                   <img src={refs.char1.url} alt="char1" />
-                  <span className={styles.refMiniIcon}>C1</span>
+                  <span className={styles.refMiniIcon}>R1</span>
                   <button
                     type="button"
                     className={styles.refMiniRemove}
-                    aria-label="Remove Character 1"
+                    aria-label="Remove Reference 1"
                     onClick={(e) => {
                       e.stopPropagation();
                       setRefSlot("char1", null);
@@ -1591,13 +1834,13 @@ const ImageGeneratorTool: React.FC = () => {
               )}
 
               {refs.char2 && (
-                <div className={styles.refMini} title="Character 2">
+                <div className={styles.refMini} title="Reference 2">
                   <img src={refs.char2.url} alt="char2" />
-                  <span className={styles.refMiniIcon}>C2</span>
+                  <span className={styles.refMiniIcon}>R2</span>
                   <button
                     type="button"
                     className={styles.refMiniRemove}
-                    aria-label="Remove Character 2"
+                    aria-label="Remove Reference 2"
                     onClick={(e) => {
                       e.stopPropagation();
                       setRefSlot("char2", null);
@@ -1609,13 +1852,13 @@ const ImageGeneratorTool: React.FC = () => {
               )}
 
               {refs.char3 && (
-                <div className={styles.refMini} title="Character 3">
+                <div className={styles.refMini} title="Reference 3">
                   <img src={refs.char3.url} alt="char3" />
-                  <span className={styles.refMiniIcon}>C3</span>
+                  <span className={styles.refMiniIcon}>R3</span>
                   <button
                     type="button"
                     className={styles.refMiniRemove}
-                    aria-label="Remove Character 3"
+                    aria-label="Remove Reference 3"
                     onClick={(e) => {
                       e.stopPropagation();
                       setRefSlot("char3", null);
@@ -1647,7 +1890,10 @@ const ImageGeneratorTool: React.FC = () => {
           )}
           <div className={styles.promptRow}>
             <div className={styles.promptInputWrap}>
-              <div className={styles.klingDock}>
+              <div className={styles.klingDock} onMouseEnter={handleElementHoverStart} onMouseLeave={handleElementHoverEnd}>
+                <div className={`${styles.klingTooltip} ${isElementHovering ? styles.klingTooltipVisible : ""}`}>
+                  Crear Elemento Consistente
+                </div>
                 {/* Botón 1x1 */}
                 <button
                   type="button"
@@ -1659,11 +1905,11 @@ const ImageGeneratorTool: React.FC = () => {
                   title="Element/Person"
                   aria-label="Element/Person"
                 >
-                  {/* ícono “scan” */}
+                  {/* ícono persona */}
                   <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
                     <path
                       fill="currentColor"
-                      d="M7 3H5a2 2 0 0 0-2 2v2h2V5h2V3zm14 4V5a2 2 0 0 0-2-2h-2v2h2v2h2zM5 19v-2H3v2a2 2 0 0 0 2 2h2v-2H5zm16-2v2h-2v2h2a2 2 0 0 0 2-2v-2h-2zM7 8h10v2H7V8zm0 6h10v2H7v-2z"
+                      d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm0 2c-4.4 0-8 2.24-8 5v2h16v-2c0-2.76-3.6-5-8-5z"
                     />
                   </svg>
 
@@ -1674,7 +1920,7 @@ const ImageGeneratorTool: React.FC = () => {
                 </button>
 
                 {/* Popover al hover */}
-                <div className={styles.klingPopover}>
+                <div className={`${styles.klingPopover} ${isElementHovering ? styles.klingPopoverVisible : ""}`}>
                   <div className={styles.klingPopoverTop}>
                     <button
                       type="button"
@@ -1684,50 +1930,69 @@ const ImageGeneratorTool: React.FC = () => {
                     >
                       All
                     </button>
-                  </div>
 
-                  {elements.length > 0 ? (
-                    <div className={styles.klingPopoverThumbRow}>
-                      {elements.slice(0, 6).map((el) => {
-                        const active = selectedElementAssetIds.includes(el.id);
-                        const src = el.url || "";
-                        return (
-                          <button
-                            key={el.id}
-                            type="button"
-                            className={`${styles.klingThumbBtn} ${active ? styles.klingThumbBtnActive : ""}`}
-                            onClick={() => {
-                              setSelectedElementAssetIds((prev) => {
-                                const has = prev.includes(el.id);
-                                if (has) return prev.filter((x) => x !== el.id);
-                                if (prev.length >= 5) {
-                                  setError("Máximo 5 Elements a la vez.");
-                                  return prev;
-                                }
-                                return [el.id, ...prev];
-                              });
-                            }}
-                            title={el.name}
-                            aria-label={el.name}
-                          >
-                            {src ? <img src={src} alt={el.name} className={styles.klingThumbImg} /> : null}
-                          </button>
-                        );
-                      })}
+                    {elements.length > 0 ? (
+                      <div className={styles.klingPopoverThumbRow}>
+                        {elements.slice(0, 6).map((el) => {
+                          const active = selectedElementAssetIds.includes(el.id);
+                          const src = el.url || "";
+                          return (
+                            <div key={el.id} className={styles.klingThumbWrap}>
+                              <button
+                                type="button"
+                                className={`${styles.klingThumbBtn} ${active ? styles.klingThumbBtnActive : ""}`}
+                                onClick={() => {
+                                  setSelectedElementAssetIds((prev) => {
+                                    const has = prev.includes(el.id);
+                                    if (has) {
+                                      const tag = makeElementTag(el.name);
+                                      if (tag) appendPromptTag(tag);
+                                      return prev;
+                                    }
+                                    if (prev.length >= 5) {
+                                      setError("Máximo 5 Elements a la vez.");
+                                      return prev;
+                                    }
+                                    const tag = makeElementTag(el.name);
+                                    if (tag) appendPromptTag(tag);
+                                    return [el.id, ...prev];
+                                  });
+                                }}
+                                title={el.name}
+                                aria-label={el.name}
+                              >
+                                {src ? <img src={src} alt={el.name} className={styles.klingThumbImg} /> : null}
+                              </button>
+                              {active && (
+                                <button
+                                  type="button"
+                                  className={styles.klingThumbRemove}
+                                  onClick={() => setSelectedElementAssetIds((prev) => prev.filter((x) => x !== el.id))}
+                                  aria-label={`Deselect ${el.name}`}
+                                >
+                                  ×
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
                     </div>
-                  ) : (
-                    <div className={styles.klingEmpty}>No elements yet</div>
-                  )}
+                    ) : (
+                      <div className={styles.klingEmpty}>No elements yet</div>
+                    )}
+                  </div>
                 </div>
               </div>           
 
-              <textarea
-                className={styles.prompt}
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                placeholder="Escribe tu prompt y comienza a crear..."
-                rows={2}
-              />
+              <div className={styles.promptEditor}>
+                <textarea
+                  className={styles.prompt}
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  placeholder="Escribe tu prompt y comienza a crear..."
+                  rows={2}
+                />
+              </div>
             </div>
 
             <div className={styles.generateCol}>
@@ -1912,51 +2177,25 @@ const ImageGeneratorTool: React.FC = () => {
 
                   <div className={styles.formRow}>
                     <label className={styles.formLabel}>Model</label>
-                    <select
-                      className={styles.select}
-                      value={model}
-                      onChange={(e) => {
-                        const next = e.target.value;
-                        const nextCaps = getActiveCaps(next);
-
-                        setModel(next);
-
-                        // ✅ defaults (por requerimiento)
-                        setAspectRatio("auto");
-                        setCount(1);
-
-                        // Quality válida para el modelo elegido
-                        if (!nextCaps.qualities.includes(quality)) {
-                          setQuality(nextCaps.qualities[0] || "1K");
-                        }
-
-                        // IMPORTANTÍSIMO:
-                        // NanoBanana (flash) solo soporta 1K, si no, el backend lo rechaza.
-                        if (next === GeminiModel.IMAGE) setQuality("1K");
-
-                        setPanel(null); // auto-close
-                      }}
-                    >
-                      <optgroup label="Google NanoBanana">
-                        <option value={GeminiModel.IMAGE}>NanoBanana</option>
-                        <option value={GeminiModel.IMAGE_PRO}>NanoBanana Pro</option>
-                      </optgroup>
-
-                      <optgroup label="Kling">
-                        <option value="kling:kling-image-o1">Kling o1</option>
-                      </optgroup>
-
-                      <optgroup label="Flux 2.0">
-                        <option value="fal-ai/flux-2-max">Flux 2.0 Max</option>
-                        <option value="fal-ai/flux-2-pro">Flux 2.0 Pro</option>
-                        <option value="fal-ai/flux-2-flex">Flux 2.0 Flex</option>
-                      </optgroup>
-
-                      <optgroup label="GPT - Image">
-                        <option value="openai:gpt-image-1.5">GPT 1.5</option>
-                        <option value="openai:gpt-image-1.5-high">GPT 1.5 - high</option>
-                      </optgroup>
-                    </select>
+                    <div className={styles.modelGrid}>
+                      {modelGroups.map((group) => (
+                        <div key={group.label} className={styles.modelGroup}>
+                          <div className={styles.modelGroupLabel}>{group.label}</div>
+                          <div className={styles.modelGroupOptions}>
+                            {group.options.map((opt) => (
+                              <button
+                                key={opt.value}
+                                type="button"
+                                className={`${styles.modelOption} ${model === opt.value ? styles.modelOptionActive : ""}`}
+                                onClick={() => handleModelSelect(opt.value)}
+                              >
+                                {opt.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}
@@ -2427,11 +2666,17 @@ const ImageGeneratorTool: React.FC = () => {
                           onClick={() => {
                             setSelectedElementAssetIds((prev) => {
                               const has = prev.includes(el.id);
-                              if (has) return prev.filter((x) => x !== el.id);
+                              if (has) {
+                                const tag = makeElementTag(el.name);
+                                if (tag) appendPromptTag(tag);
+                                return prev;
+                              }
                               if (prev.length >= 5) {
                                 setError("Kling permite seleccionar máximo 5 Elements a la vez.");
                                 return prev;
                               }
+                              const tag = makeElementTag(el.name);
+                              if (tag) appendPromptTag(tag);
                               return [el.id, ...prev];
                             });
                           }}
@@ -2440,6 +2685,16 @@ const ImageGeneratorTool: React.FC = () => {
                           {src ? <img src={src} alt={el.name} /> : null}
                           <span className={styles.elementAllBadge}>{active ? "SELECTED" : "SELECT"}</span>
                         </button>
+                        {active && (
+                          <button
+                            type="button"
+                            className={styles.elementAllDeselect}
+                            onClick={() => setSelectedElementAssetIds((prev) => prev.filter((x) => x !== el.id))}
+                            aria-label={`Deselect ${el.name}`}
+                          >
+                            ×
+                          </button>
+                        )}
 
                         <div className={styles.elementAllName}>{el.name}</div>
 
@@ -2450,16 +2705,22 @@ const ImageGeneratorTool: React.FC = () => {
                             onClick={() => {
                               setSelectedElementAssetIds((prev) => {
                                 const has = prev.includes(el.id);
-                                if (has) return prev.filter((x) => x !== el.id);
+                                if (has) {
+                                  const tag = makeElementTag(el.name);
+                                  if (tag) appendPromptTag(tag);
+                                  return prev;
+                                }
                                 if (prev.length >= 5) {
                                   setError("Kling permite seleccionar máximo 5 Elements a la vez.");
                                   return prev;
                                 }
+                                const tag = makeElementTag(el.name);
+                                if (tag) appendPromptTag(tag);
                                 return [el.id, ...prev];
                               });
                             }}
                           >
-                            {active ? "Deselect" : "Select"}
+                            {active ? "Insert tag" : "Select"}
                           </button>
 
                           <button
