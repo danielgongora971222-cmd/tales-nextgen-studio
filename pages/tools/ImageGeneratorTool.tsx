@@ -1665,8 +1665,16 @@ const ImageGeneratorTool: React.FC = () => {
         <div className={styles.historyGrid}>
           {history.length === 0 && pendingSlots.length === 0 ? (
             <div className={styles.emptyState}>
-              <div className={styles.emptyCode}>NO GENERATIONS</div>
-              <div className={styles.emptyText}>Genera tu primera imagen para ver el historial aquí.</div>
+              <div className={styles.emptyAnimator}>
+                <div className={styles.emptyGrid} />
+                <div className={styles.emptyGlow} />
+                <div className={styles.emptyScan} />
+                <div className={styles.emptyOrb} />
+              </div>
+              <div className={styles.emptyCopy}>
+                <div className={styles.emptyCode}>NO GENERATIONS</div>
+                <div className={styles.emptyText}>Genera tu primera imagen para ver el historial aquí.</div>
+              </div>
             </div>
           ) : (
             <div className={styles.grid}>
