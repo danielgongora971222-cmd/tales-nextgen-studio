@@ -12,7 +12,7 @@ export interface ToolDefinition {
 export const TOOLS_REGISTRY: ToolDefinition[] = [
   {
     id: 'generator',
-    label: 'Standard Generator',
+    label: 'General Image Generator',
     route: AppRoute.TOOL_GENERATOR,
     description: 'Fast and efficient text-to-image generation.',
     status: 'ready'

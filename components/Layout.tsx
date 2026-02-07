@@ -50,34 +50,30 @@ const NavItem: React.FC<{
   </button>
 );
 
-const SubNavItem: React.FC<{
-  label: string;
-  active: boolean;
-  onClick: () => void;
-  status?: string;
-}> = ({ label, active, onClick, status }) => (
-  <button
-    onClick={onClick}
-    className={`w-full text-left pl-12 pr-4 py-2 text-xs font-medium transition-all rounded-r-xl border-l-2 flex justify-between items-center ${
-      active
-        ? 'border-[rgba(241,225,148,0.45)] text-white bg-[rgba(241,225,148,0.06)]'
-        : 'border-[rgba(241,225,148,0.10)] text-white/40 hover:text-white hover:border-[rgba(241,225,148,0.28)] hover:bg-[rgba(241,225,148,0.04)]'
-    }`}
-  >
-    <span>{label}</span>
-    {status === 'beta' && <span className="text-[9px] bg-white/20 px-1 rounded">BETA</span>}
-  </button>
-);
-
 const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [imageMenuOpen, setImageMenuOpen] = useState(true);
+  const [imageMenuOpen, setImageMenuOpen] = useState(false);
+  const [videoMenuOpen, setVideoMenuOpen] = useState(false);
   const { user, logout } = useAuth();
 
   const sidebarRef = useRef<HTMLElement | null>(null);
+  const imageMenuTimer = useRef<number | null>(null);
+  const videoMenuTimer = useRef<number | null>(null);
 
   const isImageTool =
     TOOLS_REGISTRY.some((tool) => tool.route === currentRoute) || currentRoute === AppRoute.IMAGE_GEN_ROOT;
+  const videoTools = [
+    {
+      id: 'general-video',
+      label: 'General Video Generator',
+      status: 'ready' as const
+    },
+    {
+      id: 'motion-control',
+      label: 'Motion Control',
+      status: 'beta' as const
+    }
+  ];
 
   // Auto-collapse sidebar when clicking outside (matches your mock)
   useEffect(() => {
@@ -94,6 +90,32 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
     document.addEventListener('pointerdown', onPointerDown);
     return () => document.removeEventListener('pointerdown', onPointerDown);
   }, [sidebarOpen]);
+  useEffect(() => {
+    return () => {
+      if (imageMenuTimer.current) window.clearTimeout(imageMenuTimer.current);
+      if (videoMenuTimer.current) window.clearTimeout(videoMenuTimer.current);
+    };
+  }, []);
+
+  const handleImageMenuEnter = () => {
+    if (imageMenuTimer.current) window.clearTimeout(imageMenuTimer.current);
+    if (sidebarOpen) setImageMenuOpen(true);
+  };
+
+  const handleImageMenuLeave = () => {
+    if (imageMenuTimer.current) window.clearTimeout(imageMenuTimer.current);
+    imageMenuTimer.current = window.setTimeout(() => setImageMenuOpen(false), 700);
+  };
+
+  const handleVideoMenuEnter = () => {
+    if (videoMenuTimer.current) window.clearTimeout(videoMenuTimer.current);
+    if (sidebarOpen) setVideoMenuOpen(true);
+  };
+
+  const handleVideoMenuLeave = () => {
+    if (videoMenuTimer.current) window.clearTimeout(videoMenuTimer.current);
+    videoMenuTimer.current = window.setTimeout(() => setVideoMenuOpen(false), 700);
+  };
 
   return (
     <div className="relative w-full h-screen overflow-hidden flex bg-black text-white font-sans selection:bg-white selection:text-black">
@@ -149,56 +171,87 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
 
           <div className="hud-divider my-4 mx-2" />
 
-          <div>
+          <div className="relative" onMouseEnter={handleImageMenuEnter} onMouseLeave={handleImageMenuLeave}>
             <NavItem
               label={sidebarOpen ? 'Image Gen' : ''}
               active={isImageTool}
               onClick={() => {
                 if (!sidebarOpen) setSidebarOpen(true);
-                setImageMenuOpen(!imageMenuOpen);
                 onNavigate(AppRoute.IMAGE_GEN_ROOT);
               }}
               expanded={sidebarOpen ? imageMenuOpen : undefined}
               icon={
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M15 4V2" />
-                  <path d="M15 16v-2" />
-                  <path d="M8 9h2" />
-                  <path d="M20 9h2" />
-                  <path d="M17.8 11.8 19 13" />
-                  <path d="M15 9h0" />
-                  <path d="M17.8 6.2 19 5" />
-                  <path d="m3 21 9-9" />
-                  <path d="M12.2 6.2 11 5" />
+                  <rect width="18" height="14" x="3" y="5" rx="2" ry="2" />
+                  <circle cx="9" cy="10" r="1.5" />
+                  <path d="m21 16-4.2-4.2a2 2 0 0 0-2.8 0L7 18" />
                 </svg>
               }
             />
             {sidebarOpen && imageMenuOpen && (
-              <div className="mt-2 space-y-1 animate-in slide-in-from-top-2 duration-200">
-                {TOOLS_REGISTRY.map((tool) => (
-                  <SubNavItem
-                    key={tool.id}
-                    label={tool.label}
-                    active={currentRoute === tool.route}
-                    onClick={() => onNavigate(tool.route)}
-                    status={tool.status}
-                  />
-                ))}
+              <div className="absolute left-full top-0 ml-3 w-64 rounded-2xl border border-white/10 bg-black/70 backdrop-blur-xl shadow-[0_20px_40px_rgba(0,0,0,0.45)] p-3 space-y-1 animate-in fade-in slide-in-from-left-2 duration-200">
+                {TOOLS_REGISTRY.map((tool) => {
+                  const isPrimary = tool.id === 'generator';
+                  return (
+                    <button
+                      key={tool.id}
+                      onClick={() => onNavigate(tool.route)}
+                      className={`w-full text-left px-3 py-2 rounded-xl text-xs font-medium transition-all border ${
+                        currentRoute === tool.route
+                          ? 'border-[rgba(241,225,148,0.45)] text-white bg-[rgba(241,225,148,0.08)]'
+                          : isPrimary
+                            ? 'border-[rgba(241,225,148,0.35)] text-white bg-[rgba(241,225,148,0.14)] shadow-[0_0_18px_rgba(241,225,148,0.18)]'
+                            : 'border-transparent text-white/60 hover:text-white hover:bg-white/5'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span>{tool.label}</span>
+                        {tool.status === 'beta' && <span className="text-[9px] bg-white/20 px-1 rounded">BETA</span>}
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>
 
-          <NavItem
-            label={sidebarOpen ? 'Video Gen' : ''}
-            active={currentRoute === AppRoute.VIDEO_GEN}
-            onClick={() => onNavigate(AppRoute.VIDEO_GEN)}
-            icon={
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="m22 8-6 4 6 4V8Z" />
-                <rect width="14" height="12" x="2" y="6" rx="2" ry="2" />
-              </svg>
-            }
-          />
+          <div className="relative" onMouseEnter={handleVideoMenuEnter} onMouseLeave={handleVideoMenuLeave}>
+            <NavItem
+              label={sidebarOpen ? 'Video Gen' : ''}
+              active={currentRoute === AppRoute.VIDEO_GEN}
+              onClick={() => onNavigate(AppRoute.VIDEO_GEN)}
+              expanded={sidebarOpen ? videoMenuOpen : undefined}
+              icon={
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="m22 8-6 4 6 4V8Z" />
+                  <rect width="14" height="12" x="2" y="6" rx="2" ry="2" />
+                </svg>
+              }
+            />
+            {sidebarOpen && videoMenuOpen && (
+              <div className="absolute left-full top-0 ml-3 w-60 rounded-2xl border border-white/10 bg-black/70 backdrop-blur-xl shadow-[0_20px_40px_rgba(0,0,0,0.45)] p-3 space-y-1 animate-in fade-in slide-in-from-left-2 duration-200">
+                {videoTools.map((tool) => {
+                  const isPrimary = tool.id === 'general-video';
+                  return (
+                    <button
+                      key={tool.id}
+                      onClick={() => onNavigate(AppRoute.VIDEO_GEN)}
+                      className={`w-full text-left px-3 py-2 rounded-xl text-xs font-medium transition-all border ${
+                        isPrimary
+                          ? 'border-[rgba(241,225,148,0.35)] text-white bg-[rgba(241,225,148,0.14)] shadow-[0_0_18px_rgba(241,225,148,0.18)]'
+                          : 'border-transparent text-white/60 hover:text-white hover:bg-white/5'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span>{tool.label}</span>
+                        {tool.status === 'beta' && <span className="text-[9px] bg-white/20 px-1 rounded">BETA</span>}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </nav>
 
         <div className="p-4 border-t border-white/10">
