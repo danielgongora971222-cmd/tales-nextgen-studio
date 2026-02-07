@@ -135,7 +135,7 @@ const VIDEO_MODELS: VideoModelConfig[] = [
 
 const getModelConfig = (modelId: string) => VIDEO_MODELS.find((model) => model.id === modelId) || VIDEO_MODELS[0];
 
-const GeneralVideoGeneratorTool: React.FC = () => {
+const GeneralVideoGeneratolTool: React.FC = () => {
   const { user } = useAuth();
   const [prompt, setPrompt] = useState("");
   const [model, setModel] = useState(VIDEO_MODELS[0].id);
@@ -839,4 +839,4 @@ const GeneralVideoGeneratorTool: React.FC = () => {
   );
 };
 
-export default GeneralVideoGeneratorTool;
+export default GeneralVideoGeneratolTool;

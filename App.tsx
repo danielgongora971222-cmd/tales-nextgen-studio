@@ -11,7 +11,7 @@ import UpscalerTool from './pages/tools/UpscalerTool';
 import EditorTool from './pages/tools/EditorTool';
 import CameraAnglesTool from './pages/tools/CameraAnglesTool';
 import CollageTool from './pages/tools/CollageTool';
-import GeneralVideoGeneratorTool from './pages/tools/GeneralVideoGeneratorTool';
+import GeneralVideoGeneratolTool from './pages/tools/GeneralVideoGeneratolTool';
 import Background3D from './components/Background3D';
 import { AppRoute } from './types';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
@@ -79,7 +79,7 @@ const AppContent: React.FC = () => {
         return <CollageTool />;
 
       case AppRoute.VIDEO_GEN:
-        return <GeneralVideoGeneratorTool />;
+        return <GeneralVideoGeneratolTool />;
       case AppRoute.MY_CREATIONS:
         return <MyCreations />;
       case AppRoute.CHAT:
