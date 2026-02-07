@@ -971,14 +971,21 @@ async function falQueueRun(endpointId, input) {
   } catch {
     throw httpError(502, "FAL_BAD_RESPONSE", `Fal submit invalid JSON: ${submitText.slice(0, 200)}`);
   }
+
   if (!submitResp.ok) {
-    throw httpError(502, "FAL_SUBMIT_FAILED", submitJson?.detail || submitJson?.message || submitText);
+    throw httpError(
+      502,
+      "FAL_SUBMIT_FAILED",
+      `Fal submit HTTP ${submitResp.status}: ${submitJson?.detail || submitJson?.message || submitText}`.slice(0, 400)
+    );
   }
 
   const statusUrl = submitJson?.status_url;
+  const responseUrl = submitJson?.response_url; // ✅ USAR ESTA
   const requestId = submitJson?.request_id;
-  if (!statusUrl || !requestId) {
-    throw httpError(502, "FAL_SUBMIT_MISSING_FIELDS", "Fal submit missing status_url/request_id");
+
+  if (!statusUrl || !responseUrl || !requestId) {
+    throw httpError(502, "FAL_SUBMIT_MISSING_FIELDS", "Fal submit missing status_url/response_url/request_id");
   }
 
   // Poll until COMPLETED
@@ -987,6 +994,7 @@ async function falQueueRun(endpointId, input) {
     const statusResp = await fetch(statusUrl, {
       headers: { Authorization: auth },
     });
+
     const statusText = await statusResp.text();
     let statusJson;
     try {
@@ -994,8 +1002,13 @@ async function falQueueRun(endpointId, input) {
     } catch {
       throw httpError(502, "FAL_BAD_STATUS", `Fal status invalid JSON: ${statusText.slice(0, 200)}`);
     }
+
     if (!statusResp.ok) {
-      throw httpError(502, "FAL_STATUS_FAILED", statusJson?.detail || statusJson?.message || statusText);
+      throw httpError(
+        502,
+        "FAL_STATUS_FAILED",
+        `Fal status HTTP ${statusResp.status}: ${statusJson?.detail || statusJson?.message || statusText}`.slice(0, 400)
+      );
     }
 
     const st = statusJson?.status;
@@ -1010,19 +1023,21 @@ async function falQueueRun(endpointId, input) {
     await sleep(800);
   }
 
-  // Fetch final result
-  const resultUrl = `https://queue.fal.run/${endpointId}/requests/${requestId}`;
-  const resultResp = await fetch(resultUrl, { headers: { Authorization: auth } });
+  // ✅ Fetch final result usando response_url (NO construirla)
+  const resultResp = await fetch(responseUrl, { headers: { Authorization: auth } });
   const resultText = await resultResp.text();
+
+  if (!resultResp.ok) {
+    throw httpError(502, "FAL_RESULT_FAILED", `Fal result HTTP ${resultResp.status}: ${resultText.slice(0, 200)}`);
+  }
+
   let resultJson;
   try {
     resultJson = JSON.parse(resultText);
   } catch {
     throw httpError(502, "FAL_BAD_RESULT", `Fal result invalid JSON: ${resultText.slice(0, 200)}`);
   }
-  if (!resultResp.ok) {
-    throw httpError(502, "FAL_RESULT_FAILED", resultJson?.detail || resultJson?.message || resultText);
-  }
+
   return resultJson;
 }
 
