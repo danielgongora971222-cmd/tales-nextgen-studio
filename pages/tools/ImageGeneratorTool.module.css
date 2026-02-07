@@ -532,6 +532,7 @@
   flex-shrink: 0;
   transform: translateY(-10px); /* “ligeramente arriba” del borde del prompt */
   z-index: 5;
+  position: relative;
 }
 
 /* ===== Kling Hover Popover ===== */
@@ -646,7 +647,7 @@
   z-index: 30;
 }
 
-.klingDock:hover .klingPopover{
+.klingPopoverVisible{
   opacity: 1;
   pointer-events: auto;
   transform: translate3d(0, 0, 0) scale(1);
@@ -656,7 +657,8 @@
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  margin-bottom: 10px;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .klingAllBtn{
@@ -710,6 +712,31 @@
   font-size: 12px;
   color: rgba(255,255,255,0.55);
   padding: 6px 2px 2px;
+}
+
+.klingTooltip{
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 10px);
+  transform: translate(-50%, 6px);
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: rgba(10, 5, 6, 0.9);
+  border: 1px solid rgba(241,225,148,0.18);
+  color: rgba(241,225,148,0.92);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  box-shadow: 0 16px 40px rgba(0,0,0,0.6);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s var(--ease-smooth), transform 0.18s var(--ease-smooth);
+  z-index: 40;
+}
+
+.klingTooltipVisible{
+  opacity: 1;
+  transform: translate(-50%, 0);
 }
 
 .klingThumbRow{

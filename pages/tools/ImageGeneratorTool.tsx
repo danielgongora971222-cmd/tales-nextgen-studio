@@ -467,9 +467,9 @@ type Panel = null | "reference" | "model" | "parameters" | "styles";
 type RefSlot = "char1" | "char2" | "char3" | "background";
 
 const SLOT_LABEL: Record<RefSlot, string> = {
-  char1: "Character 1",
-  char2: "Character 2",
-  char3: "Character 3",
+  char1: "Reference 1",
+  char2: "Reference 2",
+  char3: "Reference 3",
   background: "Background",
 };
 
@@ -629,6 +629,8 @@ const ImageGeneratorTool: React.FC = () => {
   const [isElementCreateOpen, setIsElementCreateOpen] = useState(false);
   const [isElementAllOpen, setIsElementAllOpen] = useState(false);
   const [elementCtaActive, setElementCtaActive] = useState(false);
+  const [isElementHovering, setIsElementHovering] = useState(false);
+  const elementHoverTimeoutRef = useRef<number | null>(null);
     // ===============================
   // Kling Elements: modales (Create / All)
   // ===============================
@@ -676,6 +678,14 @@ const ImageGeneratorTool: React.FC = () => {
   }, [model]);
 
   useEffect(() => {
+    return () => {
+      if (elementHoverTimeoutRef.current) {
+        window.clearTimeout(elementHoverTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     // @ts-ignore
     console.log("[KLING DEBUG] model =", model, "isKling =", isKlingModel(model));
   }, [model]);
@@ -719,9 +729,9 @@ const ImageGeneratorTool: React.FC = () => {
 
   const refLabel =
     [
-      refs.char1 ? "C1" : null,
-      refs.char2 ? "C2" : null,
-      refs.char3 ? "C3" : null,
+      refs.char1 ? "R1" : null,
+      refs.char2 ? "R2" : null,
+      refs.char3 ? "R3" : null,
       refs.background ? "BG" : null,
     ].filter(Boolean).join(" ") || "None";
 
@@ -737,6 +747,29 @@ const ImageGeneratorTool: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
     // Cache de dimensiones por imagen (para layout del historial y viewer responsive)
   const [imgDims, setImgDims] = useState<Record<string, { w: number; h: number }>>({});
+
+  function appendPromptTag(tag: string | null) {
+    if (!tag) return;
+    setPrompt((prev) => {
+      const next = prev || "";
+      if (next.includes(tag)) return next;
+      return next ? `${next} ${tag}` : tag;
+    });
+  }
+
+  function makeElementTag(name: string): string | null {
+    const slug = slugifyName(name || "");
+    if (!slug) return null;
+    return `@${slug}`;
+  }
+
+  function getRefTag(slot: RefSlot): string | null {
+    if (slot === "background") return "@background";
+    if (slot === "char1") return "@reference1";
+    if (slot === "char2") return "@reference2";
+    if (slot === "char3") return "@reference3";
+    return null;
+  }
 
   function rememberImgDims(assetId: string, img: HTMLImageElement) {
     const w = img.naturalWidth || 0;
@@ -767,6 +800,24 @@ const ImageGeneratorTool: React.FC = () => {
 
   function handleRootMouseLeave() {
     setRootGlow(50, 20);
+  }
+
+  function handleElementHoverStart() {
+    if (elementHoverTimeoutRef.current) {
+      window.clearTimeout(elementHoverTimeoutRef.current);
+      elementHoverTimeoutRef.current = null;
+    }
+    setIsElementHovering(true);
+  }
+
+  function handleElementHoverEnd() {
+    if (elementHoverTimeoutRef.current) {
+      window.clearTimeout(elementHoverTimeoutRef.current);
+    }
+    elementHoverTimeoutRef.current = window.setTimeout(() => {
+      setIsElementHovering(false);
+      elementHoverTimeoutRef.current = null;
+    }, 700);
   }
 
   function isGeneratedHistoryItem(a: Asset): boolean {
@@ -984,6 +1035,20 @@ const ImageGeneratorTool: React.FC = () => {
     return new File([blob], `element_${Date.now()}.jpg`, { type: "image/jpeg" });
   }
 
+  async function buildSingleElementFile(input: ElementImageInput): Promise<File> {
+    if (input.kind === "dataUrl") {
+      const resp = await fetch(input.dataUrl);
+      const blob = await resp.blob();
+      return new File([blob], `element_${Date.now()}.jpg`, { type: blob.type || "image/jpeg" });
+    }
+
+    const src = await resolveInputToUrl(input);
+    const resp = await fetch(src);
+    if (!resp.ok) throw new Error(`No se pudo descargar la imagen (${resp.status}).`);
+    const blob = await resp.blob();
+    return new File([blob], `element_${Date.now()}.jpg`, { type: blob.type || "image/jpeg" });
+  }
+
   async function klingAuthHeadersJson(): Promise<Record<string, string>> {
     const { data: sessionData } = await supabase.auth.getSession();
     const token = sessionData.session?.access_token;
@@ -1049,13 +1114,16 @@ const ImageGeneratorTool: React.FC = () => {
 
     setIsCreatingElement(true);
     try {
-      // 1) mosaico 2x2 (sin IA)
-      const base = await buildMosaic2x2(elementCreateSlots);
+      // 1) generar archivo (mosaico 2x2 o imagen única)
+      const base =
+        imagesCount === 1 && elementCreateSlots[0]
+          ? await buildSingleElementFile(elementCreateSlots[0])
+          : await buildMosaic2x2(elementCreateSlots);
 
       // 2) nombre bonito para el asset
       const slug = slugifyName(name);
       const fileName = slug ? `${slug}.jpg` : `element_${Date.now()}.jpg`;
-      const mosaicFile = new File([base], fileName, { type: "image/jpeg" });
+      const mosaicFile = new File([base], fileName, { type: base.type || "image/jpeg" });
 
       // 3) subir como asset normal (global para todos los modelos)
       const uploaded = await uploadUserAsset(mosaicFile, "element-library");
@@ -1068,6 +1136,7 @@ const ImageGeneratorTool: React.FC = () => {
         const next = [uploaded.id, ...prev];
         return next.slice(0, 5);
       });
+      appendPromptTag(makeElementTag(name));
 
       closeCreateModal();
       resetCreateModal();
@@ -1201,6 +1270,9 @@ const ImageGeneratorTool: React.FC = () => {
 
   function setRefSlot(slot: RefSlot, asset: Asset | null) {
     setRefs((prev) => {
+      if (asset) {
+        appendPromptTag(getRefTag(slot));
+      }
       // Background es independiente
       if (slot === "background") {
         return { ...prev, background: asset };
@@ -1573,13 +1645,13 @@ const ImageGeneratorTool: React.FC = () => {
           {(refs.char1 || refs.char2 || refs.char3 || refs.background) && (
             <div className={styles.refThumbStrip}>
               {refs.char1 && (
-                <div className={styles.refMini} title="Character 1">
+                <div className={styles.refMini} title="Reference 1">
                   <img src={refs.char1.url} alt="char1" />
-                  <span className={styles.refMiniIcon}>C1</span>
+                  <span className={styles.refMiniIcon}>R1</span>
                   <button
                     type="button"
                     className={styles.refMiniRemove}
-                    aria-label="Remove Character 1"
+                    aria-label="Remove Reference 1"
                     onClick={(e) => {
                       e.stopPropagation();
                       setRefSlot("char1", null);
@@ -1591,13 +1663,13 @@ const ImageGeneratorTool: React.FC = () => {
               )}
 
               {refs.char2 && (
-                <div className={styles.refMini} title="Character 2">
+                <div className={styles.refMini} title="Reference 2">
                   <img src={refs.char2.url} alt="char2" />
-                  <span className={styles.refMiniIcon}>C2</span>
+                  <span className={styles.refMiniIcon}>R2</span>
                   <button
                     type="button"
                     className={styles.refMiniRemove}
-                    aria-label="Remove Character 2"
+                    aria-label="Remove Reference 2"
                     onClick={(e) => {
                       e.stopPropagation();
                       setRefSlot("char2", null);
@@ -1609,13 +1681,13 @@ const ImageGeneratorTool: React.FC = () => {
               )}
 
               {refs.char3 && (
-                <div className={styles.refMini} title="Character 3">
+                <div className={styles.refMini} title="Reference 3">
                   <img src={refs.char3.url} alt="char3" />
-                  <span className={styles.refMiniIcon}>C3</span>
+                  <span className={styles.refMiniIcon}>R3</span>
                   <button
                     type="button"
                     className={styles.refMiniRemove}
-                    aria-label="Remove Character 3"
+                    aria-label="Remove Reference 3"
                     onClick={(e) => {
                       e.stopPropagation();
                       setRefSlot("char3", null);
@@ -1647,7 +1719,10 @@ const ImageGeneratorTool: React.FC = () => {
           )}
           <div className={styles.promptRow}>
             <div className={styles.promptInputWrap}>
-              <div className={styles.klingDock}>
+              <div className={styles.klingDock} onMouseEnter={handleElementHoverStart} onMouseLeave={handleElementHoverEnd}>
+                <div className={`${styles.klingTooltip} ${isElementHovering ? styles.klingTooltipVisible : ""}`}>
+                  Crear Elemento Consistente
+                </div>
                 {/* Botón 1x1 */}
                 <button
                   type="button"
@@ -1659,11 +1734,11 @@ const ImageGeneratorTool: React.FC = () => {
                   title="Element/Person"
                   aria-label="Element/Person"
                 >
-                  {/* ícono “scan” */}
+                  {/* ícono persona */}
                   <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
                     <path
                       fill="currentColor"
-                      d="M7 3H5a2 2 0 0 0-2 2v2h2V5h2V3zm14 4V5a2 2 0 0 0-2-2h-2v2h2v2h2zM5 19v-2H3v2a2 2 0 0 0 2 2h2v-2H5zm16-2v2h-2v2h2a2 2 0 0 0 2-2v-2h-2zM7 8h10v2H7V8zm0 6h10v2H7v-2z"
+                      d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm0 2c-4.4 0-8 2.24-8 5v2h16v-2c0-2.76-3.6-5-8-5z"
                     />
                   </svg>
 
@@ -1674,7 +1749,7 @@ const ImageGeneratorTool: React.FC = () => {
                 </button>
 
                 {/* Popover al hover */}
-                <div className={styles.klingPopover}>
+                <div className={`${styles.klingPopover} ${isElementHovering ? styles.klingPopoverVisible : ""}`}>
                   <div className={styles.klingPopoverTop}>
                     <button
                       type="button"
@@ -1684,40 +1759,41 @@ const ImageGeneratorTool: React.FC = () => {
                     >
                       All
                     </button>
-                  </div>
 
-                  {elements.length > 0 ? (
-                    <div className={styles.klingPopoverThumbRow}>
-                      {elements.slice(0, 6).map((el) => {
-                        const active = selectedElementAssetIds.includes(el.id);
-                        const src = el.url || "";
-                        return (
-                          <button
-                            key={el.id}
-                            type="button"
-                            className={`${styles.klingThumbBtn} ${active ? styles.klingThumbBtnActive : ""}`}
-                            onClick={() => {
-                              setSelectedElementAssetIds((prev) => {
-                                const has = prev.includes(el.id);
-                                if (has) return prev.filter((x) => x !== el.id);
-                                if (prev.length >= 5) {
-                                  setError("Máximo 5 Elements a la vez.");
-                                  return prev;
-                                }
-                                return [el.id, ...prev];
-                              });
-                            }}
-                            title={el.name}
-                            aria-label={el.name}
-                          >
-                            {src ? <img src={src} alt={el.name} className={styles.klingThumbImg} /> : null}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className={styles.klingEmpty}>No elements yet</div>
-                  )}
+                    {elements.length > 0 ? (
+                      <div className={styles.klingPopoverThumbRow}>
+                        {elements.slice(0, 6).map((el) => {
+                          const active = selectedElementAssetIds.includes(el.id);
+                          const src = el.url || "";
+                          return (
+                            <button
+                              key={el.id}
+                              type="button"
+                              className={`${styles.klingThumbBtn} ${active ? styles.klingThumbBtnActive : ""}`}
+                              onClick={() => {
+                                setSelectedElementAssetIds((prev) => {
+                                  const has = prev.includes(el.id);
+                                  if (has) return prev.filter((x) => x !== el.id);
+                                  if (prev.length >= 5) {
+                                    setError("Máximo 5 Elements a la vez.");
+                                    return prev;
+                                  }
+                                  appendPromptTag(makeElementTag(el.name));
+                                  return [el.id, ...prev];
+                                });
+                              }}
+                              title={el.name}
+                              aria-label={el.name}
+                            >
+                              {src ? <img src={src} alt={el.name} className={styles.klingThumbImg} /> : null}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className={styles.klingEmpty}>No elements yet</div>
+                    )}
+                  </div>
                 </div>
               </div>           
 
@@ -2432,6 +2508,7 @@ const ImageGeneratorTool: React.FC = () => {
                                 setError("Kling permite seleccionar máximo 5 Elements a la vez.");
                                 return prev;
                               }
+                              appendPromptTag(makeElementTag(el.name));
                               return [el.id, ...prev];
                             });
                           }}
@@ -2455,6 +2532,7 @@ const ImageGeneratorTool: React.FC = () => {
                                   setError("Kling permite seleccionar máximo 5 Elements a la vez.");
                                   return prev;
                                 }
+                                appendPromptTag(makeElementTag(el.name));
                                 return [el.id, ...prev];
                               });
                             }}
