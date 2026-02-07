@@ -126,7 +126,7 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
 
       <aside
         ref={sidebarRef}
-        className={`relative z-20 h-full transition-all duration-500 ease-out flex flex-col hud-panel hud-noise ${
+        className={`relative z-20 h-full overflow-visible transition-all duration-500 ease-out flex flex-col hud-panel hud-noise ${
           sidebarOpen ? 'w-72' : 'w-20'
         }`}
       >
@@ -154,7 +154,7 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
           </button>
         </div>
 
-        <nav className="flex-1 px-4 space-y-2 py-4 overflow-y-auto custom-scrollbar">
+        <nav className="flex-1 px-4 space-y-2 py-4 overflow-y-auto overflow-x-visible custom-scrollbar">
           <NavItem
             label={sidebarOpen ? 'Dashboard' : ''}
             active={currentRoute === AppRoute.HOME}
