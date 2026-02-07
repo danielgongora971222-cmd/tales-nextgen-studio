@@ -598,6 +598,10 @@ const ImageGeneratorTool: React.FC = () => {
 
   const [history, setHistory] = useState<Asset[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [visibleHistory, setVisibleHistory] = useState<Asset[]>([]);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const historyLoadMoreRef = useRef<HTMLDivElement | null>(null);
 
   // "library": todas tus imágenes (generadas + subidas) para el picker y recipe
   const [myAssets, setMyAssets] = useState<Asset[]>([]);
@@ -704,6 +708,35 @@ const ImageGeneratorTool: React.FC = () => {
     ? (STYLE_PRESETS.find((p) => p.id === selectedStyleId)?.name || "Selected")
     : "None";
 
+  const modelGroups = [
+    {
+      label: "Google NanoBanana",
+      options: [
+        { value: GeminiModel.IMAGE, label: "NanoBanana" },
+        { value: GeminiModel.IMAGE_PRO, label: "NanoBanana Pro" },
+      ],
+    },
+    {
+      label: "Kling",
+      options: [{ value: "kling:kling-image-o1", label: "Kling o1" }],
+    },
+    {
+      label: "Flux 2.0",
+      options: [
+        { value: "fal-ai/flux-2-max", label: "Flux 2.0 Max" },
+        { value: "fal-ai/flux-2-pro", label: "Flux 2.0 Pro" },
+        { value: "fal-ai/flux-2-flex", label: "Flux 2.0 Flex" },
+      ],
+    },
+    {
+      label: "GPT - Image",
+      options: [
+        { value: "openai:gpt-image-1.5", label: "GPT 1.5" },
+        { value: "openai:gpt-image-1.5-high", label: "GPT 1.5 - high" },
+      ],
+    },
+  ];
+
     // Mantener aspect ratio / quality / count válidos según el modelo
     useEffect(() => {
       // Aspect ratio
@@ -726,6 +759,27 @@ const ImageGeneratorTool: React.FC = () => {
         setQuality("1K");
       }
     }, [activeCaps, aspectRatio, quality, count, model]);
+
+  function handleModelSelect(next: string) {
+    const nextCaps = getActiveCaps(next);
+
+    setModel(next);
+
+    // ✅ defaults (por requerimiento)
+    setAspectRatio("auto");
+    setCount(1);
+
+    // Quality válida para el modelo elegido
+    if (!nextCaps.qualities.includes(quality)) {
+      setQuality(nextCaps.qualities[0] || "1K");
+    }
+
+    // IMPORTANTÍSIMO:
+    // NanoBanana (flash) solo soporta 1K, si no, el backend lo rechaza.
+    if (next === GeminiModel.IMAGE) setQuality("1K");
+
+    setPanel(null); // auto-close
+  }
 
   const refLabel =
     [
@@ -847,6 +901,8 @@ const ImageGeneratorTool: React.FC = () => {
       // 2) historial: SOLO generaciones de esta herramienta
       const onlyGenerated = sorted.filter(isGeneratedHistoryItem);
       setHistory(onlyGenerated);
+      setHistoryPage(1);
+      setVisibleHistory(onlyGenerated.slice(0, 12));
     } catch (e: any) {
       setError(e?.message || "No se pudo cargar el historial.");
     } finally {
@@ -857,6 +913,35 @@ const ImageGeneratorTool: React.FC = () => {
   useEffect(() => {
     reloadHistory();
   }, []);
+
+  const hasMoreHistory = visibleHistory.length < history.length;
+
+  useEffect(() => {
+    const target = historyLoadMoreRef.current;
+    if (!target) return;
+    if (!hasMoreHistory) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries[0]?.isIntersecting) return;
+        if (isLoadingMore) return;
+        setIsLoadingMore(true);
+        window.setTimeout(() => {
+          setHistoryPage((prev) => {
+            const nextPage = prev + 1;
+            const nextVisible = history.slice(0, nextPage * 12);
+            setVisibleHistory(nextVisible);
+            return nextPage;
+          });
+          setIsLoadingMore(false);
+        }, 700);
+      },
+      { threshold: 0.2 }
+    );
+
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [hasMoreHistory, history, isLoadingMore]);
 
 
   // ===============================
@@ -1435,7 +1520,11 @@ const ImageGeneratorTool: React.FC = () => {
 
     try {
       await deleteAsset(asset.id);
-      setHistory((prev) => prev.filter((x) => x.id !== asset.id));
+      setHistory((prev) => {
+        const next = prev.filter((x) => x.id !== asset.id);
+        setVisibleHistory(next.slice(0, historyPage * 12));
+        return next;
+      });
       if (viewer?.id === asset.id) setViewer(null);
     } catch (e: any) {
       setError(e?.message || "No se pudo eliminar.");
@@ -1591,7 +1680,7 @@ const ImageGeneratorTool: React.FC = () => {
                 </div>
               ))}
 
-              {history.map((asset) => {
+              {visibleHistory.map((asset) => {
                 const caption = removeStylePresetBlock(asset.prompt || "") || asset.name || "—";
                 return (
                   <button
@@ -1656,6 +1745,12 @@ const ImageGeneratorTool: React.FC = () => {
                   </button>
                 );
               })}
+            </div>
+          )}
+          {hasMoreHistory && (
+            <div className={styles.historyLoader} ref={historyLoadMoreRef}>
+              <div className={styles.historyLoaderSpinner} aria-hidden="true" />
+              <span>{isLoadingMore ? "Cargando más..." : "Desliza para cargar más"}</span>
             </div>
           )}
         </div>
@@ -2028,51 +2123,25 @@ const ImageGeneratorTool: React.FC = () => {
 
                   <div className={styles.formRow}>
                     <label className={styles.formLabel}>Model</label>
-                    <select
-                      className={styles.select}
-                      value={model}
-                      onChange={(e) => {
-                        const next = e.target.value;
-                        const nextCaps = getActiveCaps(next);
-
-                        setModel(next);
-
-                        // ✅ defaults (por requerimiento)
-                        setAspectRatio("auto");
-                        setCount(1);
-
-                        // Quality válida para el modelo elegido
-                        if (!nextCaps.qualities.includes(quality)) {
-                          setQuality(nextCaps.qualities[0] || "1K");
-                        }
-
-                        // IMPORTANTÍSIMO:
-                        // NanoBanana (flash) solo soporta 1K, si no, el backend lo rechaza.
-                        if (next === GeminiModel.IMAGE) setQuality("1K");
-
-                        setPanel(null); // auto-close
-                      }}
-                    >
-                      <optgroup label="Google NanoBanana">
-                        <option value={GeminiModel.IMAGE}>NanoBanana</option>
-                        <option value={GeminiModel.IMAGE_PRO}>NanoBanana Pro</option>
-                      </optgroup>
-
-                      <optgroup label="Kling">
-                        <option value="kling:kling-image-o1">Kling o1</option>
-                      </optgroup>
-
-                      <optgroup label="Flux 2.0">
-                        <option value="fal-ai/flux-2-max">Flux 2.0 Max</option>
-                        <option value="fal-ai/flux-2-pro">Flux 2.0 Pro</option>
-                        <option value="fal-ai/flux-2-flex">Flux 2.0 Flex</option>
-                      </optgroup>
-
-                      <optgroup label="GPT - Image">
-                        <option value="openai:gpt-image-1.5">GPT 1.5</option>
-                        <option value="openai:gpt-image-1.5-high">GPT 1.5 - high</option>
-                      </optgroup>
-                    </select>
+                    <div className={styles.modelGrid}>
+                      {modelGroups.map((group) => (
+                        <div key={group.label} className={styles.modelGroup}>
+                          <div className={styles.modelGroupLabel}>{group.label}</div>
+                          <div className={styles.modelGroupOptions}>
+                            {group.options.map((opt) => (
+                              <button
+                                key={opt.value}
+                                type="button"
+                                className={`${styles.modelOption} ${model === opt.value ? styles.modelOptionActive : ""}`}
+                                onClick={() => handleModelSelect(opt.value)}
+                              >
+                                {opt.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}
