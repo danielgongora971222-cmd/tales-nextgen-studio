@@ -854,6 +854,10 @@ const ImageGeneratorTool: React.FC = () => {
     }
   }
 
+  useEffect(() => {
+    reloadHistory();
+  }, []);
+
 
   // ===============================
   // Element/Person Library (GLOBAL):
@@ -1552,7 +1556,16 @@ const ImageGeneratorTool: React.FC = () => {
         <div className={styles.historyHeader}>
           <div className={styles.historyTitle}>
             <span className={styles.kicker}>IMAGE GENERATOR</span>
-            <span className={styles.subKicker}>{isLoadingHistory ? "Loading history..." : `History · ${history.length}`}</span>
+            <div className={styles.historyMeta}>
+              {isLoadingHistory ? (
+                <span className={styles.subKicker}>Loading history...</span>
+              ) : (
+                <>
+                  <span className={styles.subKicker}>History</span>
+                  <span className={styles.historyCount}>{history.length}</span>
+                </>
+              )}
+            </div>
           </div>
 
           <button className={styles.ghostBtn} onClick={reloadHistory} type="button" disabled={isLoadingHistory}>
