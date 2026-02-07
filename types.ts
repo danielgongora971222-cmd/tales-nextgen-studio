@@ -63,9 +63,9 @@ export enum GeminiModel {
   IMAGE_PRO = 'gemini-3-pro-image-preview',
   VIDEO_FAST = 'veo-3.1-fast-generate-preview',
   VIDEO_PRO = 'veo-3.1-generate-preview',
+  VIDEO_VEO3 = 'veo-3.0-generate-preview',
   TEXT_FAST = 'gemini-3-flash-preview',
   TEXT_PRO = 'gemini-3-pro-preview'
-  VIDEO_VEO3 = 'veo-3.0-generate-preview',
 }
 
 declare global {
