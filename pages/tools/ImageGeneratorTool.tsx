@@ -256,6 +256,11 @@ BACKGROUND AUTO-RULES (only if a background reference image is provided):
 // Si además usas presets largos (como Live Action), puede romper el límite.
 // Por eso forzamos un máximo y usamos una versión “corta” de los estilos.
 const KLING_PROMPT_MAX = 2500;
+// Kling 3.0 (Fal.ai)
+// - O3 (Omni) = image-to-image (requiere >= 1 referencia)
+// - V3 = text-to-image (sin referencias)
+const KLING_MODEL_O3_OMNI = "fal-ai/kling-image/o3/image-to-image";
+const KLING_MODEL_V3_TEXT = "fal-ai/kling-image/v3/text-to-image";
 
 function isKlingModel(model: any): boolean {
   // Soporta: string ("kling:kling-image-o1") o objeto ({ id, value, name, provider })
@@ -762,8 +767,8 @@ const ImageGeneratorTool: React.FC = () => {
       label: "Kling",
       options: [
         { value: "kling:kling-image-o1", label: "Kling o1 (API)" },
-        { value: "fal-ai/kling-image/v3/text-to-image", label: "Kling 3.0 (V3)" },
-        { value: "fal-ai/kling-image/o3/image-to-image", label: "Kling 3.0 (Omni O3)" },
+        // Nota: Kling 3.0 (V3) se usa automáticamente cuando eliges Omni O3 pero NO agregas referencias.
+        { value: KLING_MODEL_O3_OMNI, label: "Kling 3.0 (Omni O3)" },
       ],
     },
     {
@@ -1507,10 +1512,31 @@ const ImageGeneratorTool: React.FC = () => {
         );
       }
 
-      await generateImageBatch(finalPrompt, model, {
-        aspectRatio,
-        count,
-        quality,
+      // Auto-fallback: si el usuario eligió Omni O3 pero NO puso referencias,
+      // evitamos el error FAL_KLING_MISSING_REFERENCE usando el modelo texto (V3).
+      const totalRefs = mergedCharacterAssetIds.length + (backgroundAssetId ? 1 : 0);
+      const effectiveModel = model === KLING_MODEL_O3_OMNI && totalRefs === 0 ? KLING_MODEL_V3_TEXT : model;
+
+      // Asegura que los parámetros sean válidos para el modelo efectivo.
+      // Ej: O3 soporta aspectRatio="auto" y quality="4K", pero V3 no.
+      const effCaps = getActiveCaps(effectiveModel);
+
+      const effectiveAspectRatio =
+        effCaps.aspectRatios.some((ar) => ar.value === aspectRatio)
+          ? aspectRatio
+          : (effCaps.aspectRatios.find((ar) => ar.value === "1:1")?.value || effCaps.aspectRatios[0]?.value || "1:1");
+
+      const effectiveQuality =
+        effCaps.qualities.includes(quality)
+          ? quality
+          : (effCaps.qualities[effCaps.qualities.length - 1] || effCaps.qualities[0] || "1K");
+
+      const effectiveCount = effCaps.countOptions.includes(count) ? count : (effCaps.countOptions[0] || 1);
+
+      await generateImageBatch(finalPrompt, effectiveModel, {
+        aspectRatio: effectiveAspectRatio,
+        count: effectiveCount,
+        quality: effectiveQuality,
         tool: "image-generator",
         nameHint: "generated",
         characterAssetIds: mergedCharacterAssetIds,
@@ -1604,10 +1630,15 @@ const ImageGeneratorTool: React.FC = () => {
     // model
     const metaModel = typeof meta.model === "string" ? meta.model : null;
     if (metaModel) {
-      setModel(metaModel as GeminiModel);
+      // Si el asset fue generado con Kling V3 (texto), lo “mapeamos” a Omni O3 en UI.
+      // Esto mantiene el selector limpio (solo Omni O3), y el botón Generate seguirá
+      // usando V3 automáticamente si no hay referencias.
+      const mappedModel = metaModel === KLING_MODEL_V3_TEXT ? KLING_MODEL_O3_OMNI : metaModel;
+
+      setModel(mappedModel as GeminiModel);
 
       // NanoBanana (flash) solo soporta 1K
-      if (metaModel === GeminiModel.IMAGE) setQuality("1K");
+      if (mappedModel === GeminiModel.IMAGE) setQuality("1K");
     }
 
     // aspect ratio
