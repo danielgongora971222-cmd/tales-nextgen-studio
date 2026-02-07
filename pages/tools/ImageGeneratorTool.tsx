@@ -465,6 +465,13 @@ function getActiveCaps(modelId: string) {
 
 type Panel = null | "reference" | "model" | "parameters" | "styles";
 type RefSlot = "char1" | "char2" | "char3" | "background";
+type PromptTag = {
+  id: string;
+  label: string;
+  kind: "ref" | "element";
+  refSlot?: RefSlot;
+  elementId?: string;
+};
 
 const SLOT_LABEL: Record<RefSlot, string> = {
   char1: "Reference 1",
@@ -747,29 +754,6 @@ const ImageGeneratorTool: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
     // Cache de dimensiones por imagen (para layout del historial y viewer responsive)
   const [imgDims, setImgDims] = useState<Record<string, { w: number; h: number }>>({});
-
-  function appendPromptTag(tag: string | null) {
-    if (!tag) return;
-    setPrompt((prev) => {
-      const next = prev || "";
-      if (next.includes(tag)) return next;
-      return next ? `${next} ${tag}` : tag;
-    });
-  }
-
-  function makeElementTag(name: string): string | null {
-    const slug = slugifyName(name || "");
-    if (!slug) return null;
-    return `@${slug}`;
-  }
-
-  function getRefTag(slot: RefSlot): string | null {
-    if (slot === "background") return "@background";
-    if (slot === "char1") return "@reference1";
-    if (slot === "char2") return "@reference2";
-    if (slot === "char3") return "@reference3";
-    return null;
-  }
 
   function rememberImgDims(assetId: string, img: HTMLImageElement) {
     const w = img.naturalWidth || 0;
@@ -1136,7 +1120,6 @@ const ImageGeneratorTool: React.FC = () => {
         const next = [uploaded.id, ...prev];
         return next.slice(0, 5);
       });
-      appendPromptTag(makeElementTag(name));
 
       closeCreateModal();
       resetCreateModal();
@@ -1240,14 +1223,44 @@ const ImageGeneratorTool: React.FC = () => {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  function stripPromptTags(text: string): string {
+    return (text || "").replace(/@\w+/g, "").replace(/\s+/g, " ").trim();
+  }
+
   const filteredPickerAssets = useMemo(() => {
     const q = pickerQuery.trim().toLowerCase();
-    if (!q) return myAssets;
-    return myAssets.filter((a) => {
+    if (!q) return history;
+    return history.filter((a) => {
       const caption = removeStylePresetBlock(a.prompt || "").toLowerCase();
       return (a.name || "").toLowerCase().includes(q) || caption.includes(q);
     });
-  }, [myAssets, pickerQuery]);
+  }, [history, pickerQuery]);
+
+  const elementNameById = useMemo(() => {
+    return new Map(elements.map((el) => [el.id, el.name]));
+  }, [elements]);
+
+  const promptTags = useMemo(() => {
+    const tags: PromptTag[] = [];
+    if (refs.char1) tags.push({ id: "ref-char1", label: "@reference1", kind: "ref", refSlot: "char1" });
+    if (refs.char2) tags.push({ id: "ref-char2", label: "@reference2", kind: "ref", refSlot: "char2" });
+    if (refs.char3) tags.push({ id: "ref-char3", label: "@reference3", kind: "ref", refSlot: "char3" });
+    if (refs.background) tags.push({ id: "ref-background", label: "@background", kind: "ref", refSlot: "background" });
+
+    selectedElementAssetIds.forEach((id) => {
+      const name = elementNameById.get(id) || "";
+      const slug = slugifyName(name);
+      if (!slug) return;
+      tags.push({ id: `element-${id}`, label: `@${slug}`, kind: "element", elementId: id });
+    });
+
+    return tags;
+  }, [refs, selectedElementAssetIds, elementNameById]);
+
+  const promptWithTags = useMemo(() => {
+    const tagsText = promptTags.map((tag) => tag.label).join(" ");
+    return [tagsText, prompt].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+  }, [promptTags, prompt]);
 
   const recipeStyleName = useMemo(() => {
     return getStyleNameFromPromptOrSelection({ prompt, selectedStyleId });
@@ -1268,11 +1281,18 @@ const ImageGeneratorTool: React.FC = () => {
     ];
   }, [model, aspectRatio, count, quality, refs, recipeStyleName]);
 
+  function removePromptTag(tag: PromptTag) {
+    if (tag.kind === "ref" && tag.refSlot) {
+      setRefSlot(tag.refSlot, null);
+      return;
+    }
+    if (tag.kind === "element" && tag.elementId) {
+      setSelectedElementAssetIds((prev) => prev.filter((id) => id !== tag.elementId));
+    }
+  }
+
   function setRefSlot(slot: RefSlot, asset: Asset | null) {
     setRefs((prev) => {
-      if (asset) {
-        appendPromptTag(getRefTag(slot));
-      }
       // Background es independiente
       if (slot === "background") {
         return { ...prev, background: asset };
@@ -1315,7 +1335,7 @@ const ImageGeneratorTool: React.FC = () => {
       return;
     }
 
-    const basePrompt = (prompt || "").trim();
+    const basePrompt = (promptWithTags || "").trim();
     if (!basePrompt) return;
 
     setIsGenerating(true);
@@ -1448,7 +1468,7 @@ const ImageGeneratorTool: React.FC = () => {
     if (!raw.trim()) return;
 
     // 1) prompt (incluye bloque de style si venía guardado)
-    setPrompt(raw);
+    setPrompt(stripPromptTags(raw));
 
     // 2) receta (model/ratio/count/quality + refs)
     const meta = (asset as any).meta || {};
@@ -1774,14 +1794,13 @@ const ImageGeneratorTool: React.FC = () => {
                                 setSelectedElementAssetIds((prev) => {
                                   const has = prev.includes(el.id);
                                   if (has) return prev.filter((x) => x !== el.id);
-                                  if (prev.length >= 5) {
-                                    setError("Máximo 5 Elements a la vez.");
-                                    return prev;
-                                  }
-                                  appendPromptTag(makeElementTag(el.name));
-                                  return [el.id, ...prev];
-                                });
-                              }}
+                                if (prev.length >= 5) {
+                                  setError("Máximo 5 Elements a la vez.");
+                                  return prev;
+                                }
+                                return [el.id, ...prev];
+                              });
+                            }}
                               title={el.name}
                               aria-label={el.name}
                             >
@@ -1797,20 +1816,47 @@ const ImageGeneratorTool: React.FC = () => {
                 </div>
               </div>           
 
-              <textarea
-                className={styles.prompt}
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                placeholder="Escribe tu prompt y comienza a crear..."
-                rows={2}
-              />
+              <div className={styles.promptEditor}>
+                {promptTags.length > 0 && (
+                  <div className={styles.promptTags}>
+                    {promptTags.map((tag) => (
+                      <button
+                        key={tag.id}
+                        type="button"
+                        className={styles.promptTag}
+                        onClick={() => removePromptTag(tag)}
+                        aria-label={`Remove ${tag.label}`}
+                      >
+                        <span>{tag.label}</span>
+                        <span className={styles.promptTagRemove}>×</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <textarea
+                  className={styles.prompt}
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Backspace") return;
+                    if (prompt.trim().length > 0) return;
+                    if (promptTags.length === 0) return;
+                    e.preventDefault();
+                    const last = promptTags[promptTags.length - 1];
+                    removePromptTag(last);
+                  }}
+                  placeholder="Escribe tu prompt y comienza a crear..."
+                  rows={2}
+                />
+              </div>
             </div>
 
             <div className={styles.generateCol}>
               <button
                 type="button"
                 className={styles.generateBtn}
-                disabled={isGenerating || !prompt.trim()}
+                disabled={isGenerating || !promptWithTags.trim()}
                 onClick={handleGenerate}
                 data-loading={isGenerating ? "true" : "false"}
               >
@@ -2508,7 +2554,6 @@ const ImageGeneratorTool: React.FC = () => {
                                 setError("Kling permite seleccionar máximo 5 Elements a la vez.");
                                 return prev;
                               }
-                              appendPromptTag(makeElementTag(el.name));
                               return [el.id, ...prev];
                             });
                           }}
@@ -2532,7 +2577,6 @@ const ImageGeneratorTool: React.FC = () => {
                                   setError("Kling permite seleccionar máximo 5 Elements a la vez.");
                                   return prev;
                                 }
-                                appendPromptTag(makeElementTag(el.name));
                                 return [el.id, ...prev];
                               });
                             }}
