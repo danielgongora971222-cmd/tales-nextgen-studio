@@ -8,6 +8,9 @@ import { z } from "zod";
 import { GoogleGenAI } from "@google/genai";
 import { createClient } from "@supabase/supabase-js";
 import { createHmac, randomUUID } from "crypto";
+import os from "os";
+import fs from "fs/promises";
+import { join as pathJoin } from "path";
 
 
 dotenv.config();
@@ -76,9 +79,16 @@ function parseDataUrl(dataUrl) {
 }
 
 function extFromMime(mimeType) {
-  if (mimeType.includes("jpeg")) return "jpg";
-  if (mimeType.includes("webp")) return "webp";
-  return "png";
+  const t = String(mimeType || "").toLowerCase();
+  // video
+  if (t.includes("video/mp4") || t.includes("mp4")) return "mp4";
+  if (t.includes("video/webm") || t.includes("webm")) return "webm";
+  if (t.includes("quicktime") || t.includes("mov")) return "mov";
+  // images
+  if (t.includes("jpeg") || t.includes("jpg")) return "jpg";
+  if (t.includes("webp")) return "webp";
+  if (t.includes("png")) return "png";
+  return "bin";
 }
 
 function safeSlug(input) {
