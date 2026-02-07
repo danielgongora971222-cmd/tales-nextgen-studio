@@ -54,6 +54,8 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [imageMenuOpen, setImageMenuOpen] = useState(false);
   const [videoMenuOpen, setVideoMenuOpen] = useState(false);
+  const [imageFlyoutTop, setImageFlyoutTop] = useState<number | null>(null);
+  const [videoFlyoutTop, setVideoFlyoutTop] = useState<number | null>(null);
   const { user, logout } = useAuth();
 
   const sidebarRef = useRef<HTMLElement | null>(null);
@@ -97,8 +99,14 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
     };
   }, []);
 
-  const handleImageMenuEnter = () => {
+  const handleImageMenuEnter = (event: React.MouseEvent<HTMLDivElement>) => {
     if (imageMenuTimer.current) window.clearTimeout(imageMenuTimer.current);
+    const sidebarEl = sidebarRef.current;
+    if (sidebarEl) {
+      const itemRect = event.currentTarget.getBoundingClientRect();
+      const sidebarRect = sidebarEl.getBoundingClientRect();
+      setImageFlyoutTop(itemRect.top - sidebarRect.top);
+    }
     if (sidebarOpen) setImageMenuOpen(true);
   };
 
@@ -107,8 +115,14 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
     imageMenuTimer.current = window.setTimeout(() => setImageMenuOpen(false), 700);
   };
 
-  const handleVideoMenuEnter = () => {
+  const handleVideoMenuEnter = (event: React.MouseEvent<HTMLDivElement>) => {
     if (videoMenuTimer.current) window.clearTimeout(videoMenuTimer.current);
+    const sidebarEl = sidebarRef.current;
+    if (sidebarEl) {
+      const itemRect = event.currentTarget.getBoundingClientRect();
+      const sidebarRect = sidebarEl.getBoundingClientRect();
+      setVideoFlyoutTop(itemRect.top - sidebarRect.top);
+    }
     if (sidebarOpen) setVideoMenuOpen(true);
   };
 
@@ -154,107 +168,123 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
           </button>
         </div>
 
-        <nav className="flex-1 px-4 py-4 overflow-visible">
-          <div className="space-y-2 overflow-y-auto custom-scrollbar pr-1">
+        <nav className="flex-1 px-4 space-y-2 py-4 overflow-y-auto overflow-x-hidden custom-scrollbar">
+          <NavItem
+            label={sidebarOpen ? 'Dashboard' : ''}
+            active={currentRoute === AppRoute.HOME}
+            onClick={() => onNavigate(AppRoute.HOME)}
+            icon={
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect width="7" height="9" x="3" y="3" rx="1" />
+                <rect width="7" height="5" x="14" y="3" rx="1" />
+                <rect width="7" height="9" x="14" y="12" rx="1" />
+                <rect width="7" height="5" x="3" y="16" rx="1" />
+              </svg>
+            }
+          />
+
+          <div className="hud-divider my-4 mx-2" />
+
+          <div className="relative" onMouseEnter={handleImageMenuEnter} onMouseLeave={handleImageMenuLeave}>
             <NavItem
-              label={sidebarOpen ? 'Dashboard' : ''}
-              active={currentRoute === AppRoute.HOME}
-              onClick={() => onNavigate(AppRoute.HOME)}
+              label={sidebarOpen ? 'Image Gen' : ''}
+              active={isImageTool}
+              onClick={() => {
+                if (!sidebarOpen) setSidebarOpen(true);
+                onNavigate(AppRoute.IMAGE_GEN_ROOT);
+              }}
+              expanded={sidebarOpen ? imageMenuOpen : undefined}
               icon={
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect width="7" height="9" x="3" y="3" rx="1" />
-                  <rect width="7" height="5" x="14" y="3" rx="1" />
-                  <rect width="7" height="9" x="14" y="12" rx="1" />
-                  <rect width="7" height="5" x="3" y="16" rx="1" />
+                  <rect width="18" height="14" x="3" y="5" rx="2" ry="2" />
+                  <circle cx="9" cy="10" r="1.5" />
+                  <path d="m21 16-4.2-4.2a2 2 0 0 0-2.8 0L7 18" />
                 </svg>
               }
             />
+          </div>
 
-            <div className="hud-divider my-4 mx-2" />
-
-            <div className="relative" onMouseEnter={handleImageMenuEnter} onMouseLeave={handleImageMenuLeave}>
-              <NavItem
-                label={sidebarOpen ? 'Image Gen' : ''}
-                active={isImageTool}
-                onClick={() => {
-                  if (!sidebarOpen) setSidebarOpen(true);
-                  onNavigate(AppRoute.IMAGE_GEN_ROOT);
-                }}
-                expanded={sidebarOpen ? imageMenuOpen : undefined}
-                icon={
-                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect width="18" height="14" x="3" y="5" rx="2" ry="2" />
-                    <circle cx="9" cy="10" r="1.5" />
-                    <path d="m21 16-4.2-4.2a2 2 0 0 0-2.8 0L7 18" />
-                  </svg>
-                }
-              />
-              {sidebarOpen && imageMenuOpen && (
-                <div className="absolute left-full top-0 z-50 ml-3 w-64 rounded-2xl border border-white/10 bg-black/70 backdrop-blur-xl shadow-[0_20px_40px_rgba(0,0,0,0.45)] p-3 space-y-1 animate-in fade-in slide-in-from-left-2 duration-200">
-                  {TOOLS_REGISTRY.map((tool) => {
-                    const isPrimary = tool.id === 'generator';
-                    return (
-                      <button
-                        key={tool.id}
-                        onClick={() => onNavigate(tool.route)}
-                        className={`w-full text-left px-3 py-2 rounded-xl text-xs font-medium transition-all border ${
-                          currentRoute === tool.route
-                            ? 'border-[rgba(241,225,148,0.45)] text-white bg-[rgba(241,225,148,0.08)]'
-                            : isPrimary
-                              ? 'border-[rgba(241,225,148,0.35)] text-white bg-[rgba(241,225,148,0.14)] shadow-[0_0_18px_rgba(241,225,148,0.18)]'
-                              : 'border-transparent text-white/60 hover:text-white hover:bg-white/5'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between">
-                          <span>{tool.label}</span>
-                          {tool.status === 'beta' && <span className="text-[9px] bg-white/20 px-1 rounded">BETA</span>}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            <div className="relative" onMouseEnter={handleVideoMenuEnter} onMouseLeave={handleVideoMenuLeave}>
-              <NavItem
-                label={sidebarOpen ? 'Video Gen' : ''}
-                active={currentRoute === AppRoute.VIDEO_GEN}
-                onClick={() => onNavigate(AppRoute.VIDEO_GEN)}
-                expanded={sidebarOpen ? videoMenuOpen : undefined}
-                icon={
-                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="m22 8-6 4 6 4V8Z" />
-                    <rect width="14" height="12" x="2" y="6" rx="2" ry="2" />
-                  </svg>
-                }
-              />
-              {sidebarOpen && videoMenuOpen && (
-                <div className="absolute left-full top-0 z-50 ml-3 w-60 rounded-2xl border border-white/10 bg-black/70 backdrop-blur-xl shadow-[0_20px_40px_rgba(0,0,0,0.45)] p-3 space-y-1 animate-in fade-in slide-in-from-left-2 duration-200">
-                  {videoTools.map((tool) => {
-                    const isPrimary = tool.id === 'general-video';
-                    return (
-                      <button
-                        key={tool.id}
-                        onClick={() => onNavigate(AppRoute.VIDEO_GEN)}
-                        className={`w-full text-left px-3 py-2 rounded-xl text-xs font-medium transition-all border ${
-                          isPrimary
-                            ? 'border-[rgba(241,225,148,0.35)] text-white bg-[rgba(241,225,148,0.14)] shadow-[0_0_18px_rgba(241,225,148,0.18)]'
-                            : 'border-transparent text-white/60 hover:text-white hover:bg-white/5'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between">
-                          <span>{tool.label}</span>
-                          {tool.status === 'beta' && <span className="text-[9px] bg-white/20 px-1 rounded">BETA</span>}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+          <div className="relative" onMouseEnter={handleVideoMenuEnter} onMouseLeave={handleVideoMenuLeave}>
+            <NavItem
+              label={sidebarOpen ? 'Video Gen' : ''}
+              active={currentRoute === AppRoute.VIDEO_GEN}
+              onClick={() => onNavigate(AppRoute.VIDEO_GEN)}
+              expanded={sidebarOpen ? videoMenuOpen : undefined}
+              icon={
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="m22 8-6 4 6 4V8Z" />
+                  <rect width="14" height="12" x="2" y="6" rx="2" ry="2" />
+                </svg>
+              }
+            />
           </div>
         </nav>
+
+        {sidebarOpen && imageMenuOpen && imageFlyoutTop !== null && (
+          <div
+            className="absolute left-full z-50 ml-3 w-64 rounded-2xl border border-white/10 bg-black/70 backdrop-blur-xl shadow-[0_20px_40px_rgba(0,0,0,0.45)] p-3 space-y-1 animate-in fade-in slide-in-from-left-2 duration-200"
+            style={{ top: imageFlyoutTop }}
+            onMouseEnter={() => {
+              if (imageMenuTimer.current) window.clearTimeout(imageMenuTimer.current);
+              setImageMenuOpen(true);
+            }}
+            onMouseLeave={handleImageMenuLeave}
+          >
+            {TOOLS_REGISTRY.map((tool) => {
+              const isPrimary = tool.id === 'generator';
+              return (
+                <button
+                  key={tool.id}
+                  onClick={() => onNavigate(tool.route)}
+                  className={`w-full text-left px-3 py-2 rounded-xl text-xs font-medium transition-all border ${
+                    currentRoute === tool.route
+                      ? 'border-[rgba(241,225,148,0.45)] text-white bg-[rgba(241,225,148,0.08)]'
+                      : isPrimary
+                        ? 'border-[rgba(241,225,148,0.35)] text-white bg-[rgba(241,225,148,0.14)] shadow-[0_0_18px_rgba(241,225,148,0.18)]'
+                        : 'border-transparent text-white/60 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span>{tool.label}</span>
+                    {tool.status === 'beta' && <span className="text-[9px] bg-white/20 px-1 rounded">BETA</span>}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {sidebarOpen && videoMenuOpen && videoFlyoutTop !== null && (
+          <div
+            className="absolute left-full z-50 ml-3 w-60 rounded-2xl border border-white/10 bg-black/70 backdrop-blur-xl shadow-[0_20px_40px_rgba(0,0,0,0.45)] p-3 space-y-1 animate-in fade-in slide-in-from-left-2 duration-200"
+            style={{ top: videoFlyoutTop }}
+            onMouseEnter={() => {
+              if (videoMenuTimer.current) window.clearTimeout(videoMenuTimer.current);
+              setVideoMenuOpen(true);
+            }}
+            onMouseLeave={handleVideoMenuLeave}
+          >
+            {videoTools.map((tool) => {
+              const isPrimary = tool.id === 'general-video';
+              return (
+                <button
+                  key={tool.id}
+                  onClick={() => onNavigate(AppRoute.VIDEO_GEN)}
+                  className={`w-full text-left px-3 py-2 rounded-xl text-xs font-medium transition-all border ${
+                    isPrimary
+                      ? 'border-[rgba(241,225,148,0.35)] text-white bg-[rgba(241,225,148,0.14)] shadow-[0_0_18px_rgba(241,225,148,0.18)]'
+                      : 'border-transparent text-white/60 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span>{tool.label}</span>
+                    {tool.status === 'beta' && <span className="text-[9px] bg-white/20 px-1 rounded">BETA</span>}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         <div className="p-4 border-t border-white/10">
           <div className={`rounded-xl p-4 transition-all hud-panel hud-panel--soft hud-noise ${sidebarOpen ? 'opacity-100' : 'opacity-0 hidden'}`}>
