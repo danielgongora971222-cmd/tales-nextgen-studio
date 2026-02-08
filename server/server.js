@@ -2997,7 +2997,7 @@ app.post("/api/ai/video", async (req, res, next) => {
         firstFrameAssetId: firstFrameAssetId || null,
         lastFrameAssetId: lastFrameAssetId || null,
         klingMode: klingModeValue,
-        klingSound: includeSound ? klingSound ?? null : null,
+        klingSound: supportsNativeAudio ? (enableAudio ?? null) : null,
         negativePrompt: negativePrompt || null,
         klingTaskId: taskId,
       };

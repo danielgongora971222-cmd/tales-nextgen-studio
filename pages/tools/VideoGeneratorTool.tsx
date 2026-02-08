@@ -109,6 +109,7 @@ const VideoGeneratorTool: React.FC = () => {
   const [count, setCount] = useState<number>(1);
   const [klingSound, setKlingSound] = useState<boolean>(false);
   const [klingSoundTouched, setKlingSoundTouched] = useState<boolean>(false);
+  const [klingMode, setKlingMode] = useState<"std" | "pro">("std");
 
   // Duration
   const [durationSeconds, setDurationSeconds] = useState<number>(8);
@@ -146,7 +147,7 @@ const VideoGeneratorTool: React.FC = () => {
         supportsAspectRatio: !hasFirst,
         supportsAspectRatio1x1: !hasFirst,
         durations: [5, 10] as const,
-        supportsSound: model === KLING_2_6,
+        supportsSound: model === KLING_2_6 && klingMode === "pro",
         supportsLastFrame: true,
       };
     }
@@ -169,7 +170,7 @@ const VideoGeneratorTool: React.FC = () => {
       supportsSound: false,
       supportsLastFrame: true,
     };
-  }, [hasFirst, hasLast, isVeo30, model, resolution]);
+  }, [hasFirst, hasLast, isVeo30, model, resolution, klingMode]);
 
   // Allowed durations logic (según tu regla)
   const allowedDurations = useMemo(() => capability.durations, [capability.durations]);
@@ -202,6 +203,15 @@ const VideoGeneratorTool: React.FC = () => {
   useEffect(() => {
     if (!hasLast) return;
     if (!isVeo30) return;
+
+    useEffect(() => {
+      if (!isKling) return;
+      // Si pasa a STD y tenía sound ON, lo apagamos y marcamos touched
+      if (klingMode === "std" && klingSound) {
+        setKlingSound(false);
+        setKlingSoundTouched(true);
+      }
+    }, [isKling, klingMode, klingSound]);
 
     // Mantener "fast" si venías en fast
     const wantsFast = model.includes("-fast-");
@@ -360,7 +370,12 @@ const VideoGeneratorTool: React.FC = () => {
       // si NO hay first frame, se permite escoger aspect ratio
       if (!firstFrame && capability.supportsAspectRatio) body.aspectRatio = aspectRatio;
 
-      if (isKling && capability.supportsSound && klingSoundTouched) {
+      if (isKling) {
+        body.klingMode = klingMode; // <-- SIEMPRE enviamos el modo
+      }
+
+      // KlingSound: solo aplica a Kling 2.6, pero queremos poder mandar OFF si ya lo tocó
+      if (isKling && modelNorm === KLING_2_6 && klingSoundTouched) {
         body.klingSound = klingSound;
       }
 
@@ -758,6 +773,31 @@ const VideoGeneratorTool: React.FC = () => {
                         <div className={styles.segmentMeta}>Actualmente: 1 por request</div>
                       </div>
                     </div>
+
+                    {isKling && (
+                      <div className={styles.formRow}>
+                        <label className={styles.formLabel}>Kling Mode</label>
+                        <div className={styles.segment}>
+                          <button
+                            type="button"
+                            className={`${styles.segmentBtn} ${klingMode === "std" ? styles.segmentBtnActive : ""}`}
+                            onClick={() => setKlingMode("std")}
+                          >
+                            Standard
+                          </button>
+                          <button
+                            type="button"
+                            className={`${styles.segmentBtn} ${klingMode === "pro" ? styles.segmentBtnActive : ""}`}
+                            onClick={() => setKlingMode("pro")}
+                          >
+                            Pro
+                          </button>
+                          <div className={styles.segmentMeta}>
+                            Pro habilita Sound (solo Kling 2.6)
+                          </div>
+                        </div>
+                      </div>
+                    )}
 
                     {capability.supportsSound && (
                       <div className={styles.formRow}>
