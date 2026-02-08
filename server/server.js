@@ -350,7 +350,7 @@ const VideoRequestSchema = z.object({
 
   // Params Veo
   resolution: z.enum(["720p", "1080p", "4k"]).optional(),
-  durationSeconds: z.union([z.number(), z.string()]).optional(),
+  durationSeconds: z.coerce.number().optional(),
   count: z.number().int().min(1).max(4).default(1),
 
   tool: z.string().optional(),
@@ -2871,12 +2871,12 @@ app.post("/api/ai/video", async (req, res, next) => {
     // resolution
     if (resolution) cfg.resolution = resolution;
 
-    // durationSeconds: Veo 3/3.1 acepta 4/6/8 (y fuerza 8 con 1080p/4k o con frames)
-    let dur = durationSeconds != null ? Number(durationSeconds) : 4;
-    if (![4, 6, 8].includes(dur)) dur = 4;
-
-    if ((cfg.resolution && cfg.resolution !== "720p") || hasFirst || hasLast) dur = 8;
-    cfg.durationSeconds = String(dur);
+    // durationSeconds: Veo 3/3.1 acepta 4/6/8 y 1080p/4k/frames fuerzan 8s
+    let dur = durationSeconds != null ? Number(durationSeconds) : 8;
+    dur = Math.trunc(dur);
+    if (![4, 6, 8].includes(dur)) dur = 8;   if ((cfg.resolution && cfg.resolution !== "720p") || hasFirst || hasLast) dur = 8;
+    cfg.durationSeconds = dur; // ✅ NUMBER (no string)
+    console.log("[VEO DEBUG] durationSeconds =", cfg.durationSeconds, "typeof =", typeof cfg.durationSeconds);
 
     // aspectRatio solo si NO hay first frame
     if (!hasFirst) {

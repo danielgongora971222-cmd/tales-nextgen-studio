@@ -303,7 +303,7 @@ const VideoGeneratorTool: React.FC = () => {
         nameHint: "video",
         resolution,
         count: clampInt(count, 1, 4, 1),
-        durationSeconds,
+        durationSeconds: Number(durationSeconds),
       };
 
       if (firstFrame?.id) body.firstFrameAssetId = firstFrame.id;
@@ -338,7 +338,7 @@ const VideoGeneratorTool: React.FC = () => {
           model,
           aspectRatio: firstFrame ? "auto" : aspectRatio,
           resolution,
-          durationSeconds,
+          durationSeconds: Number(durationSeconds),
           firstFrameAssetId: firstFrame?.id || null,
           lastFrameAssetId: lastFrame?.id || null,
         },
