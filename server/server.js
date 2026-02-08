@@ -350,7 +350,7 @@ const VideoRequestSchema = z.object({
 
   // Params Veo
   resolution: z.enum(["720p", "1080p", "4k"]).optional(),
-  durationSeconds: z.union([z.number(), z.string()]).optional(),
+  durationSeconds: z.coerce.number().optional(),
   count: z.number().int().min(1).max(4).default(1),
 
   tool: z.string().optional(),
@@ -2872,9 +2872,10 @@ app.post("/api/ai/video", async (req, res, next) => {
     if (resolution) cfg.resolution = resolution;
 
     // durationSeconds: Veo 3/3.1 acepta 4/6/8 (y fuerza 8 con 1080p/4k o con frames)
-    let dur = durationSeconds != null ? Number(durationSeconds) : 4;
+    let dur = Number.isFinite(durationSeconds) ? Math.trunc(durationSeconds) : 4;
     if (![4, 6, 8].includes(dur)) dur = 4;
 
+    if (String(selectedModel).startsWith("veo-3.0")) dur = 8;
     if ((cfg.resolution && cfg.resolution !== "720p") || hasFirst || hasLast) dur = 8;
     cfg.durationSeconds = dur;
 
