@@ -174,7 +174,7 @@ export async function createText2VideoTask({
 
   Object.keys(payload).forEach((key) => payload[key] === undefined && delete payload[key]);
 
-  return klingPostForm("/videos/text2video", payload);
+  return klingPost("/videos/text2video", payload);
 }
 
 export async function createImage2VideoTask({
@@ -198,7 +198,7 @@ export async function createImage2VideoTask({
 
   Object.keys(payload).forEach((key) => payload[key] === undefined && delete payload[key]);
 
-  return klingPostForm("/videos/image2video", payload);
+  return klingPost("/videos/image2video", payload);
 }
 
 export async function pollTaskUntilDone({
