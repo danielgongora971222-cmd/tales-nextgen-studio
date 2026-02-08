@@ -2850,16 +2850,23 @@ app.post("/api/ai/video", async (req, res, next) => {
       );
     }
 
-    // Si usan frames, forzamos Veo 3.1 (más compatible con interpolación/frames)
+    // Si usan frames, forzamos Veo 3.1 (first/last frames es feature de 3.1)
     let selectedModel = model || "veo-3.1-generate-preview";
-    if ((hasFirst || hasLast) && selectedModel === "veo-3.0-generate-preview") {
+    const selectedModelStr = String(selectedModel || "");
+    const isVeo31 = selectedModelStr.startsWith("veo-3.1");
+    if ((hasFirst || hasLast) && !isVeo31) {
       selectedModel = "veo-3.1-generate-preview";
     }
 
     const cfg = {};
 
     // numberOfVideos (count)
-    cfg.numberOfVideos = Math.max(1, Math.min(Number(count || 1), 4));
+    // Nota: Veo 3 / 3.1 (Gemini API) limita salida a 1 video por request.
+    let requestedCount = Math.max(1, Math.min(Number(count || 1), 4));
+    if (String(selectedModel).startsWith("veo-3.")) {
+      requestedCount = 1;
+    }
+    cfg.numberOfVideos = requestedCount;
 
     // resolution
     if (resolution) cfg.resolution = resolution;
@@ -3041,6 +3048,52 @@ app.use((err, req, res, _next) => {
           ? "La IA no está configurada en el servidor."
           : err.message,
         details: err.details,
+      },
+    });
+  }
+
+    // 2.5) Google GenAI SDK (ApiError)
+  // Suele venir como:
+  // ApiError: {"error":{"code":"http_error","message":"Not Found"}}
+  // Si no lo normalizamos, cae en INTERNAL_ERROR y no vemos la causa real.
+  if (
+    err?.name === "ApiError" ||
+    (typeof err?.message === "string" && err.message.startsWith("ApiError:"))
+  ) {
+    const raw = String(err?.message || "").replace(/^ApiError:\s*/, "").trim();
+    let parsed = null;
+    try {
+      // A veces el SDK mete texto extra; intentamos aislar el JSON.
+      const start = raw.indexOf("{");
+      const end = raw.lastIndexOf("}");
+      const jsonStr = start >= 0 && end > start ? raw.slice(start, end + 1) : raw;
+      parsed = JSON.parse(jsonStr);
+    } catch {
+      parsed = null;
+    }
+
+    const e = parsed?.error || parsed || {};
+    const providerCode = (e?.code || "genai_error").toString();
+    const providerMsg = (e?.message || err?.message || "Error del proveedor de IA").toString();
+    const status = Number(e?.status) || Number(e?.statusCode) || 502;
+
+    // Hint útil para Veo (muchos casos son falta de plan/billing o modelo no disponible)
+    const hint =
+      providerMsg.toLowerCase().includes("not found")
+        ? "El modelo/endpoint no se encontró o tu API key no tiene acceso. Veo suele requerir Paid Tier/Billing habilitado."
+        : providerMsg.toLowerCase().includes("permission") || providerMsg.toLowerCase().includes("unauth")
+          ? "Tu API key no tiene permisos para este modelo. Revisa que el proyecto tenga billing y acceso a Veo."
+          : undefined;
+
+    return res.status(status).json({
+      ok: false,
+      error: {
+        code: `GENAI_${providerCode.toUpperCase()}`,
+        message: providerMsg,
+        details: {
+          ...(parsed ? { provider: parsed } : {}),
+          ...(hint ? { hint } : {}),
+        },
       },
     });
   }

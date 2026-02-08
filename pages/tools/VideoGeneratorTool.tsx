@@ -18,8 +18,10 @@ type VideoGenResponse =
 const TOOL_ID = "video-generator";
 const FRAME_UPLOAD_TOOL = "video-gen-frame";
 
-const VEO_3 = "veo-3.0-generate-preview";
+const VEO_3 = "veo-3.0-generate-001";
+const VEO_3_FAST = "veo-3.0-fast-generate-001";
 const VEO_3_1 = "veo-3.1-generate-preview";
+const VEO_3_1_FAST = "veo-3.1-fast-generate-preview";
 
 function getStatus(err: any): number | null {
   return typeof err?.status === "number"
