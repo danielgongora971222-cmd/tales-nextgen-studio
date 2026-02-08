@@ -645,6 +645,7 @@ app.get("/api/assets", async (req, res) => {
   const { data, error: dbErr } = await q;
 
   if (dbErr) {
+    console.error("[UNHANDLED ERROR]", err?.stack || err);
     return res.status(500).json({
       ok: false,
       error: { code: "DB_QUERY_FAILED", message: dbErr.message },
