@@ -2881,12 +2881,21 @@ app.post("/api/ai/video", async (req, res, next) => {
         );
       }
 
-      const klingModeValue = klingMode || "std";
-      const includeSound = selectedModelNorm === "kling-v2-6";
+      // Kling v2.6 Native Audio
+      // ✅ Kling API espera `enable_audio: boolean` (no `sound: "on"|"off"`).
+      // ✅ Además: cuando enable_audio=true, la mayoría de gateways requieren `mode: "pro"`.
+      let klingModeValue = klingMode || "std";
+      const supportsNativeAudio = selectedModelNorm === "kling-v2-6";
+      const enableAudio =
+        supportsNativeAudio && klingSound !== undefined ? Boolean(klingSound) : undefined;
+
+      if (supportsNativeAudio && enableAudio === true && klingModeValue !== "pro") {
+        klingModeValue = "pro";
+      }
 
       const klingExtras = {
         mode: klingModeValue,
-        ...(includeSound && klingSound !== undefined ? { sound: klingSound } : {}),
+        ...(enableAudio !== undefined ? { enable_audio: enableAudio } : {}),
         ...(negativePrompt ? { negative_prompt: negativePrompt } : {}),
       };
 
@@ -2939,6 +2948,7 @@ app.post("/api/ai/video", async (req, res, next) => {
         taskData = await pollTaskUntilDone({
           type: taskType,
           taskId,
+          modelName: selectedModelNorm,
           maxWaitMs: 6 * 60 * 1000,
           intervalMs: 2000,
         });

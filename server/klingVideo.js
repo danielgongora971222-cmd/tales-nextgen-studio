@@ -139,7 +139,7 @@ export async function createText2VideoTask({
   const payload = {
     model_name: model,
     prompt,
-    duration: duration !== undefined ? String(duration) : undefined,
+    duration: duration !== undefined ? Number(duration) : undefined,
     aspect_ratio: aspectRatio,
     ...(sound !== undefined ? { sound } : {}),
     ...rest,
@@ -162,7 +162,7 @@ export async function createImage2VideoTask({
   const payload = {
     model_name: model,
     prompt,
-    duration: duration !== undefined ? String(duration) : undefined,
+    duration: duration !== undefined ? Number(duration) : undefined,
     image,
     image_tail: imageTail,
     ...(sound !== undefined ? { sound } : {}),
@@ -177,11 +177,17 @@ export async function createImage2VideoTask({
 export async function pollTaskUntilDone({
   type,
   taskId,
+  modelName,
   maxWaitMs = 120000,
   intervalMs = 2000,
 }) {
   const deadline = Date.now() + maxWaitMs;
-  const endpoint = `/videos/${type}/${taskId}`;
+  const modelValue = String(modelName || "").trim();
+  const requiresModelParam =
+    modelValue === "kling-v2-6" || modelValue.startsWith("kling-video-");
+  const endpoint = requiresModelParam
+    ? `/videos/${type}/${taskId}?kling_model=${encodeURIComponent(modelValue)}`
+    : `/videos/${type}/${taskId}`;
 
   while (Date.now() < deadline) {
     const json = await klingGet(endpoint);

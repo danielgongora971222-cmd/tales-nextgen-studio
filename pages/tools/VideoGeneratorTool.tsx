@@ -108,6 +108,7 @@ const VideoGeneratorTool: React.FC = () => {
   const [resolution, setResolution] = useState<"720p" | "1080p" | "4k">("720p");
   const [count, setCount] = useState<number>(1);
   const [klingSound, setKlingSound] = useState<boolean>(false);
+  const [klingSoundTouched, setKlingSoundTouched] = useState<boolean>(false);
 
   // Duration
   const [durationSeconds, setDurationSeconds] = useState<number>(8);
@@ -359,7 +360,7 @@ const VideoGeneratorTool: React.FC = () => {
       // si NO hay first frame, se permite escoger aspect ratio
       if (!firstFrame && capability.supportsAspectRatio) body.aspectRatio = aspectRatio;
 
-      if (isKling && capability.supportsSound) {
+      if (isKling && capability.supportsSound && klingSoundTouched) {
         body.klingSound = klingSound;
       }
 
@@ -765,14 +766,20 @@ const VideoGeneratorTool: React.FC = () => {
                           <button
                             type="button"
                             className={`${styles.segmentBtn} ${klingSound ? styles.segmentBtnActive : ""}`}
-                            onClick={() => setKlingSound(true)}
+                            onClick={() => {
+                              setKlingSound(true);
+                              setKlingSoundTouched(true);
+                            }}
                           >
                             On
                           </button>
                           <button
                             type="button"
                             className={`${styles.segmentBtn} ${!klingSound ? styles.segmentBtnActive : ""}`}
-                            onClick={() => setKlingSound(false)}
+                            onClick={() => {
+                              setKlingSound(false);
+                              setKlingSoundTouched(true);
+                            }}
                           >
                             Off
                           </button>
