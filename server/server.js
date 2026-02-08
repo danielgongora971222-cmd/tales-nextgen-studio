@@ -2883,10 +2883,16 @@ app.post("/api/ai/video", async (req, res, next) => {
 
       const klingModeValue = klingMode || "std";
       const includeSound = selectedModelNorm === "kling-v2-6";
+      const klingSoundPayload =
+        includeSound && klingSound !== undefined
+          ? klingSound
+            ? "on"
+            : "off"
+          : undefined;
 
       const klingExtras = {
         mode: klingModeValue,
-        ...(includeSound && klingSound !== undefined ? { sound: klingSound } : {}),
+        ...(klingSoundPayload !== undefined ? { sound: klingSoundPayload } : {}),
         ...(negativePrompt ? { negative_prompt: negativePrompt } : {}),
       };
 
@@ -2939,6 +2945,7 @@ app.post("/api/ai/video", async (req, res, next) => {
         taskData = await pollTaskUntilDone({
           type: taskType,
           taskId,
+          modelName: selectedModelNorm,
           maxWaitMs: 6 * 60 * 1000,
           intervalMs: 2000,
         });

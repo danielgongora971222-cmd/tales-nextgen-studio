@@ -177,11 +177,17 @@ export async function createImage2VideoTask({
 export async function pollTaskUntilDone({
   type,
   taskId,
+  modelName,
   maxWaitMs = 120000,
   intervalMs = 2000,
 }) {
   const deadline = Date.now() + maxWaitMs;
-  const endpoint = `/videos/${type}/${taskId}`;
+  const modelValue = String(modelName || "").trim();
+  const requiresModelParam =
+    modelValue === "kling-v2-6" || modelValue.startsWith("kling-video-");
+  const endpoint = requiresModelParam
+    ? `/videos/${type}/${taskId}?kling_model=${encodeURIComponent(modelValue)}`
+    : `/videos/${type}/${taskId}`;
 
   while (Date.now() < deadline) {
     const json = await klingGet(endpoint);
