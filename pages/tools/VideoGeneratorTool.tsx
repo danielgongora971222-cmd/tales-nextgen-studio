@@ -131,17 +131,42 @@ const VideoGeneratorTool: React.FC = () => {
   const hasFirst = !!firstFrame;
   const hasLast = !!lastFrame;
 
+  const isVeo30 = model.startsWith("veo-3.0");
+  const isVeo31 = model.startsWith("veo-3.1");
+
   // Allowed durations logic (según tu regla)
   const allowedDurations = useMemo(() => {
-    // Regla: si hay frames => 8s fijo
-    if (hasFirst) return [8];
+    // Veo 3 / Veo 3 Fast: en Gemini API es 8s fijo
+    if (isVeo30) return [8] as const;
 
-    // Regla: si 1080p/4k => 8s fijo
-    if (resolution !== "720p") return [8];
+    // Veo 3.1: 8s obligatorio si 1080p/4k o si usas imágenes (first/last)
+    if (hasFirst || hasLast) return [8] as const;
+    if (resolution === "720p") return [4, 6, 8] as const;
+    return [8] as const;
+  }, [isVeo30, hasFirst, hasLast, resolution]);
 
-    // Sin frames + 720p => varias opciones
-    return [4, 6, 8];
-  }, [hasFirst, resolution]);
+  const supportedResolutions = useMemo(() => {
+    return isVeo30 ? (["720p", "1080p"] as const) : (["720p", "1080p", "4k"] as const);
+  }, [isVeo30]);
+
+  useEffect(() => {
+    if (isVeo30 && resolution === "4k") setResolution("1080p");
+  }, [isVeo30, resolution]);
+
+  useEffect(() => {
+    if (isVeo30 && !hasFirst && resolution === "1080p" && aspectRatio === "9:16") {
+      setAspectRatio("16:9");
+    }
+  }, [isVeo30, hasFirst, resolution, aspectRatio]);
+
+  useEffect(() => {
+    if (!hasLast) return;
+    if (!isVeo30) return;
+
+    // Mantener "fast" si venías en fast
+    const wantsFast = model.includes("-fast-");
+    setModel(wantsFast ? VEO_3_1_FAST : VEO_3_1);
+  }, [hasLast, isVeo30, model]);
 
   // Si cambia allowedDurations, ajusta duration si no es válido
   useEffect(() => {
@@ -194,7 +219,9 @@ const VideoGeneratorTool: React.FC = () => {
 
   const modelLabel = useMemo(() => {
     if (model === VEO_3) return "Veo 3";
+    if (model === VEO_3_FAST) return "Veo 3 Fast";
     if (model === VEO_3_1) return "Veo 3.1";
+    if (model === VEO_3_1_FAST) return "Veo 3.1 Fast";
     return model;
   }, [model]);
 
@@ -538,21 +565,35 @@ const VideoGeneratorTool: React.FC = () => {
 
                     <div className={styles.modelGrid}>
                       <button
-                        type="button"
                         className={`${styles.modelOption} ${model === VEO_3 ? styles.modelOptionActive : ""}`}
                         onClick={() => setModel(VEO_3)}
                       >
                         <div className={styles.modelName}>Veo 3</div>
-                        <div className={styles.modelDesc}>Text-to-video + First frame</div>
+                        <div className={styles.modelDesc}>Stable · con audio · 8s</div>
                       </button>
 
                       <button
-                        type="button"
+                        className={`${styles.modelOption} ${model === VEO_3_FAST ? styles.modelOptionActive : ""}`}
+                        onClick={() => setModel(VEO_3_FAST)}
+                      >
+                        <div className={styles.modelName}>Veo 3 Fast</div>
+                        <div className={styles.modelDesc}>Más barato · más rápido · 8s</div>
+                      </button>
+
+                      <button
                         className={`${styles.modelOption} ${model === VEO_3_1 ? styles.modelOptionActive : ""}`}
                         onClick={() => setModel(VEO_3_1)}
                       >
                         <div className={styles.modelName}>Veo 3.1</div>
-                        <div className={styles.modelDesc}>Adds interpolation (Last frame)</div>
+                        <div className={styles.modelDesc}>Preview · 4/6/8s · 4k</div>
+                      </button>
+
+                      <button
+                        className={`${styles.modelOption} ${model === VEO_3_1_FAST ? styles.modelOptionActive : ""}`}
+                        onClick={() => setModel(VEO_3_1_FAST)}
+                      >
+                        <div className={styles.modelName}>Veo 3.1 Fast</div>
+                        <div className={styles.modelDesc}>Preview · rápido · 4k</div>
                       </button>
                     </div>
 
@@ -602,10 +643,9 @@ const VideoGeneratorTool: React.FC = () => {
                     <div className={styles.formRow}>
                       <label className={styles.formLabel}>Resolution</label>
                       <div className={styles.segment}>
-                        {(["720p", "1080p", "4k"] as const).map((r) => (
+                        {supportedResolutions.map((r) => (
                           <button
                             key={r}
-                            type="button"
                             className={`${styles.segmentBtn} ${resolution === r ? styles.segmentBtnActive : ""}`}
                             onClick={() => setResolution(r)}
                           >
