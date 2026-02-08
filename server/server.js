@@ -540,6 +540,26 @@ function mimeFromPath(storagePath) {
   return "image/png";
 }
 
+function extractVideoGenRejection(operation) {
+  const promptFeedback = operation?.response?.promptFeedback;
+  if (promptFeedback?.blockReason) {
+    return {
+      message: `Generation rejected: ${promptFeedback.blockReason}`,
+      details: { promptFeedback },
+    };
+  }
+
+  const opError = operation?.error || operation?.response?.error;
+  if (opError?.message) {
+    return {
+      message: opError.message,
+      details: { error: opError },
+    };
+  }
+
+  return null;
+}
+
 function qualityHint(quality) {
   if (!quality) return "";
   if (quality === "1K") return "high quality, clean, sharp";
@@ -2900,6 +2920,11 @@ app.post("/api/ai/video", async (req, res, next) => {
       config: cfg,
     });
 
+    const initialRejection = extractVideoGenRejection(operation);
+    if (initialRejection) {
+      throw httpError(400, "GENERATION_REJECTED", initialRejection.message, initialRejection.details);
+    }
+
     // 2) polling hasta done (máx 6 min)
     const start = Date.now();
     const maxWaitMs = 6 * 60 * 1000;
@@ -2912,10 +2937,19 @@ app.post("/api/ai/video", async (req, res, next) => {
       }
       await sleep(5000);
       operation = await aiClient.operations.getVideosOperation({ operation });
+
+      const pollRejection = extractVideoGenRejection(operation);
+      if (pollRejection) {
+        throw httpError(400, "GENERATION_REJECTED", pollRejection.message, pollRejection.details);
+      }
     }
 
     const generated = operation?.response?.generatedVideos || [];
     if (!generated.length) {
+      const rejection = extractVideoGenRejection(operation);
+      if (rejection) {
+        throw httpError(400, "GENERATION_REJECTED", rejection.message, rejection.details);
+      }
       throw httpError(500, "NO_VIDEO_RETURNED", "Veo no devolvió videos en la respuesta.", {
         model: selectedModel,
       });
