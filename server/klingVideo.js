@@ -139,7 +139,7 @@ export async function createText2VideoTask({
   const payload = {
     model_name: model,
     prompt,
-    duration: duration !== undefined ? String(duration) : undefined,
+    duration: duration !== undefined ? Number(duration) : undefined,
     aspect_ratio: aspectRatio,
     ...(sound !== undefined ? { sound } : {}),
     ...rest,
@@ -162,7 +162,7 @@ export async function createImage2VideoTask({
   const payload = {
     model_name: model,
     prompt,
-    duration: duration !== undefined ? String(duration) : undefined,
+    duration: duration !== undefined ? Number(duration) : undefined,
     image,
     image_tail: imageTail,
     ...(sound !== undefined ? { sound } : {}),
