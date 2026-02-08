@@ -22,6 +22,8 @@ const VEO_3 = "veo-3.0-generate-001";
 const VEO_3_FAST = "veo-3.0-fast-generate-001";
 const VEO_3_1 = "veo-3.1-generate-preview";
 const VEO_3_1_FAST = "veo-3.1-fast-generate-preview";
+const KLING_2_5_TURBO = "kling-v2-5-turbo";
+const KLING_2_6 = "kling-v2-6";
 
 function getStatus(err: any): number | null {
   return typeof err?.status === "number"
@@ -102,9 +104,10 @@ const VideoGeneratorTool: React.FC = () => {
   const [lastFrame, setLastFrame] = useState<Asset | null>(null);
 
   // Params
-  const [aspectRatio, setAspectRatio] = useState<"16:9" | "9:16">("16:9");
+  const [aspectRatio, setAspectRatio] = useState<"16:9" | "9:16" | "1:1">("16:9");
   const [resolution, setResolution] = useState<"720p" | "1080p" | "4k">("720p");
   const [count, setCount] = useState<number>(1);
+  const [klingSound, setKlingSound] = useState<boolean>(false);
 
   // Duration
   const [durationSeconds, setDurationSeconds] = useState<number>(8);
@@ -133,31 +136,67 @@ const VideoGeneratorTool: React.FC = () => {
 
   const isVeo30 = model.startsWith("veo-3.0");
   const isVeo31 = model.startsWith("veo-3.1");
+  const isKling = model.startsWith("kling-");
+
+  const capability = useMemo(() => {
+    if (model === KLING_2_5_TURBO || model === KLING_2_6) {
+      return {
+        supportsResolution: false,
+        supportsAspectRatio: !hasFirst,
+        supportsAspectRatio1x1: !hasFirst,
+        durations: [5, 10] as const,
+        supportsSound: model === KLING_2_6,
+        supportsLastFrame: true,
+      };
+    }
+
+    const durations = (() => {
+      // Veo 3 / Veo 3 Fast: en Gemini API es 8s fijo
+      if (isVeo30) return [8] as const;
+
+      // Veo 3.1: 8s obligatorio si 1080p/4k o si usas imágenes (first/last)
+      if (hasFirst || hasLast) return [8] as const;
+      if (resolution === "720p") return [4, 6, 8] as const;
+      return [8] as const;
+    })();
+
+    return {
+      supportsResolution: true,
+      supportsAspectRatio: !hasFirst,
+      supportsAspectRatio1x1: false,
+      durations,
+      supportsSound: false,
+      supportsLastFrame: true,
+    };
+  }, [hasFirst, hasLast, isVeo30, model, resolution]);
 
   // Allowed durations logic (según tu regla)
-  const allowedDurations = useMemo(() => {
-    // Veo 3 / Veo 3 Fast: en Gemini API es 8s fijo
-    if (isVeo30) return [8] as const;
-
-    // Veo 3.1: 8s obligatorio si 1080p/4k o si usas imágenes (first/last)
-    if (hasFirst || hasLast) return [8] as const;
-    if (resolution === "720p") return [4, 6, 8] as const;
-    return [8] as const;
-  }, [isVeo30, hasFirst, hasLast, resolution]);
+  const allowedDurations = useMemo(() => capability.durations, [capability.durations]);
 
   const supportedResolutions = useMemo(() => {
+    if (!capability.supportsResolution) return ["720p"] as const;
     return isVeo30 ? (["720p", "1080p"] as const) : (["720p", "1080p", "4k"] as const);
-  }, [isVeo30]);
+  }, [capability.supportsResolution, isVeo30]);
 
   useEffect(() => {
+    if (!capability.supportsResolution && resolution !== "720p") {
+      setResolution("720p");
+      return;
+    }
     if (isVeo30 && resolution === "4k") setResolution("1080p");
-  }, [isVeo30, resolution]);
+  }, [capability.supportsResolution, isVeo30, resolution]);
 
   useEffect(() => {
     if (isVeo30 && !hasFirst && resolution === "1080p" && aspectRatio === "9:16") {
       setAspectRatio("16:9");
     }
   }, [isVeo30, hasFirst, resolution, aspectRatio]);
+
+  useEffect(() => {
+    if (!capability.supportsAspectRatio1x1 && aspectRatio === "1:1") {
+      setAspectRatio("16:9");
+    }
+  }, [aspectRatio, capability.supportsAspectRatio1x1]);
 
   useEffect(() => {
     if (!hasLast) return;
@@ -222,13 +261,16 @@ const VideoGeneratorTool: React.FC = () => {
     if (model === VEO_3_FAST) return "Veo 3 Fast";
     if (model === VEO_3_1) return "Veo 3.1";
     if (model === VEO_3_1_FAST) return "Veo 3.1 Fast";
+    if (model === KLING_2_5_TURBO) return "Kling 2.5 Turbo";
+    if (model === KLING_2_6) return "Kling 2.6";
     return model;
   }, [model]);
 
   const paramsLabel = useMemo(() => {
-    const ar = hasFirst ? "Auto" : aspectRatio;
-    return `${ar} • ${resolution} • x${count}`;
-  }, [hasFirst, aspectRatio, resolution, count]);
+    const ar = capability.supportsAspectRatio ? aspectRatio : "Auto";
+    const resLabel = capability.supportsResolution ? resolution : "Auto";
+    return `${ar} • ${resLabel} • x${count}`;
+  }, [aspectRatio, capability.supportsAspectRatio, capability.supportsResolution, count, resolution]);
 
   const durationLabel = useMemo(() => `${durationSeconds}s`, [durationSeconds]);
 
@@ -301,16 +343,23 @@ const VideoGeneratorTool: React.FC = () => {
         model, // Veo 3 / 3.1
         tool: TOOL_ID,
         nameHint: "video",
-        resolution,
         count: clampInt(count, 1, 4, 1),
         durationSeconds: Number(durationSeconds),
       };
+
+      if (capability.supportsResolution) {
+        body.resolution = resolution;
+      }
 
       if (firstFrame?.id) body.firstFrameAssetId = firstFrame.id;
       if (lastFrame?.id) body.lastFrameAssetId = lastFrame.id;
 
       // si NO hay first frame, se permite escoger aspect ratio
-      if (!firstFrame) body.aspectRatio = aspectRatio;
+      if (!firstFrame && capability.supportsAspectRatio) body.aspectRatio = aspectRatio;
+
+      if (isKling && capability.supportsSound) {
+        body.klingSound = klingSound;
+      }
 
       const res = await apiPostJson<VideoGenResponse>("/api/ai/video", body);
 
@@ -337,7 +386,7 @@ const VideoGeneratorTool: React.FC = () => {
         meta: {
           model,
           aspectRatio: firstFrame ? "auto" : aspectRatio,
-          resolution,
+          resolution: capability.supportsResolution ? resolution : "auto",
           durationSeconds: Number(durationSeconds),
           firstFrameAssetId: firstFrame?.id || null,
           lastFrameAssetId: lastFrame?.id || null,
@@ -361,7 +410,7 @@ const VideoGeneratorTool: React.FC = () => {
         <div className={styles.titleWrap}>
           <div className={styles.title}>GENERAL VIDEO GENERATOR</div>
           <div className={styles.hint}>
-            Veo 3 / 3.1 • First/Last frame • Historial guardado en assets
+            Veo 3 / 3.1 · Kling 2.5/2.6 • First/Last frame • Historial guardado en assets
           </div>
         </div>
         <div className={styles.badges}>
@@ -595,6 +644,22 @@ const VideoGeneratorTool: React.FC = () => {
                         <div className={styles.modelName}>Veo 3.1 Fast</div>
                         <div className={styles.modelDesc}>Preview · rápido · 4k</div>
                       </button>
+
+                      <button
+                        className={`${styles.modelOption} ${model === KLING_2_5_TURBO ? styles.modelOptionActive : ""}`}
+                        onClick={() => setModel(KLING_2_5_TURBO)}
+                      >
+                        <div className={styles.modelName}>Kling 2.5 Turbo</div>
+                        <div className={styles.modelDesc}>Rápido · 5/10s · sin sound</div>
+                      </button>
+
+                      <button
+                        className={`${styles.modelOption} ${model === KLING_2_6 ? styles.modelOptionActive : ""}`}
+                        onClick={() => setModel(KLING_2_6)}
+                      >
+                        <div className={styles.modelName}>Kling 2.6</div>
+                        <div className={styles.modelDesc}>Mejor calidad · 5/10s · sound</div>
+                      </button>
                     </div>
 
                     <div className={styles.note}>
@@ -618,45 +683,60 @@ const VideoGeneratorTool: React.FC = () => {
                       <div className={styles.segment}>
                         <button
                           type="button"
-                          className={`${styles.segmentBtn} ${hasFirst ? styles.segmentBtnDisabled : ""} ${
-                            !hasFirst && aspectRatio === "16:9" ? styles.segmentBtnActive : ""
-                          }`}
-                          onClick={() => !hasFirst && setAspectRatio("16:9")}
-                          disabled={hasFirst}
+                          className={`${styles.segmentBtn} ${
+                            !capability.supportsAspectRatio ? styles.segmentBtnDisabled : ""
+                          } ${capability.supportsAspectRatio && aspectRatio === "16:9" ? styles.segmentBtnActive : ""}`}
+                          onClick={() => capability.supportsAspectRatio && setAspectRatio("16:9")}
+                          disabled={!capability.supportsAspectRatio}
                         >
                           16:9
                         </button>
                         <button
                           type="button"
-                          className={`${styles.segmentBtn} ${hasFirst ? styles.segmentBtnDisabled : ""} ${
-                            !hasFirst && aspectRatio === "9:16" ? styles.segmentBtnActive : ""
-                          }`}
-                          onClick={() => !hasFirst && setAspectRatio("9:16")}
-                          disabled={hasFirst}
+                          className={`${styles.segmentBtn} ${
+                            !capability.supportsAspectRatio ? styles.segmentBtnDisabled : ""
+                          } ${capability.supportsAspectRatio && aspectRatio === "9:16" ? styles.segmentBtnActive : ""}`}
+                          onClick={() => capability.supportsAspectRatio && setAspectRatio("9:16")}
+                          disabled={!capability.supportsAspectRatio}
                         >
                           9:16
                         </button>
-                        <div className={styles.segmentMeta}>{hasFirst ? "AUTO (por First Frame)" : "Manual"}</div>
+                        {capability.supportsAspectRatio1x1 && capability.supportsAspectRatio && (
+                          <button
+                            type="button"
+                            className={`${styles.segmentBtn} ${
+                              aspectRatio === "1:1" ? styles.segmentBtnActive : ""
+                            }`}
+                            onClick={() => setAspectRatio("1:1")}
+                          >
+                            1:1
+                          </button>
+                        )}
+                        <div className={styles.segmentMeta}>
+                          {capability.supportsAspectRatio ? "Manual" : "AUTO (por imagen)"}
+                        </div>
                       </div>
                     </div>
 
-                    <div className={styles.formRow}>
-                      <label className={styles.formLabel}>Resolution</label>
-                      <div className={styles.segment}>
-                        {supportedResolutions.map((r) => (
-                          <button
-                            key={r}
-                            className={`${styles.segmentBtn} ${resolution === r ? styles.segmentBtnActive : ""}`}
-                            onClick={() => setResolution(r)}
-                          >
-                            {r.toUpperCase()}
-                          </button>
-                        ))}
+                    {capability.supportsResolution && (
+                      <div className={styles.formRow}>
+                        <label className={styles.formLabel}>Resolution</label>
+                        <div className={styles.segment}>
+                          {supportedResolutions.map((r) => (
+                            <button
+                              key={r}
+                              className={`${styles.segmentBtn} ${resolution === r ? styles.segmentBtnActive : ""}`}
+                              onClick={() => setResolution(r)}
+                            >
+                              {r.toUpperCase()}
+                            </button>
+                          ))}
+                        </div>
+                        <div className={styles.noteSmall}>
+                          Nota: 1080p/4k fuerzan 8s por reglas del modelo.
+                        </div>
                       </div>
-                      <div className={styles.noteSmall}>
-                        Nota: 1080p/4k fuerzan 8s por reglas del modelo.
-                      </div>
-                    </div>
+                    )}
 
                     <div className={styles.formRow}>
                       <label className={styles.formLabel}>Count</label>
@@ -675,6 +755,29 @@ const VideoGeneratorTool: React.FC = () => {
                         <div className={styles.segmentMeta}>Actualmente: 1 por request</div>
                       </div>
                     </div>
+
+                    {capability.supportsSound && (
+                      <div className={styles.formRow}>
+                        <label className={styles.formLabel}>Sound</label>
+                        <div className={styles.segment}>
+                          <button
+                            type="button"
+                            className={`${styles.segmentBtn} ${klingSound ? styles.segmentBtnActive : ""}`}
+                            onClick={() => setKlingSound(true)}
+                          >
+                            On
+                          </button>
+                          <button
+                            type="button"
+                            className={`${styles.segmentBtn} ${!klingSound ? styles.segmentBtnActive : ""}`}
+                            onClick={() => setKlingSound(false)}
+                          >
+                            Off
+                          </button>
+                          <div className={styles.segmentMeta}>Solo Kling 2.6</div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -702,11 +805,13 @@ const VideoGeneratorTool: React.FC = () => {
                     </div>
 
                     <div className={styles.note}>
-                      {hasFirst
-                        ? "Con frames (First/Last) la duración es 8s."
-                        : resolution !== "720p"
-                          ? "Con 1080p/4k la duración es 8s."
-                          : "Con 720p sin frames puedes elegir 4/6/8s."}
+                      {isKling
+                        ? "Kling permite 5s o 10s."
+                        : hasFirst
+                          ? "Con frames (First/Last) la duración es 8s."
+                          : resolution !== "720p"
+                            ? "Con 1080p/4k la duración es 8s."
+                            : "Con 720p sin frames puedes elegir 4/6/8s."}
                     </div>
                   </div>
                 )}
