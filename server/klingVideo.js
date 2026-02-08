@@ -113,6 +113,33 @@ async function klingFetch(path, options = {}) {
   return { json, text };
 }
 
+async function klingPostForm(path, fields = {}) {
+  if (typeof FormData === "undefined") {
+    throw new Error(
+      "KLING_FORMDATA_UNAVAILABLE: FormData no está disponible en este runtime de Node. Actualiza Node (>=18) o implementa FormData con undici."
+    );
+  }
+
+  const form = new FormData();
+
+  for (const [key, value] of Object.entries(fields || {})) {
+    if (value === undefined || value === null) continue;
+
+    // Kling suele esperar strings en form-data; booleans como "true"/"false".
+    const v =
+      typeof value === "boolean" ? (value ? "true" : "false") : String(value);
+
+    form.append(key, v);
+  }
+
+  const { json } = await klingFetch(path, {
+    method: "POST",
+    body: form,
+  });
+
+  return json;
+}
+
 export async function klingPost(path, body) {
   const payload = body ? JSON.stringify(body) : "{}";
   const { json } = await klingFetch(path, {
@@ -147,7 +174,7 @@ export async function createText2VideoTask({
 
   Object.keys(payload).forEach((key) => payload[key] === undefined && delete payload[key]);
 
-  return klingPost("/videos/text2video", payload);
+  return klingPostForm("/videos/text2video", payload);
 }
 
 export async function createImage2VideoTask({
@@ -171,7 +198,7 @@ export async function createImage2VideoTask({
 
   Object.keys(payload).forEach((key) => payload[key] === undefined && delete payload[key]);
 
-  return klingPost("/videos/image2video", payload);
+  return klingPostForm("/videos/image2video", payload);
 }
 
 export async function pollTaskUntilDone({

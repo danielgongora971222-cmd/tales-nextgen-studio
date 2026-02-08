@@ -2959,7 +2959,39 @@ app.post("/api/ai/video", async (req, res, next) => {
         });
       }
 
-      const videoUrl = taskData?.task_result?.videos?.[0]?.url;
+      const taskResult = taskData?.task_result || taskData?.data?.task_result || {};
+      const firstVideo =
+        Array.isArray(taskResult?.videos) && taskResult.videos.length ? taskResult.videos[0] : null;
+
+      // Kling puede devolver diferentes llaves según el endpoint / versión.
+      const videoUrl =
+        firstVideo?.url_with_audio ||
+        firstVideo?.urlWithAudio ||
+        firstVideo?.url_audio ||
+        firstVideo?.urlAudio ||
+        firstVideo?.url ||
+        taskResult?.video_url ||
+        taskResult?.videoUrl ||
+        taskResult?.video?.url;
+
+      // Para depuración / soporte futuro (algunas respuestas también traen audio separado)
+      const audioUrl =
+        (Array.isArray(taskResult?.audios) && taskResult.audios.length
+          ? taskResult.audios[0]?.url
+          : null) ||
+        taskResult?.audio_url ||
+        taskResult?.audioUrl;
+
+      if (enableAudio) {
+        console.log("[Kling v2.6 audio] enableAudio=true", {
+          taskId,
+          hasVideoUrl: Boolean(videoUrl),
+          hasAudioUrl: Boolean(audioUrl),
+          videoKeys: firstVideo ? Object.keys(firstVideo) : null,
+          taskResultKeys: taskResult ? Object.keys(taskResult) : null,
+        });
+      }
+
       if (!videoUrl) {
         throw httpError(502, "KLING_NO_VIDEOS", "Kling: tarea completada pero sin videos.", {
           taskId,
