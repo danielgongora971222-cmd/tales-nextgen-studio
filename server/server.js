@@ -2882,7 +2882,7 @@ app.post("/api/ai/video", async (req, res, next) => {
       }
 
       const klingModeValue = klingMode || "std";
-      const includeSound = selectedModelStr === "kling-v2-6";
+      const includeSound = selectedModelNorm === "kling-v2-6";
 
       const klingExtras = {
         mode: klingModeValue,
@@ -2905,7 +2905,7 @@ app.post("/api/ai/video", async (req, res, next) => {
         }
 
         taskResponse = await createImage2VideoTask({
-          model: selectedModelStr,
+          model: selectedModelNorm,
           prompt,
           duration: klingDuration,
           image,
@@ -2914,7 +2914,7 @@ app.post("/api/ai/video", async (req, res, next) => {
         });
       } else {
         taskResponse = await createText2VideoTask({
-          model: selectedModelStr,
+          model: selectedModelNorm,
           prompt,
           duration: klingDuration,
           aspectRatio: aspectRatio || "16:9",
@@ -2980,7 +2980,8 @@ app.post("/api/ai/video", async (req, res, next) => {
       const meta = {
         tool: toolName,
         provider: "kling",
-        model: selectedModelStr,
+        model: selectedModelNorm,
+
         aspectRatio: hasFirst ? null : (aspectRatio || "16:9"),
         durationSeconds: klingDuration,
         firstFrameAssetId: firstFrameAssetId || null,
@@ -3017,7 +3018,7 @@ app.post("/api/ai/video", async (req, res, next) => {
     const aiClient = await ensureAI();
 
     // Si usan frames, forzamos Veo 3.1 (first/last frames es feature de 3.1)
-    let veoModel = selectedModelStr;
+    let veoModel = selectedModelNorm;
     const isVeo31 = veoModel.startsWith("veo-3.1");
     if ((hasFirst || hasLast) && !isVeo31) {
       veoModel = "veo-3.1-generate-preview";

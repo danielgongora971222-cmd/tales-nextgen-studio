@@ -475,15 +475,24 @@
 .popover {
   position: relative;
   margin-top: 10px;
+  z-index: 20; /* ✅ asegura que quede encima visualmente */
 }
+
 .popoverInner {
   border-radius: 18px;
   border: 1px solid rgba(241,225,148,0.14);
   background: rgba(10, 5, 6, 0.78);
   backdrop-filter: blur(16px) saturate(160%);
   box-shadow: 0 28px 70px rgba(0,0,0,0.62);
-  overflow: hidden;
+
+  /* ✅ FIX: evita que se "corten" las opciones (Kling queda abajo) */
+  max-height: min(540px, 72vh);
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
 }
+
 .popoverHeader {
   display: flex;
   align-items: center;

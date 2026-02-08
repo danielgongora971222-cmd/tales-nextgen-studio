@@ -337,10 +337,12 @@ const VideoGeneratorTool: React.FC = () => {
     setIsGenerating(true);
     setError(null);
 
+    const modelNorm = String(model || "").trim().replace(/^models\//i, "");
+
     try {
       const body: any = {
         prompt,
-        model, // Veo 3 / 3.1
+        model: modelNorm, // Veo 3 / 3.1
         tool: TOOL_ID,
         nameHint: "video",
         count: clampInt(count, 1, 4, 1),
@@ -384,7 +386,7 @@ const VideoGeneratorTool: React.FC = () => {
         likes: [],
         comments: [],
         meta: {
-          model,
+          model: modelNorm,
           aspectRatio: firstFrame ? "auto" : aspectRatio,
           resolution: capability.supportsResolution ? resolution : "auto",
           durationSeconds: Number(durationSeconds),
