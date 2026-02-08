@@ -574,11 +574,6 @@ async function assetIdToInlineDataPart({ assetId, requesterId }) {
     throw e;
   }
 
-  async function assetIdToGenAIImage({ assetId, requesterId }) {
-    const part = await assetIdToInlineDataPart({ assetId, requesterId });
-    return { imageBytes: part.inlineData.data, mimeType: part.inlineData.mimeType };
-  }
-
   if (row.type !== "image") {
     const e = new Error("El asset referenciado no es una imagen.");
     e.status = 400;
@@ -610,6 +605,11 @@ async function assetIdToInlineDataPart({ assetId, requesterId }) {
   const mimeType = blob.type || mimeFromPath(row.storage_path);
 
   return { inlineData: { mimeType, data: base64 } };
+}
+
+async function assetIdToGenAIImage({ assetId, requesterId }) {
+  const part = await assetIdToInlineDataPart({ assetId, requesterId });
+  return { imageBytes: part.inlineData.data, mimeType: part.inlineData.mimeType };
 }
 
 // ===============================
@@ -2869,7 +2869,7 @@ app.post("/api/ai/video", async (req, res, next) => {
     if (![4, 6, 8].includes(dur)) dur = 4;
 
     if ((cfg.resolution && cfg.resolution !== "720p") || hasFirst || hasLast) dur = 8;
-    cfg.durationSeconds = String(dur);
+    cfg.durationSeconds = dur;
 
     // aspectRatio solo si NO hay first frame
     if (!hasFirst) {
