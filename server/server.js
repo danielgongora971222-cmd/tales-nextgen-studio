@@ -8,6 +8,11 @@ import { z } from "zod";
 import { GoogleGenAI } from "@google/genai";
 import { createClient } from "@supabase/supabase-js";
 import { createHmac, randomUUID } from "crypto";
+import {
+  createImage2VideoTask,
+  createText2VideoTask,
+  pollTaskUntilDone,
+} from "./klingVideo.js";
 import os from "os";
 import fs from "fs/promises";
 import { join as pathJoin } from "path";
@@ -346,7 +351,7 @@ const VideoRequestSchema = z.object({
   model: z.string().optional(),
 
   // Solo aplica cuando NO hay firstFrame
-  aspectRatio: z.enum(["16:9", "9:16"]).optional(),
+  aspectRatio: z.enum(["16:9", "9:16", "1:1"]).optional(),
 
   // Params Veo
   resolution: z.enum(["720p", "1080p", "4k"]).optional(),
@@ -359,6 +364,11 @@ const VideoRequestSchema = z.object({
   // Frame assets (opcionales)
   firstFrameAssetId: z.string().uuid().nullable().optional(),
   lastFrameAssetId: z.string().uuid().nullable().optional(),
+
+  // Kling extras
+  klingMode: z.enum(["std", "pro"]).optional(),
+  klingSound: z.boolean().optional(),
+  negativePrompt: z.string().max(4000).optional(),
 });
 
 const Base64ImageSchema = z
@@ -2819,8 +2829,6 @@ app.post("/api/ai/upscale", async (req, res, next) => {
 
 app.post("/api/ai/video", async (req, res, next) => {
   try {
-    const aiClient = await ensureAI();
-
     const {
       prompt,
       model,
@@ -2832,6 +2840,9 @@ app.post("/api/ai/video", async (req, res, next) => {
       nameHint,
       firstFrameAssetId,
       lastFrameAssetId,
+      klingMode,
+      klingSound,
+      negativePrompt,
     } = VideoRequestSchema.parse(req.body);
 
     const { user, error } = await requireUser(req);
@@ -2842,6 +2853,14 @@ app.post("/api/ai/video", async (req, res, next) => {
 
     const hasFirst = Boolean(firstFrameAssetId);
     const hasLast = Boolean(lastFrameAssetId);
+    const selectedModelRaw = model || "veo-3.1-generate-preview";
+    const selectedModelStr = String(selectedModelRaw || "").trim();
+
+    // En Gemini a veces aparece con prefijo "models/".
+    // Si llega "models/kling-...", sin esto cae al branch de Veo por error.
+    const selectedModelNorm = selectedModelStr.replace(/^models\//i, "");
+
+    const isKling = selectedModelNorm.startsWith("kling-");
 
     if (hasLast && !hasFirst) {
       throw httpError(
@@ -2851,12 +2870,157 @@ app.post("/api/ai/video", async (req, res, next) => {
       );
     }
 
+    if (isKling) {
+      let klingDuration = durationSeconds != null ? Number(durationSeconds) : 5;
+      klingDuration = Math.trunc(klingDuration);
+      if (![5, 10].includes(klingDuration)) {
+        throw httpError(
+          400,
+          "KLING_DURATION_NOT_SUPPORTED",
+          "Kling solo acepta durationSeconds de 5 o 10."
+        );
+      }
+
+      const klingModeValue = klingMode || "std";
+      const includeSound = selectedModelStr === "kling-v2-6";
+
+      const klingExtras = {
+        mode: klingModeValue,
+        ...(includeSound && klingSound !== undefined ? { sound: klingSound } : {}),
+        ...(negativePrompt ? { negative_prompt: negativePrompt } : {}),
+      };
+
+      let taskResponse = null;
+      let taskType = "text2video";
+
+      if (hasFirst) {
+        taskType = "image2video";
+        const firstPart = await assetIdToInlinePart(firstFrameAssetId, user.id);
+        const image = firstPart.inlineData.data;
+        let imageTail = undefined;
+
+        if (hasLast) {
+          const lastPart = await assetIdToInlinePart(lastFrameAssetId, user.id);
+          imageTail = lastPart.inlineData.data;
+        }
+
+        taskResponse = await createImage2VideoTask({
+          model: selectedModelStr,
+          prompt,
+          duration: klingDuration,
+          image,
+          imageTail,
+          ...klingExtras,
+        });
+      } else {
+        taskResponse = await createText2VideoTask({
+          model: selectedModelStr,
+          prompt,
+          duration: klingDuration,
+          aspectRatio: aspectRatio || "16:9",
+          ...klingExtras,
+        });
+      }
+
+      const taskId =
+        taskResponse?.data?.task_id ||
+        taskResponse?.task_id ||
+        taskResponse?.data?.taskId ||
+        taskResponse?.taskId;
+
+      if (!taskId) {
+        throw httpError(502, "KLING_BAD_RESPONSE", "Kling no devolvió task_id.", {
+          response: taskResponse,
+        });
+      }
+
+      let taskData = null;
+      try {
+        taskData = await pollTaskUntilDone({
+          type: taskType,
+          taskId,
+          maxWaitMs: 6 * 60 * 1000,
+          intervalMs: 2000,
+        });
+      } catch (err) {
+        throw httpError(502, "KLING_TASK_FAILED", err.message || "Kling task failed.", {
+          taskId,
+          requestId: err?.requestId || null,
+        });
+      }
+
+      const videoUrl = taskData?.task_result?.videos?.[0]?.url;
+      if (!videoUrl) {
+        throw httpError(502, "KLING_NO_VIDEOS", "Kling: tarea completada pero sin videos.", {
+          taskId,
+          response: taskData,
+        });
+      }
+
+      const videoResp = await fetch(videoUrl);
+      if (!videoResp.ok) {
+        throw httpError(
+          502,
+          "KLING_VIDEO_DOWNLOAD_FAILED",
+          `No pude descargar el video de Kling (${videoResp.status}).`
+        );
+      }
+
+      const bytes = Buffer.from(await videoResp.arrayBuffer());
+      const mimeType = videoResp.headers.get("content-type") || "video/mp4";
+      const storagePath = buildAssetPath({
+        userId: user.id,
+        tool: toolName,
+        mimeType,
+        nameHint: hint,
+      });
+
+      await uploadBytesToStorageAtPath({ storagePath, bytes, mimeType });
+
+      const meta = {
+        tool: toolName,
+        provider: "kling",
+        model: selectedModelStr,
+        aspectRatio: hasFirst ? null : (aspectRatio || "16:9"),
+        durationSeconds: klingDuration,
+        firstFrameAssetId: firstFrameAssetId || null,
+        lastFrameAssetId: lastFrameAssetId || null,
+        klingMode: klingModeValue,
+        klingSound: includeSound ? klingSound ?? null : null,
+        negativePrompt: negativePrompt || null,
+        klingTaskId: taskId,
+      };
+
+      const assetId = await insertAssetRow({
+        ownerId: user.id,
+        type: "video",
+        tool: toolName,
+        name: hint,
+        prompt,
+        storagePath,
+        isPublic: false,
+        meta,
+      });
+
+      const urlExpiresInSeconds = 60 * 60;
+      const url = await signStoragePath(storagePath, urlExpiresInSeconds);
+
+      return res.json({
+        ok: true,
+        items: [{ url, assetId }],
+        url,
+        assetId,
+        urlExpiresInSeconds,
+      });
+    }
+
+    const aiClient = await ensureAI();
+
     // Si usan frames, forzamos Veo 3.1 (first/last frames es feature de 3.1)
-    let selectedModel = model || "veo-3.1-generate-preview";
-    const selectedModelStr = String(selectedModel || "");
-    const isVeo31 = selectedModelStr.startsWith("veo-3.1");
+    let veoModel = selectedModelStr;
+    const isVeo31 = veoModel.startsWith("veo-3.1");
     if ((hasFirst || hasLast) && !isVeo31) {
-      selectedModel = "veo-3.1-generate-preview";
+      veoModel = "veo-3.1-generate-preview";
     }
 
     const cfg = {};
@@ -2864,7 +3028,7 @@ app.post("/api/ai/video", async (req, res, next) => {
     // numberOfVideos (count)
     // Nota: Veo 3 / 3.1 (Gemini API) limita salida a 1 video por request.
     let requestedCount = Math.max(1, Math.min(Number(count || 1), 4));
-    if (String(selectedModel).startsWith("veo-3.")) {
+    if (String(veoModel).startsWith("veo-3.")) {
       requestedCount = 1;
     }
     cfg.numberOfVideos = requestedCount;
@@ -2898,7 +3062,7 @@ app.post("/api/ai/video", async (req, res, next) => {
 
     // 1) iniciar operación
     let operation = await aiClient.models.generateVideos({
-      model: selectedModel,
+      model: veoModel,
       prompt,
       ...(firstImage ? { image: firstImage } : {}),
       config: cfg,
@@ -2921,7 +3085,7 @@ app.post("/api/ai/video", async (req, res, next) => {
     const generated = operation?.response?.generatedVideos || [];
     if (!generated.length) {
       throw httpError(500, "NO_VIDEO_RETURNED", "Veo no devolvió videos en la respuesta.", {
-        model: selectedModel,
+        model: veoModel,
       });
     }
 
@@ -2951,7 +3115,7 @@ app.post("/api/ai/video", async (req, res, next) => {
 
         const meta = {
           tool: toolName,
-          model: selectedModel,
+          model: veoModel,
           aspectRatio: hasFirst ? null : (cfg.aspectRatio || null),
           resolution: cfg.resolution || "720p",
           durationSeconds: cfg.durationSeconds,
