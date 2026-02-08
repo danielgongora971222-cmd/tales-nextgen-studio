@@ -645,7 +645,7 @@ app.get("/api/assets", async (req, res) => {
   const { data, error: dbErr } = await q;
 
   if (dbErr) {
-    console.error("[UNHANDLED ERROR]", err?.stack || err);
+    console.error("[DB_QUERY_FAILED]", dbErr);
     return res.status(500).json({
       ok: false,
       error: { code: "DB_QUERY_FAILED", message: dbErr.message },
@@ -2885,19 +2885,15 @@ app.post("/api/ai/video", async (req, res, next) => {
     }
 
     // Construir image / lastFrame si aplica
+    // Usamos el helper correcto ya existente: assetIdToImageObject()
     let firstImage = null;
+
     if (hasFirst) {
-      firstImage = await assetIdToGenAIImage({
-        assetId: firstFrameAssetId,
-        requesterId: user.id,
-      });
+      firstImage = await assetIdToImageObject(firstFrameAssetId, user.id);
     }
 
     if (hasLast) {
-      cfg.lastFrame = await assetIdToGenAIImage({
-        assetId: lastFrameAssetId,
-        requesterId: user.id,
-      });
+      cfg.lastFrame = await assetIdToImageObject(lastFrameAssetId, user.id);
     }
 
     // 1) iniciar operación
