@@ -600,9 +600,26 @@ async function assetIdToInlineDataPart({ assetId, requesterId }) {
   }
 
   const blob = dl.data;
-  const ab = await blob.arrayBuffer();
-  const base64 = Buffer.from(ab).toString("base64");
-  const mimeType = blob.type || mimeFromPath(row.storage_path);
+  let buffer = null;
+
+  if (blob && typeof blob.arrayBuffer === "function") {
+    const ab = await blob.arrayBuffer();
+    buffer = Buffer.from(ab);
+  } else if (Buffer.isBuffer(blob)) {
+    buffer = blob;
+  } else if (blob instanceof ArrayBuffer) {
+    buffer = Buffer.from(blob);
+  } else if (blob?.buffer && Buffer.isBuffer(blob.buffer)) {
+    buffer = blob.buffer;
+  } else {
+    const e = new Error("No se pudo leer el contenido del asset descargado.");
+    e.status = 500;
+    e.code = "ASSET_READ_FAILED";
+    throw e;
+  }
+
+  const base64 = buffer.toString("base64");
+  const mimeType = blob?.type || mimeFromPath(row.storage_path);
 
   return { inlineData: { mimeType, data: base64 } };
 }
@@ -2901,10 +2918,14 @@ app.post("/api/ai/video", async (req, res, next) => {
     }
 
     // 1) iniciar operación
-    let operation = await aiClient.models.generateVideos({
-      model: selectedModel,
+    const source = {
       prompt,
       ...(firstImage ? { image: firstImage } : {}),
+    };
+
+    let operation = await aiClient.models.generateVideos({
+      model: selectedModel,
+      source,
       config: cfg,
     });
 
