@@ -349,6 +349,7 @@ const ImageRequestSchema = z.object({
 const VideoRequestSchema = z.object({
   prompt: z.string().min(1).max(14000),
   model: z.string().optional(),
+  async: z.boolean().optional(),
   sync: z.boolean().optional(),
 
   // Solo aplica cuando NO hay firstFrame
@@ -3113,7 +3114,8 @@ app.post("/api/ai/video", async (req, res, next) => {
     const {
       prompt,
       model,
-      async: asyncMode,
+      async: asyncFlag,
+      sync: syncFlag,
       aspectRatio,
       resolution,
       durationSeconds,
@@ -3133,6 +3135,7 @@ app.post("/api/ai/video", async (req, res, next) => {
       klingVoiceIds,
       klingShotType,
     } = VideoRequestSchema.parse(req.body);
+    const asyncMode = asyncFlag === true ? true : syncFlag === true ? false : true;
 
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
