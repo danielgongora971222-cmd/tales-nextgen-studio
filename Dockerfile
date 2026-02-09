@@ -14,7 +14,7 @@ FROM node:20-alpine
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=8788
-ENV SERVE_CLIENT=1
+ENV SERVE_CLIENT=0
 
 COPY package*.json ./
 RUN npm ci --omit=dev
@@ -22,5 +22,5 @@ RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/server ./server
 
-EXPOSE 8788
+EXPOSE 8080
 CMD ["node", "server/server.js"]

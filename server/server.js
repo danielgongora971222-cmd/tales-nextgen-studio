@@ -20,7 +20,6 @@ import { join as pathJoin } from "path";
 
 dotenv.config();
 
-const PORT = Number(process.env.PORT || 8788);
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 if (!GEMINI_API_KEY) {
@@ -4134,6 +4133,10 @@ app.use((err, req, res, _next) => {
   });
 });
 
-app.listen(PORT, () => {
+
+const PORT = Number(process.env.PORT || 8080);
+
+
+app.listen(PORT, "0.0.0.0", () => {
   console.log(`[API] listening on http://0.0.0.0:${PORT}`);
 });
