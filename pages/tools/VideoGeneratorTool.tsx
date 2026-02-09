@@ -168,6 +168,8 @@ const VideoGeneratorTool: React.FC = () => {
   const [imageAssets, setImageAssets] = useState<Asset[]>([]);
   const [videoAssets, setVideoAssets] = useState<Asset[]>([]);
   const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null);
+  const [historyLimit, setHistoryLimit] = useState<number>(3);
+  const [historyHasMore, setHistoryHasMore] = useState<boolean>(false);
   const selectedVideo = useMemo(
     () => videoAssets.find((a) => a.id === selectedVideoId) || null,
     [videoAssets, selectedVideoId]
@@ -296,20 +298,12 @@ const VideoGeneratorTool: React.FC = () => {
     }
   }, [hasFirst, hasLast]);
 
-  // Cargar assets (imágenes para picker + videos para historial)
+  // Cargar assets (imágenes para picker)
   useEffect(() => {
     (async () => {
       try {
-        const [imgs, vids] = await Promise.all([
-          listMyAssets({ type: "image", limit: 200 }),
-          listMyAssets({ type: "video", limit: 80 }),
-        ]);
+        const imgs = await listMyAssets({ type: "image", limit: 200 });
         setImageAssets(imgs);
-        setVideoAssets(vids);
-
-        if (!selectedVideoId && vids.length > 0) {
-          setSelectedVideoId(vids[0].id);
-        }
       } catch (e: any) {
         // no lo vuelvo “fatal” para no bloquear UI
         console.warn(e);
@@ -317,6 +311,32 @@ const VideoGeneratorTool: React.FC = () => {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Cargar videos para historial (paginado)
+  useEffect(() => {
+    let isActive = true;
+    (async () => {
+      try {
+        const vids = await listMyAssets({ type: "video", limit: historyLimit });
+        if (!isActive) return;
+        setVideoAssets(vids);
+        setHistoryHasMore(vids.length >= historyLimit);
+
+        setSelectedVideoId((prev) => {
+          if (prev && vids.some((v) => v.id === prev)) {
+            return prev;
+          }
+          return vids[0]?.id || null;
+        });
+      } catch (e: any) {
+        if (!isActive) return;
+        console.warn(e);
+      }
+    })();
+    return () => {
+      isActive = false;
+    };
+  }, [historyLimit]);
 
   // Cerrar popover al click afuera
   useEffect(() => {
@@ -600,7 +620,7 @@ const durationLabel = useMemo(() => {
         },
       }));
 
-      setVideoAssets((prev) => [...newAssets, ...prev]);
+      setVideoAssets((prev) => [...newAssets, ...prev].slice(0, historyLimit));
       setSelectedVideoId(newAssets[0].id);
     } catch (e: any) {
       setError(formatErr(e));
@@ -1203,6 +1223,15 @@ const durationLabel = useMemo(() => {
               })
             )}
           </div>
+          {historyHasMore && (
+            <button
+              type="button"
+              className={styles.historyLoadMore}
+              onClick={() => setHistoryLimit((prev) => prev + 5)}
+            >
+              Cargar más
+            </button>
+          )}
         </div>
       </div>
 
