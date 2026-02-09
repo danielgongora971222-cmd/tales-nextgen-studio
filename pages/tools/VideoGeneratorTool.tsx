@@ -4,6 +4,7 @@ import ErrorModal from "../../components/ErrorModal";
 import { listMyAssets, uploadUserAsset } from "../../services/assetsApi";
 import { supabase } from "../../services/supabaseClient";
 import type { Asset } from "../../types";
+import { listKlingElements, type KlingElement } from "../../services/klingElementsService";
 
 type PanelKey = "model" | "parameters" | "duration" | null;
 
@@ -15,6 +16,8 @@ type VideoGenResponse =
   | { ok: true; items: VideoGenItem[]; urlExpiresInSeconds?: number }
   | { ok: false; error: any };
 
+type KlingV3Shot = { prompt: string; durationSeconds: number };
+
 const TOOL_ID = "video-generator";
 const FRAME_UPLOAD_TOOL = "video-gen-frame";
 
@@ -24,6 +27,7 @@ const VEO_3_1 = "veo-3.1-generate-preview";
 const VEO_3_1_FAST = "veo-3.1-fast-generate-preview";
 const KLING_2_5_TURBO = "kling-v2-5-turbo";
 const KLING_2_6 = "kling-v2-6";
+const KLING_V3 = "kling-v3";
 
 function getStatus(err: any): number | null {
   return typeof err?.status === "number"
@@ -111,6 +115,27 @@ const VideoGeneratorTool: React.FC = () => {
   const [klingSoundTouched, setKlingSoundTouched] = useState<boolean>(false);
   const [klingMode, setKlingMode] = useState<"std" | "pro">("std");
 
+  // ===============================
+  // Kling V3 (Fal) — Elements + Multishot + Params
+  // ===============================
+  const [klingElements, setKlingElements] = useState<KlingElement[]>([]);
+  const [elementsOpen, setElementsOpen] = useState(false);
+  const [elementsQuery, setElementsQuery] = useState("");
+  const [selectedKlingElementIds, setSelectedKlingElementIds] = useState<string[]>([]);
+
+  const [multishotEnabled, setMultishotEnabled] = useState(false);
+  const [multishotOpen, setMultishotOpen] = useState(false);
+  const [klingShots, setKlingShots] = useState<KlingV3Shot[]>([
+    { prompt: "", durationSeconds: 3 },
+    { prompt: "", durationSeconds: 3 },
+  ]);
+  const [klingShotType, setKlingShotType] = useState<"customize" | "intelligent">("customize");
+
+  // V3 extra params
+  const [negativePrompt, setNegativePrompt] = useState("");
+  const [klingCfgScale, setKlingCfgScale] = useState<number>(0.5);
+  const [klingVoiceIdsText, setKlingVoiceIdsText] = useState("");
+
   // Duration
   const [durationSeconds, setDurationSeconds] = useState<number>(8);
 
@@ -139,6 +164,11 @@ const VideoGeneratorTool: React.FC = () => {
   const isVeo30 = model.startsWith("veo-3.0");
   const isVeo31 = model.startsWith("veo-3.1");
   const isKling = model.startsWith("kling-");
+  const isKlingV2 = model === KLING_2_5_TURBO || model === KLING_2_6;
+  const isKlingV3 = model === KLING_V3;
+
+
+
 
   const capability = useMemo(() => {
     if (model === KLING_2_5_TURBO || model === KLING_2_6) {
@@ -149,6 +179,17 @@ const VideoGeneratorTool: React.FC = () => {
         durations: [5, 10] as const,
         supportsSound: model === KLING_2_6 && klingMode === "pro",
         supportsLastFrame: true,
+      };
+    }
+
+    if (model === KLING_V3) {
+      return {
+        supportsResolution: false,
+        supportsAspectRatio: !hasFirst,
+        supportsAspectRatio1x1: !hasFirst,
+        durations: [3,4,5,6,7,8,9,10,11,12,13,14,15] as const,
+        supportsSound: true,       // en v3 pro es nativo
+        supportsLastFrame: true,   // usaremos end_image_url luego
       };
     }
 
@@ -200,20 +241,21 @@ const VideoGeneratorTool: React.FC = () => {
     }
   }, [aspectRatio, capability.supportsAspectRatio1x1]);
 
+  // 1) Regla Kling: si estás en STD y tenías sound ON, lo apagamos
+  useEffect(() => {
+  if (!isKlingV2) return;
+
+  if (klingMode === "std" && klingSound) {
+    setKlingSound(false);
+    setKlingSoundTouched(true);
+  }
+}, [isKlingV2, klingMode, klingSound]);
+
+  // 2) Regla Veo: si hay LAST frame y estabas en Veo 3.0, forzar Veo 3.1
   useEffect(() => {
     if (!hasLast) return;
     if (!isVeo30) return;
 
-    useEffect(() => {
-      if (!isKling) return;
-      // Si pasa a STD y tenía sound ON, lo apagamos y marcamos touched
-      if (klingMode === "std" && klingSound) {
-        setKlingSound(false);
-        setKlingSoundTouched(true);
-      }
-    }, [isKling, klingMode, klingSound]);
-
-    // Mantener "fast" si venías en fast
     const wantsFast = model.includes("-fast-");
     setModel(wantsFast ? VEO_3_1_FAST : VEO_3_1);
   }, [hasLast, isVeo30, model]);
@@ -267,6 +309,30 @@ const VideoGeneratorTool: React.FC = () => {
     return () => document.removeEventListener("mousedown", onDown);
   }, [panel]);
 
+  useEffect(() => {
+    if (!isKlingV3) return;
+    if (!elementsOpen) return;
+
+    (async () => {
+      try {
+        const items = await listKlingElements();
+        setKlingElements(items || []);
+      } catch (e: any) {
+        setError(e?.message || "No pude cargar tus Elements.");
+      }
+    })();
+  }, [isKlingV3, elementsOpen]);
+
+  useEffect(() => {
+    if (!isKlingV3) return;
+    if (firstFrame?.id) return;
+
+    // Si quitas FIRST, dejamos elements en 0 para evitar errores
+    if (selectedKlingElementIds.length > 0) {
+      setSelectedKlingElementIds([]);
+    }
+  }, [isKlingV3, firstFrame?.id, selectedKlingElementIds.length]);
+
   const modelLabel = useMemo(() => {
     if (model === VEO_3) return "Veo 3";
     if (model === VEO_3_FAST) return "Veo 3 Fast";
@@ -274,6 +340,7 @@ const VideoGeneratorTool: React.FC = () => {
     if (model === VEO_3_1_FAST) return "Veo 3.1 Fast";
     if (model === KLING_2_5_TURBO) return "Kling 2.5 Turbo";
     if (model === KLING_2_6) return "Kling 2.6";
+    if (model === KLING_V3) return "Kling V3";
     return model;
   }, [model]);
 
@@ -283,7 +350,36 @@ const VideoGeneratorTool: React.FC = () => {
     return `${ar} • ${resLabel} • x${count}`;
   }, [aspectRatio, capability.supportsAspectRatio, capability.supportsResolution, count, resolution]);
 
-  const durationLabel = useMemo(() => `${durationSeconds}s`, [durationSeconds]);
+  
+
+  const multishotValidShots = useMemo(() => {
+  if (!isKlingV3 || !multishotEnabled) return [];
+  return klingShots
+    .map((s) => ({
+      prompt: (s.prompt || "").trim(),
+      durationSeconds: clampInt(s.durationSeconds, 3, 15, 3),
+    }))
+    .filter((s) => s.prompt.length > 0);
+}, [isKlingV3, multishotEnabled, klingShots]);
+
+const multishotTotalSeconds = useMemo(() => {
+  if (!isKlingV3 || !multishotEnabled) return 0;
+  return multishotValidShots.reduce((acc, s) => acc + s.durationSeconds, 0);
+}, [isKlingV3, multishotEnabled, multishotValidShots]);
+
+const multishotIsReady = useMemo(() => {
+  if (!isKlingV3 || !multishotEnabled) return true;
+  if (multishotValidShots.length < 2) return false;
+  return multishotTotalSeconds >= 3 && multishotTotalSeconds <= 15;
+}, [isKlingV3, multishotEnabled, multishotValidShots.length, multishotTotalSeconds]);
+
+const durationLabel = useMemo(() => {
+  if (isKlingV3 && multishotEnabled) {
+    return `${multishotTotalSeconds || 0}s (multishot)`;
+  }
+  return `${durationSeconds}s`;
+}, [durationSeconds, isKlingV3, multishotEnabled, multishotTotalSeconds]);
+
 
   const openPicker = (slot: FrameSlotKey) => {
     if (slot === "last" && !hasFirst) return; // bloquea last si no hay first
@@ -343,7 +439,8 @@ const VideoGeneratorTool: React.FC = () => {
   }, [imageAssets, pickerQuery]);
 
   const handleGenerate = async () => {
-    if (!prompt.trim()) return;
+    const allowEmptyPrompt = isKlingV3 && multishotEnabled;
+    if (!allowEmptyPrompt && !prompt.trim()) return;
 
     setIsGenerating(true);
     setError(null);
@@ -351,13 +448,24 @@ const VideoGeneratorTool: React.FC = () => {
     const modelNorm = String(model || "").trim().replace(/^models\//i, "");
 
     try {
+      // Si es Kling V3 + Multishot: usamos el primer shot válido como prompt fallback (por schema min(1))
+      const effectivePrompt =
+        modelNorm === KLING_V3 && multishotEnabled
+          ? (multishotValidShots[0]?.prompt || "multishot")
+          : prompt;
+
+      const effectiveDurationSeconds =
+        modelNorm === KLING_V3 && multishotEnabled
+          ? Number(multishotTotalSeconds || 5)
+          : Number(durationSeconds);
+
       const body: any = {
-        prompt,
-        model: modelNorm, // Veo 3 / 3.1
+        prompt: effectivePrompt,
+        model: modelNorm,
         tool: TOOL_ID,
         nameHint: "video",
-        count: clampInt(count, 1, 4, 1),
-        durationSeconds: Number(durationSeconds),
+        count: modelNorm === KLING_V3 ? 1 : clampInt(count, 1, 4, 1),
+        durationSeconds: effectiveDurationSeconds,
       };
 
       if (capability.supportsResolution) {
@@ -370,13 +478,51 @@ const VideoGeneratorTool: React.FC = () => {
       // si NO hay first frame, se permite escoger aspect ratio
       if (!firstFrame && capability.supportsAspectRatio) body.aspectRatio = aspectRatio;
 
-      if (isKling) {
-        body.klingMode = klingMode; // <-- SIEMPRE enviamos el modo
+      // Kling v2.* directo
+      if (isKling && modelNorm !== "kling-v3") {
+        body.klingMode = klingMode;
       }
 
-      // KlingSound: solo aplica a Kling 2.6, pero queremos poder mandar OFF si ya lo tocó
+      // Kling 2.6: solo enviamos si el usuario tocó el toggle
       if (isKling && modelNorm === KLING_2_6 && klingSoundTouched) {
         body.klingSound = klingSound;
+      }
+
+      // Kling V3 (Fal): enviamos SIEMPRE audio + extras
+      if (modelNorm === "kling-v3") {
+        // Audio nativo (Fal: generate_audio)
+        body.klingSound = klingSound;
+
+        // Elements (requiere FIRST)
+        if (selectedKlingElementIds.length > 0) {
+          if (!firstFrame?.id) {
+            throw new Error("Kling V3: Para usar Elements debes cargar FIRST frame.");
+          }
+          body.klingElementIds = selectedKlingElementIds.slice(0, 5);
+        }
+
+        // Multishot
+        if (multishotEnabled) {
+          if (!multishotIsReady) {
+            throw new Error("Multishot: necesitas 2+ shots con prompt y la suma de duración 3–15s.");
+          }
+
+          body.klingMultiPrompt = multishotValidShots;
+
+          // shot_type solo importa en text-to-video (sin FIRST)
+          if (!firstFrame?.id) body.klingShotType = klingShotType;
+        }
+
+        // Params extra V3
+        if (negativePrompt.trim()) body.negativePrompt = negativePrompt.trim();
+        if (Number.isFinite(Number(klingCfgScale))) body.klingCfgScale = Number(klingCfgScale);
+
+        const voiceIds = klingVoiceIdsText
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .slice(0, 2);
+        if (voiceIds.length) body.klingVoiceIds = voiceIds;
       }
 
       const res = await apiPostJson<VideoGenResponse>("/api/ai/video", body);
@@ -395,7 +541,7 @@ const VideoGeneratorTool: React.FC = () => {
         url: it.url,
         type: "video",
         name: `video_${now}_${idx + 1}`,
-        prompt,
+        prompt: effectivePrompt,
         createdAt: now,
         ownerId: "me",
         isPublic: false,
@@ -405,7 +551,7 @@ const VideoGeneratorTool: React.FC = () => {
           model: modelNorm,
           aspectRatio: firstFrame ? "auto" : aspectRatio,
           resolution: capability.supportsResolution ? resolution : "auto",
-          durationSeconds: Number(durationSeconds),
+          durationSeconds: effectiveDurationSeconds,
           firstFrameAssetId: firstFrame?.id || null,
           lastFrameAssetId: lastFrame?.id || null,
         },
@@ -563,6 +709,40 @@ const VideoGeneratorTool: React.FC = () => {
                 </div>
 
                 <div className={styles.promptEditor}>
+                  {isKlingV3 && (
+                    <div className={styles.promptToolbar}>
+                      <button
+                        type="button"
+                        className={styles.toolbarBtn}
+                        onClick={() => setElementsOpen(true)}
+                        disabled={!firstFrame?.id} // V3 Elements requiere FIRST
+                        title={!firstFrame?.id ? "Para usar Elements primero carga FIRST frame" : "Seleccionar Elements"}
+                      >
+                        Elements {selectedKlingElementIds.length ? `(${selectedKlingElementIds.length})` : ""}
+                      </button>
+
+                      <button
+                        type="button"
+                        className={`${styles.toolbarBtn} ${multishotEnabled ? styles.toolbarBtnActive : ""}`}
+                        onClick={() => setMultishotEnabled((v) => !v)}
+                        title="Activar/Desactivar Multishot"
+                      >
+                        Multishot {multishotEnabled ? "ON" : "OFF"}
+                      </button>
+
+                      {multishotEnabled && (
+                        <button
+                          type="button"
+                          className={styles.toolbarBtn}
+                          onClick={() => setMultishotOpen(true)}
+                          title="Editar shots"
+                        >
+                          Edit ({klingShots.length} · {multishotTotalSeconds}s)
+                        </button>
+                      )}
+                    </div>
+                  )}
+
                   <textarea
                     className={styles.prompt}
                     value={prompt}
@@ -577,7 +757,7 @@ const VideoGeneratorTool: React.FC = () => {
                 <button
                   type="button"
                   className={styles.generateBtn}
-                  disabled={isGenerating || !prompt.trim()}
+                  disabled={isGenerating || (isKlingV3 && multishotEnabled ? !multishotIsReady : !prompt.trim())}
                   onClick={handleGenerate}
                   data-loading={isGenerating ? "true" : "false"}
                 >
@@ -678,6 +858,14 @@ const VideoGeneratorTool: React.FC = () => {
                         <div className={styles.modelName}>Kling 2.6</div>
                         <div className={styles.modelDesc}>Mejor calidad · 5/10s · sound</div>
                       </button>
+
+                      <button
+                        className={`${styles.modelOption} ${model === KLING_V3 ? styles.modelOptionActive : ""}`}
+                        onClick={() => setModel(KLING_V3)}
+                      >
+                        <div className={styles.modelName}>Kling V3</div>
+                        <div className={styles.modelDesc}>Pro · 3–15s · sound · elements · multishot</div>
+                      </button>
                     </div>
 
                     <div className={styles.note}>
@@ -774,7 +962,7 @@ const VideoGeneratorTool: React.FC = () => {
                       </div>
                     </div>
 
-                    {isKling && (
+                    {isKlingV2 && (
                       <div className={styles.formRow}>
                         <label className={styles.formLabel}>Kling Mode</label>
                         <div className={styles.segment}>
@@ -823,8 +1011,56 @@ const VideoGeneratorTool: React.FC = () => {
                           >
                             Off
                           </button>
-                          <div className={styles.segmentMeta}>Solo Kling 2.6</div>
+                          <div className={styles.segmentMeta}>
+                            {isKlingV3 ? "Native audio (Kling V3)" : "Solo Kling 2.6 (Mode Pro)"}
+                          </div>
                         </div>
+                      </div>
+                    )}
+
+                    {isKlingV3 && (
+                      <>
+                        <div className={styles.formRow}>
+                          <label className={styles.formLabel}>Negative Prompt</label>
+                          <textarea
+                            className={styles.textarea}
+                            value={negativePrompt}
+                            onChange={(e) => setNegativePrompt(e.target.value)}
+                            placeholder="blur, distort, low quality…"
+                            rows={2}
+                          />
+                        </div>
+
+                        <div className={styles.formRow}>
+                          <label className={styles.formLabel}>CFG Scale</label>
+                          <input
+                            className={styles.input}
+                            type="number"
+                            min={0}
+                            max={1}
+                            step={0.05}
+                            value={klingCfgScale}
+                            onChange={(e) => setKlingCfgScale(Number(e.target.value))}
+                          />
+                        </div>
+
+                        <div className={styles.formRow}>
+                          <label className={styles.formLabel}>Voice IDs</label>
+                          <input
+                            className={styles.input}
+                            value={klingVoiceIdsText}
+                            onChange={(e) => setKlingVoiceIdsText(e.target.value)}
+                            placeholder="id1,id2 (máx 2)"
+                          />
+                          <div className={styles.segmentMeta}>
+                            Usa {"<<<voice_1>>>"} y {"<<<voice_2>>>"} en el prompt
+                          </div>
+                        </div>
+                      </>
+                    )}
+                    {isKlingV3 && multishotEnabled && !multishotIsReady && (
+                      <div className={styles.noteSmall}>
+                        Multishot: necesitas 2+ shots con prompt y la suma de duración debe ser 3–15s.
                       </div>
                     )}
                   </div>
@@ -840,28 +1076,43 @@ const VideoGeneratorTool: React.FC = () => {
                       </button>
                     </div>
 
-                    <div className={styles.durationGrid}>
-                      {allowedDurations.map((d) => (
-                        <button
-                          key={d}
-                          type="button"
-                          className={`${styles.durationOption} ${durationSeconds === d ? styles.durationOptionActive : ""}`}
-                          onClick={() => setDurationSeconds(d)}
-                        >
-                          {d}s
-                        </button>
-                      ))}
-                    </div>
+                    {isKlingV3 && multishotEnabled ? (
+                      <>
+                        <div className={styles.note}>
+                          Multishot controla la duración total. Total actual: <b>{multishotTotalSeconds}s</b> (debe ser 3–15s).
+                        </div>
+                        <div className={styles.note}>
+                          Edita los shots en “Edit” para ajustar la duración.
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className={styles.durationGrid}>
+                          {allowedDurations.map((d) => (
+                            <button
+                              key={d}
+                              type="button"
+                              className={`${styles.durationOption} ${durationSeconds === d ? styles.durationOptionActive : ""}`}
+                              onClick={() => setDurationSeconds(d)}
+                            >
+                              {d}s
+                            </button>
+                          ))}
+                        </div>
 
-                    <div className={styles.note}>
-                      {isKling
-                        ? "Kling permite 5s o 10s."
-                        : hasFirst
-                          ? "Con frames (First/Last) la duración es 8s."
-                          : resolution !== "720p"
-                            ? "Con 1080p/4k la duración es 8s."
-                            : "Con 720p sin frames puedes elegir 4/6/8s."}
-                    </div>
+                        <div className={styles.note}>
+                          {isKlingV2
+                            ? "Kling 2.5/2.6 permite 5s o 10s."
+                            : isKlingV3
+                              ? "Kling V3 permite 3s–15s."
+                              : hasFirst
+                                ? "Con frames (First/Last) la duración es 8s."
+                                : resolution !== "720p"
+                                  ? "Con 1080p/4k la duración es 8s."
+                                  : "Con 720p sin frames puedes elegir 4/6/8s."}
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
@@ -967,6 +1218,190 @@ const VideoGeneratorTool: React.FC = () => {
             {pickerSlot === "last" && !hasFirst && (
               <div className={styles.modalNote}>
                 LAST está bloqueado: primero carga FIRST.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Multishot modal (Kling V3) */}
+      {multishotOpen && (
+        <div className={styles.modalOverlay} role="dialog" aria-modal="true">
+          <div className={styles.modal}>
+            <div className={styles.modalHeader}>
+              <div className={styles.modalTitle}>Multishot</div>
+              <button className={styles.modalClose} onClick={() => setMultishotOpen(false)} type="button">
+                ×
+              </button>
+            </div>
+
+            <div className={styles.modalActions}>
+              <button
+                type="button"
+                className={styles.uploadBtn}
+                onClick={() =>
+                  setKlingShots((prev) =>
+                    prev.length >= 10 ? prev : [...prev, { prompt: "", durationSeconds: 3 }]
+                  )
+                }
+              >
+                + Add shot
+              </button>
+
+              <div className={styles.segmentMeta}>
+                Total: {multishotTotalSeconds}s (cada shot 3–15s · max 10)
+              </div>
+            </div>
+
+            <div className={styles.modalActions}>
+              <label className={styles.formLabel} style={{ width: 110 }}>Shot type</label>
+              <div className={styles.segment}>
+                <button
+                  type="button"
+                  className={`${styles.segmentBtn} ${klingShotType === "customize" ? styles.segmentBtnActive : ""}`}
+                  onClick={() => setKlingShotType("customize")}
+                >
+                  customize
+                </button>
+                <button
+                  type="button"
+                  className={`${styles.segmentBtn} ${klingShotType === "intelligent" ? styles.segmentBtnActive : ""}`}
+                  onClick={() => setKlingShotType("intelligent")}
+                  disabled={!!firstFrame?.id} // i2v: solo customize
+                >
+                  intelligent
+                </button>
+                <div className={styles.segmentMeta}>
+                  {firstFrame?.id ? "Con FIRST frame solo permite customize" : "Text-only permite intelligent"}
+                </div>
+              </div>
+            </div>
+
+            <div className={styles.shotsList}>
+              {klingShots.map((s, i) => (
+                <div key={i} className={styles.shotRow}>
+                  <div className={styles.shotHeader}>
+                    <div className={styles.shotTitle}>Shot {i + 1}</div>
+                    <button
+                      type="button"
+                      className={styles.swapBtn}
+                      onClick={() => setKlingShots((prev) => prev.filter((_, idx) => idx !== i))}
+                      disabled={klingShots.length <= 1}
+                    >
+                      Remove
+                    </button>
+                  </div>
+
+                  <textarea
+                    className={styles.textarea}
+                    rows={2}
+                    value={s.prompt}
+                    onChange={(e) =>
+                      setKlingShots((prev) =>
+                        prev.map((x, idx) => (idx === i ? { ...x, prompt: e.target.value } : x))
+                      )
+                    }
+                    placeholder="Prompt de este shot..."
+                  />
+
+                  <div className={styles.formRow}>
+                    <label className={styles.formLabel}>Duration</label>
+                    <input
+                      className={styles.input}
+                      type="number"
+                      min={3}
+                      max={15}
+                      value={s.durationSeconds}
+                      onChange={(e) =>
+                        setKlingShots((prev) =>
+                          prev.map((x, idx) =>
+                            idx === i ? { ...x, durationSeconds: Number(e.target.value) } : x
+                          )
+                        )
+                      }
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className={styles.modalNote}>
+              Si Multishot está ON, el backend enviará `multi_prompt` y usará la suma de durations.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Elements modal (Kling V3) */}
+      {elementsOpen && (
+        <div className={styles.modalOverlay} role="dialog" aria-modal="true">
+          <div className={styles.modal}>
+            <div className={styles.modalHeader}>
+              <div className={styles.modalTitle}>Kling Elements</div>
+              <button className={styles.modalClose} onClick={() => setElementsOpen(false)} type="button">
+                ×
+              </button>
+            </div>
+
+            <div className={styles.modalActions}>
+              <input
+                className={styles.search}
+                placeholder="Search elements..."
+                value={elementsQuery}
+                onChange={(e) => setElementsQuery(e.target.value)}
+              />
+              <button
+                type="button"
+                className={styles.swapBtn}
+                onClick={() => setSelectedKlingElementIds([])}
+              >
+                Clear
+              </button>
+            </div>
+
+            <div className={styles.pickerGrid}>
+              {klingElements
+                .filter((el) => {
+                  const q = elementsQuery.trim().toLowerCase();
+                  if (!q) return true;
+                  const t = `${el.elementName} ${el.elementDescription}`.toLowerCase();
+                  return t.includes(q);
+                })
+                .map((el) => {
+                  const selected = selectedKlingElementIds.includes(el.id);
+                  const thumbAsset =
+                    imageAssets.find((a) => a.id === el.frontalAssetId) || null;
+
+                  return (
+                    <button
+                      key={el.id}
+                      type="button"
+                      className={`${styles.pickerTile} ${selected ? styles.pickerTileActive : ""}`}
+                      onClick={() => {
+                        setSelectedKlingElementIds((prev) => {
+                          const has = prev.includes(el.id);
+                          if (has) return prev.filter((x) => x !== el.id);
+                          if (prev.length >= 5) return prev; // max 5
+                          return [...prev, el.id];
+                        });
+                      }}
+                    >
+                      <img
+                        src={thumbAsset?.url || "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="}
+                        alt={el.elementName}
+                      />
+                      <div className={styles.pickerCap}>
+                        {el.elementName}
+                        {selected ? " ✓" : ""}
+                      </div>
+                    </button>
+                  );
+                })}
+            </div>
+
+            {!firstFrame?.id && (
+              <div className={styles.modalNote}>
+                Para usar Elements en Kling V3 primero debes cargar FIRST frame.
               </div>
             )}
           </div>

@@ -365,11 +365,26 @@ const VideoRequestSchema = z.object({
   firstFrameAssetId: z.string().uuid().nullable().optional(),
   lastFrameAssetId: z.string().uuid().nullable().optional(),
 
-  // Kling extras
+  // Kling extras (v2.* directo + v3 via fal)
   klingMode: z.enum(["std", "pro"]).optional(),
   klingSound: z.boolean().optional(),
   negativePrompt: z.string().max(4000).optional(),
-});
+
+  // Kling V3 (Fal) extras
+  klingElementIds: z.array(z.string().uuid()).max(5).optional(),
+  klingMultiPrompt: z
+    .array(
+      z.object({
+        prompt: z.string().min(1).max(2500),
+        durationSeconds: z.coerce.number().int().min(3).max(15).optional(),
+      })
+    )
+    .max(10)
+    .optional(),
+  klingCfgScale: z.coerce.number().min(0).max(1).optional(),
+  klingVoiceIds: z.array(z.string()).max(2).optional(),
+  klingShotType: z.enum(["customize", "intelligent"]).optional(),
+  });
 
 const Base64ImageSchema = z
   .string()
@@ -2843,6 +2858,13 @@ app.post("/api/ai/video", async (req, res, next) => {
       klingMode,
       klingSound,
       negativePrompt,
+
+      // Kling V3 (Fal)
+      klingElementIds,
+      klingMultiPrompt,
+      klingCfgScale,
+      klingVoiceIds,
+      klingShotType,
     } = VideoRequestSchema.parse(req.body);
 
     const { user, error } = await requireUser(req);
@@ -2871,6 +2893,208 @@ app.post("/api/ai/video", async (req, res, next) => {
     }
 
     if (isKling) {
+      // ✅ KLING V3 PRO via FAL (fal-ai/kling-video/v3/pro/*)
+      if (selectedModelNorm === "kling-v3") {
+        const hasElements = Array.isArray(klingElementIds) && klingElementIds.length > 0;
+
+        // Duración (Fal: 3..15)
+        let dur = durationSeconds != null ? Number(durationSeconds) : 5;
+        dur = Math.trunc(dur);
+        if (dur < 3) dur = 3;
+        if (dur > 15) dur = 15;
+
+        const ar = aspectRatio || "16:9";
+
+        // Audio nativo (Fal: generate_audio)
+        const generateAudio = klingSound !== undefined ? Boolean(klingSound) : false;
+
+        // Multi-shot (Fal: multi_prompt + shot_type)
+        const multi =
+          Array.isArray(klingMultiPrompt) && klingMultiPrompt.length
+            ? klingMultiPrompt.map((s) => {
+                let sDur = s?.durationSeconds != null ? Number(s.durationSeconds) : 5;
+                sDur = Math.trunc(sDur);
+                if (sDur < 3) sDur = 3;
+                if (sDur > 15) sDur = 15;
+                return { prompt: s.prompt, duration: String(sDur) };
+              })
+            : null;
+
+        // Si hay multishot: usamos la suma de shots como duración total (debe quedar 3..15)
+        let totalDur = dur;
+        if (multi && multi.length) {
+          totalDur = multi.reduce((acc, s) => acc + Number(s.duration || 0), 0);
+          if (totalDur < 3 || totalDur > 15) {
+            throw httpError(
+              400,
+              "KLING_V3_MULTISHOT_DURATION_INVALID",
+              "Kling V3 Multishot: la suma de durations debe ser entre 3 y 15 segundos."
+            );
+          }
+        }
+
+        // Elements (Fal) desde tu tabla kling_elements + imágenes en Storage
+        let elements = undefined;
+        if (hasElements) {
+          if (!hasFirst) {
+            throw httpError(
+              400,
+              "KLING_V3_ELEMENTS_REQUIRE_FIRST_FRAME",
+              "Kling V3: Para usar Elements necesitas un First Frame (start image)."
+            );
+          }
+
+          const { data: rows, error: rowsErr } = await supabaseAdmin
+            .from("kling_elements")
+            .select("id, owner_id, image_paths")
+            .in("id", klingElementIds)
+            .eq("owner_id", user.id);
+
+          if (rowsErr) {
+            throw httpError(500, "DB_ERROR", "No pude leer tus Elements.", { rowsErr });
+          }
+
+          const byId = new Map((rows || []).map((r) => [r.id, r]));
+          const missing = (klingElementIds || []).filter((id) => !byId.has(id));
+          if (missing.length) {
+            throw httpError(
+              400,
+              "KLING_V3_ELEMENT_NOT_FOUND",
+              "Uno o más Elements no existen o no te pertenecen.",
+              { missing }
+            );
+          }
+
+          const out = [];
+          for (const elementId of klingElementIds) {
+            const row = byId.get(elementId);
+            const paths = Array.isArray(row?.image_paths) ? row.image_paths : [];
+            if (!paths.length) continue;
+
+            // firmamos hasta 4 imágenes
+            const urls = [];
+            for (const p of paths.slice(0, 4)) {
+              const u = await signStoragePath(p, 60 * 30);
+              urls.push(u);
+            }
+            if (!urls.length) continue;
+
+            const frontal = urls[0];
+            const refs = urls.slice(1, 4);
+            // Fal requiere al menos 1 reference_image_url
+            if (!refs.length) refs.push(frontal);
+
+            out.push({ frontal_image_url: frontal, reference_image_urls: refs });
+          }
+
+          if (out.length) elements = out;
+        }
+
+        // Armamos el input Fal
+        let endpointId = "fal-ai/kling-video/v3/pro/text-to-video";
+
+        const falInput = {
+          aspect_ratio: ar,
+          duration: String(totalDur),
+          generate_audio: generateAudio,
+          ...(negativePrompt ? { negative_prompt: negativePrompt } : {}),
+          ...(klingCfgScale !== undefined ? { cfg_scale: klingCfgScale } : {}),
+          ...(Array.isArray(klingVoiceIds) && klingVoiceIds.length
+            ? { voice_ids: klingVoiceIds.slice(0, 2) }
+            : {}),
+        };
+
+        if (multi && multi.length) {
+          falInput.multi_prompt = multi;
+          falInput.shot_type = klingShotType || "customize";
+        } else {
+          falInput.prompt = prompt;
+        }
+
+        if (hasFirst) {
+          endpointId = "fal-ai/kling-video/v3/pro/image-to-video";
+          falInput.start_image_url = await assetIdToSignedUrl(firstFrameAssetId, user.id, 60 * 30);
+          if (hasLast) {
+            falInput.end_image_url = await assetIdToSignedUrl(lastFrameAssetId, user.id, 60 * 30);
+          }
+          if (elements) falInput.elements = elements;
+
+          // i2v: shot_type solo "customize"
+          if (multi && multi.length) falInput.shot_type = "customize";
+        }
+
+        const falJson = await falQueueRun(endpointId, falInput);
+        const videoUrl = falJson?.video?.url || falJson?.data?.video?.url;
+
+        if (!videoUrl) {
+          throw httpError(502, "FAL_KLING_V3_NO_VIDEO", "Fal/Kling V3 no devolvió video.", {
+            endpointId,
+            response: falJson,
+          });
+        }
+
+        // Descargar video y guardarlo como Asset (igual que Kling directo)
+        const videoResp = await fetch(videoUrl);
+        if (!videoResp.ok) {
+          throw httpError(
+            502,
+            "FAL_KLING_V3_VIDEO_DOWNLOAD_FAILED",
+            `No pude descargar el video de Fal (${videoResp.status}).`
+          );
+        }
+
+        const bytes = Buffer.from(await videoResp.arrayBuffer());
+        const mimeType = videoResp.headers.get("content-type") || "video/mp4";
+        const storagePath = buildAssetPath({
+          userId: user.id,
+          tool: toolName,
+          mimeType,
+          nameHint: hint,
+        });
+
+        await uploadBytesToStorageAtPath({ storagePath, bytes, mimeType });
+
+        const meta = {
+          tool: toolName,
+          provider: "fal",
+          model: selectedModelNorm,
+          falEndpointId: endpointId,
+
+          aspectRatio: ar,
+          durationSeconds: totalDur,
+          firstFrameAssetId: firstFrameAssetId || null,
+          lastFrameAssetId: lastFrameAssetId || null,
+
+          klingSound: generateAudio,
+          negativePrompt: negativePrompt || null,
+          klingCfgScale: klingCfgScale ?? null,
+          klingVoiceIds: Array.isArray(klingVoiceIds) ? klingVoiceIds.slice(0, 2) : null,
+          klingElementIds: hasElements ? klingElementIds : null,
+          klingMultiPrompt: multi || null,
+        };
+
+        const assetId = await insertAssetRow({
+          ownerId: user.id,
+          type: "video",
+          tool: toolName,
+          name: hint,
+          prompt,
+          storagePath,
+          isPublic: false,
+          meta,
+        });
+
+        const urlExpiresInSeconds = 60 * 60;
+        const url = await signStoragePath(storagePath, urlExpiresInSeconds);
+
+        return res.json({
+          ok: true,
+          items: [{ url, assetId }],
+          url,
+          assetId,
+          urlExpiresInSeconds,
+        });
+      }
       let klingDuration = durationSeconds != null ? Number(durationSeconds) : 5;
       klingDuration = Math.trunc(klingDuration);
       if (![5, 10].includes(klingDuration)) {
