@@ -349,6 +349,7 @@ const ImageRequestSchema = z.object({
 const VideoRequestSchema = z.object({
   prompt: z.string().min(1).max(14000),
   model: z.string().optional(),
+  sync: z.boolean().optional(),
 
   // Solo aplica cuando NO hay firstFrame
   aspectRatio: z.enum(["16:9", "9:16", "1:1"]).optional(),
@@ -962,13 +963,55 @@ function sleep(ms) {
 // =============================
 // Kling helpers (JWT HS256)
 // =============================
-function base64urlEncode(input) {
-  const buf = Buffer.isBuffer(input) ? input : Buffer.from(String(input));
-  return buf
-    .toString("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/g, "");
+function base64urlDecodeToString(input) {
+  const s = String(input || "");
+  const pad = s.length % 4 === 0 ? "" : "=".repeat(4 - (s.length % 4));
+  const b64 = (s + pad).replace(/-/g, "+").replace(/_/g, "/");
+  return Buffer.from(b64, "base64").toString("utf8");
+}
+
+const JOB_TOKEN_SECRET =
+  process.env.JOB_TOKEN_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+
+function signJobToken(payload, ttlSeconds = 60 * 60) {
+  if (!JOB_TOKEN_SECRET) {
+    throw httpError(
+      500,
+      "JOB_TOKEN_SECRET_MISSING",
+      "Falta JOB_TOKEN_SECRET (o SUPABASE_SERVICE_ROLE_KEY) para firmar tokens internos."
+    );
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const data = { ...payload, iat: now, exp: now + ttlSeconds };
+  const body = base64urlEncode(JSON.stringify(data));
+  const sig = base64urlEncode(createHmac("sha256", JOB_TOKEN_SECRET).update(body).digest());
+  return `${body}.${sig}`;
+}
+
+function verifyJobToken(token) {
+  if (!JOB_TOKEN_SECRET) {
+    throw httpError(
+      500,
+      "JOB_TOKEN_SECRET_MISSING",
+      "Falta JOB_TOKEN_SECRET (o SUPABASE_SERVICE_ROLE_KEY) para verificar tokens internos."
+    );
+  }
+  const [body, sig] = String(token || "").split(".");
+  if (!body || !sig) throw httpError(400, "JOB_TOKEN_INVALID", "Token inválido.");
+
+  const expected = base64urlEncode(createHmac("sha256", JOB_TOKEN_SECRET).update(body).digest());
+  if (expected !== sig) throw httpError(400, "JOB_TOKEN_BAD_SIG", "Firma inválida.");
+
+  let data;
+  try {
+    data = JSON.parse(base64urlDecodeToString(body));
+  } catch {
+    throw httpError(400, "JOB_TOKEN_BAD_JSON", "Token corrupto.");
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  if (data?.exp && now > data.exp) throw httpError(400, "JOB_TOKEN_EXPIRED", "Token expirado.");
+  return data;
 }
 
 function makeKlingJwt(accessKey, secretKey, ttlSeconds = 300) {
@@ -1020,6 +1063,94 @@ function falDimsFromAspectQuality(aspectRatio, quality) {
 
   if (w >= h) return { width: long, height: short };
   return { width: short, height: long };
+}
+
+async function falQueueSubmit(endpointId, input) {
+  const auth = falAuthHeader();
+  if (!auth) throw httpError(500, "FAL_KEY_MISSING", "Missing FAL_KEY env var (Fal.ai)");
+
+  const submitUrl = `https://queue.fal.run/${endpointId}`;
+  const submitResp = await fetch(submitUrl, {
+    method: "POST",
+    headers: { Authorization: auth, "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  const submitText = await submitResp.text();
+  let submitJson;
+  try {
+    submitJson = JSON.parse(submitText);
+  } catch {
+    throw httpError(502, "FAL_BAD_RESPONSE", `Fal submit invalid JSON: ${submitText.slice(0, 200)}`);
+  }
+
+  if (!submitResp.ok) {
+    throw httpError(
+      502,
+      "FAL_SUBMIT_FAILED",
+      `Fal submit HTTP ${submitResp.status}: ${submitJson?.detail || submitJson?.message || submitText}`.slice(0, 400)
+    );
+  }
+
+  const statusUrl = submitJson?.status_url;
+  const responseUrl = submitJson?.response_url;
+  const requestId = submitJson?.request_id;
+
+  if (!statusUrl || !responseUrl || !requestId) {
+    throw httpError(502, "FAL_SUBMIT_MISSING_FIELDS", "Fal submit missing status_url/response_url/request_id");
+  }
+
+  return { requestId, statusUrl, responseUrl };
+}
+
+async function falQueueStatus(statusUrl) {
+  const auth = falAuthHeader();
+  if (!auth) throw httpError(500, "FAL_KEY_MISSING", "Missing FAL_KEY env var (Fal.ai)");
+
+  const statusResp = await fetch(statusUrl, { headers: { Authorization: auth } });
+  const statusText = await statusResp.text();
+
+  let statusJson;
+  try {
+    statusJson = JSON.parse(statusText);
+  } catch {
+    throw httpError(502, "FAL_BAD_STATUS", `Fal status invalid JSON: ${statusText.slice(0, 200)}`);
+  }
+
+  if (!statusResp.ok) {
+    throw httpError(
+      502,
+      "FAL_STATUS_FAILED",
+      `Fal status HTTP ${statusResp.status}: ${statusJson?.detail || statusJson?.message || statusText}`.slice(0, 400)
+    );
+  }
+
+  return statusJson;
+}
+
+async function falQueueResult(responseUrl) {
+  const auth = falAuthHeader();
+  if (!auth) throw httpError(500, "FAL_KEY_MISSING", "Missing FAL_KEY env var (Fal.ai)");
+
+  const resultResp = await fetch(responseUrl, { headers: { Authorization: auth } });
+  const resultText = await resultResp.text();
+
+  let falJson;
+  try {
+    falJson = resultText ? JSON.parse(resultText) : null;
+  } catch {
+    throw httpError(502, "FAL_BAD_RESULT", `Fal result invalid JSON: ${resultText.slice(0, 200)}`);
+  }
+
+  if (!resultResp.ok) {
+    throw httpError(
+      502,
+      "FAL_RESULT_FAILED",
+      `Fal result HTTP ${resultResp.status}: ${falJson?.detail || falJson?.message || resultText}`.slice(0, 400)
+    );
+  }
+
+  return falJson;
 }
 
 async function falQueueRun(endpointId, input) {
@@ -2849,12 +2980,140 @@ app.post("/api/ai/upscale", async (req, res, next) => {
   }
 });
 
+const FalJobSchema = z.object({
+  jobToken: z.string().min(10),
+});
+
+const FalFinalizeSchema = z.object({
+  jobToken: z.string().min(10),
+  prompt: z.string().min(1).max(14000),
+});
+
+app.post("/api/ai/video/fal/status", async (req, res) => {
+  try {
+    const { jobToken } = FalJobSchema.parse(req.body);
+
+    const { user, error } = await requireUser(req);
+    if (error) return res.status(401).json({ ok: false, error });
+
+    const t = verifyJobToken(jobToken);
+    if (t.uid !== user.id) throw httpError(403, "JOB_NOT_YOURS", "Este job no pertenece a tu usuario.");
+
+    const st = await falQueueStatus(t.statusUrl);
+    const status = st?.status || "UNKNOWN";
+
+    if (status === "FAILED") {
+      return res.json({ ok: true, status, error: st?.error || st?.detail || "Fal job failed" });
+    }
+
+    return res.json({ ok: true, status });
+  } catch (e) {
+    return handleApiError(res, e);
+  }
+});
+
+app.post("/api/ai/video/fal/finalize", async (req, res) => {
+  try {
+    const { jobToken, prompt } = FalFinalizeSchema.parse(req.body);
+
+    const { user, error } = await requireUser(req);
+    if (error) return res.status(401).json({ ok: false, error });
+
+    const t = verifyJobToken(jobToken);
+    if (t.uid !== user.id) throw httpError(403, "JOB_NOT_YOURS", "Este job no pertenece a tu usuario.");
+
+    const st = await falQueueStatus(t.statusUrl);
+    const status = st?.status || "UNKNOWN";
+
+    if (status !== "COMPLETED") {
+      return res.status(202).json({ ok: true, status });
+    }
+
+    const falJson = await falQueueResult(t.responseUrl);
+
+    const videoUrl =
+      falJson?.video?.url ||
+      falJson?.data?.video?.url ||
+      falJson?.videos?.[0]?.url ||
+      falJson?.output?.video?.url;
+
+    if (!videoUrl) {
+      throw httpError(502, "FAL_KLING_V3_NO_VIDEO", "Fal/Kling V3 no devolvió video.", {
+        response: falJson,
+      });
+    }
+
+    // Descarga y guarda en Storage como asset (igual que tu path sync)
+    const toolName = t.toolName || "VideoGeneratorTool";
+    const hint = t.hint || "kling-v3";
+    const selectedModelNorm = t.model || "kling-v3";
+    const endpointId = t.endpointId;
+
+    const videoResp = await fetch(videoUrl);
+    if (!videoResp.ok) {
+      throw httpError(
+        502,
+        "FAL_KLING_V3_VIDEO_DOWNLOAD_FAILED",
+        `No pude descargar el video de Fal (${videoResp.status}).`
+      );
+    }
+
+    const bytes = Buffer.from(await videoResp.arrayBuffer());
+    const mimeType = videoResp.headers.get("content-type") || "video/mp4";
+
+    const storagePath = buildAssetPath({
+      userId: user.id,
+      tool: toolName,
+      mimeType,
+      nameHint: hint,
+    });
+
+    await uploadBytesToStorageAtPath({ storagePath, bytes, mimeType });
+
+    const meta = {
+      tool: toolName,
+      provider: "fal",
+      model: selectedModelNorm,
+      falEndpointId: endpointId || null,
+      aspectRatio: t.ar || null,
+      durationSeconds: t.totalDur || null,
+      firstFrameAssetId: t.firstFrameAssetId || null,
+      lastFrameAssetId: t.lastFrameAssetId || null,
+      klingSound: Boolean(t.generateAudio),
+    };
+
+    const assetId = await insertAssetRow({
+      ownerId: user.id,
+      type: "video",
+      tool: toolName,
+      name: hint,
+      prompt,
+      storagePath,
+      isPublic: false,
+      meta,
+    });
+
+    const urlExpiresInSeconds = 60 * 60;
+    const url = await signStoragePath(storagePath, urlExpiresInSeconds);
+
+    return res.json({
+      ok: true,
+      items: [{ url, assetId }],
+      url,
+      assetId,
+      urlExpiresInSeconds,
+    });
+  } catch (e) {
+    return handleApiError(res, e);
+  }
+});
 
 app.post("/api/ai/video", async (req, res, next) => {
   try {
     const {
       prompt,
       model,
+      async: asyncMode,
       aspectRatio,
       resolution,
       durationSeconds,
@@ -3029,6 +3288,29 @@ app.post("/api/ai/video", async (req, res, next) => {
 
           // i2v: shot_type solo "customize"
           if (multi && multi.length) falInput.shot_type = "customize";
+        }
+
+        // ✅ Modo async para evitar el timeout 120s de Vercel
+        if (asyncMode) {
+          const { requestId, statusUrl, responseUrl } = await falQueueSubmit(endpointId, falInput);
+
+          const jobToken = signJobToken({
+            uid: user.id,
+            requestId,
+            statusUrl,
+            responseUrl,
+            endpointId,
+            toolName,
+            hint,
+            model: selectedModelNorm,
+            ar,
+            totalDur,
+            firstFrameAssetId: firstFrameAssetId || null,
+            lastFrameAssetId: lastFrameAssetId || null,
+            generateAudio,
+          });
+
+          return res.json({ ok: true, mode: "async", jobToken, requestId });
         }
 
         const falJson = await falQueueRun(endpointId, falInput);

@@ -101,6 +101,22 @@ function shortText(s?: string, max = 60) {
   return t.length > max ? t.slice(0, max - 1) + "…" : t;
 }
 
+const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+async function waitFalJob(jobToken: string, maxWaitMs = 15 * 60 * 1000) {
+  const t0 = Date.now();
+  while (true) {
+    const st = await apiPostJson<any>("/api/ai/video/fal/status", { jobToken });
+    const status = st?.status;
+
+    if (status === "COMPLETED") return;
+    if (status === "FAILED") throw new Error(st?.error || "Fal job FAILED");
+    if (Date.now() - t0 > maxWaitMs) throw new Error("Timeout esperando Kling V3 (Fal).");
+
+    await delay(1500);
+  }
+}
+
 const VideoGeneratorTool: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
@@ -531,7 +547,28 @@ const durationLabel = useMemo(() => {
         if (voiceIds.length) body.klingVoiceIds = voiceIds;
       }
 
-      const res = await apiPostJson<VideoGenResponse>("/api/ai/video", body);
+      let res: any;
+
+      if (modelNorm === KLING_V3) {
+        const submit = await apiPostJson<any>("/api/ai/video", { ...body, async: true });
+
+        if (submit?.mode === "async" && submit?.jobToken) {
+          const jobToken = String(submit.jobToken);
+
+          await waitFalJob(jobToken);
+
+          // Finalize: aquí es donde bajas el video de Fal y lo guardas en Supabase Storage
+          res = await apiPostJson<VideoGenResponse>("/api/ai/video/fal/finalize", {
+            jobToken,
+            prompt: effectivePrompt,
+          });
+        } else {
+          // fallback por si el backend responde sync
+          res = submit;
+        }
+      } else {
+        res = await apiPostJson<VideoGenResponse>("/api/ai/video", body);
+      }
 
       if (!("ok" in res) || (res as any).ok !== true) {
         throw new Error("Respuesta inválida del backend.");
