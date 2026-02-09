@@ -144,7 +144,7 @@ const VideoGeneratorTool: React.FC = () => {
   const isVeo30 = model.startsWith("veo-3.0");
   const isVeo31 = model.startsWith("veo-3.1");
   const isKlingClassic = model.startsWith("kling-");
-  const isKlingV3 = model === KLING_V3_PRO;
+  const isKlingV3 = model.startsWith(KLING_V3_PRO);
   const isKling = isKlingClassic || isKlingV3;
 
   const capability = useMemo(() => {
@@ -159,7 +159,7 @@ const VideoGeneratorTool: React.FC = () => {
       };
     }
 
-    if (model === KLING_V3_PRO) {
+    if (model.startsWith(KLING_V3_PRO)) {
       return {
         supportsResolution: false,
         supportsAspectRatio: !hasFirst && selectedElementIds.length === 0,
@@ -302,7 +302,7 @@ const VideoGeneratorTool: React.FC = () => {
     if (model === VEO_3_1_FAST) return "Veo 3.1 Fast";
     if (model === KLING_2_5_TURBO) return "Kling 2.5 Turbo";
     if (model === KLING_2_6) return "Kling 2.6";
-    if (model === KLING_V3_PRO) return "Kling V3";
+    if (model.startsWith(KLING_V3_PRO)) return "Kling V3";
     return model;
   }, [model]);
 
@@ -436,7 +436,7 @@ const VideoGeneratorTool: React.FC = () => {
         body.klingSound = klingSound;
       }
 
-      if (modelNorm === KLING_V3_PRO) {
+      if (modelNorm.startsWith(KLING_V3_PRO)) {
         if (klingSoundTouched) {
           body.klingSound = klingSound;
         }
@@ -475,9 +475,9 @@ const VideoGeneratorTool: React.FC = () => {
           durationSeconds: Number(durationSeconds),
           firstFrameAssetId: firstFrame?.id || null,
           lastFrameAssetId: lastFrame?.id || null,
-          klingSound: modelNorm === KLING_V3_PRO ? klingSound : null,
-          klingMultiShot: modelNorm === KLING_V3_PRO ? klingMultiShot : null,
-          klingElementAssetIds: modelNorm === KLING_V3_PRO ? selectedElementIds : [],
+          klingSound: modelNorm.startsWith(KLING_V3_PRO) ? klingSound : null,
+          klingMultiShot: modelNorm.startsWith(KLING_V3_PRO) ? klingMultiShot : null,
+          klingElementAssetIds: modelNorm.startsWith(KLING_V3_PRO) ? selectedElementIds : [],
         },
       }));
 

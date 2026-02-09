@@ -2865,7 +2865,7 @@ app.post("/api/ai/video", async (req, res, next) => {
     const selectedModelNorm = selectedModelStr.replace(/^models\//i, "");
 
     const isKling = selectedModelNorm.startsWith("kling-");
-    const isFalKlingVideo = selectedModelNorm === "fal-ai/kling-video/v3/pro";
+    const isFalKlingVideo = selectedModelNorm.startsWith("fal-ai/kling-video/v3/pro");
 
     if (hasLast && !hasFirst) {
       throw httpError(
