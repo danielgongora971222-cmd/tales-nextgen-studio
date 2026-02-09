@@ -368,6 +368,8 @@ const VideoRequestSchema = z.object({
   // Kling extras
   klingMode: z.enum(["std", "pro"]).optional(),
   klingSound: z.boolean().optional(),
+  klingMultiShot: z.boolean().optional(),
+  klingElementAssetIds: z.array(z.string().uuid()).max(5).optional(),
   negativePrompt: z.string().max(4000).optional(),
 });
 
@@ -2842,6 +2844,8 @@ app.post("/api/ai/video", async (req, res, next) => {
       lastFrameAssetId,
       klingMode,
       klingSound,
+      klingMultiShot,
+      klingElementAssetIds,
       negativePrompt,
     } = VideoRequestSchema.parse(req.body);
 
@@ -2861,6 +2865,7 @@ app.post("/api/ai/video", async (req, res, next) => {
     const selectedModelNorm = selectedModelStr.replace(/^models\//i, "");
 
     const isKling = selectedModelNorm.startsWith("kling-");
+    const isFalKlingVideo = selectedModelNorm === "fal-ai/kling-video/v3/pro";
 
     if (hasLast && !hasFirst) {
       throw httpError(
@@ -2868,6 +2873,131 @@ app.post("/api/ai/video", async (req, res, next) => {
         "MISSING_FIRST_FRAME",
         "lastFrameAssetId requiere firstFrameAssetId."
       );
+    }
+
+    if (isFalKlingVideo) {
+      let klingDuration = durationSeconds != null ? Number(durationSeconds) : 5;
+      klingDuration = Math.trunc(klingDuration);
+      if (![5, 10].includes(klingDuration)) {
+        throw httpError(
+          400,
+          "KLING_DURATION_NOT_SUPPORTED",
+          "Kling solo acepta durationSeconds de 5 o 10."
+        );
+      }
+
+      const elementAssetIds = Array.isArray(klingElementAssetIds) ? klingElementAssetIds : [];
+      const hasElementRefs = elementAssetIds.length > 0;
+      const useImageToVideo = hasFirst || hasElementRefs;
+
+      let baseImageUrl = null;
+      if (hasFirst) {
+        baseImageUrl = await assetIdToSignedUrl(firstFrameAssetId, user.id, 60 * 10);
+      } else if (hasElementRefs) {
+        baseImageUrl = await assetIdToSignedUrl(elementAssetIds[0], user.id, 60 * 10);
+      }
+
+      if (useImageToVideo && !baseImageUrl) {
+        throw httpError(
+          400,
+          "KLING_MISSING_REFERENCE",
+          "Kling V3 (Fal) necesita al menos 1 imagen de referencia para image-to-video."
+        );
+      }
+
+      const elementUrls = hasElementRefs
+        ? await Promise.all(elementAssetIds.map((id) => assetIdToSignedUrl(id, user.id, 60 * 10)))
+        : [];
+
+      const falInput = {
+        prompt,
+        duration: klingDuration,
+        ...(aspectRatio ? { aspect_ratio: aspectRatio } : {}),
+        ...(useImageToVideo ? { image_url: baseImageUrl } : {}),
+        ...(elementUrls.length ? { elements: elementUrls } : {}),
+        ...(klingMultiShot !== undefined ? { multi_shot: Boolean(klingMultiShot) } : {}),
+        ...(klingSound !== undefined ? { enable_audio: Boolean(klingSound) } : {}),
+        ...(negativePrompt ? { negative_prompt: negativePrompt } : {}),
+      };
+
+      const endpointId = useImageToVideo
+        ? "fal-ai/kling-video/v3/pro/image-to-video"
+        : "fal-ai/kling-video/v3/pro/text-to-video";
+
+      const falJson = await falQueueRun(endpointId, falInput);
+
+      const videoUrl =
+        falJson?.video?.url ||
+        falJson?.data?.video?.url ||
+        falJson?.output?.video?.url ||
+        (Array.isArray(falJson?.videos) && falJson.videos.length ? falJson.videos[0]?.url : null) ||
+        (Array.isArray(falJson?.data?.videos) && falJson.data.videos.length
+          ? falJson.data.videos[0]?.url
+          : null) ||
+        (Array.isArray(falJson?.output?.videos) && falJson.output.videos.length
+          ? falJson.output.videos[0]?.url
+          : null);
+
+      if (!videoUrl) {
+        throw httpError(502, "FAL_NO_VIDEOS", "Fal: tarea completada pero sin videos.", {
+          response: falJson,
+        });
+      }
+
+      const videoResp = await fetch(videoUrl);
+      if (!videoResp.ok) {
+        throw httpError(
+          502,
+          "FAL_VIDEO_DOWNLOAD_FAILED",
+          `No pude descargar el video de Fal (${videoResp.status}).`
+        );
+      }
+
+      const bytes = Buffer.from(await videoResp.arrayBuffer());
+      const mimeType = videoResp.headers.get("content-type") || "video/mp4";
+      const storagePath = buildAssetPath({
+        userId: user.id,
+        tool: toolName,
+        mimeType,
+        nameHint: hint,
+      });
+
+      await uploadBytesToStorageAtPath({ storagePath, bytes, mimeType });
+
+      const meta = {
+        tool: toolName,
+        provider: "fal",
+        model: selectedModelNorm,
+        aspectRatio: aspectRatio || "16:9",
+        durationSeconds: klingDuration,
+        firstFrameAssetId: firstFrameAssetId || null,
+        lastFrameAssetId: lastFrameAssetId || null,
+        klingSound: klingSound ?? null,
+        klingMultiShot: klingMultiShot ?? null,
+        klingElementAssetIds: elementAssetIds,
+      };
+
+      const assetId = await insertAssetRow({
+        ownerId: user.id,
+        type: "video",
+        tool: toolName,
+        name: hint,
+        prompt,
+        storagePath,
+        isPublic: false,
+        meta,
+      });
+
+      const urlExpiresInSeconds = 60 * 60;
+      const url = await signStoragePath(storagePath, urlExpiresInSeconds);
+
+      return res.json({
+        ok: true,
+        items: [{ url, assetId }],
+        url,
+        assetId,
+        urlExpiresInSeconds,
+      });
     }
 
     if (isKling) {

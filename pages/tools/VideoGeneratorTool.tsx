@@ -24,6 +24,7 @@ const VEO_3_1 = "veo-3.1-generate-preview";
 const VEO_3_1_FAST = "veo-3.1-fast-generate-preview";
 const KLING_2_5_TURBO = "kling-v2-5-turbo";
 const KLING_2_6 = "kling-v2-6";
+const KLING_V3_PRO = "fal-ai/kling-video/v3/pro";
 
 function getStatus(err: any): number | null {
   return typeof err?.status === "number"
@@ -110,6 +111,10 @@ const VideoGeneratorTool: React.FC = () => {
   const [klingSound, setKlingSound] = useState<boolean>(false);
   const [klingSoundTouched, setKlingSoundTouched] = useState<boolean>(false);
   const [klingMode, setKlingMode] = useState<"std" | "pro">("std");
+  const [klingMultiShot, setKlingMultiShot] = useState<boolean>(false);
+  const [selectedElementIds, setSelectedElementIds] = useState<string[]>([]);
+  const [elementsOpen, setElementsOpen] = useState(false);
+  const [elementsQuery, setElementsQuery] = useState("");
 
   // Duration
   const [durationSeconds, setDurationSeconds] = useState<number>(8);
@@ -138,7 +143,9 @@ const VideoGeneratorTool: React.FC = () => {
 
   const isVeo30 = model.startsWith("veo-3.0");
   const isVeo31 = model.startsWith("veo-3.1");
-  const isKling = model.startsWith("kling-");
+  const isKlingClassic = model.startsWith("kling-");
+  const isKlingV3 = model === KLING_V3_PRO;
+  const isKling = isKlingClassic || isKlingV3;
 
   const capability = useMemo(() => {
     if (model === KLING_2_5_TURBO || model === KLING_2_6) {
@@ -148,6 +155,17 @@ const VideoGeneratorTool: React.FC = () => {
         supportsAspectRatio1x1: !hasFirst,
         durations: [5, 10] as const,
         supportsSound: model === KLING_2_6 && klingMode === "pro",
+        supportsLastFrame: true,
+      };
+    }
+
+    if (model === KLING_V3_PRO) {
+      return {
+        supportsResolution: false,
+        supportsAspectRatio: !hasFirst && selectedElementIds.length === 0,
+        supportsAspectRatio1x1: !hasFirst && selectedElementIds.length === 0,
+        durations: [5, 10] as const,
+        supportsSound: true,
         supportsLastFrame: true,
       };
     }
@@ -170,7 +188,7 @@ const VideoGeneratorTool: React.FC = () => {
       supportsSound: false,
       supportsLastFrame: true,
     };
-  }, [hasFirst, hasLast, isVeo30, model, resolution, klingMode]);
+  }, [hasFirst, hasLast, isVeo30, model, resolution, klingMode, selectedElementIds.length]);
 
   // Allowed durations logic (según tu regla)
   const allowedDurations = useMemo(() => capability.durations, [capability.durations]);
@@ -201,22 +219,32 @@ const VideoGeneratorTool: React.FC = () => {
   }, [aspectRatio, capability.supportsAspectRatio1x1]);
 
   useEffect(() => {
+    if (!isKlingClassic) return;
+    // Si pasa a STD y tenía sound ON, lo apagamos y marcamos touched
+    if (klingMode === "std" && klingSound) {
+      setKlingSound(false);
+      setKlingSoundTouched(true);
+    }
+  }, [isKlingClassic, klingMode, klingSound]);
+
+  useEffect(() => {
     if (!hasLast) return;
     if (!isVeo30) return;
-
-    useEffect(() => {
-      if (!isKling) return;
-      // Si pasa a STD y tenía sound ON, lo apagamos y marcamos touched
-      if (klingMode === "std" && klingSound) {
-        setKlingSound(false);
-        setKlingSoundTouched(true);
-      }
-    }, [isKling, klingMode, klingSound]);
 
     // Mantener "fast" si venías en fast
     const wantsFast = model.includes("-fast-");
     setModel(wantsFast ? VEO_3_1_FAST : VEO_3_1);
   }, [hasLast, isVeo30, model]);
+
+  useEffect(() => {
+    if (isKlingV3) return;
+    if (selectedElementIds.length) setSelectedElementIds([]);
+  }, [isKlingV3, selectedElementIds.length]);
+
+  useEffect(() => {
+    if (isKlingV3) return;
+    if (elementsOpen) setElementsOpen(false);
+  }, [elementsOpen, isKlingV3]);
 
   // Si cambia allowedDurations, ajusta duration si no es válido
   useEffect(() => {
@@ -274,6 +302,7 @@ const VideoGeneratorTool: React.FC = () => {
     if (model === VEO_3_1_FAST) return "Veo 3.1 Fast";
     if (model === KLING_2_5_TURBO) return "Kling 2.5 Turbo";
     if (model === KLING_2_6) return "Kling 2.6";
+    if (model === KLING_V3_PRO) return "Kling V3";
     return model;
   }, [model]);
 
@@ -342,6 +371,34 @@ const VideoGeneratorTool: React.FC = () => {
     });
   }, [imageAssets, pickerQuery]);
 
+  const elementAssets = useMemo(() => {
+    return imageAssets.filter((a) => {
+      if (a.type !== "image" || !a.url) return false;
+      const meta = a.meta || {};
+      return meta?.tool === "element-library" || meta?.isElement === true;
+    });
+  }, [imageAssets]);
+
+  const filteredElementAssets = useMemo(() => {
+    const q = elementsQuery.trim().toLowerCase();
+    if (!q) return elementAssets;
+    return elementAssets.filter((a) => {
+      const t = `${a.name || ""} ${a.prompt || ""}`.toLowerCase();
+      return t.includes(q);
+    });
+  }, [elementAssets, elementsQuery]);
+
+  const toggleElementSelection = (assetId: string) => {
+    setSelectedElementIds((prev) => {
+      if (prev.includes(assetId)) return prev.filter((id) => id !== assetId);
+      if (prev.length >= 5) {
+        setError("Kling permite seleccionar máximo 5 Elements a la vez.");
+        return prev;
+      }
+      return [assetId, ...prev];
+    });
+  };
+
   const handleGenerate = async () => {
     if (!prompt.trim()) return;
 
@@ -370,13 +427,23 @@ const VideoGeneratorTool: React.FC = () => {
       // si NO hay first frame, se permite escoger aspect ratio
       if (!firstFrame && capability.supportsAspectRatio) body.aspectRatio = aspectRatio;
 
-      if (isKling) {
+      if (isKlingClassic) {
         body.klingMode = klingMode; // <-- SIEMPRE enviamos el modo
       }
 
       // KlingSound: solo aplica a Kling 2.6, pero queremos poder mandar OFF si ya lo tocó
-      if (isKling && modelNorm === KLING_2_6 && klingSoundTouched) {
+      if (isKlingClassic && modelNorm === KLING_2_6 && klingSoundTouched) {
         body.klingSound = klingSound;
+      }
+
+      if (modelNorm === KLING_V3_PRO) {
+        if (klingSoundTouched) {
+          body.klingSound = klingSound;
+        }
+        body.klingMultiShot = klingMultiShot;
+        if (selectedElementIds.length) {
+          body.klingElementAssetIds = selectedElementIds;
+        }
       }
 
       const res = await apiPostJson<VideoGenResponse>("/api/ai/video", body);
@@ -408,6 +475,9 @@ const VideoGeneratorTool: React.FC = () => {
           durationSeconds: Number(durationSeconds),
           firstFrameAssetId: firstFrame?.id || null,
           lastFrameAssetId: lastFrame?.id || null,
+          klingSound: modelNorm === KLING_V3_PRO ? klingSound : null,
+          klingMultiShot: modelNorm === KLING_V3_PRO ? klingMultiShot : null,
+          klingElementAssetIds: modelNorm === KLING_V3_PRO ? selectedElementIds : [],
         },
       }));
 
@@ -425,12 +495,12 @@ const VideoGeneratorTool: React.FC = () => {
       <ErrorModal error={error} onClose={() => setError(null)} />
 
       <div className={styles.topBar}>
-        <div className={styles.titleWrap}>
-          <div className={styles.title}>GENERAL VIDEO GENERATOR</div>
-          <div className={styles.hint}>
-            Veo 3 / 3.1 · Kling 2.5/2.6 • First/Last frame • Historial guardado en assets
+          <div className={styles.titleWrap}>
+            <div className={styles.title}>GENERAL VIDEO GENERATOR</div>
+            <div className={styles.hint}>
+            Veo 3 / 3.1 · Kling 2.5/2.6/3 • First/Last frame • Historial guardado en assets
+            </div>
           </div>
-        </div>
         <div className={styles.badges}>
           <span className={styles.badge}>{modelLabel}</span>
           <span className={styles.badgeDim}>{hasFirst ? "Frames: ON" : "Frames: OFF"}</span>
@@ -570,6 +640,17 @@ const VideoGeneratorTool: React.FC = () => {
                     placeholder="Describe el video… (ej: cinematic neon city, rain, slow dolly in, high detail)"
                     rows={2}
                   />
+                  {isKlingV3 && (
+                    <div className={styles.promptToggles}>
+                      <button
+                        type="button"
+                        className={`${styles.toggleBtn} ${klingMultiShot ? styles.toggleBtnActive : ""}`}
+                        onClick={() => setKlingMultiShot((prev) => !prev)}
+                      >
+                        Multishot {klingMultiShot ? "On" : "Off"}
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -615,6 +696,19 @@ const VideoGeneratorTool: React.FC = () => {
                 <span>Duration</span>
                 <span className={styles.controlBtnMeta}>{durationLabel}</span>
               </button>
+
+              {isKlingV3 && (
+                <button
+                  type="button"
+                  className={styles.controlBtn}
+                  onClick={() => setElementsOpen(true)}
+                >
+                  <span>Elements</span>
+                  <span className={styles.controlBtnMeta}>
+                    {selectedElementIds.length ? `${selectedElementIds.length} selected` : "None"}
+                  </span>
+                </button>
+              )}
             </div>
 
             {/* Popovers */}
@@ -677,6 +771,14 @@ const VideoGeneratorTool: React.FC = () => {
                       >
                         <div className={styles.modelName}>Kling 2.6</div>
                         <div className={styles.modelDesc}>Mejor calidad · 5/10s · sound</div>
+                      </button>
+
+                      <button
+                        className={`${styles.modelOption} ${model === KLING_V3_PRO ? styles.modelOptionActive : ""}`}
+                        onClick={() => setModel(KLING_V3_PRO)}
+                      >
+                        <div className={styles.modelName}>Kling V3</div>
+                        <div className={styles.modelDesc}>Pro · text/image · multishot · sound</div>
                       </button>
                     </div>
 
@@ -774,7 +876,7 @@ const VideoGeneratorTool: React.FC = () => {
                       </div>
                     </div>
 
-                    {isKling && (
+                    {isKlingClassic && (
                       <div className={styles.formRow}>
                         <label className={styles.formLabel}>Kling Mode</label>
                         <div className={styles.segment}>
@@ -823,7 +925,9 @@ const VideoGeneratorTool: React.FC = () => {
                           >
                             Off
                           </button>
-                          <div className={styles.segmentMeta}>Solo Kling 2.6</div>
+                          <div className={styles.segmentMeta}>
+                            {model === KLING_2_6 ? "Solo Kling 2.6" : "Kling V3"}
+                          </div>
                         </div>
                       </div>
                     )}
@@ -969,6 +1073,59 @@ const VideoGeneratorTool: React.FC = () => {
                 LAST está bloqueado: primero carga FIRST.
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {elementsOpen && (
+        <div className={styles.modalOverlay} role="dialog" aria-modal="true">
+          <div className={styles.modal}>
+            <div className={styles.modalHeader}>
+              <div className={styles.modalTitle}>Select Elements</div>
+              <button className={styles.modalClose} onClick={() => setElementsOpen(false)} type="button">
+                ×
+              </button>
+            </div>
+
+            <div className={styles.modalActions}>
+              <input
+                className={styles.search}
+                placeholder="Search elements..."
+                value={elementsQuery}
+                onChange={(e) => setElementsQuery(e.target.value)}
+              />
+              <button
+                type="button"
+                className={styles.clearBtn}
+                onClick={() => setSelectedElementIds([])}
+                disabled={selectedElementIds.length === 0}
+              >
+                Clear
+              </button>
+            </div>
+
+            <div className={styles.pickerGrid}>
+              {filteredElementAssets.length === 0 ? (
+                <div className={styles.modalNote}>No elements yet. Crea Elements en Image Generator.</div>
+              ) : (
+                filteredElementAssets.map((a) => {
+                  const active = selectedElementIds.includes(a.id);
+                  return (
+                    <button
+                      key={a.id}
+                      type="button"
+                      className={`${styles.pickerTile} ${active ? styles.pickerTileActive : ""}`}
+                      onClick={() => toggleElementSelection(a.id)}
+                    >
+                      <img src={a.url} alt={a.name} />
+                      <div className={styles.pickerCap}>
+                        {shortText(a.prompt || a.name, 56)}
+                      </div>
+                    </button>
+                  );
+                })
+              )}
+            </div>
           </div>
         </div>
       )}

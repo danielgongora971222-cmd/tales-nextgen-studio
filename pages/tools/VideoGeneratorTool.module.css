@@ -368,11 +368,13 @@
   background: rgba(10, 5, 6, 0.55);
   overflow: hidden;
   box-shadow: 0 18px 40px rgba(0,0,0,0.45);
+  display: flex;
+  flex-direction: column;
 }
 
 .prompt {
   width: 100%;
-  height: 100%;
+  min-height: 72px;
   border: 0;
   outline: none;
   resize: none;
@@ -385,6 +387,33 @@
 }
 .prompt::placeholder {
   color: rgba(255,255,255,0.38);
+}
+
+.promptToggles {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 12px 10px;
+}
+.toggleBtn {
+  border-radius: 999px;
+  border: 1px solid rgba(241,225,148,0.20);
+  background: rgba(10, 5, 6, 0.6);
+  color: rgba(241,225,148,0.95);
+  font-family: var(--mono);
+  letter-spacing: 0.08em;
+  font-size: 10px;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: transform .18s ease, border-color .18s ease, background .18s ease;
+}
+.toggleBtn:hover {
+  transform: translateY(-1px);
+  border-color: rgba(241,225,148,0.35);
+}
+.toggleBtnActive {
+  background: rgba(91,14,20,0.45);
+  border-color: rgba(241,225,148,0.45);
+  box-shadow: 0 10px 25px rgba(91,14,20,0.35);
 }
 
 .generateCol {
@@ -438,7 +467,7 @@
 
 .controlsRow {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 10px;
   margin-top: 10px;
 }
@@ -796,6 +825,22 @@
   text-transform: uppercase;
   font-size: 11px;
 }
+.clearBtn {
+  height: 40px;
+  padding: 0 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(10, 5, 6, 0.45);
+  color: rgba(255,255,255,0.78);
+  cursor: pointer;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.clearBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 
 .pickerGrid {
   padding: 14px;
@@ -822,6 +867,10 @@
 .pickerTile:hover {
   transform: translateY(-1px);
   border-color: rgba(241,225,148,0.22);
+}
+.pickerTileActive {
+  border-color: rgba(241,225,148,0.55);
+  box-shadow: 0 14px 30px rgba(91,14,20,0.35);
 }
 .pickerTile img {
   width: 100%;
