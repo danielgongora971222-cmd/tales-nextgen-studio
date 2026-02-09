@@ -63,15 +63,21 @@ async function apiPostJson<T>(path: string, body: any): Promise<T> {
     body: JSON.stringify(body),
   });
 
+  // A veces un 502 viene como HTML (gateway) y resp.json() falla.
+  // Leemos texto y luego intentamos parsear JSON.
+  const rawText = await resp.text();
   let data: any = null;
   try {
-    data = await resp.json();
+    data = rawText ? JSON.parse(rawText) : null;
   } catch {
     data = null;
   }
 
   if (!resp.ok || data?.ok === false) {
-    const e = data?.error ?? data ?? { message: `Request failed: ${resp.status}` };
+    const e =
+      data?.error ??
+      data ??
+      { message: rawText ? rawText.slice(0, 600) : `Request failed: ${resp.status}` };
     const msg =
       typeof e === "string"
         ? e

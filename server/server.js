@@ -1112,6 +1112,14 @@ async function falQueueRun(endpointId, input) {
     throw httpError(502, "FAL_BAD_RESULT", `Fal result invalid JSON: ${resultText.slice(0, 200)}`);
   }
 
+  // Fal Queue result normalmente devuelve:
+  // { status: "COMPLETED", request_id, response: { ...output } }
+  // Nosotros queremos devolver directamente el output para que el resto del server use:
+  // falJson.video.url / falJson.images / etc.
+  if (resultJson && typeof resultJson === "object" && resultJson.response) {
+    return resultJson.response;
+  }
+
   return resultJson;
 }
 
