@@ -3032,7 +3032,12 @@ app.post("/api/ai/video", async (req, res, next) => {
         }
 
         const falJson = await falQueueRun(endpointId, falInput);
-        const videoUrl = falJson?.video?.url || falJson?.data?.video?.url;
+
+        const videoUrl =
+          falJson?.video?.url ||
+          falJson?.data?.video?.url ||
+          falJson?.videos?.[0]?.url ||
+          falJson?.output?.video?.url;
 
         if (!videoUrl) {
           throw httpError(502, "FAL_KLING_V3_NO_VIDEO", "Fal/Kling V3 no devolvió video.", {
@@ -3061,6 +3066,45 @@ app.post("/api/ai/video", async (req, res, next) => {
         });
 
         await uploadBytesToStorageAtPath({ storagePath, bytes, mimeType });
+        async function uploadStreamToStorageAtPath({ storagePath, stream, mimeType }) {
+          if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+            throw httpError(500, "SUPABASE_NOT_CONFIGURED", "Supabase no está configurado en el backend.");
+          }
+          if (!stream) {
+            throw httpError(502, "VIDEO_STREAM_MISSING", "No pude obtener el stream del video para subirlo a Storage.");
+          }
+
+          const encodedPath = String(storagePath)
+            .split("/")
+            .map(encodeURIComponent)
+            .join("/");
+
+          const url = `${SUPABASE_URL}/storage/v1/object/${SUPABASE_BUCKET}/${encodedPath}`;
+
+          const resp = await fetch(url, {
+            method: "POST",
+            headers: {
+              apikey: SUPABASE_SERVICE_ROLE_KEY,
+              Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+              "Content-Type": mimeType || "application/octet-stream",
+              "x-upsert": "false",
+            },
+            body: stream,
+            // Node fetch exige esto cuando mandas un stream como body
+            duplex: "half",
+          });
+
+          const txt = await resp.text();
+          if (!resp.ok) {
+            throw httpError(
+              502,
+              "SUPABASE_UPLOAD_FAILED",
+              `Supabase Storage upload failed (HTTP ${resp.status}): ${txt.slice(0, 200)}`
+            );
+          }
+
+          return storagePath;
+        }
 
         const meta = {
           tool: toolName,
@@ -3240,13 +3284,13 @@ app.post("/api/ai/video", async (req, res, next) => {
         );
       }
 
-      const bytes = Buffer.from(await videoResp.arrayBuffer());
       const mimeType = videoResp.headers.get("content-type") || "video/mp4";
-      const storagePath = buildAssetPath({
-        userId: user.id,
-        tool: toolName,
+
+      // ✅ Subida por streaming (no cargamos todo el mp4 en memoria)
+      await uploadStreamToStorageAtPath({
+        storagePath,
+        stream: videoResp.body,
         mimeType,
-        nameHint: hint,
       });
 
       await uploadBytesToStorageAtPath({ storagePath, bytes, mimeType });
