@@ -350,6 +350,7 @@ const VideoRequestSchema = z.object({
   prompt: z.string().min(1).max(14000),
   model: z.string().optional(),
   sync: z.boolean().optional(),
+  async: z.boolean().optional(),
 
   // Solo aplica cuando NO hay firstFrame
   aspectRatio: z.enum(["16:9", "9:16", "1:1"]).optional(),
@@ -970,23 +971,6 @@ function base64urlDecodeToString(input) {
   return Buffer.from(b64, "base64").toString("utf8");
 }
 
-const JOB_TOKEN_SECRET =
-  process.env.JOB_TOKEN_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-
-function signJobToken(payload, ttlSeconds = 60 * 60) {
-  if (!JOB_TOKEN_SECRET) {
-    throw httpError(
-      500,
-      "JOB_TOKEN_SECRET_MISSING",
-      "Falta JOB_TOKEN_SECRET (o SUPABASE_SERVICE_ROLE_KEY) para firmar tokens internos."
-    );
-  }
-  const now = Math.floor(Date.now() / 1000);
-  const data = { ...payload, iat: now, exp: now + ttlSeconds };
-  const body = base64urlEncode(JSON.stringify(data));
-  const sig = base64urlEncode(createHmac("sha256", JOB_TOKEN_SECRET).update(body).digest());
-  return `${body}.${sig}`;
-}
 
 function verifyJobToken(token) {
   if (!JOB_TOKEN_SECRET) {
@@ -1064,6 +1048,45 @@ function falDimsFromAspectQuality(aspectRatio, quality) {
   if (w >= h) return { width: long, height: short };
   return { width: short, height: long };
 }
+
+// =============================
+// JobToken (HMAC) - stateless
+// =============================
+const JOB_TOKEN_SECRET = process.env.JOB_TOKEN_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+function base64urlDecodeToString(b64url) {
+  const b64 = b64url.replace(/-/g, "+").replace(/_/g, "/");
+  const pad = b64.length % 4 ? "=".repeat(4 - (b64.length % 4)) : "";
+  return Buffer.from(b64 + pad, "base64").toString("utf8");
+}
+
+function signJobToken(payloadObj) {
+  if (!JOB_TOKEN_SECRET) throw httpError(500, "JOB_TOKEN_SECRET_MISSING", "Missing JOB_TOKEN_SECRET (or SUPABASE_SERVICE_ROLE_KEY)");
+  const payloadB64 = base64urlEncode(JSON.stringify(payloadObj));
+  const sigB64 = createHmac("sha256", JOB_TOKEN_SECRET).update(payloadB64).digest("base64");
+  const sig = sigB64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  return `${payloadB64}.${sig}`;
+}
+
+function verifyJobToken(token) {
+  if (!JOB_TOKEN_SECRET) throw httpError(500, "JOB_TOKEN_SECRET_MISSING", "Missing JOB_TOKEN_SECRET (or SUPABASE_SERVICE_ROLE_KEY)");
+  const parts = String(token || "").split(".");
+  if (parts.length !== 2) throw httpError(400, "BAD_JOB_TOKEN", "Job token inválido.");
+  const [payloadB64, sig] = parts;
+
+  const expectedSigB64 = createHmac("sha256", JOB_TOKEN_SECRET).update(payloadB64).digest("base64");
+  const expectedSig = expectedSigB64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  if (sig !== expectedSig) throw httpError(401, "BAD_JOB_TOKEN_SIG", "Job token inválido (firma).");
+
+  const payload = JSON.parse(base64urlDecodeToString(payloadB64));
+
+  // exp opcional
+  if (payload?.exp && Date.now() > payload.exp) {
+    throw httpError(401, "JOB_TOKEN_EXPIRED", "Job token expiró.");
+  }
+  return payload;
+}
+
 
 async function falQueueSubmit(endpointId, input) {
   const auth = falAuthHeader();
@@ -1253,6 +1276,96 @@ async function falQueueRun(endpointId, input) {
 
   return resultJson;
 }
+
+// =============================
+// Fal.ai async helpers (submit/status/result)
+// =============================
+async function falQueueSubmit(endpointId, input) {
+  const auth = falAuthHeader();
+  if (!auth) throw httpError(500, "FAL_KEY_MISSING", "Missing FAL_KEY env var (Fal.ai)");
+
+  const submitUrl = `https://queue.fal.run/${endpointId}`;
+  const submitResp = await fetch(submitUrl, {
+    method: "POST",
+    headers: { Authorization: auth, "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  const submitText = await submitResp.text();
+  let submitJson;
+  try {
+    submitJson = JSON.parse(submitText);
+  } catch {
+    throw httpError(502, "FAL_BAD_RESPONSE", `Fal submit invalid JSON: ${submitText.slice(0, 200)}`);
+  }
+
+  if (!submitResp.ok) {
+    throw httpError(
+      502,
+      "FAL_SUBMIT_FAILED",
+      `Fal submit HTTP ${submitResp.status}: ${submitJson?.detail || submitJson?.message || submitText}`.slice(0, 400)
+    );
+  }
+
+  const statusUrl = submitJson?.status_url;
+  const responseUrl = submitJson?.response_url;
+  const requestId = submitJson?.request_id;
+
+  if (!statusUrl || !responseUrl || !requestId) {
+    throw httpError(502, "FAL_SUBMIT_MISSING_FIELDS", "Fal submit missing status_url/response_url/request_id", {
+      submitJson,
+    });
+  }
+
+  return { requestId, statusUrl, responseUrl };
+}
+
+async function falQueueStatus(statusUrl) {
+  const auth = falAuthHeader();
+  if (!auth) throw httpError(500, "FAL_KEY_MISSING", "Missing FAL_KEY env var (Fal.ai)");
+
+  const r = await fetch(statusUrl, { headers: { Authorization: auth } });
+  const t = await r.text();
+
+  let j;
+  try {
+    j = JSON.parse(t);
+  } catch {
+    throw httpError(502, "FAL_BAD_STATUS", `Fal status invalid JSON: ${t.slice(0, 200)}`);
+  }
+
+  if (!r.ok) {
+    throw httpError(
+      502,
+      "FAL_STATUS_FAILED",
+      `Fal status HTTP ${r.status}: ${j?.detail || j?.message || t}`.slice(0, 400)
+    );
+  }
+
+  return j; // { status: "IN_PROGRESS"|"COMPLETED"|"FAILED", ... }
+}
+
+async function falQueueResult(responseUrl) {
+  const auth = falAuthHeader();
+  if (!auth) throw httpError(500, "FAL_KEY_MISSING", "Missing FAL_KEY env var (Fal.ai)");
+
+  const r = await fetch(responseUrl, { headers: { Authorization: auth } });
+  const t = await r.text();
+
+  if (!r.ok) {
+    throw httpError(502, "FAL_RESULT_FAILED", `Fal result HTTP ${r.status}: ${t.slice(0, 200)}`);
+  }
+
+  let j;
+  try {
+    j = JSON.parse(t);
+  } catch {
+    throw httpError(502, "FAL_BAD_RESULT", `Fal result invalid JSON: ${t.slice(0, 200)}`);
+  }
+
+  return j;
+}
+
 
 async function falResultImageToDataUrl(img) {
   if (!img) throw httpError(502, "FAL_NO_IMAGE", "Fal result missing image");
@@ -3108,12 +3221,145 @@ app.post("/api/ai/video/fal/finalize", async (req, res) => {
   }
 });
 
+// =============================
+// Kling V3 (Fal) async endpoints
+// =============================
+
+// 1) SUBMIT: crea el job en Fal y devuelve jobToken rápido (evita timeout de Vercel)
+app.post("/api/ai/video/fal/submit", async (req, res) => {
+  try {
+    const body = VideoRequestSchema.parse(req.body);
+    const { user, error } = await requireUser(req);
+    if (error) return res.status(401).json({ ok: false, error });
+
+    const modelNorm = String(body.model || "").trim().replace(/^models\//i, "");
+    if (modelNorm !== "kling-v3") {
+      return res.status(400).json({ ok: false, error: "Este endpoint es solo para Kling V3 (Fal)." });
+    }
+
+    // Reutilizamos TU lógica de armado Fal input (la misma que ya tienes en /api/ai/video)
+    const hasFirst = Boolean(body.firstFrameAssetId);
+    const endpointId = hasFirst
+      ? "fal-ai/kling-video/v3/pro/image-to-video"
+      : "fal-ai/kling-video/v3/pro/text-to-video";
+
+    // --- COPIA LA MISMA CONSTRUCCIÓN QUE YA TIENES EN /api/ai/video (branch kling-v3) ---
+    // OJO: aquí solo armamos falInput y NO hacemos falQueueRun.
+    const falInput = {};
+    // 🔴 (En el siguiente paso te digo EXACTO qué bloque copiar para falInput)
+
+    // Para no improvisar, aquí lo hacemos simple: llamamos a una función local
+    // Si no quieres función, copia el bloque y listo.
+    const built = await buildFalInputForKlingV3({ body, userId: user.id });
+    const { requestId, statusUrl, responseUrl } = await falQueueSubmit(endpointId, built);
+
+    const jobToken = signJobToken({
+      kind: "fal-kling-v3",
+      userId: user.id,
+      endpointId,
+      requestId,
+      statusUrl,
+      responseUrl,
+      exp: Date.now() + 1000 * 60 * 60 * 6, // 6 horas
+    });
+
+    return res.json({ ok: true, async: true, requestId, jobToken });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// 2) STATUS: el frontend pregunta progreso sin mantener request largo
+app.get("/api/ai/video/fal/status", async (req, res) => {
+  try {
+    const token = String(req.query.token || "");
+    if (!token) return res.status(400).json({ ok: false, error: "Missing token" });
+
+    const { user, error } = await requireUser(req);
+    if (error) return res.status(401).json({ ok: false, error });
+
+    const payload = verifyJobToken(token);
+    if (payload.userId !== user.id) return res.status(403).json({ ok: false, error: "Forbidden" });
+
+    const st = await falQueueStatus(payload.statusUrl);
+    return res.json({ ok: true, status: st?.status || "UNKNOWN", raw: st });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
+// 3) FINALIZE: cuando status=COMPLETED, descarga el video, lo sube a Supabase, devuelve items
+app.post("/api/ai/video/fal/finalize", async (req, res) => {
+  try {
+    const token = String(req.body?.token || "");
+    if (!token) return res.status(400).json({ ok: false, error: "Missing token" });
+
+    const { user, error } = await requireUser(req);
+    if (error) return res.status(401).json({ ok: false, error });
+
+    const payload = verifyJobToken(token);
+    if (payload.userId !== user.id) return res.status(403).json({ ok: false, error: "Forbidden" });
+
+    const st = await falQueueStatus(payload.statusUrl);
+    if (st?.status !== "COMPLETED") {
+      return res.status(409).json({ ok: false, error: `Not ready yet: ${st?.status || "UNKNOWN"}`, status: st?.status });
+    }
+
+    const result = await falQueueResult(payload.responseUrl);
+
+    const videoUrl =
+      result?.video?.url ||
+      result?.data?.video?.url ||
+      result?.videos?.[0]?.url ||
+      result?.output?.video?.url;
+
+    if (!videoUrl) {
+      return res.status(502).json({ ok: false, error: "FAL_KLING_V3_NO_VIDEO", debug: result });
+    }
+
+    const videoResp = await fetch(videoUrl);
+    if (!videoResp.ok) {
+      return res.status(502).json({ ok: false, error: `Failed to download video from Fal: ${videoResp.status}` });
+    }
+
+    const arr = await videoResp.arrayBuffer();
+    const buf = Buffer.from(arr);
+
+    const { storagePath } = await uploadBufferToStorage({
+      userId: user.id,
+      tool: "video-generator",
+      buffer: buf,
+      mimeType: "video/mp4",
+      nameHint: "kling_v3",
+    });
+
+    const assetId = await insertAssetRow({
+      ownerId: user.id,
+      type: "video",
+      tool: "video-generator",
+      name: "kling_v3",
+      prompt: null,
+      storagePath,
+      isPublic: false,
+      meta: { provider: "fal", model: "kling-v3", requestId: payload.requestId },
+    });
+
+    const signedUrl = await signStoragePath(storagePath, 60 * 60); // 1h
+
+    return res.json({ ok: true, items: [{ url: signedUrl, assetId }], urlExpiresInSeconds: 3600 });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+  }
+});
+
 app.post("/api/ai/video", async (req, res, next) => {
   try {
+    const parsed = VideoRequestSchema.parse(req.body);
     const {
       prompt,
       model,
-      async: asyncMode,
+      async: asyncFlag,
+      sync,
       aspectRatio,
       resolution,
       durationSeconds,
@@ -3132,8 +3378,14 @@ app.post("/api/ai/video", async (req, res, next) => {
       klingCfgScale,
       klingVoiceIds,
       klingShotType,
-    } = VideoRequestSchema.parse(req.body);
+    } = parsed;
 
+    // Prioridad: body.async === true => asyncMode true
+    //            body.sync  === true => asyncMode false
+    //            default => asyncMode true (evita timeouts en Vercel)
+    const asyncMode = asyncFlag === true ? true : sync === true ? false : true;
+
+    // ... resto igual
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
 
