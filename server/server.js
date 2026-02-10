@@ -211,6 +211,7 @@ app.use(
     getClientIp,
     apiError,
     httpError,
+    ensureAI,
 
     // storage helpers
     parseDataUrl,
@@ -226,14 +227,6 @@ app.use(
     APP_ENV: process.env.APP_ENV,
     NODE_ENV: process.env.NODE_ENV,
     SUPABASE_BUCKET: process.env.SUPABASE_BUCKET,
-
-    // 🔥 IMPORTANTÍSIMO:
-    // Si tu handler /api/ai/video usa más variables del server.js (por ejemplo fal, fetch, etc),
-    // solo añádelas aquí con el mismo nombre.
-    // Ejemplo:
-    // FAL_KEY: process.env.FAL_KEY,
-    // FAL_BASE_URL,
-    // falClient,
   })
 );
 
@@ -246,6 +239,7 @@ app.use(
     getClientIp,
     apiError,
     httpError,
+    ensureAI,
 
     // storage helpers
     parseDataUrl,
@@ -261,16 +255,9 @@ app.use(
     APP_ENV: process.env.APP_ENV,
     NODE_ENV: process.env.NODE_ENV,
     SUPABASE_BUCKET: process.env.SUPABASE_BUCKET,
-
-    // ⚠️ Si tu handler /api/ai/image usa otras variables del server.js,
-    // agrégalas aquí con el MISMO nombre.
-    // Ejemplos típicos (solo si las usa tu handler):
-    // GEMINI_API_KEY: process.env.GEMINI_API_KEY,
-    // OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-    // fetch,
-    // etc...
   })
 );
+
 
 app.use(
   "/api",

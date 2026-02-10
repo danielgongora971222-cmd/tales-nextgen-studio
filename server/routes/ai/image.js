@@ -17,6 +17,7 @@ export function createAiImageRouter(ctx) {
     getClientIp,
     apiError,
     httpError,
+    ensureAI,
 
     // storage helpers
     parseDataUrl,
