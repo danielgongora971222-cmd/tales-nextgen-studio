@@ -1758,12 +1758,25 @@ app.use((err, req, res, _next) => {
   }
 
   // 4) Cualquier otro error inesperado
-  req?.log?.error?.({ err }, "Unhandled error");
+  const errorId = randomUUID();
+  req?.log?.error?.({ err, errorId }, "Unhandled error");
+
+  const isDebug = (process.env.APP_ENV || "").toLowerCase() !== "production";
+
   return res.status(500).json({
     ok: false,
     error: {
       code: "INTERNAL_ERROR",
       message: "Error inesperado en el servidor.",
+      details: {
+        errorId,
+        ...(isDebug
+          ? {
+              message: err?.message,
+              stack: err?.stack,
+            }
+          : {}),
+      },
     },
   });
 });
