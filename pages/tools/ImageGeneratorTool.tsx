@@ -698,6 +698,20 @@ const ImageGeneratorTool: React.FC = () => {
   const [elementAllQuery, setElementAllQuery] = useState("");
   const [deletingElementId, setDeletingElementId] = useState<string | null>(null);
 
+// ✅ Kling o1 (API) NO permite aspect_ratio="auto" cuando NO hay imágenes de referencia.
+// (Cuando hay imágenes, "auto" sí puede funcionar porque el modelo detecta el ratio desde la imagen.)
+const isKlingO1 = model === "kling:kling-image-o1";
+const hasAnyReferenceImage =
+  !!refs.char1 || !!refs.char2 || !!refs.char3 || !!refs.background || (selectedElementAssetIds?.length || 0) > 0;
+
+// Si el usuario está en Kling o1 y quita todas las referencias, evitamos que se quede en "auto".
+useEffect(() => {
+  if (isKlingO1 && !hasAnyReferenceImage && aspectRatio === "auto") {
+    setAspectRatio("1:1");
+  }
+}, [isKlingO1, hasAnyReferenceImage, aspectRatio]);
+
+
   const elementPickerCandidates = useMemo(() => {
     const q = (elementCreatePickerQuery || "").trim().toLowerCase();
     const imgs = (myAssets || []).filter((a: any) => a?.type === "image" && a?.url);
@@ -754,6 +768,15 @@ const ImageGeneratorTool: React.FC = () => {
   const styleLabel = selectedStyleId
     ? (STYLE_PRESETS.find((p) => p.id === selectedStyleId)?.name || "Selected")
     : "None";
+
+  // Options reales para el selector de Aspect Ratio.
+  // Para Kling o1: escondemos "Auto" si no hay referencias (text-to-image puro)
+  // porque el backend (Kling) lo rechaza.
+  const aspectRatioOptions = useMemo(() => {
+    const list = activeCaps.aspectRatios || [];
+    if (isKlingO1 && !hasAnyReferenceImage) return list.filter((ar) => ar.value !== "auto");
+    return list;
+  }, [activeCaps, isKlingO1, hasAnyReferenceImage]);
 
   const modelGroups = [
     {
@@ -817,7 +840,7 @@ const ImageGeneratorTool: React.FC = () => {
     setModel(next);
 
     // ✅ defaults (por requerimiento)
-    setAspectRatio("auto");
+    setAspectRatio(next === "kling:kling-image-o1" ? "1:1" : "auto");
     setCount(1);
 
     // Quality válida para el modelo elegido
@@ -1521,10 +1544,16 @@ const ImageGeneratorTool: React.FC = () => {
       // Ej: O3 soporta aspectRatio="auto" y quality="4K", pero V3 no.
       const effCaps = getActiveCaps(effectiveModel);
 
-      const effectiveAspectRatio =
+      let effectiveAspectRatio =
         effCaps.aspectRatios.some((ar) => ar.value === aspectRatio)
           ? aspectRatio
           : (effCaps.aspectRatios.find((ar) => ar.value === "1:1")?.value || effCaps.aspectRatios[0]?.value || "1:1");
+
+      // ✅ FIX: Kling o1 (API) rechaza aspectRatio="auto" si NO hay imágenes de referencia
+      // (error: "Auto aspect ratio is not allowed when no image input").
+      if (effectiveModel === "kling:kling-image-o1" && totalRefs === 0 && effectiveAspectRatio === "auto") {
+        effectiveAspectRatio = "1:1";
+      }
 
       const effectiveQuality =
         effCaps.qualities.includes(quality)
@@ -2252,7 +2281,7 @@ const ImageGeneratorTool: React.FC = () => {
                           setPanel(null); // auto-close
                         }}
                       >
-                        {getActiveCaps(model).aspectRatios.map((ar) => (
+                        {aspectRatioOptions.map((ar) => (
                           <option key={ar.value} value={ar.value}>
                             {ar.label}
                           </option>
