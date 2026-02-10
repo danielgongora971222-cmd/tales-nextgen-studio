@@ -1,5 +1,5 @@
 import express from "express";
-import { UploadAssetSchema } from "../schemas/index.js";
+import { UploadAssetSchema } from "../../schemas/index.js";
 
 export function createAssetsRouter(ctx) {
   const router = express.Router();
@@ -44,7 +44,7 @@ export function createAssetsRouter(ctx) {
 // Assets: delete (owner only)
 // DELETE /api/assets/:id
 // ===============================
-router.delete("/api/assets/:id", async (req, res) => {
+router.delete("/assets/:id", async (req, res) => {
   const { user, error } = await requireUser(req);
   if (error) return res.status(401).json({ ok: false, error });
 
@@ -114,7 +114,7 @@ router.delete("/api/assets/:id", async (req, res) => {
 // Assets: historial del usuario (DB)
 // GET /api/assets?type=image&limit=50
 // ===============================
-router.get("/api/assets", async (req, res) => {
+router.get("/assets", async (req, res) => {
   // 1) exigir login
   const scope = typeof req.query.scope === "string" ? req.query.scope : "my";
   const { user, error } = await requireUser(req);
@@ -188,7 +188,7 @@ router.get("/api/assets", async (req, res) => {
     return res.json({ ok: true, items });
 });
 
-router.post("/api/assets/:id/unpublish", async (req, res) => {
+router.post("/assets/:id/unpublish", async (req, res) => {
   const { user, error } = await requireUser(req);
   if (error) return res.status(401).json({ ok: false, error });
 
@@ -219,7 +219,7 @@ router.post("/api/assets/:id/unpublish", async (req, res) => {
   return res.json({ ok: true, id: data.id, isPublic: !!data.is_public });
 });
 
-router.post("/api/assets/upload", async (req, res, next) => {
+router.post("/assets/upload", async (req, res, next) => {
   try {
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
@@ -283,7 +283,7 @@ router.post("/api/assets/upload", async (req, res, next) => {
 // POST /api/assets/:id/unpublish
 // ===============================
 
-router.post("/api/assets/:id/publish", async (req, res) => {
+router.post("/assets/:id/publish", async (req, res) => {
   const { user, error } = await requireUser(req);
   if (error) return res.status(401).json({ ok: false, error });
 
