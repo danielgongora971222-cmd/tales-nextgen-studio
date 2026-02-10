@@ -926,48 +926,44 @@ const durationLabel = useMemo(() => {
     >
       <ErrorModal error={error} onClose={() => setError(null)} />
 
-      <div className={styles.topBar}>
-        <div className={styles.titleWrap}>
-          <div className={styles.title}>GENERAL VIDEO GENERATOR</div>
-          <div className={styles.hint}>
-            Veo 3 / 3.1 · Kling 2.5/2.6 • First/Last frame • Historial guardado en assets
-          </div>
-        </div>
-        <div className={styles.badges}>
-          <span className={styles.badge}>{modelLabel}</span>
-          <span className={styles.badgeDim}>{hasFirst ? "Frames: ON" : "Frames: OFF"}</span>
-        </div>
-      </div>
-
-            <div className={styles.historyBar}>
-        <div className={styles.historyBarLeft}>
-          <div className={styles.historyTitle}>HISTORY</div>
-          <div className={styles.historyHint}>Hover para acciones · Click para receta</div>
-        </div>
-
-        <button className={styles.ghostBtn} onClick={reloadHistory} type="button" disabled={isLoadingHistory}>
-          Refresh
-        </button>
-      </div>
-
-      <div className={styles.historyGrid}>
-        {isLoadingHistory ? (
-          <div className={styles.historyLoading}>Cargando historial…</div>
-        ) : videoAssets.length === 0 && pendingSlots.length === 0 ? (
-          <div className={styles.emptyState}>
-            <div className={styles.emptyAnimator}>
-              <div className={styles.emptyGrid} />
-              <div className={styles.emptyGlow} />
-              <div className={styles.emptyScan} />
-              <div className={styles.emptyOrb} />
-            </div>
-            <div className={styles.emptyCopy}>
-              <div className={styles.emptyTitle}>Aún no has generado videos</div>
-              <div className={styles.emptySub}>Escribe un prompt abajo y presiona GENERATE.</div>
+            <div className={styles.stage}>
+        <div className={styles.historyHeader}>
+          <div className={styles.historyTitle}>
+            <span className={styles.kicker}>VIDEO GENERATOR</span>
+            <div className={styles.historyMeta}>
+              {isLoadingHistory ? (
+                <span className={styles.subKicker}>Loading history...</span>
+              ) : (
+                <>
+                  <span className={styles.subKicker}>History</span>
+                  <span className={styles.historyCount}>{videoAssets.length}</span>
+                </>
+              )}
             </div>
           </div>
-        ) : (
-          <>
+
+          <button className={styles.ghostBtn} onClick={reloadHistory} type="button" disabled={isLoadingHistory}>
+            Refresh
+          </button>
+        </div>
+
+        <div className={styles.historyGrid}>
+          {isLoadingHistory ? (
+            <div className={styles.historyLoading}>Cargando historial…</div>
+          ) : videoAssets.length === 0 && pendingSlots.length === 0 ? (
+            <div className={styles.emptyState}>
+              <div className={styles.emptyAnimator}>
+                <div className={styles.emptyGrid} />
+                <div className={styles.emptyGlow} />
+                <div className={styles.emptyScan} />
+                <div className={styles.emptyOrb} />
+              </div>
+              <div className={styles.emptyCopy}>
+                <div className={styles.emptyCode}>NO GENERATIONS</div>
+                <div className={styles.emptyText}>Genera tu primer video para ver el historial aquí.</div>
+              </div>
+            </div>
+          ) : (
             <div className={styles.grid}>
               {pendingSlots.map((id) => (
                 <div key={id} className={`${styles.tile} ${styles.tilePending}`} aria-label="Generating...">
@@ -1019,7 +1015,6 @@ const durationLabel = useMemo(() => {
                       {asset.isPublic && <span className={styles.publicTag}>PUBLIC</span>}
                     </div>
 
-                    {/* Hover actions */}
                     <div className={styles.tileActions} onClick={(e) => e.stopPropagation()}>
                       <button
                         type="button"
@@ -1051,21 +1046,24 @@ const durationLabel = useMemo(() => {
                 );
               })}
             </div>
+          )}
 
-            {hasMoreHistory && (
-              <div className={styles.loadMoreRow}>
-                <button
-                  type="button"
-                  className={styles.loadMoreBtn}
-                  onClick={handleLoadMoreHistory}
-                  disabled={isLoadingMoreHistory}
-                >
-                  {isLoadingMoreHistory ? "Cargando…" : "Cargar más"}
-                </button>
+          {hasMoreHistory && (
+            <div className={styles.historyLoadMoreWrap}>
+              <button
+                type="button"
+                className={styles.loadMoreBtn}
+                onClick={handleLoadMoreHistory}
+                disabled={isLoadingMoreHistory}
+              >
+                {isLoadingMoreHistory ? "Cargando..." : "Cargar más"}
+              </button>
+              <div className={styles.loadMoreHint}>
+                Mostrando {visibleHistory.length} de {videoAssets.length}
               </div>
-            )}
-          </>
-        )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* DOCK (prompt bar estilo Image Tool) */}
@@ -1126,62 +1124,117 @@ const durationLabel = useMemo(() => {
             </div>
           </div>
 
-          <div className={styles.promptRow}>
+                    <div className={styles.promptRow}>
             <div className={styles.promptInputWrap}>
-              {/* Kling toolbar (se mantiene tu lógica) */}
               {isKlingV3 && (
-                <div className={styles.toolbar}>
+                <div className={styles.klingDock}>
+                  {/* Elements */}
                   <button
                     type="button"
-                    className={`${styles.toolbarBtn} ${elementsOpen ? styles.toolbarBtnActive : ""}`}
-                    onClick={() => setElementsOpen((v) => !v)}
+                    className={styles.klingElementBtn}
+                    onClick={() => setElementsOpen(true)}
                     disabled={!firstFrame?.id}
                     title={!firstFrame?.id ? "Para usar Elements primero carga FIRST frame" : "Seleccionar Elements"}
+                    aria-label="Elements"
                   >
-                    Elements {selectedKlingElementIds.length ? `(${selectedKlingElementIds.length})` : ""}
+                    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                      <path
+                        fill="currentColor"
+                        d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm0 2c-4.4 0-8 2.24-8 5v2h16v-2c0-2.76-3.6-5-8-5z"
+                      />
+                    </svg>
+
+                    {selectedKlingElementIds.length > 0 && (
+                      <span className={styles.klingBadge}>{selectedKlingElementIds.length}</span>
+                    )}
                   </button>
 
+                  {/* Multishot toggle */}
                   <button
                     type="button"
-                    className={`${styles.toolbarBtn} ${multishotEnabled ? styles.toolbarBtnActive : ""}`}
+                    className={`${styles.klingElementBtn} ${multishotEnabled ? styles.klingElementBtnActive : ""}`}
                     onClick={() => setMultishotEnabled((v) => !v)}
                     title="Activar/Desactivar Multishot"
+                    aria-label="Multishot"
                   >
-                    Multishot {multishotEnabled ? "ON" : "OFF"}
+                    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                      <path
+                        fill="currentColor"
+                        d="M4 6h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2zm2 2v8h12V8H6zm14 1h2v6h-2V9z"
+                      />
+                    </svg>
                   </button>
 
-                  {multishotEnabled && (
-                    <button
-                      type="button"
-                      className={styles.toolbarBtn}
-                      onClick={() => setMultishotOpen(true)}
-                      title="Editar shots"
-                    >
-                      Edit ({klingShots.length} · {multishotTotalSeconds}s)
-                    </button>
-                  )}
+                  {/* Edit multishot */}
+                  <button
+                    type="button"
+                    className={styles.klingElementBtn}
+                    onClick={() => setMultishotOpen(true)}
+                    disabled={!multishotEnabled}
+                    title={!multishotEnabled ? "Activa Multishot para editar shots" : "Editar shots"}
+                    aria-label="Edit multishot"
+                  >
+                    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                      <path
+                        fill="currentColor"
+                        d="M10 18h4v-2h-4v2zm-7 0h4v-2H3v2zM17 18h4v-2h-4v2zM10 13h4V6h-4v7zM3 13h4V9H3v4zm14 0h4V4h-4v9z"
+                      />
+                    </svg>
+                  </button>
                 </div>
               )}
 
-              <textarea
-                className={styles.promptInput}
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                placeholder="Describe el video… (ej: cinematic neon city, rain, slow dolly in, high detail)"
-                rows={2}
-              />
+              <div className={styles.promptEditor}>
+                {(selectedKlingElementIds.length > 0 || (isKlingV3 && multishotEnabled)) && (
+                  <div className={styles.promptTags}>
+                    {selectedKlingElementIds.length > 0 && (
+                      <button
+                        type="button"
+                        className={styles.promptTag}
+                        onClick={() => setSelectedKlingElementIds([])}
+                        title="Click para limpiar Elements"
+                      >
+                        Elements: {selectedKlingElementIds.length}
+                        <span className={styles.promptTagRemove}>×</span>
+                      </button>
+                    )}
+
+                    {isKlingV3 && multishotEnabled && (
+                      <button
+                        type="button"
+                        className={styles.promptTag}
+                        onClick={() => setMultishotEnabled(false)}
+                        title="Click para apagar Multishot"
+                      >
+                        Multishot: {multishotTotalSeconds}s
+                        <span className={styles.promptTagRemove}>×</span>
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                <textarea
+                  className={styles.prompt}
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  placeholder="Describe el video… (ej: cinematic neon city, rain, slow dolly in, high detail)"
+                  rows={2}
+                />
+              </div>
             </div>
 
-            <button
-              type="button"
-              className={styles.generateBtn}
-              disabled={isGenerating || (isKlingV3 && multishotEnabled ? !multishotIsReady : !prompt.trim())}
-              onClick={handleGenerate}
-              data-loading={isGenerating ? "true" : "false"}
-            >
-              <span className={styles.generateLabel}>{isGenerating ? "GENERATING" : "GENERATE"}</span>
-              {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
-            </button>
+            <div className={styles.generateCol}>
+              <button
+                type="button"
+                className={styles.generateBtn}
+                disabled={isGenerating || (isKlingV3 && multishotEnabled ? !multishotIsReady : !prompt.trim())}
+                onClick={handleGenerate}
+                data-loading={isGenerating ? "true" : "false"}
+              >
+                <span className={styles.generateLabel}>{isGenerating ? "GENERATING" : "GENERATE"}</span>
+                {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
+              </button>
+            </div>
           </div>
 
           {/* Controls row (igual a tu lógica actual) */}
@@ -1215,11 +1268,344 @@ const durationLabel = useMemo(() => {
           </div>
 
           {/* POPOVERS: aquí NO cambiamos tu contenido, solo el botón close si quieres estética igual */}
-          {panel && (
-            <div ref={popoverRef} className={styles.popover}>
-              {/* (Tu contenido actual de popovers va aquí tal cual ya lo tienes) */}
-            </div>
-          )}
+                    {panel && (
+                      <div ref={popoverRef} className={styles.popover}>
+                        <div className={styles.popoverInner}>
+                          <div className={styles.popoverHeader}>
+                            <div className={styles.popoverTitle}>
+                              {panel === "model" ? "Model" : panel === "parameters" ? "Parameters" : "Duration"}
+                            </div>
+                            <button className={styles.closeBtn} onClick={() => setPanel(null)} type="button" title="Cerrar">
+                              <Icon name="close" />
+                            </button>
+                          </div>
+
+                          {/* MODEL */}
+                          {panel === "model" && (
+                            <div className={styles.modelGrid}>
+                              <button
+                                type="button"
+                                className={`${styles.modelOption} ${model === VEO_3 ? styles.modelOptionActive : ""}`}
+                                onClick={() => {
+                                  setModel(VEO_3);
+                                  setPanel(null);
+                                }}
+                              >
+                                <div className={styles.modelName}>Veo 3</div>
+                                <div className={styles.modelDesc}>Calidad alta · 8s fijo</div>
+                              </button>
+
+                              <button
+                                type="button"
+                                className={`${styles.modelOption} ${model === VEO_3_FAST ? styles.modelOptionActive : ""}`}
+                                onClick={() => {
+                                  setModel(VEO_3_FAST);
+                                  setPanel(null);
+                                }}
+                              >
+                                <div className={styles.modelName}>Veo 3 Fast</div>
+                                <div className={styles.modelDesc}>Más rápido · 8s fijo</div>
+                              </button>
+
+                              <button
+                                type="button"
+                                className={`${styles.modelOption} ${model === VEO_3_1 ? styles.modelOptionActive : ""}`}
+                                onClick={() => {
+                                  setModel(VEO_3_1);
+                                  setPanel(null);
+                                }}
+                              >
+                                <div className={styles.modelName}>Veo 3.1</div>
+                                <div className={styles.modelDesc}>4/6/8s (según resolución y frames)</div>
+                              </button>
+
+                              <button
+                                type="button"
+                                className={`${styles.modelOption} ${model === VEO_3_1_FAST ? styles.modelOptionActive : ""}`}
+                                onClick={() => {
+                                  setModel(VEO_3_1_FAST);
+                                  setPanel(null);
+                                }}
+                              >
+                                <div className={styles.modelName}>Veo 3.1 Fast</div>
+                                <div className={styles.modelDesc}>Más rápido · mismo set de reglas</div>
+                              </button>
+
+                              <button
+                                type="button"
+                                className={`${styles.modelOption} ${model === KLING_2_5_TURBO ? styles.modelOptionActive : ""}`}
+                                onClick={() => {
+                                  setModel(KLING_2_5_TURBO);
+                                  setPanel(null);
+                                }}
+                              >
+                                <div className={styles.modelName}>Kling 2.5 Turbo</div>
+                                <div className={styles.modelDesc}>5/10s · soporta first/last</div>
+                              </button>
+
+                              <button
+                                type="button"
+                                className={`${styles.modelOption} ${model === KLING_2_6 ? styles.modelOptionActive : ""}`}
+                                onClick={() => {
+                                  setModel(KLING_2_6);
+                                  setPanel(null);
+                                }}
+                              >
+                                <div className={styles.modelName}>Kling 2.6</div>
+                                <div className={styles.modelDesc}>Mejorado · audio solo en PRO</div>
+                              </button>
+
+                              <button
+                                type="button"
+                                className={`${styles.modelOption} ${model === KLING_V3 ? styles.modelOptionActive : ""}`}
+                                onClick={() => {
+                                  setModel(KLING_V3);
+                                  setPanel(null);
+                                }}
+                              >
+                                <div className={styles.modelName}>Kling V3</div>
+                                <div className={styles.modelDesc}>Elements + Multishot · 3–15s</div>
+                              </button>
+                            </div>
+                          )}
+
+                          {/* PARAMETERS */}
+                          {panel === "parameters" && (
+                            <>
+                              <div className={styles.formRow}>
+                                <label className={styles.formLabel}>Aspect ratio</label>
+
+                                {capability.supportsAspectRatio ? (
+                                  <div className={styles.segment}>
+                                    <button
+                                      type="button"
+                                      className={`${styles.segmentBtn} ${aspectRatio === "16:9" ? styles.segmentBtnActive : ""}`}
+                                      onClick={() => setAspectRatio("16:9")}
+                                    >
+                                      16:9
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className={`${styles.segmentBtn} ${aspectRatio === "9:16" ? styles.segmentBtnActive : ""}`}
+                                      onClick={() => setAspectRatio("9:16")}
+                                    >
+                                      9:16
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className={`${styles.segmentBtn} ${aspectRatio === "1:1" ? styles.segmentBtnActive : ""} ${
+                                        capability.supportsAspectRatio1x1 ? "" : styles.segmentBtnDisabled
+                                      }`}
+                                      onClick={() => capability.supportsAspectRatio1x1 && setAspectRatio("1:1")}
+                                      disabled={!capability.supportsAspectRatio1x1}
+                                      title={!capability.supportsAspectRatio1x1 ? "No disponible para este modelo/estado" : "1:1"}
+                                    >
+                                      1:1
+                                    </button>
+                                    {!capability.supportsAspectRatio && <span className={styles.segmentMeta}>Auto</span>}
+                                    {hasFirst && <span className={styles.segmentMeta}>Bloqueado por FIRST</span>}
+                                  </div>
+                                ) : (
+                                  <div className={styles.noteSmall}>Auto (se bloquea si usas FIRST frame)</div>
+                                )}
+                              </div>
+
+                              <div className={styles.formRow}>
+                                <label className={styles.formLabel}>Resolution</label>
+
+                                {capability.supportsResolution ? (
+                                  <div className={styles.segment}>
+                                    {supportedResolutions.map((r) => (
+                                      <button
+                                        key={r}
+                                        type="button"
+                                        className={`${styles.segmentBtn} ${resolution === r ? styles.segmentBtnActive : ""}`}
+                                        onClick={() => setResolution(r)}
+                                      >
+                                        {r}
+                                      </button>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div className={styles.noteSmall}>Auto / Fixed (según el modelo)</div>
+                                )}
+                              </div>
+
+                              <div className={styles.formRow}>
+                                <label className={styles.formLabel}>Count</label>
+                                <div className={styles.segment}>
+                                  {[1, 2, 3, 4].map((n) => (
+                                    <button
+                                      key={n}
+                                      type="button"
+                                      className={`${styles.segmentBtn} ${count === n ? styles.segmentBtnActive : ""} ${
+                                        isKlingV3 ? styles.segmentBtnDisabled : ""
+                                      }`}
+                                      onClick={() => !isKlingV3 && setCount(n)}
+                                      disabled={isKlingV3}
+                                      title={isKlingV3 ? "Kling V3 genera 1 video por vez" : `Generar x${n}`}
+                                    >
+                                      x{n}
+                                    </button>
+                                  ))}
+                                  {isKlingV3 && <span className={styles.segmentMeta}>Kling V3: x1</span>}
+                                </div>
+                              </div>
+
+                              {isKling && (
+                                <div className={styles.formRow}>
+                                  <label className={styles.formLabel}>Kling mode</label>
+                                  <div className={styles.segment}>
+                                    <button
+                                      type="button"
+                                      className={`${styles.segmentBtn} ${klingMode === "std" ? styles.segmentBtnActive : ""}`}
+                                      onClick={() => setKlingMode("std")}
+                                    >
+                                      STD
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className={`${styles.segmentBtn} ${klingMode === "pro" ? styles.segmentBtnActive : ""}`}
+                                      onClick={() => setKlingMode("pro")}
+                                    >
+                                      PRO
+                                    </button>
+                                    <span className={styles.segmentMeta}>{model === KLING_2_6 ? "2.6: audio solo PRO" : "STD/PRO"}</span>
+                                  </div>
+                                </div>
+                              )}
+
+                              {capability.supportsSound && (
+                                <div className={styles.formRow}>
+                                  <label className={styles.formLabel}>Sound</label>
+                                  <div className={styles.segment}>
+                                    <button
+                                      type="button"
+                                      className={`${styles.segmentBtn} ${!klingSound ? styles.segmentBtnActive : ""}`}
+                                      onClick={() => {
+                                        setKlingSound(false);
+                                        setKlingSoundTouched(true);
+                                      }}
+                                    >
+                                      OFF
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className={`${styles.segmentBtn} ${klingSound ? styles.segmentBtnActive : ""}`}
+                                      onClick={() => {
+                                        setKlingSound(true);
+                                        setKlingSoundTouched(true);
+                                      }}
+                                    >
+                                      ON
+                                    </button>
+                                    <span className={styles.segmentMeta}>Disponible en este modo</span>
+                                  </div>
+                                </div>
+                              )}
+
+                              {isKlingV3 && (
+                                <>
+                                  <div className={styles.formRow}>
+                                    <label className={styles.formLabel}>Shot type</label>
+                                    <div className={styles.segment}>
+                                      <button
+                                        type="button"
+                                        className={`${styles.segmentBtn} ${klingShotType === "customize" ? styles.segmentBtnActive : ""}`}
+                                        onClick={() => setKlingShotType("customize")}
+                                      >
+                                        customize
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className={`${styles.segmentBtn} ${klingShotType === "intelligent" ? styles.segmentBtnActive : ""}`}
+                                        onClick={() => setKlingShotType("intelligent")}
+                                      >
+                                        intelligent
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  <div className={styles.formRow}>
+                                    <label className={styles.formLabel}>Negative prompt</label>
+                                    <textarea
+                                      className={styles.textarea}
+                                      rows={2}
+                                      value={negativePrompt}
+                                      onChange={(e) => setNegativePrompt(e.target.value)}
+                                      placeholder="Evitar: blur, low quality, artifacts..."
+                                    />
+                                  </div>
+
+                                  <div className={styles.formRow}>
+                                    <label className={styles.formLabel}>CFG scale</label>
+                                    <input
+                                      className={styles.input}
+                                      type="number"
+                                      min={0}
+                                      max={1}
+                                      step={0.05}
+                                      value={klingCfgScale}
+                                      onChange={(e) => setKlingCfgScale(Number(e.target.value))}
+                                    />
+                                    <div className={styles.noteSmall}>Rango típico 0.0–1.0</div>
+                                  </div>
+
+                                  <div className={styles.formRow}>
+                                    <label className={styles.formLabel}>Voice IDs (opcional)</label>
+                                    <input
+                                      className={styles.input}
+                                      value={klingVoiceIdsText}
+                                      onChange={(e) => setKlingVoiceIdsText(e.target.value)}
+                                      placeholder="Ej: voice_1, voice_2"
+                                    />
+                                  </div>
+                                </>
+                              )}
+                            </>
+                          )}
+
+                          {/* DURATION */}
+                          {panel === "duration" && (
+                            <>
+                              {isKlingV3 && multishotEnabled ? (
+                                <div className={styles.note}>
+                                  La duración la controla <b>Multishot</b>.
+                                  <div className={styles.noteSmall}>
+                                    Total actual: {multishotTotalSeconds}s · Debe quedar entre 3s y 15s
+                                  </div>
+
+                                  <div className={styles.formRow}>
+                                    <button type="button" className={styles.segmentBtn} onClick={() => setMultishotOpen(true)}>
+                                      Editar Multishot
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <>
+                                  <div className={styles.durationGrid}>
+                                    {allowedDurations.map((d) => (
+                                      <button
+                                        key={d}
+                                        type="button"
+                                        className={`${styles.durationOption} ${durationSeconds === d ? styles.durationOptionActive : ""}`}
+                                        onClick={() => setDurationSeconds(d)}
+                                      >
+                                        {d}s
+                                      </button>
+                                    ))}
+                                  </div>
+
+                                  <div className={styles.noteSmall}>
+                                    Las opciones dependen del modelo (y en Veo 3.1 también de resolución/frames).
+                                  </div>
+                                </>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    )}
         </div>
       </div>
 
