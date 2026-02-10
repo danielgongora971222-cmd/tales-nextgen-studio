@@ -996,7 +996,7 @@ export function createAiImageRouter(ctx) {
   }
 });
 
-app.post("/api/ai/restyle", async (req, res, next) => {
+router.post("/ai/restyle", async (req, res, next) => {
   try {
     const aiClient = await ensureAI();
     const body = RestyleSchema.parse(req.body);

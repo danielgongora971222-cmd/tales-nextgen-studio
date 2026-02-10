@@ -1,7 +1,7 @@
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import pinoHttp from "pino-http";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
@@ -141,7 +141,7 @@ const healthLimiter = rateLimit({
   max: 120,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: getClientIp,
+  keyGenerator: (req) => ipKeyGenerator(getClientIp(req)),
   handler: (req, res) => {
     const retryAfter = Number(res.getHeader("Retry-After")) || null;
     return res.status(429).json({
@@ -164,7 +164,7 @@ const apiLimiter = rateLimit({
   max: 120, // 120 requests/min por IP
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: getClientIp,
+  keyGenerator: (req) => ipKeyGenerator(getClientIp(req)),
   skip: (req) => req.path === "/api/health" || req.originalUrl === "/api/health",
 });
 
@@ -178,7 +178,7 @@ const aiLimiter = rateLimit({
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: getClientIp,
+  keyGenerator: (req) => ipKeyGenerator(getClientIp(req)),
   handler: (req, res) => {
     const retryAfter = Number(res.getHeader("Retry-After")) || null;
     return res.status(429).json({
