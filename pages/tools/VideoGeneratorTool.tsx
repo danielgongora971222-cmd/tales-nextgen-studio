@@ -31,8 +31,98 @@ const KLING_2_5_TURBO = "kling-v2-5-turbo";
 const KLING_2_6 = "kling-v2-6";
 const KLING_V3 = "kling-v3";
 
-function Icon({ name }: { name: "heart" | "share" | "download" | "trash" | "close" | "copy" | "reuse" }) {
+function Icon({
+  name,
+}: {
+  name:
+    | "heart"
+    | "share"
+    | "download"
+    | "trash"
+    | "close"
+    | "copy"
+    | "reuse"
+    | "model"
+    | "sliders"
+    | "clock"
+    | "elements"
+    | "multishot"
+    | "sound"
+    | "speed"
+    | "mode";
+}) {
   switch (name) {
+    case "model":
+      return (
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <path
+            fill="currentColor"
+            d="M12 2 3 7v10l9 5 9-5V7l-9-5zm0 2.2L19 8l-7 3.8L5 8l7-3.8zm-7 5.9 6 3.3v6.4l-6-3.3v-6.4zm8 9.7v-6.4l6-3.3v6.4l-6 3.3z"
+          />
+        </svg>
+      );
+    case "sliders":
+      return (
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <path
+            fill="currentColor"
+            d="M4 21v-7h2v7H4zm0-11V3h2v7H4zM11 21v-11h2v11h-2zm0-15V3h2v3h-2zM18 21v-3h2v3h-2zm0-7V3h2v11h-2z"
+          />
+        </svg>
+      );
+    case "clock":
+      return (
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <path
+            fill="currentColor"
+            d="M12 2a10 10 0 1 0 .001 20.001A10 10 0 0 0 12 2zm1 11h5v-2h-4V7h-2v6z"
+          />
+        </svg>
+      );
+    case "elements":
+      return (
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <path
+            fill="currentColor"
+            d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm0 2c-4.4 0-8 2.24-8 5v2h16v-2c0-2.76-3.6-5-8-5z"
+          />
+        </svg>
+      );
+    case "multishot":
+      return (
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <path
+            fill="currentColor"
+            d="M4 6h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2zm2 2v8h12V8H6zm14 1h2v6h-2V9z"
+          />
+        </svg>
+      );
+    case "sound":
+      return (
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <path
+            fill="currentColor"
+            d="M5 10v4h3l4 4V6L8 10H5zm11.5 2a4.5 4.5 0 0 0-2.2-3.9v7.8A4.5 4.5 0 0 0 16.5 12zm0-8a1 1 0 0 0-.5 1.87A8.5 8.5 0 0 1 18 12a8.5 8.5 0 0 1-2 6.13A1 1 0 1 0 17.5 19.5 10.5 10.5 0 0 0 20 12 10.5 10.5 0 0 0 17.5 4z"
+          />
+        </svg>
+      );
+    case "speed":
+      return (
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <path fill="currentColor" d="M13 2 3 14h8l-1 8 10-12h-8l1-8z" />
+        </svg>
+      );
+    case "mode":
+      return (
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <path
+            fill="currentColor"
+            d="M4 7h16v10H4V7zm2 2v6h12V9H6zm-1 11h14v2H5v-2zM5 2h14v2H5V2z"
+          />
+        </svg>
+      );
+
+    // ====== iconos existentes ======
     case "heart":
       return (
         <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
@@ -60,19 +150,7 @@ function Icon({ name }: { name: "heart" | "share" | "download" | "trash" | "clos
     case "trash":
       return (
         <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-          <path
-            fill="currentColor"
-            d="M6 7h12l-1 14H7L6 7zm3-3h6l1 2H8l1-2z"
-          />
-        </svg>
-      );
-    case "close":
-      return (
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-          <path
-            fill="currentColor"
-            d="M18.3 5.71a1 1 0 0 0-1.41 0L12 10.59 7.11 5.7a1 1 0 0 0-1.41 1.41L10.59 12l-4.9 4.89a1 1 0 0 0 1.41 1.41L12 13.41l4.89 4.9a1 1 0 0 0 1.42-1.41L13.41 12l4.9-4.89a1 1 0 0 0-.01-1.4z"
-          />
+          <path fill="currentColor" d="M6 7h12l-1 14H7L6 7zm3-3h6l1 2H8l1-2z" />
         </svg>
       );
     case "copy":
@@ -80,7 +158,7 @@ function Icon({ name }: { name: "heart" | "share" | "download" | "trash" | "clos
         <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
           <path
             fill="currentColor"
-            d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 18H8V7h11v16z"
+            d="M16 1H4c-1.1 0-2 .9-2 2v12h2V3h12V1zm4 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h12v14z"
           />
         </svg>
       );
@@ -89,12 +167,20 @@ function Icon({ name }: { name: "heart" | "share" | "download" | "trash" | "clos
         <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
           <path
             fill="currentColor"
-            d="M17.65 6.35A7.95 7.95 0 0 0 12 4V1L7 6l5 5V7c2.76 0 5 2.24 5 5 0 .91-.24 1.76-.65 2.5l1.46 1.46A7.93 7.93 0 0 0 20 12c0-2.21-.9-4.21-2.35-5.65zM6.35 17.65A7.95 7.95 0 0 0 12 20v3l5-5-5-5v3c-2.76 0-5-2.24-5-5 0-.91.24-1.76.65-2.5L6.19 7.04A7.93 7.93 0 0 0 4 12c0 2.21.9 4.21 2.35 5.65z"
+            d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6 0 .34-.03.67-.08 1h2.02c.04-.33.06-.66.06-1 0-4.42-3.58-8-8-8zm-6 7c0-.34.03-.67.08-1H4.06c-.04.33-.06.66-.06 1 0 4.42 3.58 8 8 8v4l5-5-5-5v4c-3.31 0-6-2.69-6-6z"
           />
         </svg>
       );
+    case "close":
     default:
-      return null;
+      return (
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <path
+            fill="currentColor"
+            d="M18.3 5.71 12 12l6.3 6.29-1.41 1.42L10.59 13.4 4.29 19.71 2.88 18.29 9.17 12 2.88 5.71 4.29 4.29l6.3 6.3 6.29-6.3z"
+          />
+        </svg>
+      );
   }
 }
 
@@ -480,7 +566,26 @@ const VideoGeneratorTool: React.FC = () => {
   const isKlingV2 = model === KLING_2_5_TURBO || model === KLING_2_6;
   const isKlingV3 = model === KLING_V3;
 
+  const isVeoFamily = model.startsWith("veo-");
+  const veoIsFast = model === VEO_3_FAST || model === VEO_3_1_FAST;
+  const veoSpeedLabel = isVeoFamily ? (veoIsFast ? "Fast" : "Quality") : "";
 
+  const toggleVeoSpeed = () => {
+    if (!isVeoFamily) return;
+
+    if (model === VEO_3) return setModel(VEO_3_FAST);
+    if (model === VEO_3_FAST) return setModel(VEO_3);
+
+    if (model === VEO_3_1) return setModel(VEO_3_1_FAST);
+    if (model === VEO_3_1_FAST) return setModel(VEO_3_1);
+  };
+
+  const toggleKlingMode = () => setKlingMode((m) => (m === "std" ? "pro" : "std"));
+
+  const toggleSound = () => {
+    setKlingSound((v) => !v);
+    setKlingSoundTouched(true);
+  };
 
 
   const capability = useMemo(() => {
@@ -1124,66 +1229,8 @@ const durationLabel = useMemo(() => {
             </div>
           </div>
 
-                    <div className={styles.promptRow}>
+          <div className={styles.promptRow}>
             <div className={styles.promptInputWrap}>
-              {isKlingV3 && (
-                <div className={styles.klingDock}>
-                  {/* Elements */}
-                  <button
-                    type="button"
-                    className={styles.klingElementBtn}
-                    onClick={() => setElementsOpen(true)}
-                    disabled={!firstFrame?.id}
-                    title={!firstFrame?.id ? "Para usar Elements primero carga FIRST frame" : "Seleccionar Elements"}
-                    aria-label="Elements"
-                  >
-                    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-                      <path
-                        fill="currentColor"
-                        d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm0 2c-4.4 0-8 2.24-8 5v2h16v-2c0-2.76-3.6-5-8-5z"
-                      />
-                    </svg>
-
-                    {selectedKlingElementIds.length > 0 && (
-                      <span className={styles.klingBadge}>{selectedKlingElementIds.length}</span>
-                    )}
-                  </button>
-
-                  {/* Multishot toggle */}
-                  <button
-                    type="button"
-                    className={`${styles.klingElementBtn} ${multishotEnabled ? styles.klingElementBtnActive : ""}`}
-                    onClick={() => setMultishotEnabled((v) => !v)}
-                    title="Activar/Desactivar Multishot"
-                    aria-label="Multishot"
-                  >
-                    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-                      <path
-                        fill="currentColor"
-                        d="M4 6h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2zm2 2v8h12V8H6zm14 1h2v6h-2V9z"
-                      />
-                    </svg>
-                  </button>
-
-                  {/* Edit multishot */}
-                  <button
-                    type="button"
-                    className={styles.klingElementBtn}
-                    onClick={() => setMultishotOpen(true)}
-                    disabled={!multishotEnabled}
-                    title={!multishotEnabled ? "Activa Multishot para editar shots" : "Editar shots"}
-                    aria-label="Edit multishot"
-                  >
-                    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-                      <path
-                        fill="currentColor"
-                        d="M10 18h4v-2h-4v2zm-7 0h4v-2H3v2zM17 18h4v-2h-4v2zM10 13h4V6h-4v7zM3 13h4V9H3v4zm14 0h4V4h-4v9z"
-                      />
-                    </svg>
-                  </button>
-                </div>
-              )}
-
               <div className={styles.promptEditor}>
                 {(selectedKlingElementIds.length > 0 || (isKlingV3 && multishotEnabled)) && (
                   <div className={styles.promptTags}>
@@ -1213,13 +1260,111 @@ const durationLabel = useMemo(() => {
                   </div>
                 )}
 
-                <textarea
-                  className={styles.prompt}
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  placeholder="Describe el video… (ej: cinematic neon city, rain, slow dolly in, high detail)"
-                  rows={2}
-                />
+                {isKlingV3 && multishotEnabled ? (
+                  <div className={styles.multishotInline}>
+                    <div className={styles.multishotTop}>
+                      <div className={styles.multishotTitle}>
+                        <Icon name="multishot" />
+                        Shots ({klingShots.length}/10)
+                      </div>
+
+                      <div className={styles.multishotTopActions}>
+                        <button
+                          type="button"
+                          className={styles.multishotAddBtn}
+                          onClick={() =>
+                            setKlingShots((prev) =>
+                              prev.length >= 10 ? prev : [...prev, { prompt: "", durationSeconds: 3 }]
+                            )
+                          }
+                          title="Agregar un shot"
+                        >
+                          + Shot
+                        </button>
+
+                        <button
+                          type="button"
+                          className={styles.multishotExpandBtn}
+                          onClick={() => setMultishotOpen(true)}
+                          title="Abrir editor en pantalla completa"
+                        >
+                          <Icon name="sliders" />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className={styles.multishotMeta}>
+                      Total: {multishotTotalSeconds}s · mínimo 2 shots · suma entre 3s y 15s
+                    </div>
+
+                    <div className={styles.multishotShots}>
+                      {klingShots.map((s, i) => (
+                        <div key={i} className={styles.multishotShotRow}>
+                          <div className={styles.multishotShotHeader}>
+                            <div className={styles.multishotShotName}>Shot {i + 1}</div>
+                            <button
+                              type="button"
+                              className={styles.multishotRemoveBtn}
+                              onClick={() => setKlingShots((prev) => prev.filter((_, idx) => idx !== i))}
+                              disabled={klingShots.length <= 1}
+                              title={klingShots.length <= 1 ? "Debe existir al menos 1 shot" : "Eliminar shot"}
+                            >
+                              <Icon name="trash" />
+                            </button>
+                          </div>
+
+                          <textarea
+                            className={styles.multishotTextarea}
+                            rows={2}
+                            value={s.prompt}
+                            onChange={(e) =>
+                              setKlingShots((prev) =>
+                                prev.map((x, idx) => (idx === i ? { ...x, prompt: e.target.value } : x))
+                              )
+                            }
+                            placeholder="Describe este shot… (acción, cámara, estilo, iluminación)"
+                          />
+
+                          <div className={styles.multishotDurationRow}>
+                            <span className={styles.multishotDurationLabel}>
+                              <Icon name="clock" />
+                              Duration
+                            </span>
+                            <input
+                              className={styles.multishotDurationInput}
+                              type="number"
+                              min={3}
+                              max={15}
+                              value={s.durationSeconds}
+                              onChange={(e) =>
+                                setKlingShots((prev) =>
+                                  prev.map((x, idx) =>
+                                    idx === i ? { ...x, durationSeconds: Number(e.target.value) } : x
+                                  )
+                                )
+                              }
+                            />
+                            <span className={styles.multishotDurationUnit}>s</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {!multishotIsReady && (
+                      <div className={styles.multishotWarn}>
+                        Para generar: mínimo 2 shots y la suma total entre 3s y 15s.
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <textarea
+                    className={styles.prompt}
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                    placeholder="Describe el video… (ej: cinematic neon city, rain, slow dolly in, high detail)"
+                    rows={2}
+                  />
+                )}
               </div>
             </div>
 
@@ -1237,14 +1382,19 @@ const durationLabel = useMemo(() => {
             </div>
           </div>
 
+
           {/* Controls row (igual a tu lógica actual) */}
-          <div className={styles.controlsRow}>
+          <div className={styles.controlsArea}></div>
+                    <div className={styles.controlsRow}>
             <button
               type="button"
               className={`${styles.controlBtn} ${panel === "model" ? styles.controlBtnActive : ""}`}
               onClick={() => setPanel((p) => (p === "model" ? null : "model"))}
             >
-              <span>Model</span>
+              <span className={styles.controlBtnLeft}>
+                <Icon name="model" />
+                <span>Model</span>
+              </span>
               <span className={styles.controlBtnMeta}>{modelLabel}</span>
             </button>
 
@@ -1253,7 +1403,10 @@ const durationLabel = useMemo(() => {
               className={`${styles.controlBtn} ${panel === "parameters" ? styles.controlBtnActive : ""}`}
               onClick={() => setPanel((p) => (p === "parameters" ? null : "parameters"))}
             >
-              <span>Parameters</span>
+              <span className={styles.controlBtnLeft}>
+                <Icon name="sliders" />
+                <span>Parameters</span>
+              </span>
               <span className={styles.controlBtnMeta}>{paramsLabel}</span>
             </button>
 
@@ -1262,9 +1415,115 @@ const durationLabel = useMemo(() => {
               className={`${styles.controlBtn} ${panel === "duration" ? styles.controlBtnActive : ""}`}
               onClick={() => setPanel((p) => (p === "duration" ? null : "duration"))}
             >
-              <span>Duration</span>
+              <span className={styles.controlBtnLeft}>
+                <Icon name="clock" />
+                <span>Duration</span>
+              </span>
               <span className={styles.controlBtnMeta}>{durationLabel}</span>
             </button>
+
+            {/* Veo: Fast / Quality */}
+            {isVeoFamily && (
+              <button
+                type="button"
+                className={styles.controlBtn}
+                onClick={() => {
+                  setPanel(null);
+                  toggleVeoSpeed();
+                }}
+                title="Cambiar entre Fast y Quality"
+              >
+                <span className={styles.controlBtnLeft}>
+                  <Icon name="speed" />
+                  <span>Veo</span>
+                </span>
+                <span className={styles.controlBtnMeta}>{veoSpeedLabel}</span>
+              </button>
+            )}
+
+            {/* Kling 2.x: Standard / Pro */}
+            {isKlingV2 && (
+              <button
+                type="button"
+                className={styles.controlBtn}
+                onClick={() => {
+                  setPanel(null);
+                  toggleKlingMode();
+                }}
+                title="Cambiar entre Standard y Pro"
+              >
+                <span className={styles.controlBtnLeft}>
+                  <Icon name="mode" />
+                  <span>Kling</span>
+                </span>
+                <span className={styles.controlBtnMeta}>{klingMode === "std" ? "Standard" : "Pro"}</span>
+              </button>
+            )}
+
+            {/* Sound ON/OFF (cuando el modelo lo soporta) */}
+            {capability.supportsSound && (
+              <button
+                type="button"
+                className={`${styles.controlBtn} ${klingSound ? styles.controlBtnActive : ""}`}
+                onClick={() => {
+                  setPanel(null);
+                  toggleSound();
+                }}
+                title="Activar/Desactivar sonido"
+              >
+                <span className={styles.controlBtnLeft}>
+                  <Icon name="sound" />
+                  <span>Sound</span>
+                </span>
+                <span className={styles.controlBtnMeta}>{klingSound ? "On" : "Off"}</span>
+              </button>
+            )}
+
+            {/* Kling V3: Elements + Multishot */}
+            {isKlingV3 && (
+              <>
+                <button
+                  type="button"
+                  className={styles.controlBtn}
+                  onClick={() => {
+                    setPanel(null);
+                    setElementsOpen(true);
+                  }}
+                  disabled={!firstFrame?.id}
+                  title={!firstFrame?.id ? "Para usar Elements primero carga FIRST frame" : "Seleccionar Elements"}
+                >
+                  <span className={styles.controlBtnLeft}>
+                    <Icon name="elements" />
+                    <span>Elements</span>
+                  </span>
+                  <span className={styles.controlBtnMeta}>
+                    {!firstFrame?.id
+                      ? "Need FIRST"
+                      : selectedKlingElementIds.length
+                        ? `${selectedKlingElementIds.length} sel`
+                        : "Optional"}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  className={`${styles.controlBtn} ${multishotEnabled ? styles.controlBtnActive : ""}`}
+                  onClick={() => {
+                    setPanel(null);
+                    setMultishotEnabled((v) => !v);
+                  }}
+                  title="Activar/Desactivar Multishot"
+                >
+                  <span className={styles.controlBtnLeft}>
+                    <Icon name="multishot" />
+                    <span>Multishot</span>
+                  </span>
+                  <span className={styles.controlBtnMeta}>
+                    {multishotEnabled ? `${multishotTotalSeconds}s` : "Off"}
+                  </span>
+                </button>
+              </>
+            )}
           </div>
 
           {/* POPOVERS: aquí NO cambiamos tu contenido, solo el botón close si quieres estética igual */}
