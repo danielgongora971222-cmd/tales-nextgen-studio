@@ -19,6 +19,25 @@ export function createAiImageRouter(ctx) {
     httpError,
     ensureAI,
 
+    // ai helpers (definidos en server.js y pasados por ctx)
+    maxCountForImageModel,
+    isImageGenModel,
+    extractImageDataUrl,
+    parseOpenAIImageModel,
+    openaiSizeFromAspectRatio,
+    openaiGenerateImageDataUrl,
+    falDimsFromAspectQuality,
+    falQueueRun,
+    bflSubmit,
+    bflPoll,
+    bflSampleToDataUrl,
+    makeKlingJwt,
+    sleep,
+    assetIdToSignedUrl,
+    assetIdToInlinePart,
+    assetIdToImageFile,
+
+
     // storage helpers
     parseDataUrl,
     extFromMime,

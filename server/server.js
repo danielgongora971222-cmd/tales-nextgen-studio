@@ -241,6 +241,24 @@ app.use(
     httpError,
     ensureAI,
 
+    // ai helpers (estos viven en este mismo archivo y se usan en routes/ai/image.js)
+    maxCountForImageModel,
+    isImageGenModel,
+    extractImageDataUrl,
+    parseOpenAIImageModel,
+    openaiSizeFromAspectRatio,
+    openaiGenerateImageDataUrl,
+    falDimsFromAspectQuality,
+    falQueueRun,
+    bflSubmit,
+    bflPoll,
+    bflSampleToDataUrl,
+    makeKlingJwt,
+    sleep,
+    assetIdToSignedUrl,
+    assetIdToInlinePart,
+    assetIdToImageFile,
+
     // storage helpers
     parseDataUrl,
     extFromMime,
