@@ -643,12 +643,15 @@ function Icon({ name }: { name: "heart" | "share" | "download" | "trash" | "copy
 const ImageGeneratorTool: React.FC = () => {
   const { user } = useAuth();
 
+  // Historial: mostramos 12 al inicio y cargamos de a 9 con botón "Cargar más"
+  const HISTORY_INITIAL_COUNT = 12;
+  const HISTORY_LOAD_MORE_COUNT = 9;
+
   const [history, setHistory] = useState<Asset[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
-  const [historyPage, setHistoryPage] = useState(1);
+  const [historyVisibleCount, setHistoryVisibleCount] = useState(HISTORY_INITIAL_COUNT);
   const [visibleHistory, setVisibleHistory] = useState<Asset[]>([]);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const historyLoadMoreRef = useRef<HTMLDivElement | null>(null);
+  const [isLoadingMoreHistory, setIsLoadingMoreHistory] = useState(false);
 
   // "library": todas tus imágenes (generadas + subidas) para el picker y recipe
   const [myAssets, setMyAssets] = useState<Asset[]>([]);
@@ -975,8 +978,8 @@ useEffect(() => {
       // 2) historial: SOLO generaciones de esta herramienta
       const onlyGenerated = sorted.filter(isGeneratedHistoryItem);
       setHistory(onlyGenerated);
-      setHistoryPage(1);
-      setVisibleHistory(onlyGenerated.slice(0, 12));
+      setHistoryVisibleCount(HISTORY_INITIAL_COUNT);
+      setVisibleHistory(onlyGenerated.slice(0, HISTORY_INITIAL_COUNT));
     } catch (e: any) {
       setError(e?.message || "No se pudo cargar el historial.");
     } finally {
@@ -990,33 +993,21 @@ useEffect(() => {
 
   const hasMoreHistory = visibleHistory.length < history.length;
 
-  useEffect(() => {
-    const target = historyLoadMoreRef.current;
-    if (!target) return;
-    if (!hasMoreHistory) return;
+  function handleLoadMoreHistory() {
+  if (!hasMoreHistory) return;
+  if (isLoadingMoreHistory) return;
 
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (!entries[0]?.isIntersecting) return;
-        if (isLoadingMore) return;
-        setIsLoadingMore(true);
-        window.setTimeout(() => {
-          setHistoryPage((prev) => {
-            const nextPage = prev + 1;
-            const nextVisible = history.slice(0, nextPage * 12);
-            setVisibleHistory(nextVisible);
-            return nextPage;
-          });
-          setIsLoadingMore(false);
-        }, 700);
-      },
-      { threshold: 0.2 }
-    );
-
-    observer.observe(target);
-    return () => observer.disconnect();
-  }, [hasMoreHistory, history, isLoadingMore]);
-
+  setIsLoadingMoreHistory(true);
+  // Delay corto solo para feedback visual
+  window.setTimeout(() => {
+    setHistoryVisibleCount((prev) => {
+      const next = Math.min(history.length, prev + HISTORY_LOAD_MORE_COUNT);
+      setVisibleHistory(history.slice(0, next));
+      return next;
+    });
+    setIsLoadingMoreHistory(false);
+  }, 200);
+}
 
   // ===============================
   // Element/Person Library (GLOBAL):
@@ -1623,7 +1614,9 @@ useEffect(() => {
       await deleteAsset(asset.id);
       setHistory((prev) => {
         const next = prev.filter((x) => x.id !== asset.id);
-        setVisibleHistory(next.slice(0, historyPage * 12));
+        const nextCount = Math.min(historyVisibleCount, next.length);
+        setHistoryVisibleCount(nextCount);
+        setVisibleHistory(next.slice(0, nextCount));
         return next;
       });
       if (viewer?.id === asset.id) setViewer(null);
@@ -1862,9 +1855,18 @@ useEffect(() => {
             </div>
           )}
           {hasMoreHistory && (
-            <div className={styles.historyLoader} ref={historyLoadMoreRef}>
-              <div className={styles.historyLoaderSpinner} aria-hidden="true" />
-              <span>{isLoadingMore ? "Cargando más..." : "Desliza para cargar más"}</span>
+            <div className={styles.historyLoadMoreWrap}>
+              <button
+                type="button"
+                className={styles.loadMoreBtn}
+                onClick={handleLoadMoreHistory}
+                disabled={isLoadingMoreHistory}
+              >
+                {isLoadingMoreHistory ? "Cargando..." : "Cargar más"}
+              </button>
+              <div className={styles.loadMoreHint}>
+                Mostrando {visibleHistory.length} de {history.length}
+              </div>
             </div>
           )}
         </div>
