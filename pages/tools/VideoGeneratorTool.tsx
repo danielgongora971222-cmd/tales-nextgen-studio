@@ -372,6 +372,7 @@ const VideoGeneratorTool: React.FC = () => {
   // Assets
   const [imageAssets, setImageAssets] = useState<Asset[]>([]);
   const [videoAssets, setVideoAssets] = useState<Asset[]>([]);
+  const [isLoadingImages, setIsLoadingImages] = useState(false);
 
   const visibleHistory = useMemo(
     () => videoAssets.slice(0, Math.min(historyVisibleCount, videoAssets.length)),
@@ -435,6 +436,45 @@ const VideoGeneratorTool: React.FC = () => {
     if (!hasPrompt) return false;
 
     return true;
+  }
+
+  function getAssetUrl(a: Asset): string | null {
+    const anyA = a as any;
+    return (
+      (typeof (a as any).url === "string" && (a as any).url) ||
+      (typeof anyA.signedUrl === "string" && anyA.signedUrl) ||
+      (typeof anyA.publicUrl === "string" && anyA.publicUrl) ||
+      (typeof anyA.thumbUrl === "string" && anyA.thumbUrl) ||
+      null
+    );
+  }
+
+  async function reloadImages() {
+    setIsLoadingImages(true);
+    try {
+      const imgs = await listMyAssets({ type: "image", limit: 500 });
+
+      if (Array.isArray(imgs) && imgs.length > 0) {
+        setImageAssets(imgs);
+        return imgs;
+      }
+
+      // Fallback: algunos backends no usan type="image" para imágenes generadas
+      const all = await listMyAssets({ limit: 500 } as any);
+      const onlyImages = (all || []).filter((x: any) => {
+        if (x?.type === "image") return true;
+        const mime = String(x?.mime || x?.contentType || x?.mimeType || "");
+        return mime.startsWith("image/");
+      });
+
+      setImageAssets(onlyImages);
+      return onlyImages;
+    } catch (e: any) {
+      console.warn(e);
+      return [];
+    } finally {
+      setIsLoadingImages(false);
+    }
   }
 
   async function reloadHistory() {
@@ -732,18 +772,18 @@ const VideoGeneratorTool: React.FC = () => {
 
   // Cargar assets (imágenes para picker + videos para historial)
   useEffect(() => {
-    (async () => {
-      try {
-        const imgs = await listMyAssets({ type: "image", limit: 250 });
-        setImageAssets(imgs);
-      } catch (e: any) {
-        console.warn(e);
-      }
+    if (!user?.id) return;
 
+    (async () => {
+      await reloadImages();
       await reloadHistory();
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!pickerOpen) return;
+    reloadImages();
+  }, [pickerOpen]);
 
   // Cerrar popover al click afuera
   useEffect(() => {
@@ -792,6 +832,12 @@ const VideoGeneratorTool: React.FC = () => {
     if (model === KLING_V3) return "Kling V3";
     return model;
   }, [model]);
+
+  const modelMetaLabel = useMemo(() => {
+    if (isVeoFamily) return `${modelLabel} • ${veoIsFast ? "Fast" : "Quality"}`;
+    if (isKlingV2) return `${modelLabel} • ${klingMode === "std" ? "Standard" : "Pro"}`;
+    return modelLabel;
+  }, [isKlingV2, isVeoFamily, klingMode, modelLabel, veoIsFast]);
 
   const paramsLabel = useMemo(() => {
     const ar = capability.supportsAspectRatio ? aspectRatio : "Auto";
@@ -881,7 +927,12 @@ const durationLabel = useMemo(() => {
   const filteredPickerAssetsAll = useMemo(() => {
     const q = pickerQuery.trim().toLowerCase();
     const base = [...imageAssets]
-      .filter((a) => a.type === "image" && a.url)
+      .filter(
+        (a) =>
+          !!getAssetUrl(a) &&
+          (a.type === "image" ||
+            String((a as any).mime || (a as any).contentType || (a as any).mimeType || "").startsWith("image/"))
+      )
       .sort((a: any, b: any) => {
         const ta = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
         const tb = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
@@ -1255,7 +1306,6 @@ const durationLabel = useMemo(() => {
                     <Icon name="upload" />
                   </div>
                   <div className={styles.frameCardEmptyText}>FIRST</div>
-                  <div className={styles.frameCardHint}>Click para cargar</div>
                 </div>
               )}
 
@@ -1290,7 +1340,7 @@ const durationLabel = useMemo(() => {
             {/* LAST */}
             <div
               className={`${styles.frameCard} ${!hasFirst ? styles.frameCardLocked : ""}`}
-              title={!hasFirst ? "LAST bloqueado: primero carga FIRST" : "LAST frame"}
+              title={!hasFirst ? "Primero carga FIRST para habilitar LAST" : "LAST frame"}
               role="button"
               tabIndex={hasFirst ? 0 : -1}
               onClick={() => openPicker("last")}
@@ -1306,7 +1356,6 @@ const durationLabel = useMemo(() => {
                     <Icon name="upload" />
                   </div>
                   <div className={styles.frameCardEmptyText}>LAST</div>
-                  <div className={styles.frameCardHint}>{!hasFirst ? "Bloqueado" : "Click para cargar"}</div>
                 </div>
               )}
 
@@ -1494,7 +1543,7 @@ const durationLabel = useMemo(() => {
                 <Icon name="model" />
                 <span>Model</span>
               </span>
-              <span className={styles.controlBtnMeta}>{modelLabel}</span>
+              <span className={styles.controlBtnMeta}>{modelMetaLabel}</span>
             </button>
 
             <button
@@ -2102,19 +2151,25 @@ const durationLabel = useMemo(() => {
               )}
 
             <div className={styles.pickerGrid}>
-              {visiblePickerAssets.map((a) => (
-                <button
-                  key={a.id}
-                  type="button"
-                  className={styles.pickerTile}
-                  onClick={() => setFrameFromAsset(pickerSlot, a)}
-                >
-                  <img src={a.url} alt={a.name} />
-                  <div className={styles.pickerCap}>
-                    {shortText(a.prompt || a.name, 56)}
-                  </div>
-                </button>
-              ))}
+              {isLoadingImages ? (
+                <div className={styles.pickerEmpty}>Cargando imágenes…</div>
+              ) : visiblePickerAssets.length === 0 ? (
+                <div className={styles.pickerEmpty}>
+                  No hay imágenes en tu historial. Genera una imagen o usa Upload.
+                </div>
+              ) : (
+                visiblePickerAssets.map((a) => (
+                  <button
+                    key={a.id}
+                    type="button"
+                    className={styles.pickerTile}
+                    onClick={() => setFrameFromAsset(pickerSlot, a)}
+                  >
+                    <img src={getAssetUrl(a) || a.url} alt={a.name} />
+                    <div className={styles.pickerCap}>{shortText(a.prompt || a.name, 56)}</div>
+                  </button>
+                ))
+              )}
             </div>
 
             {pickerSlot === "last" && !hasFirst && (
