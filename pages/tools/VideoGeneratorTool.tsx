@@ -380,9 +380,15 @@ const VideoGeneratorTool: React.FC = () => {
   const hasMoreHistory = historyVisibleCount < videoAssets.length;
 
   // Picker modal
+    // Picker modal
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerSlot, setPickerSlot] = useState<FrameSlotKey>("first");
   const [pickerQuery, setPickerQuery] = useState("");
+
+  // Picker (FIRST/LAST): mostramos 12 al inicio y cargamos de a 9 con botón "Cargar más"
+  const PICKER_INITIAL_COUNT = 12;
+  const PICKER_LOAD_MORE_COUNT = 9;
+  const [pickerVisibleCount, setPickerVisibleCount] = useState(PICKER_INITIAL_COUNT);
 
   const popoverRef = useRef<HTMLDivElement>(null);
 
@@ -532,9 +538,9 @@ const VideoGeneratorTool: React.FC = () => {
   function prettyVideoModelLabel(modelId: string | null) {
     if (!modelId) return "—";
     if (modelId === VEO_3) return "Veo 3";
-    if (modelId === VEO_3_FAST) return "Veo 3 Fast";
+    if (modelId === VEO_3_FAST) return "Veo 3";
     if (modelId === VEO_3_1) return "Veo 3.1";
-    if (modelId === VEO_3_1_FAST) return "Veo 3.1 Fast";
+    if (modelId === VEO_3_1_FAST) return "Veo 3.1";
     if (modelId === KLING_2_5_TURBO) return "Kling 2.5 Turbo";
     if (modelId === KLING_2_6) return "Kling 2.6";
     if (modelId === KLING_V3) return "Kling V3";
@@ -778,9 +784,9 @@ const VideoGeneratorTool: React.FC = () => {
 
   const modelLabel = useMemo(() => {
     if (model === VEO_3) return "Veo 3";
-    if (model === VEO_3_FAST) return "Veo 3 Fast";
+    if (model === VEO_3_FAST) return "Veo 3";
     if (model === VEO_3_1) return "Veo 3.1";
-    if (model === VEO_3_1_FAST) return "Veo 3.1 Fast";
+    if (model === VEO_3_1_FAST) return "Veo 3.1";
     if (model === KLING_2_5_TURBO) return "Kling 2.5 Turbo";
     if (model === KLING_2_6) return "Kling 2.6";
     if (model === KLING_V3) return "Kling V3";
@@ -829,6 +835,7 @@ const durationLabel = useMemo(() => {
     setPanel(null);
     setPickerSlot(slot);
     setPickerQuery("");
+    setPickerVisibleCount(PICKER_INITIAL_COUNT);
     setPickerOpen(true);
   };
 
@@ -871,15 +878,38 @@ const durationLabel = useMemo(() => {
     }
   };
 
-  const filteredPickerAssets = useMemo(() => {
+  const filteredPickerAssetsAll = useMemo(() => {
     const q = pickerQuery.trim().toLowerCase();
-    const base = imageAssets.filter((a) => a.type === "image" && a.url);
+    const base = [...imageAssets]
+      .filter((a) => a.type === "image" && a.url)
+      .sort((a: any, b: any) => {
+        const ta = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const tb = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return tb - ta;
+      });
+
     if (!q) return base;
     return base.filter((a) => {
       const t = `${a.name || ""} ${a.prompt || ""}`.toLowerCase();
       return t.includes(q);
     });
   }, [imageAssets, pickerQuery]);
+
+  // Si el usuario busca (o reabre el modal), reiniciamos a 12 para que no se “acumule” la lista.
+  useEffect(() => {
+    if (!pickerOpen) return;
+    setPickerVisibleCount(PICKER_INITIAL_COUNT);
+  }, [pickerQuery, pickerOpen]);
+
+  const visiblePickerAssets = useMemo(
+    () => filteredPickerAssetsAll.slice(0, Math.min(pickerVisibleCount, filteredPickerAssetsAll.length)),
+    [filteredPickerAssetsAll, pickerVisibleCount]
+  );
+  const hasMorePicker = pickerVisibleCount < filteredPickerAssetsAll.length;
+
+  const handleLoadMorePicker = () => {
+    setPickerVisibleCount((c) => Math.min(c + PICKER_LOAD_MORE_COUNT, filteredPickerAssetsAll.length));
+  };
 
   const handleGenerate = async () => {
     const allowEmptyPrompt = isKlingV3 && multishotEnabled;
@@ -1225,6 +1255,7 @@ const durationLabel = useMemo(() => {
                     <Icon name="upload" />
                   </div>
                   <div className={styles.frameCardEmptyText}>FIRST</div>
+                  <div className={styles.frameCardHint}>Click para cargar</div>
                 </div>
               )}
 
@@ -1275,6 +1306,7 @@ const durationLabel = useMemo(() => {
                     <Icon name="upload" />
                   </div>
                   <div className={styles.frameCardEmptyText}>LAST</div>
+                  <div className={styles.frameCardHint}>{!hasFirst ? "Bloqueado" : "Click para cargar"}</div>
                 </div>
               )}
 
@@ -1611,50 +1643,26 @@ const durationLabel = useMemo(() => {
                             <div className={styles.modelGrid}>
                               <button
                                 type="button"
-                                className={`${styles.modelOption} ${model === VEO_3 ? styles.modelOptionActive : ""}`}
+                                className={`${styles.modelOption} ${(model === VEO_3 || model === VEO_3_FAST) ? styles.modelOptionActive : ""}`}
                                 onClick={() => {
-                                  setModel(VEO_3);
+                                  setModel(veoIsFast ? VEO_3_FAST : VEO_3);
                                   setPanel(null);
                                 }}
                               >
                                 <div className={styles.modelName}>Veo 3</div>
-                                <div className={styles.modelDesc}>Calidad alta · 8s fijo</div>
+                                <div className={styles.modelDesc}>8s fijo · velocidad en "Veo: Quality/Fast"</div>
                               </button>
 
                               <button
                                 type="button"
-                                className={`${styles.modelOption} ${model === VEO_3_FAST ? styles.modelOptionActive : ""}`}
+                                className={`${styles.modelOption} ${(model === VEO_3_1 || model === VEO_3_1_FAST) ? styles.modelOptionActive : ""}`}
                                 onClick={() => {
-                                  setModel(VEO_3_FAST);
-                                  setPanel(null);
-                                }}
-                              >
-                                <div className={styles.modelName}>Veo 3 Fast</div>
-                                <div className={styles.modelDesc}>Más rápido · 8s fijo</div>
-                              </button>
-
-                              <button
-                                type="button"
-                                className={`${styles.modelOption} ${model === VEO_3_1 ? styles.modelOptionActive : ""}`}
-                                onClick={() => {
-                                  setModel(VEO_3_1);
+                                  setModel(veoIsFast ? VEO_3_1_FAST : VEO_3_1);
                                   setPanel(null);
                                 }}
                               >
                                 <div className={styles.modelName}>Veo 3.1</div>
-                                <div className={styles.modelDesc}>4/6/8s (según resolución y frames)</div>
-                              </button>
-
-                              <button
-                                type="button"
-                                className={`${styles.modelOption} ${model === VEO_3_1_FAST ? styles.modelOptionActive : ""}`}
-                                onClick={() => {
-                                  setModel(VEO_3_1_FAST);
-                                  setPanel(null);
-                                }}
-                              >
-                                <div className={styles.modelName}>Veo 3.1 Fast</div>
-                                <div className={styles.modelDesc}>Más rápido · mismo set de reglas</div>
+                                <div className={styles.modelDesc}>4/6/8s (según resolución y frames) · velocidad en "Veo: Quality/Fast"</div>
                               </button>
 
                               <button
@@ -2082,8 +2090,19 @@ const durationLabel = useMemo(() => {
               </label>
             </div>
 
+              {hasMorePicker && (
+                <div className={styles.pickerLoadMoreWrap}>
+                  <button type="button" className={styles.loadMoreBtn} onClick={handleLoadMorePicker}>
+                    Cargar más
+                  </button>
+                  <div className={styles.loadMoreHint}>
+                    Mostrando {visiblePickerAssets.length} de {filteredPickerAssetsAll.length}
+                  </div>
+                </div>
+              )}
+
             <div className={styles.pickerGrid}>
-              {filteredPickerAssets.map((a) => (
+              {visiblePickerAssets.map((a) => (
                 <button
                   key={a.id}
                   type="button"

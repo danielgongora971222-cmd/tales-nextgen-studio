@@ -798,6 +798,8 @@
 }
 
 .pickerGrid {
+  flex: 1;
+  min-height: 0;
   padding: 14px;
   overflow: auto;
   display: grid;
@@ -809,6 +811,13 @@
 }
 @media (max-width: 650px) {
   .pickerGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.pickerLoadMoreWrap{
+  grid-column: 1 / -1;
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  padding: 6px 0 2px;
 }
 .pickerTile {
   border-radius: 16px;
@@ -1860,7 +1869,7 @@
 .prompt:focus {
   background: rgba(16,16,18,0.96);
   outline: none;
-  height: 86px;
+  height: 128px;
   box-shadow:
     0 18px 46px rgba(0,0,0,0.6),
     inset 0 1px 0 rgba(255,255,255,0.08),
@@ -2019,11 +2028,15 @@
 
 .popoverInner {
   border-radius: 18px;
-  background: transparent;
-  border: none;
-  box-shadow: none;
-  max-height: inherit;
-  overflow: hidden;
+  border: 1px solid rgba(241,225,148,0.14);
+  background: rgba(10, 5, 6, 0.78);
+  backdrop-filter: blur(16px) saturate(160%);
+  box-shadow: 0 28px 70px rgba(0,0,0,0.62);
+  max-height: min(540px, 72vh);
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
 }
@@ -2097,24 +2110,16 @@
   font-size: 14px;
   line-height: 1.4;
   resize: none;
-  height: 86px;
-  min-height: 86px;
+  height: 72px;
+  min-height: 72px;
+  max-height: 180px;
+  overflow: auto;
   transition: all 0.25s ease;
   font-family: var(--sans);
   box-shadow:
     0 14px 30px rgba(0,0,0,0.45),
     inset 0 1px 0 rgba(255,255,255,0.06),
     inset 0 -10px 18px rgba(0,0,0,0.65);
-}
-
-.prompt:focus {
-  background: rgba(16,16,18,0.96);
-  outline: none;
-  height: 140px;
-  box-shadow:
-    0 18px 46px rgba(0,0,0,0.6),
-    inset 0 1px 0 rgba(255,255,255,0.08),
-    inset 0 -12px 22px rgba(0,0,0,0.7);
 }
 
 .generateBtn {
@@ -2565,7 +2570,7 @@
   aspect-ratio: 4 / 5;         /* ✅ 4:5 */
   border-radius: 18px;
   overflow: hidden;
-  border: none;                /* ✅ sin marco */
+  border: 1px solid rgba(241,225,148,0.20);               /* ✅ sin marco */
   background: rgba(0,0,0,0.22);
   position: relative;
   display: grid;
@@ -2616,9 +2621,17 @@
 .frameCardEmptyText{
   font-family: var(--mono);
   letter-spacing: 0.16em;
-  font-size: 10px;
+  font-size: 11px;
   color: rgba(241,225,148,0.75);
 }
+
+.frameCardHint{
+  font-family: var(--sans);
+  font-size: 11px;
+  color: rgba(255,255,255,0.68);
+  letter-spacing: 0.02em;
+}
+
 
 .frameCardBadge{
   position: absolute;
