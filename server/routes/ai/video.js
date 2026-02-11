@@ -6,6 +6,24 @@ import {
 } from "../../schemas/index.js";
 
 export function createAiVideoRouter(ctx) {
+  
+  // ✅ FIX: ensureAI estaba siendo usado pero no existía (ReferenceError)
+// Deja un error claro si el cliente AI no está inicializado.
+function ensureAI(aiMaybe) {
+  if (aiMaybe) return aiMaybe;
+
+  // Fallbacks comunes (por si tu app guarda el cliente en global)
+  const fallback = globalThis?.ai || globalThis?.__ai || null;
+  if (fallback) return fallback;
+
+  const err = new Error(
+    "AI client no inicializado. Revisa la inicialización del servidor y tus variables de entorno (API keys)."
+  );
+  err.code = "CONFIG_ERROR";
+  err.status = 500;
+  throw err;
+}
+
   const router = express.Router();
 
   // Destructuring: dejamos disponibles con los MISMOS nombres
