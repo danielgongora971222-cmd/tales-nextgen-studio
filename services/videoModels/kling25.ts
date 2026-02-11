@@ -1,6 +1,6 @@
 import { apiPostJson } from "../videoGenApi";
 import { KLING_2_5_TURBO } from "./ids";
-import { clampInt, normalizeModelId } from "./utils";
+import { clampInt, normalizeModelId, coerceAllowedNumber } from "./utils";
 import type { BuildPlanArgs, BuildPlanResult, VideoModelHandler } from "./types";
 
 export const kling25Handler: VideoModelHandler = {
@@ -30,7 +30,7 @@ export const kling25Handler: VideoModelHandler = {
       tool: args.tool,
       nameHint: args.nameHint,
       count: clampInt(args.count, 1, 4, 1),
-      durationSeconds: Number(args.durationSeconds),
+      durationSeconds: coerceAllowedNumber(args.durationSeconds, [5, 10], 5),
       klingMode: args.klingMode,
     };
 
@@ -48,5 +48,13 @@ export const kling25Handler: VideoModelHandler = {
     };
   },
 
-  submit: async (plan) => apiPostJson("/api/ai/video", plan.body),
+  submit: async (plan, opts) => {
+    opts?.onProgress?.("Enviando solicitud…");
+    return apiPostJson("/api/ai/video", plan.body, {
+      signal: opts?.signal,
+      timeoutMs: 10 * 60 * 1000,
+      retries: 2,
+    });
+  },
+
 };

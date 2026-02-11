@@ -74,5 +74,8 @@ export type VideoModelHandler = {
 
   buildPlan: (args: BuildPlanArgs) => BuildPlanResult;
 
-  submit: (plan: BuildPlanResult) => Promise<VideoGenResponse>;
+  submit: (
+    plan: BuildPlanResult,
+    opts?: { signal?: AbortSignal; onProgress?: (msg: string) => void }
+  ) => Promise<VideoGenResponse>;
 };

@@ -5,7 +5,7 @@ import { deleteAsset, listMyAssets, publishAsset, unpublishAsset, uploadUserAsse
 import { useAuth } from "../../contexts/AuthContext";
 import type { Asset } from "../../types";
 import { listKlingElements, type KlingElement } from "../../services/klingElementsService";
-import { formatErr } from "../../services/videoGenApi";
+import { formatErr, loadPendingFalJob, clearPendingFalJob, resumeFalFinalize, type PendingFalJob } from "../../services/videoGenApi";
 import { FramePickerModal } from "./video/FramePickerModal";
 import { MultishotModal } from "./video/multishotmodal";
 import { KlingElementsModal } from "./video/KlingElementsModal";
@@ -51,6 +51,81 @@ type KlingV3Shot = { prompt: string; durationSeconds: number };
 const TOOL_ID = "video-generator";
 const FRAME_UPLOAD_TOOL = "video-gen-frame";
 
+const VIDEO_SETTINGS_VERSION = 1;
+
+type VideoToolSettingsV1 = {
+  v: 1;
+
+  prompt: string;
+  model: string;
+
+  aspectRatio: "16:9" | "9:16" | "1:1";
+  resolution: "720p" | "1080p" | "4k";
+  durationSeconds: number;
+  count: number;
+
+  // Frames guardamos solo IDs
+  firstFrameId: string | null;
+  lastFrameId: string | null;
+
+  // Kling V2
+  klingMode: "std" | "pro";
+  klingSound: boolean;
+  klingSoundTouched: boolean;
+
+  // Kling V3
+  negativePrompt: string;
+  klingCfgScale: number;
+  klingVoiceIdsText: string;
+  selectedKlingElementIds: string[];
+
+  multishotEnabled: boolean;
+  klingShotType: "customize" | "intelligent";
+  klingShots: { prompt: string; durationSeconds: number }[];
+};
+
+function settingsKey(userId: string) {
+  return `tales_video_settings_v${VIDEO_SETTINGS_VERSION}:${userId}`;
+}
+
+function safeParseJson(raw: string | null) {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function coerceAr(v: any): "16:9" | "9:16" | "1:1" {
+  return v === "9:16" || v === "1:1" ? v : "16:9";
+}
+
+function coerceRes(v: any): "720p" | "1080p" | "4k" {
+  return v === "1080p" || v === "4k" ? v : "720p";
+}
+
+function coerceStdPro(v: any): "std" | "pro" {
+  return v === "pro" ? "pro" : "std";
+}
+
+function coerceShotType(v: any): "customize" | "intelligent" {
+  return v === "intelligent" ? "intelligent" : "customize";
+}
+
+function coerceShots(v: any) {
+  const arr = Array.isArray(v) ? v : [];
+  const cleaned = arr
+    .map((x) => ({
+      prompt: typeof x?.prompt === "string" ? x.prompt : "",
+      durationSeconds: Math.max(3, Math.min(15, Math.trunc(Number(x?.durationSeconds) || 3))),
+    }))
+    .slice(0, 10);
+
+  // mínimo 1 shot para no romper UI
+  if (cleaned.length === 0) return [{ prompt: "", durationSeconds: 3 }];
+  return cleaned;
+}
 
 const VideoGeneratorTool: React.FC = () => {
 
@@ -64,6 +139,14 @@ const VideoGeneratorTool: React.FC = () => {
   const [historyVisibleCount, setHistoryVisibleCount] = useState(HISTORY_INITIAL_COUNT);
   const [isLoadingMoreHistory, setIsLoadingMoreHistory] = useState(false);
   const [viewer, setViewer] = useState<Asset | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const [progressText, setProgressText] = useState<string | null>(null);
+  const [pendingFalJob, setPendingFalJob] = useState<PendingFalJob | null>(null);
+  const settingsLoadedRef = useRef(false);
+  const pendingFrameIdsRef = useRef<{ firstId: string | null; lastId: string | null }>({
+    firstId: null,
+    lastId: null,
+  });
 
   // placeholders mientras se genera (tiles “GENERATING” como en Image Tool)
   const [pendingSlots, setPendingSlots] = useState<string[]>([]);
@@ -461,10 +544,70 @@ const VideoGeneratorTool: React.FC = () => {
   useEffect(() => {
     if (!user?.id) return;
 
+    // 1) Cargar settings (solo una vez por login)
+    try {
+      const raw = localStorage.getItem(settingsKey(user.id));
+      const parsed = safeParseJson(raw);
+
+      if (parsed?.v === 1) {
+        const s = parsed as VideoToolSettingsV1;
+
+        setPrompt(typeof s.prompt === "string" ? s.prompt : "");
+        setModel(typeof s.model === "string" && s.model.trim() ? s.model : DEFAULT_VIDEO_MODEL);
+
+        setAspectRatio(coerceAr(s.aspectRatio));
+        setResolution(coerceRes(s.resolution));
+
+        setDurationSeconds(Number.isFinite(Number(s.durationSeconds)) ? Math.trunc(Number(s.durationSeconds)) : 8);
+        setCount(clampInt(s.count, 1, 4, 1));
+
+        setKlingMode(coerceStdPro(s.klingMode));
+        setKlingSound(Boolean(s.klingSound));
+        setKlingSoundTouched(Boolean(s.klingSoundTouched));
+
+        setNegativePrompt(typeof s.negativePrompt === "string" ? s.negativePrompt : "");
+        const cfg = Number(s.klingCfgScale);
+        setKlingCfgScale(Number.isFinite(cfg) ? Math.max(0, Math.min(1, cfg)) : 0.5);
+        setKlingVoiceIdsText(typeof s.klingVoiceIdsText === "string" ? s.klingVoiceIdsText : "");
+        setSelectedKlingElementIds(Array.isArray(s.selectedKlingElementIds) ? s.selectedKlingElementIds.filter(Boolean) : []);
+
+        setMultishotEnabled(Boolean(s.multishotEnabled));
+        setKlingShotType(coerceShotType(s.klingShotType));
+        setKlingShots(coerceShots(s.klingShots));
+
+        // Frames se aplican después de cargar imageAssets
+        pendingFrameIdsRef.current = {
+          firstId: typeof s.firstFrameId === "string" ? s.firstFrameId : null,
+          lastId: typeof s.lastFrameId === "string" ? s.lastFrameId : null,
+        };
+      }
+    } catch {
+      // si falla localStorage, no pasa nada
+    } finally {
+      settingsLoadedRef.current = true;
+    }
+
+    // 2) Cargar assets y aplicar frames guardados
     (async () => {
-      await reloadImages();
+      const imgs = await reloadImages();
       await reloadHistory();
+
+      const { firstId, lastId } = pendingFrameIdsRef.current;
+
+      if (firstId) {
+        const f = (imgs || []).find((a) => a?.id === firstId) || null;
+        setFirstFrame(f);
+        if (f && lastId) {
+          const l = (imgs || []).find((a) => a?.id === lastId) || null;
+          setLastFrame(l);
+        }
+      }
     })();
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    setPendingFalJob(loadPendingFalJob());
   }, [user?.id]);
 
   useEffect(() => {
@@ -484,6 +627,69 @@ const VideoGeneratorTool: React.FC = () => {
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
   }, [panel]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    if (!settingsLoadedRef.current) return;
+
+    const payload: VideoToolSettingsV1 = {
+      v: 1,
+
+      prompt,
+      model,
+
+      aspectRatio,
+      resolution,
+      durationSeconds,
+      count,
+
+      firstFrameId: firstFrame?.id ?? null,
+      lastFrameId: lastFrame?.id ?? null,
+
+      klingMode,
+      klingSound,
+      klingSoundTouched,
+
+      negativePrompt,
+      klingCfgScale,
+      klingVoiceIdsText,
+      selectedKlingElementIds,
+
+      multishotEnabled,
+      klingShotType,
+      klingShots,
+    };
+
+    const t = setTimeout(() => {
+      try {
+        localStorage.setItem(settingsKey(user.id), JSON.stringify(payload));
+      } catch {
+        // si no se puede guardar, no pasa nada
+      }
+    }, 250);
+
+    return () => clearTimeout(t);
+  }, [
+    user?.id,
+    prompt,
+    model,
+    aspectRatio,
+    resolution,
+    durationSeconds,
+    count,
+    firstFrame?.id,
+    lastFrame?.id,
+    klingMode,
+    klingSound,
+    klingSoundTouched,
+    negativePrompt,
+    klingCfgScale,
+    klingVoiceIdsText,
+    selectedKlingElementIds,
+    multishotEnabled,
+    klingShotType,
+    klingShots,
+  ]);
 
   useEffect(() => {
     if (!isKlingV3) return;
@@ -637,6 +843,9 @@ const durationLabel = useMemo(() => {
   const handleGenerate = async () => {
     setIsGenerating(true);
     setError(null);
+    const ac = new AbortController();
+    abortRef.current = ac;
+    setProgressText("Preparando…");
 
     try {
       const handler = getVideoModelHandler(modelNorm);
@@ -673,7 +882,10 @@ const durationLabel = useMemo(() => {
       const stamp = Date.now();
       setPendingSlots(Array.from({ length: plan.pendingSlotsCount }, (_, i) => `pending-${stamp}-${i}`));
 
-      const res = await handler.submit(plan);
+      const res = await handler.submit(plan, {
+        signal: ac.signal,
+        onProgress: (msg) => setProgressText(msg),
+      });
 
       if (!("ok" in res) || (res as any).ok !== true) {
         throw new Error("Respuesta inválida del backend.");
@@ -689,8 +901,63 @@ const durationLabel = useMemo(() => {
 
       setViewer(justMade || refreshed[0] || null);
     } catch (e: any) {
-      setError(formatErr(e));
+      if (e?.name === "AbortError" || e?.isCanceled || String(e?.message || "").toLowerCase().includes("cancel")) {
+        // Cancelado por el usuario: no mostramos modal de error
+      } else {
+        setError(formatErr(e));
+      }
     } finally {
+      abortRef.current = null;
+      setProgressText(null);
+      setIsGenerating(false);
+      setPendingSlots([]);
+    }
+  };
+
+  const handleCancel = () => {
+      abortRef.current?.abort();
+    };
+
+    const handleDiscardPending = () => {
+    clearPendingFalJob();
+    setPendingFalJob(null);
+  };
+
+  const handleResumePending = async () => {
+    if (!pendingFalJob) return;
+
+    setIsGenerating(true);
+    setError(null);
+
+    const ac = new AbortController();
+    abortRef.current = ac;
+    setProgressText("Reanudando…");
+    setPendingSlots(["pending-resume"]);
+
+    try {
+      const res = await resumeFalFinalize(pendingFalJob, {
+        signal: ac.signal,
+        onProgress: (msg) => setProgressText(msg),
+        maxWaitMs: 15 * 60 * 1000,
+      });
+
+      // Si salió bien: limpiar y refrescar historial
+      clearPendingFalJob();
+      setPendingFalJob(null);
+
+      await reloadHistory();
+    } catch (e: any) {
+      if (e?.name === "AbortError" || e?.isCanceled) {
+        // cancelado: no error modal
+      } else {
+        // si falló la reanudación, normalmente el job ya murió → limpiamos para evitar loop
+        clearPendingFalJob();
+        setPendingFalJob(null);
+        setError(formatErr(e));
+      }
+    } finally {
+      abortRef.current = null;
+      setProgressText(null);
       setIsGenerating(false);
       setPendingSlots([]);
     }
@@ -913,9 +1180,35 @@ const durationLabel = useMemo(() => {
                 <span className={styles.generateLabel}>{isGenerating ? "GENERATING" : "GENERATE"}</span>
                 {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
               </button>
+
+              {isGenerating && (
+                <button type="button" className={styles.cancelBtn} onClick={handleCancel}>
+                  CANCEL
+                </button>
+              )}
+
+              {isGenerating && progressText && (
+                <div className={styles.progressText}>{progressText}</div>
+              )}
             </div>
           </div>
 
+        {!isGenerating && pendingFalJob && (
+          <div className={styles.resumeBanner}>
+            <div className={styles.resumeTitle}>GENERACIÓN PENDIENTE DETECTADA</div>
+            <div className={styles.resumeDesc}>
+              Parece que quedó una generación de Kling V3 en progreso. Puedes reanudarla o descartarla.
+            </div>
+            <div className={styles.resumeActions}>
+              <button type="button" className={styles.resumeBtn} onClick={handleResumePending}>
+                REANUDAR
+              </button>
+              <button type="button" className={styles.discardBtn} onClick={handleDiscardPending}>
+                DESCARTAR
+              </button>
+            </div>
+          </div>
+        )} 
 
         {/* Controls */}
         <div className={styles.controlsArea}>

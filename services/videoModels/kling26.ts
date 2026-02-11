@@ -1,6 +1,6 @@
 import { apiPostJson } from "../videoGenApi";
 import { KLING_2_6 } from "./ids";
-import { clampInt, normalizeModelId } from "./utils";
+import { clampInt, normalizeModelId, coerceAllowedNumber } from "./utils";
 import type { BuildPlanArgs, BuildPlanResult, VideoModelHandler } from "./types";
 
 export const kling26Handler: VideoModelHandler = {
@@ -30,12 +30,14 @@ export const kling26Handler: VideoModelHandler = {
       tool: args.tool,
       nameHint: args.nameHint,
       count: clampInt(args.count, 1, 4, 1),
-      durationSeconds: Number(args.durationSeconds),
+      durationSeconds: coerceAllowedNumber(args.durationSeconds, [5, 10], 5),
       klingMode: args.klingMode,
     };
 
-    // Kling 2.6: solo enviamos klingSound si el usuario tocó el toggle
-    if (args.klingSoundTouched) body.klingSound = Boolean(args.klingSound);
+    // Kling 2.6: solo enviamos klingSound si el usuario tocó el toggle Y está en modo pro
+    if (args.klingSoundTouched && args.klingMode === "pro") {
+      body.klingSound = Boolean(args.klingSound);
+    }
 
     if (args.firstFrameAssetId) body.firstFrameAssetId = args.firstFrameAssetId;
     if (args.lastFrameAssetId) body.lastFrameAssetId = args.lastFrameAssetId;
@@ -51,5 +53,12 @@ export const kling26Handler: VideoModelHandler = {
     };
   },
 
-  submit: async (plan) => apiPostJson("/api/ai/video", plan.body),
+  submit: async (plan, opts) => {
+    opts?.onProgress?.("Enviando solicitud…");
+    return apiPostJson("/api/ai/video", plan.body, {
+      signal: opts?.signal,
+      timeoutMs: 10 * 60 * 1000,
+      retries: 2,
+    });
+  },
 };

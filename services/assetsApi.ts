@@ -5,29 +5,37 @@ type ApiOk = { ok: true; items: any[] };
 type ApiFail = { ok: false; error: any };
 
 function mapRowToAsset(row: any): Asset {
-  const createdRaw = row.createdAt ?? row.created_at;
+  const createdRaw =
+    row.createdAt ?? row.created_at ?? row.created ?? row.created_time ?? row.timestamp;
+
   const createdAt =
     typeof createdRaw === "number"
-      ? createdRaw
+      ? (createdRaw < 1e12 ? createdRaw * 1000 : createdRaw) // por si viene en segundos
       : typeof createdRaw === "string"
-        ? new Date(createdRaw).getTime()
+        ? (isNaN(new Date(createdRaw).getTime()) ? Date.now() : new Date(createdRaw).getTime())
         : Date.now();
 
-  const ownerId = row.ownerId ?? row.owner_id ?? "";
-  const isPublic = !!(row.isPublic ?? row.is_public);
+  const ownerId = String(row.ownerId ?? row.owner_id ?? row.userId ?? row.user_id ?? "");
+
+  const isPublic = !!(row.isPublic ?? row.is_public ?? row.public ?? row.is_public_asset);
+
+  // Normaliza el type a "image" | "video"
+  const rawType = String(row.type ?? row.assetType ?? row.mimeType ?? "");
+  const type: "image" | "video" =
+    rawType === "video" || rawType.startsWith("video") ? "video" : "image";
 
   return {
     id: row.id,
     url: row.url,
-    type: row.type,
-    name: row.name,
-    prompt: row.prompt,
-    createdAt: row.createdAt,
-    meta: (row as any).meta ?? undefined,
-    ownerId: row.ownerId,
-    isPublic: row.isPublic,
-    likes: row.likes || [],
-    comments: row.comments || []
+    type,
+    name: row.name ?? row.filename ?? row.title ?? "",
+    prompt: row.prompt ?? row.meta?.prompt ?? undefined,
+    createdAt,
+    meta: (row as any).meta ?? (row as any).metadata ?? undefined,
+    ownerId,
+    isPublic,
+    likes: Array.isArray(row.likes) ? row.likes : [],
+    comments: Array.isArray(row.comments) ? row.comments : [],
   };
 }
 
@@ -89,7 +97,15 @@ export async function listPublicAssets(opts?: { type?: "image" | "video"; limit?
 
   const text = await resp.text();
   let data: any;
-  data = JSON.parse(text);
+
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error(
+      `El backend devolvió HTML/texto en vez de JSON en listPublicAssets. Inicio: ${text.slice(0, 60)}`
+    );
+  }
+
 
   if (!resp.ok || data?.ok === false) {
     const e = data?.error;

@@ -1,6 +1,6 @@
 import { apiPostJson } from "../videoGenApi";
 import { VEO_3_1, VEO_3_1_FAST } from "./ids";
-import { clampInt, normalizeModelId } from "./utils";
+import { clampInt, normalizeModelId, coerceAllowedNumber, coerceAllowedString } from "./utils";
 import type { BuildPlanArgs, BuildPlanResult, VideoModelHandler } from "./types";
 
 function getDurations(hasFirst: boolean, hasLast: boolean, resolution: "720p" | "1080p" | "4k") {
@@ -29,14 +29,19 @@ export const veo31Handler: VideoModelHandler = {
     if (!args.prompt.trim()) throw new Error("Escribe un prompt.");
 
     const hasFirst = Boolean(args.firstFrameAssetId);
+    const hasLast = Boolean(args.lastFrameAssetId);
+
+    const resolution = coerceAllowedString(args.resolution, ["720p", "1080p", "4k"] as const, "720p");
+    const allowedDurations = getDurations(hasFirst, hasLast, resolution);
+
     const body: any = {
       prompt: args.prompt,
       model: modelNorm,
       tool: args.tool,
       nameHint: args.nameHint,
       count: clampInt(args.count, 1, 4, 1),
-      durationSeconds: Number(args.durationSeconds),
-      resolution: args.resolution,
+      durationSeconds: coerceAllowedNumber(args.durationSeconds, allowedDurations, allowedDurations[0]),
+      resolution,
     };
 
     if (args.firstFrameAssetId) body.firstFrameAssetId = args.firstFrameAssetId;
@@ -53,5 +58,12 @@ export const veo31Handler: VideoModelHandler = {
     };
   },
 
-  submit: async (plan) => apiPostJson("/api/ai/video", plan.body),
+  submit: async (plan, opts) => {
+    opts?.onProgress?.("Enviando solicitud…");
+    return apiPostJson("/api/ai/video", plan.body, {
+      signal: opts?.signal,
+      timeoutMs: 12 * 60 * 1000,
+      retries: 2,
+    });
+  },
 };

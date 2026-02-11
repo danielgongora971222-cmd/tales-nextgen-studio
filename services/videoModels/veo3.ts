@@ -1,6 +1,6 @@
 import { apiPostJson } from "../videoGenApi";
 import { VEO_3, VEO_3_FAST } from "./ids";
-import { clampInt, normalizeModelId } from "./utils";
+import { clampInt, normalizeModelId, coerceAllowedNumber, coerceAllowedString } from "./utils";
 import type { BuildPlanArgs, BuildPlanResult, VideoModelHandler } from "./types";
 
 export const veo3Handler: VideoModelHandler = {
@@ -23,14 +23,17 @@ export const veo3Handler: VideoModelHandler = {
     if (!args.prompt.trim()) throw new Error("Escribe un prompt.");
 
     const hasFirst = Boolean(args.firstFrameAssetId);
+
+    const resolution = coerceAllowedString(args.resolution, ["720p", "1080p"] as const, "720p");
+
     const body: any = {
       prompt: args.prompt,
       model: modelNorm,
       tool: args.tool,
       nameHint: args.nameHint,
       count: clampInt(args.count, 1, 4, 1),
-      durationSeconds: Number(args.durationSeconds),
-      resolution: args.resolution,
+      durationSeconds: coerceAllowedNumber(args.durationSeconds, [8], 8),
+      resolution,
     };
 
     if (args.firstFrameAssetId) body.firstFrameAssetId = args.firstFrameAssetId;
@@ -47,5 +50,12 @@ export const veo3Handler: VideoModelHandler = {
     };
   },
 
-  submit: async (plan) => apiPostJson("/api/ai/video", plan.body),
+  submit: async (plan, opts) => {
+    opts?.onProgress?.("Enviando solicitud…");
+    return apiPostJson("/api/ai/video", plan.body, {
+      signal: opts?.signal,
+      timeoutMs: 12 * 60 * 1000,
+      retries: 2,
+    });
+  },
 };

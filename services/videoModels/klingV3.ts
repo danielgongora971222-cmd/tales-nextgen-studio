@@ -1,6 +1,6 @@
-import { apiPostJson, waitFalJob } from "../videoGenApi";
+import { apiPostJson, waitFalJob, savePendingFalJob, clearPendingFalJob } from "../videoGenApi";
 import { KLING_V3 } from "./ids";
-import { normalizeModelId } from "./utils";
+import { normalizeModelId, coerceAllowedNumber } from "./utils";
 import type { BuildPlanArgs, BuildPlanResult, KlingV3Shot, VideoModelHandler } from "./types";
 
 function clampShot(s: KlingV3Shot): KlingV3Shot {
@@ -49,7 +49,7 @@ export const klingV3Handler: VideoModelHandler = {
       args.multishotEnabled ? (vShots[0]?.prompt || "multishot") : args.prompt;
 
     const effectiveDurationSeconds =
-      args.multishotEnabled ? Number(tot || 5) : Number(args.durationSeconds);
+      args.multishotEnabled ? Number(tot || 5) : coerceAllowedNumber(args.durationSeconds, [3,4,5,6,7,8,9,10,11,12,13,14,15], 5);
 
     const body: any = {
       prompt: effectivePrompt,
@@ -99,17 +99,51 @@ export const klingV3Handler: VideoModelHandler = {
     };
   },
 
-  submit: async (plan) => {
-    const submit = await apiPostJson<any>("/api/ai/video", { ...plan.body, async: true });
+  submit: async (plan, opts) => {
+    opts?.onProgress?.("Enviando solicitud (Fal)…");
+
+    const submit = await apiPostJson<any>(
+      "/api/ai/video",
+      { ...plan.body, async: true },
+      { signal: opts?.signal, timeoutMs: 60_000, retries: 2 }
+    );
 
     if (submit?.mode === "async" && submit?.jobToken) {
       const jobToken = String(submit.jobToken);
-      await waitFalJob(jobToken);
 
-      return apiPostJson("/api/ai/video/fal/finalize", {
+      // Guardamos para poder reanudar si el usuario recarga la página
+      savePendingFalJob({
         jobToken,
         prompt: plan.effectivePrompt,
+        modelNorm: plan.modelNorm,
+        createdAt: Date.now(),
       });
+
+      try {
+        await waitFalJob(jobToken, {
+          signal: opts?.signal,
+          maxWaitMs: 15 * 60 * 1000,
+          onProgress: opts?.onProgress,
+        });
+
+        opts?.onProgress?.("Finalizando (Fal)…");
+
+        const out = await apiPostJson(
+          "/api/ai/video/fal/finalize",
+          { jobToken, prompt: plan.effectivePrompt },
+          { signal: opts?.signal, timeoutMs: 2 * 60 * 1000, retries: 2 }
+        );
+
+        // Si terminó bien, limpiamos el job pendiente
+        clearPendingFalJob();
+        return out;
+      } catch (e: any) {
+        // Si el usuario canceló, limpiamos (cancel = no reanudar)
+        if (e?.name === "AbortError" || e?.isCanceled) {
+          clearPendingFalJob();
+        }
+        throw e;
+      }
     }
 
     // fallback si responde sync
