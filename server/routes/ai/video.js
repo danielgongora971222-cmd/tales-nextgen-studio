@@ -6,35 +6,19 @@ import {
 } from "../../schemas/index.js";
 
 export function createAiVideoRouter(ctx) {
-  
-  // ✅ FIX: ensureAI estaba siendo usado pero no existía (ReferenceError)
-// Deja un error claro si el cliente AI no está inicializado.
-function ensureAI(aiMaybe) {
-  if (aiMaybe) return aiMaybe;
 
-  // Fallbacks comunes (por si tu app guarda el cliente en global)
-  const fallback = globalThis?.ai || globalThis?.__ai || null;
-  if (fallback) return fallback;
-
-  const err = new Error(
-    "AI client no inicializado. Revisa la inicialización del servidor y tus variables de entorno (API keys)."
-  );
-  err.code = "CONFIG_ERROR";
-  err.status = 500;
-  throw err;
-}
 
   const router = express.Router();
 
   // Destructuring: dejamos disponibles con los MISMOS nombres
   // para que el código copiado desde server.js funcione sin cambios internos.
   const {
-    // deps/core
     supabaseAdmin,
     requireUser,
     getClientIp,
     apiError,
     httpError,
+    ensureAI,
 
     // storage helpers
     parseDataUrl,
@@ -46,15 +30,14 @@ function ensureAI(aiMaybe) {
     signStoragePath,
     insertAssetRow,
 
-    // env/flags/clients/helpers que existan en tu server.js
+    // env/flags/clients/helpers
     APP_ENV,
     NODE_ENV,
     SUPABASE_BUCKET,
 
-    // Cualquier otro helper/const que tu handler use:
-    // (si tu handler usa otros nombres, los añadimos aquí sin tocar su lógica)
     ...rest
   } = ctx;
+
 
   /**
    * 👇 PEGAREMOS AQUÍ tu handler /api/ai/video movido desde server.js
