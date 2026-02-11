@@ -2383,3 +2383,375 @@
   color: rgba(241,225,148,0.95);
   font-size: 12px;
 }
+
+/* =========================================================
+   FINAL OVERRIDES — Historial + Frames + Prompt (paridad con ImageGeneratorTool)
+   Mantén este bloque AL FINAL del archivo para que gane la cascada.
+   ========================================================= */
+
+.historyGrid {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  overflow: auto;
+  padding: 14px 20px 270px; /* deja espacio para el dock superpuesto */
+}
+
+/* History layout */
+.grid {
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+@media (min-width: 1600px) {
+  .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (max-width: 980px) {
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 560px) {
+  .grid { grid-template-columns: 1fr; }
+}
+
+/* Tiles: sin bordes, respetando aspect ratio real del video */
+.tile {
+  appearance: none;
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  text-align: inherit;
+  position: relative;
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  border: none;
+  background: rgba(0, 0, 0, 0.22);
+  cursor: pointer;
+  transition: transform 0.22s var(--ease-smooth), box-shadow 0.22s var(--ease-smooth);
+  align-self: start;
+}
+
+.tile:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 18px 44px rgba(0,0,0,0.6);
+  z-index: 2;
+}
+
+.tileVideo {
+  width: 100%;
+  height: auto;          /* ✅ respeta relación de aspecto del video */
+  display: block;
+  background: rgba(0,0,0,0.35);
+  transition: transform 0.5s ease;
+}
+
+.tile:hover .tileVideo { transform: scale(1.02); }
+
+.tileMeta {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  padding: 10px 10px 12px;
+  background: linear-gradient(to top, rgba(0,0,0,0.75), rgba(0,0,0,0));
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 8px;
+
+  opacity: 0;
+  transform: translateY(6px);
+  pointer-events: none;
+  transition: opacity 0.22s var(--ease-smooth), transform 0.22s var(--ease-smooth);
+}
+
+.tile:hover .tileMeta,
+.tile:focus-visible .tileMeta {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.tileCaption {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+
+.publicTag {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(0,0,0,0.55);
+  color: rgba(241,225,148,0.9);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+  flex-shrink: 0;
+}
+
+.tileActions {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  gap: 8px;
+  opacity: 0;
+  transform: translateY(-6px);
+  transition: all 0.22s var(--ease-smooth);
+}
+
+.tile:hover .tileActions {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.iconBtn, .iconBtnDanger {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  display: grid; place-items: center;
+  background: rgba(0,0,0,0.55);
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  box-shadow:
+    0 14px 28px rgba(0,0,0,0.55),
+    inset 0 1px 0 rgba(255,255,255,0.06);
+  transition: transform 0.18s var(--ease-spring), box-shadow 0.18s var(--ease-spring), background 0.18s var(--ease-spring);
+}
+
+.iconBtn:hover {
+  background: rgba(241,225,148,0.92);
+  color: #000;
+  transform: translateY(-1px);
+}
+
+.iconBtnDanger:hover {
+  background: var(--burgundy);
+  color: #fff;
+  transform: translateY(-1px);
+}
+
+/* Botón Refresh igual (sin marco) */
+.ghostBtn {
+  background: rgba(0,0,0,0.18);
+  border: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 6px 12px;
+  border-radius: 99px;
+  cursor: pointer;
+  box-shadow: 0 10px 22px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.06);
+  transition: all 0.2s var(--ease-smooth);
+}
+.ghostBtn:hover {
+  color: var(--sand);
+  background: rgba(0,0,0,0.26);
+  transform: translateY(-1px);
+}
+
+/* ===== Frames (FIRST / SWAP / LAST) ===== */
+
+.frameStrip{
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.frameCard{
+  width: 78px;
+  aspect-ratio: 4 / 5;         /* ✅ 4:5 */
+  border-radius: 18px;
+  overflow: hidden;
+  border: none;                /* ✅ sin marco */
+  background: rgba(0,0,0,0.22);
+  position: relative;
+  display: grid;
+  cursor: pointer;
+  box-shadow:
+    0 14px 30px rgba(0,0,0,0.45),
+    inset 0 1px 0 rgba(255,255,255,0.06);
+  transition: transform 0.18s var(--ease-spring), box-shadow 0.18s var(--ease-spring), filter 0.18s var(--ease-spring);
+}
+
+.frameCard:hover{
+  transform: translateY(-1px);
+  filter: brightness(1.05);
+  box-shadow:
+    0 18px 44px rgba(0,0,0,0.62),
+    inset 0 1px 0 rgba(255,255,255,0.08);
+}
+
+.frameCardLocked{
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.frameCardImg{
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.frameCardEmpty{
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  padding: 10px;
+}
+
+.frameCardIcons{
+  display: inline-flex;
+  gap: 8px;
+  color: rgba(241,225,148,0.85);
+  opacity: 0.95;
+}
+
+.frameCardEmptyText{
+  font-family: var(--mono);
+  letter-spacing: 0.16em;
+  font-size: 10px;
+  color: rgba(241,225,148,0.75);
+}
+
+.frameCardBadge{
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: rgba(241,225,148,0.92);
+  text-shadow: 0 1px 10px rgba(0,0,0,0.65);
+  background: rgba(0,0,0,0.38);
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(241,225,148,0.22);
+  backdrop-filter: blur(10px);
+}
+
+.frameCardRemove{
+  position: absolute;
+  right: 6px;
+  top: 6px;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  border: none;
+  background: rgba(0,0,0,0.60);
+  color: rgba(255,255,255,0.92);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  opacity: 0;
+  transform: scale(0.9);
+  pointer-events: none;
+  transition: opacity 0.16s var(--ease-smooth), transform 0.16s var(--ease-smooth), background 0.16s var(--ease-smooth);
+  z-index: 2;
+}
+
+.frameCard:hover .frameCardRemove{
+  opacity: 1;
+  transform: scale(1);
+  pointer-events: auto;
+}
+
+.frameCardRemove:hover{
+  background: rgba(91, 14, 20, 0.75);
+}
+
+/* Botón de invertir frames (entre FIRST y LAST) */
+.frameSwapBtn{
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  border: none;
+  background: rgba(18,18,20,0.88);
+  color: rgba(241,225,148,0.92);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  box-shadow:
+    0 14px 28px rgba(0,0,0,0.55),
+    inset 0 1px 0 rgba(255,255,255,0.06),
+    inset 0 -10px 18px rgba(0,0,0,0.65);
+  transition: transform 0.18s var(--ease-spring), box-shadow 0.18s var(--ease-spring), background 0.18s var(--ease-spring), color 0.18s var(--ease-spring);
+  align-self: center;
+}
+
+.frameSwapBtn:hover{
+  transform: translateY(-1px);
+  background: rgba(241,225,148,0.92);
+  color: #000;
+}
+
+.frameSwapBtn:disabled{
+  opacity: 0.35;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* ===== Prompt (igual que ImageTool, sin “comprimirse”) ===== */
+
+.promptRow {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  position: relative;
+  overflow: visible;
+}
+
+.promptInputWrap{
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  position: relative;
+  overflow: visible;
+}
+
+.promptEditor{
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.prompt {
+  flex: 1;
+  background: rgba(16,16,18,0.92);
+  border: none;
+  border-radius: 14px;
+  padding: 12px 16px;
+  color: var(--text-main);
+  font-size: 14px;
+  line-height: 1.4;
+  resize: none;
+  height: 46px;       /* ✅ colapsado como ImageTool */
+  min-height: 46px;
+  transition: all 0.25s var(--ease-smooth);
+  font-family: var(--sans);
+  box-shadow:
+    0 14px 30px rgba(0,0,0,0.45),
+    inset 0 1px 0 rgba(255,255,255,0.06),
+    inset 0 -10px 18px rgba(0,0,0,0.65);
+}
+
+.prompt:focus {
+  background: rgba(16,16,18,0.96);
+  outline: none;
+  height: 86px;       /* ✅ expande al focus */
+  box-shadow:
+    0 18px 46px rgba(0,0,0,0.6),
+    inset 0 1px 0 rgba(255,255,255,0.08),
+    inset 0 -12px 22px rgba(0,0,0,0.7);
+}
+
+.prompt::placeholder { color: rgba(255,255,255,0.25); }

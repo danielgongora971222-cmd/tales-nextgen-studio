@@ -35,21 +35,24 @@ function Icon({
   name,
 }: {
   name:
-    | "heart"
-    | "share"
-    | "download"
-    | "trash"
-    | "close"
-    | "copy"
-    | "reuse"
-    | "model"
-    | "sliders"
-    | "clock"
-    | "elements"
-    | "multishot"
-    | "sound"
-    | "speed"
-    | "mode";
+  | "heart"
+  | "share"
+  | "download"
+  | "trash"
+  | "close"
+  | "copy"
+  | "reuse"
+  | "model"
+  | "sliders"
+  | "clock"
+  | "elements"
+  | "multishot"
+  | "sound"
+  | "speed"
+  | "mode"
+  | "image"
+  | "upload"
+  | "swap";
 }) {
   switch (name) {
     case "model":
@@ -118,6 +121,35 @@ function Icon({
           <path
             fill="currentColor"
             d="M4 7h16v10H4V7zm2 2v6h12V9H6zm-1 11h14v2H5v-2zM5 2h14v2H5V2z"
+          />
+        </svg>
+      );
+        case "image":
+      return (
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <path
+            fill="currentColor"
+            d="M21 19V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2zm-2 0H5V5h14v14zM7 15l2.5-3 2 2.5L14.5 11 18 16H7z"
+          />
+        </svg>
+      );
+
+    case "upload":
+      return (
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <path
+            fill="currentColor"
+            d="M5 20h14v-2H5v2zM12 2l-5 5h3v6h4V7h3l-5-5z"
+          />
+        </svg>
+      );
+
+    case "swap":
+      return (
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <path
+            fill="currentColor"
+            d="M7 7h11l-3.5-3.5L16 2l6 6-6 6-1.5-1.5L18 9H7V7zm10 10H6l3.5 3.5L8 22l-6-6 6-6 1.5 1.5L6 15h11v2z"
           />
         </svg>
       );
@@ -1174,27 +1206,38 @@ const durationLabel = useMemo(() => {
       {/* DOCK (prompt bar estilo Image Tool) */}
       <div className={styles.dockWrap}>
         <div className={styles.dock}>
-          <div className={styles.refThumbStrip}>
+          <div className={styles.frameStrip}>
             {/* FIRST */}
             <div
-              className={styles.refMini}
+              className={styles.frameCard}
               title="FIRST frame"
               role="button"
               tabIndex={0}
               onClick={() => openPicker("first")}
               onKeyDown={(e) => e.key === "Enter" && openPicker("first")}
             >
-              {firstFrame ? <img src={firstFrame.url} alt="FIRST" /> : <div className={styles.refMiniEmpty}>FIRST</div>}
-              <span className={styles.refMiniIcon}>FIRST</span>
+              {firstFrame ? (
+                <img className={styles.frameCardImg} src={firstFrame.url} alt="FIRST" />
+              ) : (
+                <div className={styles.frameCardEmpty}>
+                  <div className={styles.frameCardIcons}>
+                    <Icon name="image" />
+                    <Icon name="upload" />
+                  </div>
+                  <div className={styles.frameCardEmptyText}>FIRST</div>
+                </div>
+              )}
+
+              <span className={styles.frameCardBadge}>FIRST</span>
+
               {firstFrame && (
                 <button
                   type="button"
-                  className={styles.refMiniRemove}
+                  className={styles.frameCardRemove}
                   aria-label="Remove FIRST"
                   onClick={(e) => {
                     e.stopPropagation();
-                    setFirstFrame(null);
-                    setLastFrame(null);
+                    clearFrame("first");
                   }}
                 >
                   ×
@@ -1202,25 +1245,49 @@ const durationLabel = useMemo(() => {
               )}
             </div>
 
+            {/* SWAP */}
+            <button
+              type="button"
+              className={styles.frameSwapBtn}
+              onClick={swapFrames}
+              disabled={!firstFrame || !lastFrame}
+              title={!firstFrame || !lastFrame ? "Carga FIRST y LAST para invertir" : "Invertir FIRST ↔ LAST"}
+            >
+              <Icon name="swap" />
+            </button>
+
             {/* LAST */}
             <div
-              className={`${styles.refMini} ${!hasFirst ? styles.refMiniLocked : ""}`}
+              className={`${styles.frameCard} ${!hasFirst ? styles.frameCardLocked : ""}`}
               title={!hasFirst ? "LAST bloqueado: primero carga FIRST" : "LAST frame"}
               role="button"
-              tabIndex={0}
+              tabIndex={hasFirst ? 0 : -1}
               onClick={() => openPicker("last")}
               onKeyDown={(e) => e.key === "Enter" && openPicker("last")}
+              aria-disabled={!hasFirst}
             >
-              {lastFrame ? <img src={lastFrame.url} alt="LAST" /> : <div className={styles.refMiniEmpty}>LAST</div>}
-              <span className={styles.refMiniIcon}>LAST</span>
+              {lastFrame ? (
+                <img className={styles.frameCardImg} src={lastFrame.url} alt="LAST" />
+              ) : (
+                <div className={styles.frameCardEmpty}>
+                  <div className={styles.frameCardIcons}>
+                    <Icon name="image" />
+                    <Icon name="upload" />
+                  </div>
+                  <div className={styles.frameCardEmptyText}>LAST</div>
+                </div>
+              )}
+
+              <span className={styles.frameCardBadge}>LAST</span>
+
               {lastFrame && (
                 <button
                   type="button"
-                  className={styles.refMiniRemove}
+                  className={styles.frameCardRemove}
                   aria-label="Remove LAST"
                   onClick={(e) => {
                     e.stopPropagation();
-                    setLastFrame(null);
+                    clearFrame("last");
                   }}
                 >
                   ×
