@@ -643,7 +643,7 @@ export function createAiVideoRouter(ctx) {
     const items = [];
 
     for (let i = 0; i < generated.length; i++) {
-      const tmpPath = pathJoin(os.tmpdir(), `veo_${Date.now()}_${i}.mp4`);
+      const tmpPath = path.join(os.tmpdir(), `veo_${Date.now()}_${i}.mp4`);
 
       try {
         await aiClient.files.download({
