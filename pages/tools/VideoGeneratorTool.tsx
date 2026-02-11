@@ -381,9 +381,8 @@ const VideoGeneratorTool: React.FC = () => {
   const hasMoreHistory = historyVisibleCount < videoAssets.length;
 
   // Picker modal
-    // Picker modal
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [pickerSlot, setPickerSlot] = useState<FrameSlotKey>("first");
+  // Picker (FIRST/LAST) — igual al picker de Reference del Image Tool
+  const [pickerSlot, setPickerSlot] = useState<FrameSlotKey | null>(null);
   const [pickerQuery, setPickerQuery] = useState("");
 
   // Picker (FIRST/LAST): mostramos 12 al inicio y cargamos de a 9 con botón "Cargar más"
@@ -780,10 +779,10 @@ const VideoGeneratorTool: React.FC = () => {
     })();
   }, [user?.id]);
 
-  useEffect(() => {
-    if (!pickerOpen) return;
+    useEffect(() => {
+    if (!pickerSlot) return;
     reloadImages();
-  }, [pickerOpen]);
+  }, [pickerSlot]);
 
   // Cerrar popover al click afuera
   useEffect(() => {
@@ -875,30 +874,34 @@ const durationLabel = useMemo(() => {
   return `${durationSeconds}s`;
 }, [durationSeconds, isKlingV3, multishotEnabled, multishotTotalSeconds]);
 
+  const framesMetaLabel = useMemo(() => {
+    const parts = [firstFrame ? "FIRST" : null, lastFrame ? "LAST" : null].filter(Boolean) as string[];
+    return parts.join(" ") || "None";
+  }, [firstFrame, lastFrame]);
 
-  const openPicker = (slot: FrameSlotKey) => {
-    if (slot === "last" && !hasFirst) return; // bloquea last si no hay first
-    setPanel(null);
+    const openFramesPicker = (slot: FrameSlotKey) => {
+    // Abre el panel "Frames" y deja el picker listo (igual al Image Tool)
+    setPanel("frames");
     setPickerSlot(slot);
     setPickerQuery("");
     setPickerVisibleCount(PICKER_INITIAL_COUNT);
-    setPickerOpen(true);
   };
 
-  const setFrameFromAsset = (slot: FrameSlotKey, asset: Asset) => {
+    const setFrameFromAsset = (slot: FrameSlotKey, asset: Asset) => {
     if (slot === "first") {
       setFirstFrame(asset);
     } else {
-      if (!hasFirst) return;
       setLastFrame(asset);
     }
-    setPickerOpen(false);
+
+    // UI close (igual a Reference picker)
+    setPickerSlot(null);
+    setPanel(null);
   };
 
-  const clearFrame = (slot: FrameSlotKey) => {
+    const clearFrame = (slot: FrameSlotKey) => {
     if (slot === "first") {
       setFirstFrame(null);
-      setLastFrame(null); // regla: al limpiar first se limpia last
     } else {
       setLastFrame(null);
     }
@@ -947,10 +950,10 @@ const durationLabel = useMemo(() => {
   }, [imageAssets, pickerQuery]);
 
   // Si el usuario busca (o reabre el modal), reiniciamos a 12 para que no se “acumule” la lista.
-  useEffect(() => {
-    if (!pickerOpen) return;
+    useEffect(() => {
+    if (!pickerSlot) return;
     setPickerVisibleCount(PICKER_INITIAL_COUNT);
-  }, [pickerQuery, pickerOpen]);
+  }, [pickerQuery, pickerSlot]);
 
   const visiblePickerAssets = useMemo(
     () => filteredPickerAssetsAll.slice(0, Math.min(pickerVisibleCount, filteredPickerAssetsAll.length)),
@@ -1294,11 +1297,11 @@ const durationLabel = useMemo(() => {
               title="FIRST frame"
               role="button"
               tabIndex={0}
-              onClick={() => openPicker("first")}
-              onKeyDown={(e) => e.key === "Enter" && openPicker("first")}
+              onClick={() => openFramesPicker("first")}
+              onKeyDown={(e) => e.key === "Enter" && openFramesPicker("first")}
             >
               {firstFrame ? (
-                <img className={styles.frameCardImg} src={firstFrame.url} alt="FIRST" />
+                <img className={styles.frameCardImg} src={getAssetUrl(firstFrame) || firstFrame.url} alt="FIRST" />
               ) : (
                 <div className={styles.frameCardEmpty}>
                   <div className={styles.frameCardIcons}>
@@ -1343,12 +1346,12 @@ const durationLabel = useMemo(() => {
               title={!hasFirst ? "Primero carga FIRST para habilitar LAST" : "LAST frame"}
               role="button"
               tabIndex={hasFirst ? 0 : -1}
-              onClick={() => openPicker("last")}
-              onKeyDown={(e) => e.key === "Enter" && openPicker("last")}
+              onClick={() => openFramesPicker("last")}
+              onKeyDown={(e) => e.key === "Enter" && openFramesPicker("last")}
               aria-disabled={!hasFirst}
             >
               {lastFrame ? (
-                <img className={styles.frameCardImg} src={lastFrame.url} alt="LAST" />
+                <img className={styles.frameCardImg} src={getAssetUrl(lastFrame) || lastFrame.url} alt="LAST" />
               ) : (
                 <div className={styles.frameCardEmpty}>
                   <div className={styles.frameCardIcons}>
@@ -1534,6 +1537,21 @@ const durationLabel = useMemo(() => {
           {/* Controls row (igual a tu lógica actual) */}
           <div className={styles.controlsArea}></div>
                     <div className={styles.controlsRow}>
+                                  <button
+              type="button"
+              className={`${styles.controlBtn} ${panel === "frames" ? styles.controlBtnActive : ""}`}
+              onClick={() => {
+                setPanel((p) => (p === "frames" ? null : "frames"));
+                setPickerSlot(null);
+              }}
+            >
+              <span className={styles.controlBtnLeft}>
+                <Icon name="image" />
+                <span>Frames</span>
+              </span>
+              <span className={styles.controlBtnMeta}>{framesMetaLabel}</span>
+            </button>
+
             <button
               type="button"
               className={`${styles.controlBtn} ${panel === "model" ? styles.controlBtnActive : ""}`}
@@ -1680,12 +1698,134 @@ const durationLabel = useMemo(() => {
                         <div className={styles.popoverInner}>
                           <div className={styles.popoverHeader}>
                             <div className={styles.popoverTitle}>
-                              {panel === "model" ? "Model" : panel === "parameters" ? "Parameters" : "Duration"}
+                              {panel === "frames" ? "Frames" : panel === "model" ? "Model" : panel === "parameters" ? "Parameters" : "Duration"}
                             </div>
                             <button className={styles.closeBtn} onClick={() => setPanel(null)} type="button" title="Cerrar">
                               <Icon name="close" />
                             </button>
                           </div>
+
+                                                    {/* FRAMES */}
+                          {panel === "frames" && (
+                            <div className={styles.framesPanel}>
+                              <div className={styles.refSlots}>
+                                {(["first", "last"] as FrameSlotKey[]).map((slot) => {
+                                  const a = slot === "first" ? firstFrame : lastFrame;
+                                  const label = slot === "first" ? "FIRST Frame" : "LAST Frame";
+                                  return (
+                                    <div key={slot} className={styles.refSlot}>
+                                      <div className={styles.refSlotLeft}>
+                                        <div className={styles.refSlotLabel}>{label}</div>
+                                        <div className={styles.refSlotThumb}>
+                                          {a ? (
+                                            <img src={getAssetUrl(a) || a.url} alt={a.name || label} />
+                                          ) : (
+                                            <div className={styles.refSlotEmpty}>EMPTY</div>
+                                          )}
+                                        </div>
+                                      </div>
+
+                                      <div className={styles.refSlotRight}>
+                                        <button
+                                          type="button"
+                                          className={styles.smallBtn}
+                                          onClick={() => {
+                                            setPickerSlot(slot);
+                                            setPickerQuery("");
+                                            setPickerVisibleCount(PICKER_INITIAL_COUNT);
+                                          }}
+                                        >
+                                          Pick
+                                        </button>
+
+                                        <label className={styles.smallBtn} title="Subir desde tu PC">
+                                          Upload
+                                          <input
+                                            type="file"
+                                            accept="image/*"
+                                            style={{ display: "none" }}
+                                            onChange={(e) => {
+                                              const f = e.target.files?.[0];
+                                              if (f) handleUploadForSlot(slot, f);
+                                              e.currentTarget.value = "";
+                                            }}
+                                          />
+                                        </label>
+
+                                        {a && (
+                                          <button
+                                            type="button"
+                                            className={styles.smallBtnGhost}
+                                            onClick={() => clearFrame(slot)}
+                                          >
+                                            Clear
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+
+                              {pickerSlot && (
+                                <div className={styles.pickerArea}>
+                                  <div className={styles.pickerTop}>
+                                    <div className={styles.pickerTitle}>
+                                      Pick for: {pickerSlot === "first" ? "FIRST Frame" : "LAST Frame"}
+                                    </div>
+                                    <button
+                                      type="button"
+                                      className={styles.smallBtnGhost}
+                                      onClick={() => setPickerSlot(null)}
+                                    >
+                                      Close
+                                    </button>
+                                  </div>
+
+                                  <input
+                                    className={styles.search}
+                                    placeholder="Search in history..."
+                                    value={pickerQuery}
+                                    onChange={(e) => setPickerQuery(e.target.value)}
+                                  />
+
+                                  {hasMorePicker && (
+                                    <div className={styles.pickerLoadMoreWrap}>
+                                      <button type="button" className={styles.loadMoreBtn} onClick={handleLoadMorePicker}>
+                                        Cargar más
+                                      </button>
+                                      <div className={styles.loadMoreHint}>
+                                        Mostrando {visiblePickerAssets.length} de {filteredPickerAssetsAll.length}
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  <div className={styles.pickerGrid}>
+                                    {isLoadingImages ? (
+                                      <div className={styles.pickerEmpty}>Cargando imágenes…</div>
+                                    ) : visiblePickerAssets.length === 0 ? (
+                                      <div className={styles.pickerEmpty}>
+                                        No hay imágenes en tu historial. Genera una imagen o usa Upload.
+                                      </div>
+                                    ) : (
+                                      visiblePickerAssets.map((a) => (
+                                        <button
+                                          key={a.id}
+                                          type="button"
+                                          className={styles.pickerTile}
+                                          onClick={() => setFrameFromAsset(pickerSlot!, a)}
+                                        >
+                                          <img src={getAssetUrl(a) || a.url} alt={a.name} />
+                                          <div className={styles.pickerTileCap}>{shortText(a.prompt || a.name, 56)}</div>
+                                        </button>
+                                      ))
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
 
                           {/* MODEL */}
                           {panel === "model" && (
@@ -2099,84 +2239,6 @@ const durationLabel = useMemo(() => {
                 </div>
               </div>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Picker modal */}
-      {pickerOpen && (
-        <div className={styles.modalOverlay} role="dialog" aria-modal="true">
-          <div className={styles.modal}>
-            <div className={styles.modalHeader}>
-              <div className={styles.modalTitle}>
-                Pick {pickerSlot === "first" ? "FIRST" : "LAST"} Frame
-              </div>
-              <button className={styles.modalClose} onClick={() => setPickerOpen(false)} type="button">
-                ×
-              </button>
-            </div>
-
-            <div className={styles.modalActions}>
-              <input
-                className={styles.search}
-                placeholder="Search in history..."
-                value={pickerQuery}
-                onChange={(e) => setPickerQuery(e.target.value)}
-              />
-
-              <label className={styles.uploadBtn}>
-                Upload
-                <input
-                  type="file"
-                  accept="image/*"
-                  style={{ display: "none" }}
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) handleUploadForSlot(pickerSlot, f);
-                    e.currentTarget.value = "";
-                  }}
-                />
-              </label>
-            </div>
-
-              {hasMorePicker && (
-                <div className={styles.pickerLoadMoreWrap}>
-                  <button type="button" className={styles.loadMoreBtn} onClick={handleLoadMorePicker}>
-                    Cargar más
-                  </button>
-                  <div className={styles.loadMoreHint}>
-                    Mostrando {visiblePickerAssets.length} de {filteredPickerAssetsAll.length}
-                  </div>
-                </div>
-              )}
-
-            <div className={styles.pickerGrid}>
-              {isLoadingImages ? (
-                <div className={styles.pickerEmpty}>Cargando imágenes…</div>
-              ) : visiblePickerAssets.length === 0 ? (
-                <div className={styles.pickerEmpty}>
-                  No hay imágenes en tu historial. Genera una imagen o usa Upload.
-                </div>
-              ) : (
-                visiblePickerAssets.map((a) => (
-                  <button
-                    key={a.id}
-                    type="button"
-                    className={styles.pickerTile}
-                    onClick={() => setFrameFromAsset(pickerSlot, a)}
-                  >
-                    <img src={getAssetUrl(a) || a.url} alt={a.name} />
-                    <div className={styles.pickerCap}>{shortText(a.prompt || a.name, 56)}</div>
-                  </button>
-                ))
-              )}
-            </div>
-
-            {pickerSlot === "last" && !hasFirst && (
-              <div className={styles.modalNote}>
-                LAST está bloqueado: primero carga FIRST.
-              </div>
-            )}
           </div>
         </div>
       )}
