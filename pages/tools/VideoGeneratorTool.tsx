@@ -11,6 +11,8 @@ import { MultishotModal } from "./video/multishotmodal";
 import { KlingElementsModal } from "./video/KlingElementsModal";
 import { HistorySection } from "./video/HistorySection";
 import { FrameStrip } from "./video/FrameStrip";
+import { ControlsRow } from "./video/ControlsRow";
+import { ControlsPopover } from "./video/ControlsPopover";
 
 
 import {
@@ -915,466 +917,74 @@ const durationLabel = useMemo(() => {
           </div>
 
 
-          {/* Controls row (igual a tu lógica actual) */}
-        <div className={styles.controlsArea}></div>
-          <div className={styles.controlsRow}>
-            <button
-              type="button"
-              className={`${styles.controlBtn} ${panel === "model" ? styles.controlBtnActive : ""}`}
-              onClick={() => setPanel((p) => (p === "model" ? null : "model"))}
-            >
-              <span className={styles.controlBtnLeft}>
-                <Icon name="model" />
-                <span>Model</span>
-              </span>
-              <span className={styles.controlBtnMeta}>{modelLabel}</span>
-            </button>
+        {/* Controls */}
+        <div className={styles.controlsArea}>
+          <ControlsRow
+            panel={panel}
+            setPanel={setPanel}
+            modelLabel={modelLabel}
+            paramsLabel={paramsLabel}
+            durationLabel={durationLabel}
+            isVeoFamily={isVeoFamily}
+            veoSpeedLabel={veoSpeedLabel}
+            toggleVeoSpeed={toggleVeoSpeed}
+            isKlingV2={isKlingV2}
+            klingMode={klingMode}
+            toggleKlingMode={toggleKlingMode}
+            supportsSound={capability.supportsSound}
+            klingSound={klingSound}
+            toggleSound={toggleSound}
+            isKlingV3={isKlingV3}
+            hasFirstFrame={!!firstFrame?.id}
+            selectedKlingElementCount={selectedKlingElementIds.length}
+            openElements={() => setElementsOpen(true)}
+            multishotEnabled={multishotEnabled}
+            setMultishotEnabled={setMultishotEnabled}
+            multishotTotalSeconds={multishotTotalSeconds}
+          />
 
-            <button
-              type="button"
-              className={`${styles.controlBtn} ${panel === "parameters" ? styles.controlBtnActive : ""}`}
-              onClick={() => setPanel((p) => (p === "parameters" ? null : "parameters"))}
-            >
-              <span className={styles.controlBtnLeft}>
-                <Icon name="sliders" />
-                <span>Parameters</span>
-              </span>
-              <span className={styles.controlBtnMeta}>{paramsLabel}</span>
-            </button>
+          <ControlsPopover
+            panel={panel}
+            setPanel={setPanel}
+            popoverRef={popoverRef}
+            model={model}
+            setModel={setModel}
+            veoIsFast={veoIsFast}
+            capability={capability}
+            hasFirst={hasFirst}
+            aspectRatio={aspectRatio}
+            setAspectRatio={setAspectRatio}
+            supportedResolutions={supportedResolutions}
+            resolution={resolution}
+            setResolution={setResolution}
+            count={count}
+            setCount={setCount}
+            isKling={isKling}
+            isKlingV3={isKlingV3}
+            klingMode={klingMode}
+            setKlingMode={setKlingMode}
+            klingSound={klingSound}
+            setKlingSound={setKlingSound}
+            setKlingSoundTouched={setKlingSoundTouched}
+            klingShotType={klingShotType}
+            setKlingShotType={setKlingShotType}
+            negativePrompt={negativePrompt}
+            setNegativePrompt={setNegativePrompt}
+            klingCfgScale={klingCfgScale}
+            setKlingCfgScale={setKlingCfgScale}
+            klingVoiceIdsText={klingVoiceIdsText}
+            setKlingVoiceIdsText={setKlingVoiceIdsText}
+            multishotEnabled={multishotEnabled}
+            multishotTotalSeconds={multishotTotalSeconds}
+            setMultishotOpen={setMultishotOpen}
+            allowedDurations={allowedDurations}
+            durationSeconds={durationSeconds}
+            setDurationSeconds={setDurationSeconds}
+          />
 
-            <button
-              type="button"
-              className={`${styles.controlBtn} ${panel === "duration" ? styles.controlBtnActive : ""}`}
-              onClick={() => setPanel((p) => (p === "duration" ? null : "duration"))}
-            >
-              <span className={styles.controlBtnLeft}>
-                <Icon name="clock" />
-                <span>Duration</span>
-              </span>
-              <span className={styles.controlBtnMeta}>{durationLabel}</span>
-            </button>
-
-            {/* Veo: Fast / Quality */}
-            {isVeoFamily && (
-              <button
-                type="button"
-                className={styles.controlBtn}
-                onClick={() => {
-                  setPanel(null);
-                  toggleVeoSpeed();
-                }}
-                title="Cambiar entre Fast y Quality"
-              >
-                <span className={styles.controlBtnLeft}>
-                  <Icon name="speed" />
-                  <span>Veo</span>
-                </span>
-                <span className={styles.controlBtnMeta}>{veoSpeedLabel}</span>
-              </button>
-            )}
-
-            {/* Kling 2.x: Standard / Pro */}
-            {isKlingV2 && (
-              <button
-                type="button"
-                className={styles.controlBtn}
-                onClick={() => {
-                  setPanel(null);
-                  toggleKlingMode();
-                }}
-                title="Cambiar entre Standard y Pro"
-              >
-                <span className={styles.controlBtnLeft}>
-                  <Icon name="mode" />
-                  <span>Kling</span>
-                </span>
-                <span className={styles.controlBtnMeta}>{klingMode === "std" ? "Standard" : "Pro"}</span>
-              </button>
-            )}
-
-            {/* Sound ON/OFF (cuando el modelo lo soporta) */}
-            {capability.supportsSound && (
-              <button
-                type="button"
-                className={`${styles.controlBtn} ${klingSound ? styles.controlBtnActive : ""}`}
-                onClick={() => {
-                  setPanel(null);
-                  toggleSound();
-                }}
-                title="Activar/Desactivar sonido"
-              >
-                <span className={styles.controlBtnLeft}>
-                  <Icon name="sound" />
-                  <span>Sound</span>
-                </span>
-                <span className={styles.controlBtnMeta}>{klingSound ? "On" : "Off"}</span>
-              </button>
-            )}
-
-            {/* Kling V3: Elements + Multishot */}
-            {isKlingV3 && (
-              <>
-                <button
-                  type="button"
-                  className={styles.controlBtn}
-                  onClick={() => {
-                    setPanel(null);
-                    setElementsOpen(true);
-                  }}
-                  disabled={!firstFrame?.id}
-                  title={!firstFrame?.id ? "Para usar Elements primero carga FIRST frame" : "Seleccionar Elements"}
-                >
-                  <span className={styles.controlBtnLeft}>
-                    <Icon name="elements" />
-                    <span>Elements</span>
-                  </span>
-                  <span className={styles.controlBtnMeta}>
-                    {!firstFrame?.id
-                      ? "Need FIRST"
-                      : selectedKlingElementIds.length
-                        ? `${selectedKlingElementIds.length} sel`
-                        : "Optional"}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  className={`${styles.controlBtn} ${multishotEnabled ? styles.controlBtnActive : ""}`}
-                  onClick={() => {
-                    setPanel(null);
-                    setMultishotEnabled((v) => !v);
-                  }}
-                  title="Activar/Desactivar Multishot"
-                >
-                  <span className={styles.controlBtnLeft}>
-                    <Icon name="multishot" />
-                    <span>Multishot</span>
-                  </span>
-                  <span className={styles.controlBtnMeta}>
-                    {multishotEnabled ? `${multishotTotalSeconds}s` : "Off"}
-                  </span>
-                </button>
-              </>
-            )}
-          </div>
-
-          {/* POPOVERS: aquí NO cambiamos tu contenido, solo el botón close si quieres estética igual */}
-                    {panel && (
-                      <div ref={popoverRef} className={styles.popover}>
-                        <div className={styles.popoverInner}>
-                          <div className={styles.popoverHeader}>
-                            <div className={styles.popoverTitle}>
-                              {panel === "model" ? "Model" : panel === "parameters" ? "Parameters" : "Duration"}
-                            </div>
-                            <button className={styles.closeBtn} onClick={() => setPanel(null)} type="button" title="Cerrar">
-                              <Icon name="close" />
-                            </button>
-                          </div>
-
-                          {/* MODEL */}
-                          {panel === "model" && (
-                            <div className={styles.modelGrid}>
-                              <button
-                                type="button"
-                                className={`${styles.modelOption} ${(model === VEO_3 || model === VEO_3_FAST) ? styles.modelOptionActive : ""}`}
-                                onClick={() => {
-                                  setModel(veoIsFast ? VEO_3_FAST : VEO_3);
-                                  setPanel(null);
-                                }}
-                              >
-                                <div className={styles.modelName}>Veo 3</div>
-                                <div className={styles.modelDesc}>8s fijo · velocidad en "Veo: Quality/Fast"</div>
-                              </button>
-
-                              <button
-                                type="button"
-                                className={`${styles.modelOption} ${(model === VEO_3_1 || model === VEO_3_1_FAST) ? styles.modelOptionActive : ""}`}
-                                onClick={() => {
-                                  setModel(veoIsFast ? VEO_3_1_FAST : VEO_3_1);
-                                  setPanel(null);
-                                }}
-                              >
-                                <div className={styles.modelName}>Veo 3.1</div>
-                                <div className={styles.modelDesc}>4/6/8s (según resolución y frames) · velocidad en "Veo: Quality/Fast"</div>
-                              </button>
-
-                              <button
-                                type="button"
-                                className={`${styles.modelOption} ${model === KLING_2_5_TURBO ? styles.modelOptionActive : ""}`}
-                                onClick={() => {
-                                  setModel(KLING_2_5_TURBO);
-                                  setPanel(null);
-                                }}
-                              >
-                                <div className={styles.modelName}>Kling 2.5 Turbo</div>
-                                <div className={styles.modelDesc}>5/10s · soporta first/last</div>
-                              </button>
-
-                              <button
-                                type="button"
-                                className={`${styles.modelOption} ${model === KLING_2_6 ? styles.modelOptionActive : ""}`}
-                                onClick={() => {
-                                  setModel(KLING_2_6);
-                                  setPanel(null);
-                                }}
-                              >
-                                <div className={styles.modelName}>Kling 2.6</div>
-                                <div className={styles.modelDesc}>Mejorado · audio solo en PRO</div>
-                              </button>
-
-                              <button
-                                type="button"
-                                className={`${styles.modelOption} ${model === KLING_V3 ? styles.modelOptionActive : ""}`}
-                                onClick={() => {
-                                  setModel(KLING_V3);
-                                  setPanel(null);
-                                }}
-                              >
-                                <div className={styles.modelName}>Kling V3</div>
-                                <div className={styles.modelDesc}>Elements + Multishot · 3–15s</div>
-                              </button>
-                            </div>
-                          )}
-
-                          {/* PARAMETERS */}
-                          {panel === "parameters" && (
-                            <>
-                              <div className={styles.formRow}>
-                                <label className={styles.formLabel}>Aspect ratio</label>
-
-                                {capability.supportsAspectRatio ? (
-                                  <div className={styles.segment}>
-                                    <button
-                                      type="button"
-                                      className={`${styles.segmentBtn} ${aspectRatio === "16:9" ? styles.segmentBtnActive : ""}`}
-                                      onClick={() => setAspectRatio("16:9")}
-                                    >
-                                      16:9
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className={`${styles.segmentBtn} ${aspectRatio === "9:16" ? styles.segmentBtnActive : ""}`}
-                                      onClick={() => setAspectRatio("9:16")}
-                                    >
-                                      9:16
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className={`${styles.segmentBtn} ${aspectRatio === "1:1" ? styles.segmentBtnActive : ""} ${
-                                        capability.supportsAspectRatio1x1 ? "" : styles.segmentBtnDisabled
-                                      }`}
-                                      onClick={() => capability.supportsAspectRatio1x1 && setAspectRatio("1:1")}
-                                      disabled={!capability.supportsAspectRatio1x1}
-                                      title={!capability.supportsAspectRatio1x1 ? "No disponible para este modelo/estado" : "1:1"}
-                                    >
-                                      1:1
-                                    </button>
-                                    {!capability.supportsAspectRatio && <span className={styles.segmentMeta}>Auto</span>}
-                                    {hasFirst && <span className={styles.segmentMeta}>Bloqueado por FIRST</span>}
-                                  </div>
-                                ) : (
-                                  <div className={styles.noteSmall}>Auto (se bloquea si usas FIRST frame)</div>
-                                )}
-                              </div>
-
-                              <div className={styles.formRow}>
-                                <label className={styles.formLabel}>Resolution</label>
-
-                                {capability.supportsResolution ? (
-                                  <div className={styles.segment}>
-                                    {supportedResolutions.map((r) => (
-                                      <button
-                                        key={r}
-                                        type="button"
-                                        className={`${styles.segmentBtn} ${resolution === r ? styles.segmentBtnActive : ""}`}
-                                        onClick={() => setResolution(r)}
-                                      >
-                                        {r}
-                                      </button>
-                                    ))}
-                                  </div>
-                                ) : (
-                                  <div className={styles.noteSmall}>Auto / Fixed (según el modelo)</div>
-                                )}
-                              </div>
-
-                              <div className={styles.formRow}>
-                                <label className={styles.formLabel}>Count</label>
-                                <div className={styles.segment}>
-                                  {[1, 2, 3, 4].map((n) => (
-                                    <button
-                                      key={n}
-                                      type="button"
-                                      className={`${styles.segmentBtn} ${count === n ? styles.segmentBtnActive : ""} ${
-                                        isKlingV3 ? styles.segmentBtnDisabled : ""
-                                      }`}
-                                      onClick={() => !isKlingV3 && setCount(n)}
-                                      disabled={isKlingV3}
-                                      title={isKlingV3 ? "Kling V3 genera 1 video por vez" : `Generar x${n}`}
-                                    >
-                                      x{n}
-                                    </button>
-                                  ))}
-                                  {isKlingV3 && <span className={styles.segmentMeta}>Kling V3: x1</span>}
-                                </div>
-                              </div>
-
-                              {isKling && (
-                                <div className={styles.formRow}>
-                                  <label className={styles.formLabel}>Kling mode</label>
-                                  <div className={styles.segment}>
-                                    <button
-                                      type="button"
-                                      className={`${styles.segmentBtn} ${klingMode === "std" ? styles.segmentBtnActive : ""}`}
-                                      onClick={() => setKlingMode("std")}
-                                    >
-                                      STD
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className={`${styles.segmentBtn} ${klingMode === "pro" ? styles.segmentBtnActive : ""}`}
-                                      onClick={() => setKlingMode("pro")}
-                                    >
-                                      PRO
-                                    </button>
-                                    <span className={styles.segmentMeta}>{model === KLING_2_6 ? "2.6: audio solo PRO" : "STD/PRO"}</span>
-                                  </div>
-                                </div>
-                              )}
-
-                              {capability.supportsSound && (
-                                <div className={styles.formRow}>
-                                  <label className={styles.formLabel}>Sound</label>
-                                  <div className={styles.segment}>
-                                    <button
-                                      type="button"
-                                      className={`${styles.segmentBtn} ${!klingSound ? styles.segmentBtnActive : ""}`}
-                                      onClick={() => {
-                                        setKlingSound(false);
-                                        setKlingSoundTouched(true);
-                                      }}
-                                    >
-                                      OFF
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className={`${styles.segmentBtn} ${klingSound ? styles.segmentBtnActive : ""}`}
-                                      onClick={() => {
-                                        setKlingSound(true);
-                                        setKlingSoundTouched(true);
-                                      }}
-                                    >
-                                      ON
-                                    </button>
-                                    <span className={styles.segmentMeta}>Disponible en este modo</span>
-                                  </div>
-                                </div>
-                              )}
-
-                              {isKlingV3 && (
-                                <>
-                                  <div className={styles.formRow}>
-                                    <label className={styles.formLabel}>Shot type</label>
-                                    <div className={styles.segment}>
-                                      <button
-                                        type="button"
-                                        className={`${styles.segmentBtn} ${klingShotType === "customize" ? styles.segmentBtnActive : ""}`}
-                                        onClick={() => setKlingShotType("customize")}
-                                      >
-                                        customize
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className={`${styles.segmentBtn} ${klingShotType === "intelligent" ? styles.segmentBtnActive : ""}`}
-                                        onClick={() => setKlingShotType("intelligent")}
-                                      >
-                                        intelligent
-                                      </button>
-                                    </div>
-                                  </div>
-
-                                  <div className={styles.formRow}>
-                                    <label className={styles.formLabel}>Negative prompt</label>
-                                    <textarea
-                                      className={styles.textarea}
-                                      rows={2}
-                                      value={negativePrompt}
-                                      onChange={(e) => setNegativePrompt(e.target.value)}
-                                      placeholder="Evitar: blur, low quality, artifacts..."
-                                    />
-                                  </div>
-
-                                  <div className={styles.formRow}>
-                                    <label className={styles.formLabel}>CFG scale</label>
-                                    <input
-                                      className={styles.input}
-                                      type="number"
-                                      min={0}
-                                      max={1}
-                                      step={0.05}
-                                      value={klingCfgScale}
-                                      onChange={(e) => setKlingCfgScale(Number(e.target.value))}
-                                    />
-                                    <div className={styles.noteSmall}>Rango típico 0.0–1.0</div>
-                                  </div>
-
-                                  <div className={styles.formRow}>
-                                    <label className={styles.formLabel}>Voice IDs (opcional)</label>
-                                    <input
-                                      className={styles.input}
-                                      value={klingVoiceIdsText}
-                                      onChange={(e) => setKlingVoiceIdsText(e.target.value)}
-                                      placeholder="Ej: voice_1, voice_2"
-                                    />
-                                  </div>
-                                </>
-                              )}
-                            </>
-                          )}
-
-                          {/* DURATION */}
-                          {panel === "duration" && (
-                            <>
-                              {isKlingV3 && multishotEnabled ? (
-                                <div className={styles.note}>
-                                  La duración la controla <b>Multishot</b>.
-                                  <div className={styles.noteSmall}>
-                                    Total actual: {multishotTotalSeconds}s · Debe quedar entre 3s y 15s
-                                  </div>
-
-                                  <div className={styles.formRow}>
-                                    <button type="button" className={styles.segmentBtn} onClick={() => setMultishotOpen(true)}>
-                                      Editar Multishot
-                                    </button>
-                                  </div>
-                                </div>
-                              ) : (
-                                <>
-                                  <div className={styles.durationGrid}>
-                                    {allowedDurations.map((d) => (
-                                      <button
-                                        key={d}
-                                        type="button"
-                                        className={`${styles.durationOption} ${durationSeconds === d ? styles.durationOptionActive : ""}`}
-                                        onClick={() => setDurationSeconds(d)}
-                                      >
-                                        {d}s
-                                      </button>
-                                    ))}
-                                  </div>
-
-                                  <div className={styles.noteSmall}>
-                                    Las opciones dependen del modelo (y en Veo 3.1 también de resolución/frames).
-                                  </div>
-                                </>
-                              )}
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    )}
-        </div>
-      </div>
+                </div>
+            </div>
+         </div>
 
       <ViewerModal
         viewer={viewer}
