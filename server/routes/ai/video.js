@@ -1,5 +1,7 @@
 import express from "express";
-import path from "node:path";
+import os from "node:os";
+import fs from "node:fs/promises";
+import { join as pathJoin } from "node:path";
 import {
   VideoRequestSchema,
   FalJobSchema,
@@ -41,6 +43,28 @@ export function createAiVideoRouter(ctx) {
     ...rest
   } = ctx;
 
+  // Helper: sube bytes a una ruta exacta en Supabase Storage (como en server.js)
+  const EFFECTIVE_BUCKET = SUPABASE_BUCKET || "assets";
+
+  async function uploadBytesToStorageAtPath({ storagePath, bytes, mimeType }) {
+    if (!supabaseAdmin) {
+      throw httpError(
+        500,
+        "SUPABASE_NOT_CONFIGURED",
+        "Supabase admin no está configurado en el backend."
+      );
+    }
+
+    const up = await supabaseAdmin.storage
+      .from(EFFECTIVE_BUCKET)
+      .upload(storagePath, bytes, {
+        contentType: mimeType || "application/octet-stream",
+        upsert: false,
+      });
+
+    if (up.error) throw new Error(up.error.message);
+    return storagePath;
+  }
 
   /**
    * 👇 PEGAREMOS AQUÍ tu handler /api/ai/video movido desde server.js
@@ -643,7 +667,7 @@ export function createAiVideoRouter(ctx) {
     const items = [];
 
     for (let i = 0; i < generated.length; i++) {
-      const tmpPath = path.join(os.tmpdir(), `veo_${Date.now()}_${i}.mp4`);
+      const tmpPath = pathJoin(os.tmpdir(), `veo_${Date.now()}_${i}.mp4`);
 
       try {
         await aiClient.files.download({
