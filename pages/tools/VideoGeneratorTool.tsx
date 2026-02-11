@@ -3,9 +3,35 @@ import styles from "./VideoGeneratorTool.module.css";
 import ErrorModal from "../../components/ErrorModal";
 import { deleteAsset, listMyAssets, publishAsset, unpublishAsset, uploadUserAsset } from "../../services/assetsApi";
 import { useAuth } from "../../contexts/AuthContext";
-import { supabase } from "../../services/supabaseClient";
 import type { Asset } from "../../types";
 import { listKlingElements, type KlingElement } from "../../services/klingElementsService";
+import { formatErr } from "../../services/videoGenApi";
+import { FramePickerModal } from "./video/FramePickerModal";
+import { MultishotModal } from "./video/multishotmodal";
+import { KlingElementsModal } from "./video/KlingElementsModal";
+import { HistorySection } from "./video/HistorySection";
+import { FrameStrip } from "./video/FrameStrip";
+
+
+import {
+  DEFAULT_VIDEO_MODEL,
+  getVideoModelHandler,
+  normalizeModelId,
+  prettyVideoModelLabel,
+  coerceAspectRatioForModel,
+  coerceModelForLastFrame,
+  coerceResolutionForModel,
+  clampInt,
+  KLING_2_5_TURBO,
+  KLING_2_6,
+  KLING_V3,
+  VEO_3,
+  VEO_3_FAST,
+  VEO_3_1,
+  VEO_3_1_FAST,
+} from "../../services/videoModels";
+import { Icon } from "./video/icon";
+import { ViewerModal } from "./video/viewermodal";
 
 
 type PanelKey = "frames" | "model" | "parameters" | "duration" | null;
@@ -23,286 +49,6 @@ type KlingV3Shot = { prompt: string; durationSeconds: number };
 const TOOL_ID = "video-generator";
 const FRAME_UPLOAD_TOOL = "video-gen-frame";
 
-const VEO_3 = "veo-3.0-generate-001";
-const VEO_3_FAST = "veo-3.0-fast-generate-001";
-const VEO_3_1 = "veo-3.1-generate-preview";
-const VEO_3_1_FAST = "veo-3.1-fast-generate-preview";
-const KLING_2_5_TURBO = "kling-v2-5-turbo";
-const KLING_2_6 = "kling-v2-6";
-const KLING_V3 = "kling-v3";
-
-function Icon({
-  name,
-}: {
-  name:
-  | "heart"
-  | "share"
-  | "download"
-  | "trash"
-  | "close"
-  | "copy"
-  | "reuse"
-  | "model"
-  | "sliders"
-  | "clock"
-  | "elements"
-  | "multishot"
-  | "sound"
-  | "speed"
-  | "mode"
-  | "image"
-  | "upload"
-  | "swap";
-}) {
-  switch (name) {
-    case "model":
-      return (
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-          <path
-            fill="currentColor"
-            d="M12 2 3 7v10l9 5 9-5V7l-9-5zm0 2.2L19 8l-7 3.8L5 8l7-3.8zm-7 5.9 6 3.3v6.4l-6-3.3v-6.4zm8 9.7v-6.4l6-3.3v6.4l-6 3.3z"
-          />
-        </svg>
-      );
-    case "sliders":
-      return (
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-          <path
-            fill="currentColor"
-            d="M4 21v-7h2v7H4zm0-11V3h2v7H4zM11 21v-11h2v11h-2zm0-15V3h2v3h-2zM18 21v-3h2v3h-2zm0-7V3h2v11h-2z"
-          />
-        </svg>
-      );
-    case "clock":
-      return (
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-          <path
-            fill="currentColor"
-            d="M12 2a10 10 0 1 0 .001 20.001A10 10 0 0 0 12 2zm1 11h5v-2h-4V7h-2v6z"
-          />
-        </svg>
-      );
-    case "elements":
-      return (
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-          <path
-            fill="currentColor"
-            d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm0 2c-4.4 0-8 2.24-8 5v2h16v-2c0-2.76-3.6-5-8-5z"
-          />
-        </svg>
-      );
-    case "multishot":
-      return (
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-          <path
-            fill="currentColor"
-            d="M4 6h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2zm2 2v8h12V8H6zm14 1h2v6h-2V9z"
-          />
-        </svg>
-      );
-    case "sound":
-      return (
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-          <path
-            fill="currentColor"
-            d="M5 10v4h3l4 4V6L8 10H5zm11.5 2a4.5 4.5 0 0 0-2.2-3.9v7.8A4.5 4.5 0 0 0 16.5 12zm0-8a1 1 0 0 0-.5 1.87A8.5 8.5 0 0 1 18 12a8.5 8.5 0 0 1-2 6.13A1 1 0 1 0 17.5 19.5 10.5 10.5 0 0 0 20 12 10.5 10.5 0 0 0 17.5 4z"
-          />
-        </svg>
-      );
-    case "speed":
-      return (
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-          <path fill="currentColor" d="M13 2 3 14h8l-1 8 10-12h-8l1-8z" />
-        </svg>
-      );
-    case "mode":
-      return (
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-          <path
-            fill="currentColor"
-            d="M4 7h16v10H4V7zm2 2v6h12V9H6zm-1 11h14v2H5v-2zM5 2h14v2H5V2z"
-          />
-        </svg>
-      );
-        case "image":
-      return (
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-          <path
-            fill="currentColor"
-            d="M21 19V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2zm-2 0H5V5h14v14zM7 15l2.5-3 2 2.5L14.5 11 18 16H7z"
-          />
-        </svg>
-      );
-
-    case "upload":
-      return (
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-          <path
-            fill="currentColor"
-            d="M5 20h14v-2H5v2zM12 2l-5 5h3v6h4V7h3l-5-5z"
-          />
-        </svg>
-      );
-
-    case "swap":
-      return (
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-          <path
-            fill="currentColor"
-            d="M7 7h11l-3.5-3.5L16 2l6 6-6 6-1.5-1.5L18 9H7V7zm10 10H6l3.5 3.5L8 22l-6-6 6-6 1.5 1.5L6 15h11v2z"
-          />
-        </svg>
-      );
-
-    // ====== iconos existentes ======
-    case "heart":
-      return (
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-          <path
-            fill="currentColor"
-            d="M12 21s-7.2-4.35-9.6-8.55C.6 9.6 2.4 6.6 5.55 6.05c1.7-.3 3.35.3 4.45 1.55 1.1-1.25 2.75-1.85 4.45-1.55 3.15.55 4.95 3.55 3.15 6.4C19.2 16.65 12 21 12 21z"
-          />
-        </svg>
-      );
-    case "share":
-      return (
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-          <path
-            fill="currentColor"
-            d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7a2.5 2.5 0 0 0 0-1.39l7.02-4.11A2.99 2.99 0 1 0 14 5a2.9 2.9 0 0 0 .04.49L7.02 9.6a3 3 0 1 0 0 4.8l7.02 4.11c-.03.16-.04.33-.04.49a3 3 0 1 0 3-2.92z"
-          />
-        </svg>
-      );
-    case "download":
-      return (
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-          <path fill="currentColor" d="M5 20h14v-2H5v2zM11 4h2v8h3l-4 4-4-4h3V4z" />
-        </svg>
-      );
-    case "trash":
-      return (
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-          <path fill="currentColor" d="M6 7h12l-1 14H7L6 7zm3-3h6l1 2H8l1-2z" />
-        </svg>
-      );
-    case "copy":
-      return (
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-          <path
-            fill="currentColor"
-            d="M16 1H4c-1.1 0-2 .9-2 2v12h2V3h12V1zm4 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h12v14z"
-          />
-        </svg>
-      );
-    case "reuse":
-      return (
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-          <path
-            fill="currentColor"
-            d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6 0 .34-.03.67-.08 1h2.02c.04-.33.06-.66.06-1 0-4.42-3.58-8-8-8zm-6 7c0-.34.03-.67.08-1H4.06c-.04.33-.06.66-.06 1 0 4.42 3.58 8 8 8v4l5-5-5-5v4c-3.31 0-6-2.69-6-6z"
-          />
-        </svg>
-      );
-    case "close":
-    default:
-      return (
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-          <path
-            fill="currentColor"
-            d="M18.3 5.71 12 12l6.3 6.29-1.41 1.42L10.59 13.4 4.29 19.71 2.88 18.29 9.17 12 2.88 5.71 4.29 4.29l6.3 6.3 6.29-6.3z"
-          />
-        </svg>
-      );
-  }
-}
-
-function getStatus(err: any): number | null {
-  return typeof err?.status === "number"
-    ? err.status
-    : typeof err?.response?.status === "number"
-      ? err.response.status
-      : null;
-}
-function getErrMsg(err: any): string {
-  return (
-    err?.response?.data?.message ||
-    err?.response?.data?.error ||
-    err?.message ||
-    (typeof err === "string" ? err : "Failed to generate video.")
-  );
-}
-function formatErr(err: any): string {
-  const s = getStatus(err);
-  const m = getErrMsg(err);
-  return s ? `${m} (HTTP ${s})` : m;
-}
-
-async function apiPostJson<T>(path: string, body: any): Promise<T> {
-  const { data: sessionData } = await supabase.auth.getSession();
-  const token = sessionData.session?.access_token;
-
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-
-  const resp = await fetch(path, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-  });
-
-  // A veces un 502 viene como HTML (gateway) y resp.json() falla.
-  // Leemos texto y luego intentamos parsear JSON.
-  const rawText = await resp.text();
-  let data: any = null;
-  try {
-    data = rawText ? JSON.parse(rawText) : null;
-  } catch {
-    data = null;
-  }
-
-  if (!resp.ok || data?.ok === false) {
-    const e =
-      data?.error ??
-      data ??
-      { message: rawText ? rawText.slice(0, 600) : `Request failed: ${resp.status}` };
-    const msg =
-      typeof e === "string"
-        ? e
-        : e?.message || e?.error || `Request failed: ${resp.status}`;
-    const details = e?.details ? `\n\nDetalles:\n${JSON.stringify(e.details, null, 2)}` : "";
-    throw new Error(`${e?.code ? `${e.code}: ` : ""}${msg}${details}`);
-  }
-
-  return data as T;
-}
-
-function clampInt(n: any, min: number, max: number, fallback: number) {
-  const x = Number(n);
-  if (!Number.isFinite(x)) return fallback;
-  return Math.max(min, Math.min(max, Math.trunc(x)));
-}
-
-function shortText(s?: string, max = 60) {
-  const t = (s || "").trim().replace(/\s+/g, " ");
-  if (!t) return "";
-  return t.length > max ? t.slice(0, max - 1) + "…" : t;
-}
-
-const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-
-async function waitFalJob(jobToken: string, maxWaitMs = 15 * 60 * 1000) {
-  const t0 = Date.now();
-  while (true) {
-    const st = await apiPostJson<any>("/api/ai/video/fal/status", { jobToken });
-    const status = st?.status;
-
-    if (status === "COMPLETED") return;
-    if (status === "FAILED") throw new Error(st?.error || "Fal job FAILED");
-    if (Date.now() - t0 > maxWaitMs) throw new Error("Timeout esperando Kling V3 (Fal).");
-
-    await delay(1500);
-  }
-}
 
 const VideoGeneratorTool: React.FC = () => {
 
@@ -327,7 +73,7 @@ const VideoGeneratorTool: React.FC = () => {
 
   // Core
   const [prompt, setPrompt] = useState("");
-  const [model, setModel] = useState<string>(VEO_3_1);
+  const [model, setModel] = useState<string>(DEFAULT_VIDEO_MODEL);
   const [panel, setPanel] = useState<PanelKey>(null);
 
   // Frames (First / Last)
@@ -575,17 +321,6 @@ const VideoGeneratorTool: React.FC = () => {
     }
   }
 
-  function prettyVideoModelLabel(modelId: string | null) {
-    if (!modelId) return "—";
-    if (modelId === VEO_3) return "Veo 3";
-    if (modelId === VEO_3_FAST) return "Veo 3";
-    if (modelId === VEO_3_1) return "Veo 3.1";
-    if (modelId === VEO_3_1_FAST) return "Veo 3.1";
-    if (modelId === KLING_2_5_TURBO) return "Kling 2.5 Turbo";
-    if (modelId === KLING_2_6) return "Kling 2.6";
-    if (modelId === KLING_V3) return "Kling V3";
-    return modelId;
-  }
 
   function reusePromptFromAsset(asset: Asset) {
     const raw = asset.prompt || "";
@@ -638,14 +373,14 @@ const VideoGeneratorTool: React.FC = () => {
   const hasFirst = !!firstFrame;
   const hasLast = !!lastFrame;
 
-  const isVeo30 = model.startsWith("veo-3.0");
-  const isVeo31 = model.startsWith("veo-3.1");
-  const isKling = model.startsWith("kling-");
-  const isKlingV2 = model === KLING_2_5_TURBO || model === KLING_2_6;
-  const isKlingV3 = model === KLING_V3;
+  const modelNorm = useMemo(() => normalizeModelId(model), [model]);
 
-  const isVeoFamily = model.startsWith("veo-");
-  const veoIsFast = model === VEO_3_FAST || model === VEO_3_1_FAST;
+  const isKling = modelNorm.startsWith("kling-");
+  const isKlingV2 = modelNorm === KLING_2_5_TURBO || modelNorm === KLING_2_6;
+  const isKlingV3 = modelNorm === KLING_V3;
+
+  const isVeoFamily = modelNorm.startsWith("veo-");
+  const veoIsFast = modelNorm === VEO_3_FAST || modelNorm === VEO_3_1_FAST;
   const veoSpeedLabel = isVeoFamily ? (veoIsFast ? "Fast" : "Quality") : "";
 
   const toggleVeoSpeed = () => {
@@ -666,76 +401,29 @@ const VideoGeneratorTool: React.FC = () => {
   };
 
 
-  const capability = useMemo(() => {
-    if (model === KLING_2_5_TURBO || model === KLING_2_6) {
-      return {
-        supportsResolution: false,
-        supportsAspectRatio: !hasFirst,
-        supportsAspectRatio1x1: !hasFirst,
-        durations: [5, 10] as const,
-        supportsSound: model === KLING_2_6 && klingMode === "pro",
-        supportsLastFrame: true,
-      };
-    }
+  const handler = useMemo(() => getVideoModelHandler(modelNorm), [modelNorm]);
 
-    if (model === KLING_V3) {
-      return {
-        supportsResolution: false,
-        supportsAspectRatio: !hasFirst,
-        supportsAspectRatio1x1: !hasFirst,
-        durations: [3,4,5,6,7,8,9,10,11,12,13,14,15] as const,
-        supportsSound: true,       // en v3 pro es nativo
-        supportsLastFrame: true,   // usaremos end_image_url luego
-      };
-    }
+  const capability = useMemo(
+    () => handler.getCapability({ modelNorm, hasFirst, hasLast, resolution, klingMode }),
+    [handler, modelNorm, hasFirst, hasLast, resolution, klingMode]
+  );
 
-    const durations = (() => {
-      // Veo 3 / Veo 3 Fast: en Gemini API es 8s fijo
-      if (isVeo30) return [8] as const;
-
-      // Veo 3.1: 8s obligatorio si 1080p/4k o si usas imágenes (first/last)
-      if (hasFirst || hasLast) return [8] as const;
-      if (resolution === "720p") return [4, 6, 8] as const;
-      return [8] as const;
-    })();
-
-    return {
-      supportsResolution: true,
-      supportsAspectRatio: !hasFirst,
-      supportsAspectRatio1x1: false,
-      durations,
-      supportsSound: false,
-      supportsLastFrame: true,
-    };
-  }, [hasFirst, hasLast, isVeo30, model, resolution, klingMode]);
-
-  // Allowed durations logic (según tu regla)
   const allowedDurations = useMemo(() => capability.durations, [capability.durations]);
 
-  const supportedResolutions = useMemo(() => {
-    if (!capability.supportsResolution) return ["720p"] as const;
-    return isVeo30 ? (["720p", "1080p"] as const) : (["720p", "1080p", "4k"] as const);
-  }, [capability.supportsResolution, isVeo30]);
+  const supportedResolutions = useMemo(
+    () => handler.getSupportedResolutions({ modelNorm }),
+    [handler, modelNorm]
+  );
 
   useEffect(() => {
-    if (!capability.supportsResolution && resolution !== "720p") {
-      setResolution("720p");
-      return;
-    }
-    if (isVeo30 && resolution === "4k") setResolution("1080p");
-  }, [capability.supportsResolution, isVeo30, resolution]);
+    const next = coerceResolutionForModel(modelNorm, capability, resolution);
+    if (next !== resolution) setResolution(next);
+  }, [modelNorm, capability, resolution]);
 
   useEffect(() => {
-    if (isVeo30 && !hasFirst && resolution === "1080p" && aspectRatio === "9:16") {
-      setAspectRatio("16:9");
-    }
-  }, [isVeo30, hasFirst, resolution, aspectRatio]);
-
-  useEffect(() => {
-    if (!capability.supportsAspectRatio1x1 && aspectRatio === "1:1") {
-      setAspectRatio("16:9");
-    }
-  }, [aspectRatio, capability.supportsAspectRatio1x1]);
+    const next = coerceAspectRatioForModel(modelNorm, capability, hasFirst, resolution, aspectRatio);
+    if (next !== aspectRatio) setAspectRatio(next);
+  }, [modelNorm, capability, hasFirst, resolution, aspectRatio]);
 
   // 1) Regla Kling: si estás en STD y tenías sound ON, lo apagamos
   useEffect(() => {
@@ -749,12 +437,9 @@ const VideoGeneratorTool: React.FC = () => {
 
   // 2) Regla Veo: si hay LAST frame y estabas en Veo 3.0, forzar Veo 3.1
   useEffect(() => {
-    if (!hasLast) return;
-    if (!isVeo30) return;
-
-    const wantsFast = model.includes("-fast-");
-    setModel(wantsFast ? VEO_3_1_FAST : VEO_3_1);
-  }, [hasLast, isVeo30, model]);
+    const next = coerceModelForLastFrame(modelNorm, hasLast);
+    if (next !== modelNorm) setModel(next);
+  }, [modelNorm, hasLast]);
 
   // Si cambia allowedDurations, ajusta duration si no es válido
   useEffect(() => {
@@ -822,16 +507,7 @@ const VideoGeneratorTool: React.FC = () => {
     }
   }, [isKlingV3, firstFrame?.id, selectedKlingElementIds.length]);
 
-  const modelLabel = useMemo(() => {
-    if (model === VEO_3) return "Veo 3";
-    if (model === VEO_3_FAST) return "Veo 3";
-    if (model === VEO_3_1) return "Veo 3.1";
-    if (model === VEO_3_1_FAST) return "Veo 3.1";
-    if (model === KLING_2_5_TURBO) return "Kling 2.5 Turbo";
-    if (model === KLING_2_6) return "Kling 2.6";
-    if (model === KLING_V3) return "Kling V3";
-    return model;
-  }, [model]);
+  const modelLabel = useMemo(() => prettyVideoModelLabel(modelNorm), [modelNorm]);
 
   const paramsLabel = useMemo(() => {
     const ar = capability.supportsAspectRatio ? aspectRatio : "Auto";
@@ -957,125 +633,45 @@ const durationLabel = useMemo(() => {
   };
 
   const handleGenerate = async () => {
-    const allowEmptyPrompt = isKlingV3 && multishotEnabled;
-    if (!allowEmptyPrompt && !prompt.trim()) return;
-
     setIsGenerating(true);
     setError(null);
 
-    const modelNorm = String(model || "").trim().replace(/^models\//i, "");
-
-        // crea "slots" temporales en el historial (uno por video a generar)
-    {
-      const n =
-        modelNorm === KLING_V3
-          ? 1
-          : Math.max(1, Math.min(4, Number(count) || 1));
-
-      const stamp = Date.now();
-      setPendingSlots(Array.from({ length: n }, (_, i) => `pending-${stamp}-${i}`));
-    }
-
     try {
-      // Si es Kling V3 + Multishot: usamos el primer shot válido como prompt fallback (por schema min(1))
-      const effectivePrompt =
-        modelNorm === KLING_V3 && multishotEnabled
-          ? (multishotValidShots[0]?.prompt || "multishot")
-          : prompt;
+      const handler = getVideoModelHandler(modelNorm);
 
-      const effectiveDurationSeconds =
-        modelNorm === KLING_V3 && multishotEnabled
-          ? Number(multishotTotalSeconds || 5)
-          : Number(durationSeconds);
-
-      const body: any = {
-        prompt: effectivePrompt,
+      const plan = handler.buildPlan({
         model: modelNorm,
+        prompt,
         tool: TOOL_ID,
         nameHint: "video",
-        count: modelNorm === KLING_V3 ? 1 : clampInt(count, 1, 4, 1),
-        durationSeconds: effectiveDurationSeconds,
-      };
 
-      if (capability.supportsResolution) {
-        body.resolution = resolution;
-      }
+        count,
+        durationSeconds,
+        aspectRatio,
+        resolution,
 
-      if (firstFrame?.id) body.firstFrameAssetId = firstFrame.id;
-      if (lastFrame?.id) body.lastFrameAssetId = lastFrame.id;
+        firstFrameAssetId: firstFrame?.id || null,
+        lastFrameAssetId: lastFrame?.id || null,
 
-      // si NO hay first frame, se permite escoger aspect ratio
-      if (!firstFrame && capability.supportsAspectRatio) body.aspectRatio = aspectRatio;
+        klingMode,
+        klingSound,
+        klingSoundTouched,
 
-      // Kling v2.* directo
-      if (isKling && modelNorm !== "kling-v3") {
-        body.klingMode = klingMode;
-      }
+        selectedKlingElementIds,
+        multishotEnabled,
+        klingShots,
+        klingShotType,
 
-      // Kling 2.6: solo enviamos si el usuario tocó el toggle
-      if (isKling && modelNorm === KLING_2_6 && klingSoundTouched) {
-        body.klingSound = klingSound;
-      }
+        negativePrompt,
+        klingCfgScale,
+        klingVoiceIdsText,
+      });
 
-      // Kling V3 (Fal): enviamos SIEMPRE audio + extras
-      if (modelNorm === "kling-v3") {
-        // Audio nativo (Fal: generate_audio)
-        body.klingSound = klingSound;
+      // crea placeholders en historial
+      const stamp = Date.now();
+      setPendingSlots(Array.from({ length: plan.pendingSlotsCount }, (_, i) => `pending-${stamp}-${i}`));
 
-        // Elements (requiere FIRST)
-        if (selectedKlingElementIds.length > 0) {
-          if (!firstFrame?.id) {
-            throw new Error("Kling V3: Para usar Elements debes cargar FIRST frame.");
-          }
-          body.klingElementIds = selectedKlingElementIds.slice(0, 5);
-        }
-
-        // Multishot
-        if (multishotEnabled) {
-          if (!multishotIsReady) {
-            throw new Error("Multishot: necesitas 2+ shots con prompt y la suma de duración 3–15s.");
-          }
-
-          body.klingMultiPrompt = multishotValidShots;
-
-          // shot_type solo importa en text-to-video (sin FIRST)
-          if (!firstFrame?.id) body.klingShotType = klingShotType;
-        }
-
-        // Params extra V3
-        if (negativePrompt.trim()) body.negativePrompt = negativePrompt.trim();
-        if (Number.isFinite(Number(klingCfgScale))) body.klingCfgScale = Number(klingCfgScale);
-
-        const voiceIds = klingVoiceIdsText
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean)
-          .slice(0, 2);
-        if (voiceIds.length) body.klingVoiceIds = voiceIds;
-      }
-
-      let res: any;
-
-      if (modelNorm === KLING_V3) {
-        const submit = await apiPostJson<any>("/api/ai/video", { ...body, async: true });
-
-        if (submit?.mode === "async" && submit?.jobToken) {
-          const jobToken = String(submit.jobToken);
-
-          await waitFalJob(jobToken);
-
-          // Finalize: aquí es donde bajas el video de Fal y lo guardas en Supabase Storage
-          res = await apiPostJson<VideoGenResponse>("/api/ai/video/fal/finalize", {
-            jobToken,
-            prompt: effectivePrompt,
-          });
-        } else {
-          // fallback por si el backend responde sync
-          res = submit;
-        }
-      } else {
-        res = await apiPostJson<VideoGenResponse>("/api/ai/video", body);
-      }
+      const res = await handler.submit(plan);
 
       if (!("ok" in res) || (res as any).ok !== true) {
         throw new Error("Respuesta inválida del backend.");
@@ -1084,14 +680,12 @@ const durationLabel = useMemo(() => {
       const items = Array.isArray((res as any).items) ? (res as any).items : [];
       if (!items.length) throw new Error("No se devolvió ningún video.");
 
-
       const firstId = items[0]?.assetId ? String(items[0].assetId) : null;
 
       const refreshed = await reloadHistory();
       const justMade = firstId ? refreshed.find((a) => a.id === firstId) : null;
 
       setViewer(justMade || refreshed[0] || null);
-
     } catch (e: any) {
       setError(formatErr(e));
     } finally {
@@ -1138,238 +732,34 @@ const durationLabel = useMemo(() => {
     >
       <ErrorModal error={error} onClose={() => setError(null)} />
 
-            <div className={styles.stage}>
-        <div className={styles.historyHeader}>
-          <div className={styles.historyTitle}>
-            <span className={styles.kicker}>VIDEO GENERATOR</span>
-            <div className={styles.historyMeta}>
-              {isLoadingHistory ? (
-                <span className={styles.subKicker}>Loading history...</span>
-              ) : (
-                <>
-                  <span className={styles.subKicker}>History</span>
-                  <span className={styles.historyCount}>{videoAssets.length}</span>
-                </>
-              )}
-            </div>
-          </div>
-
-          <button className={styles.ghostBtn} onClick={reloadHistory} type="button" disabled={isLoadingHistory}>
-            Refresh
-          </button>
-        </div>
-
-        <div className={styles.historyGrid}>
-          {isLoadingHistory ? (
-            <div className={styles.historyLoading}>Cargando historial…</div>
-          ) : videoAssets.length === 0 && pendingSlots.length === 0 ? (
-            <div className={styles.emptyState}>
-              <div className={styles.emptyAnimator}>
-                <div className={styles.emptyGrid} />
-                <div className={styles.emptyGlow} />
-                <div className={styles.emptyScan} />
-                <div className={styles.emptyOrb} />
-              </div>
-              <div className={styles.emptyCopy}>
-                <div className={styles.emptyCode}>NO GENERATIONS</div>
-                <div className={styles.emptyText}>Genera tu primer video para ver el historial aquí.</div>
-              </div>
-            </div>
-          ) : (
-            <div className={styles.grid}>
-              {pendingSlots.map((id) => (
-                <div key={id} className={`${styles.tile} ${styles.tilePending}`} aria-label="Generating...">
-                  <div className={styles.pendingFrame}>
-                    <div className={styles.pendingShimmer} />
-                    <div className={styles.pendingSpinner} />
-                    <div className={styles.pendingLabel}>GENERATING</div>
-                  </div>
-                </div>
-              ))}
-
-              {visibleHistory.map((asset) => {
-                const caption = (asset.prompt || asset.name || "—").trim();
-                return (
-                  <button
-                    key={asset.id}
-                    type="button"
-                    className={styles.tile}
-                    onClick={() => setViewer(asset)}
-                    title="Click para ver detalles"
-                    onMouseEnter={() => {
-                      const el = hoverVideoEls.current[asset.id];
-                      if (el) {
-                        el.currentTime = 0;
-                        el.play().catch(() => {});
-                      }
-                    }}
-                    onMouseLeave={() => {
-                      const el = hoverVideoEls.current[asset.id];
-                      if (el) {
-                        el.pause();
-                        el.currentTime = 0;
-                      }
-                    }}
-                  >
-                    <video
-                      ref={(el) => {
-                        hoverVideoEls.current[asset.id] = el;
-                      }}
-                      className={styles.tileVideo}
-                      src={asset.url}
-                      muted
-                      playsInline
-                      preload="metadata"
-                    />
-
-                    <div className={styles.tileMeta}>
-                      <span className={styles.tileCaption}>{caption}</span>
-                      {asset.isPublic && <span className={styles.publicTag}>PUBLIC</span>}
-                    </div>
-
-                    <div className={styles.tileActions} onClick={(e) => e.stopPropagation()}>
-                      <button
-                        type="button"
-                        className={styles.iconBtn}
-                        title="Favoritos (próximamente)"
-                        onClick={() => setError("Favoritos (Like) se habilita en el paso de Mis Creaciones / Favoritos.")}
-                      >
-                        <Icon name="heart" />
-                      </button>
-
-                      <button
-                        type="button"
-                        className={styles.iconBtn}
-                        title={asset.isPublic ? "Quitar de público" : "Publicar"}
-                        onClick={() => handleTogglePublish(asset)}
-                      >
-                        <Icon name="share" />
-                      </button>
-
-                      <button type="button" className={styles.iconBtn} title="Descargar" onClick={() => handleDownload(asset)}>
-                        <Icon name="download" />
-                      </button>
-
-                      <button type="button" className={styles.iconBtnDanger} title="Eliminar" onClick={() => handleDelete(asset)}>
-                        <Icon name="trash" />
-                      </button>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          {hasMoreHistory && (
-            <div className={styles.historyLoadMoreWrap}>
-              <button
-                type="button"
-                className={styles.loadMoreBtn}
-                onClick={handleLoadMoreHistory}
-                disabled={isLoadingMoreHistory}
-              >
-                {isLoadingMoreHistory ? "Cargando..." : "Cargar más"}
-              </button>
-              <div className={styles.loadMoreHint}>
-                Mostrando {visibleHistory.length} de {videoAssets.length}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
+      <HistorySection
+        isLoading={isLoadingHistory}
+        pendingSlots={pendingSlots}
+        totalCount={videoAssets.length}
+        visibleHistory={visibleHistory}
+        hasMore={hasMoreHistory}
+        isLoadingMore={isLoadingMoreHistory}
+        onRefresh={reloadHistory}
+        onLoadMore={handleLoadMoreHistory}
+        onOpenViewer={(a) => setViewer(a)}
+        onTogglePublish={handleTogglePublish}
+        onDownload={handleDownload}
+        onDelete={handleDelete}
+        onShowError={(msg) => setError(msg)}
+        hoverVideoEls={hoverVideoEls}
+      />
 
       {/* DOCK (prompt bar estilo Image Tool) */}
       <div className={styles.dockWrap}>
         <div className={styles.dock}>
-          <div className={styles.frameStrip}>
-            {/* FIRST */}
-            <div
-              className={styles.frameCard}
-              title="FIRST frame"
-              role="button"
-              tabIndex={0}
-              onClick={() => openPicker("first")}
-              onKeyDown={(e) => e.key === "Enter" && openPicker("first")}
-            >
-              {firstFrame ? (
-                <img className={styles.frameCardImg} src={firstFrame.url} alt="FIRST" />
-              ) : (
-                <div className={styles.frameCardEmpty}>
-                  <div className={styles.frameCardIcons}>
-                    <Icon name="image" />
-                    <Icon name="upload" />
-                  </div>
-                  <div className={styles.frameCardEmptyText}>FIRST</div>
-                </div>
-              )}
-
-              <span className={styles.frameCardBadge}>FIRST</span>
-
-              {firstFrame && (
-                <button
-                  type="button"
-                  className={styles.frameCardRemove}
-                  aria-label="Remove FIRST"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    clearFrame("first");
-                  }}
-                >
-                  ×
-                </button>
-              )}
-            </div>
-
-            {/* SWAP */}
-            <button
-              type="button"
-              className={styles.frameSwapBtn}
-              onClick={swapFrames}
-              disabled={!firstFrame || !lastFrame}
-              title={!firstFrame || !lastFrame ? "Carga FIRST y LAST para invertir" : "Invertir FIRST ↔ LAST"}
-            >
-              <Icon name="swap" />
-            </button>
-
-            {/* LAST */}
-            <div
-              className={`${styles.frameCard} ${!hasFirst ? styles.frameCardLocked : ""}`}
-              title={!hasFirst ? "Primero carga FIRST para habilitar LAST" : "LAST frame"}
-              role="button"
-              tabIndex={hasFirst ? 0 : -1}
-              onClick={() => openPicker("last")}
-              onKeyDown={(e) => e.key === "Enter" && openPicker("last")}
-              aria-disabled={!hasFirst}
-            >
-              {lastFrame ? (
-                <img className={styles.frameCardImg} src={lastFrame.url} alt="LAST" />
-              ) : (
-                <div className={styles.frameCardEmpty}>
-                  <div className={styles.frameCardIcons}>
-                    <Icon name="image" />
-                    <Icon name="upload" />
-                  </div>
-                  <div className={styles.frameCardEmptyText}>LAST</div>
-                </div>
-              )}
-
-              <span className={styles.frameCardBadge}>LAST</span>
-
-              {lastFrame && (
-                <button
-                  type="button"
-                  className={styles.frameCardRemove}
-                  aria-label="Remove LAST"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    clearFrame("last");
-                  }}
-                >
-                  ×
-                </button>
-              )}
-            </div>
-          </div>
+          <FrameStrip
+            firstFrame={firstFrame}
+            lastFrame={lastFrame}
+            hasFirst={hasFirst}
+            openPicker={openPicker}
+            clearFrame={clearFrame}
+            swapFrames={swapFrames}
+          />
 
           <div className={styles.promptRow}>
             <div className={styles.promptInputWrap}>
@@ -1526,8 +916,8 @@ const durationLabel = useMemo(() => {
 
 
           {/* Controls row (igual a tu lógica actual) */}
-          <div className={styles.controlsArea}></div>
-                    <div className={styles.controlsRow}>
+        <div className={styles.controlsArea}></div>
+          <div className={styles.controlsRow}>
             <button
               type="button"
               className={`${styles.controlBtn} ${panel === "model" ? styles.controlBtnActive : ""}`}
@@ -1986,378 +1376,58 @@ const durationLabel = useMemo(() => {
         </div>
       </div>
 
-      {/* VIEWER (receta estilo Image Tool) */}
-      {viewer && (
-        <div className={styles.viewerBackdrop} onClick={() => setViewer(null)}>
-          <div className={styles.viewer} onClick={(e) => e.stopPropagation()}>
-            <div className={styles.viewerTop}>
-              <div className={styles.viewerTitle}>
-                <span className={styles.viewerKicker}>GENERATION</span>
-                <span className={styles.viewerSub}>{viewer.isPublic ? "PUBLIC" : "PRIVATE"}</span>
-              </div>
+      <ViewerModal
+        viewer={viewer}
+        viewerRecipeInfo={viewerRecipeInfo}
+        onClose={() => setViewer(null)}
+        onCopyPrompt={(a) => copyToClipboard(a.prompt || "")}
+        onReusePrompt={(a) => reusePromptFromAsset(a)}
+        onTogglePublish={(a) => handleTogglePublish(a)}
+        onDownload={(a) => handleDownload(a)}
+        onDelete={(a) => handleDelete(a)}
+      />
 
-              <div className={styles.viewerTopActions}>
-                <button className={styles.iconBtn} type="button" title="Copiar prompt" onClick={() => copyToClipboard(viewer.prompt || "")}>
-                  <Icon name="copy" />
-                </button>
+      <FramePickerModal
+        open={pickerOpen}
+        slot={pickerSlot}
+        query={pickerQuery}
+        setQuery={setPickerQuery}
+        isLoading={isLoadingImages}
+        visibleAssets={visiblePickerAssets}
+        totalCount={filteredPickerAssetsAll.length}
+        hasMore={hasMorePicker}
+        onLoadMore={handleLoadMorePicker}
+        onClose={() => setPickerOpen(false)}
+        onPick={(a) => setFrameFromAsset(pickerSlot, a)}
+        onUpload={(file) => handleUploadForSlot(pickerSlot, file)}
+        hasFirst={hasFirst}
+        getAssetUrl={getAssetUrl}
+      />
 
-                <button className={styles.iconBtn} type="button" title="Reusar prompt" onClick={() => reusePromptFromAsset(viewer)}>
-                  <Icon name="reuse" />
-                </button>
+      <MultishotModal
+        open={multishotOpen}
+        onClose={() => setMultishotOpen(false)}
+        shots={klingShots}
+        setShots={setKlingShots}
+        shotType={klingShotType}
+        setShotType={setKlingShotType}
+        totalSeconds={multishotTotalSeconds}
+      />
 
-                <button className={styles.iconBtn} type="button" title={viewer.isPublic ? "Quitar de público" : "Publicar"} onClick={() => handleTogglePublish(viewer)}>
-                  <Icon name="share" />
-                </button>
+      <KlingElementsModal
+        open={elementsOpen}
+        onClose={() => setElementsOpen(false)}
+        elements={klingElements}
+        query={elementsQuery}
+        setQuery={setElementsQuery}
+        selectedIds={selectedKlingElementIds}
+        setSelectedIds={setSelectedKlingElementIds}
+        onClear={() => setSelectedKlingElementIds([])}
+        imageAssets={imageAssets}
+        hasFirstFrame={!!firstFrame?.id}
+        getAssetUrl={getAssetUrl}
+      />
 
-                <button className={styles.iconBtn} type="button" title="Descargar" onClick={() => handleDownload(viewer)}>
-                  <Icon name="download" />
-                </button>
-
-                <button className={styles.iconBtnDanger} type="button" title="Eliminar" onClick={() => handleDelete(viewer)}>
-                  <Icon name="trash" />
-                </button>
-
-                <button className={styles.closeBtn} type="button" onClick={() => setViewer(null)} title="Cerrar">
-                  <Icon name="close" />
-                </button>
-              </div>
-            </div>
-
-            <div className={styles.viewerBody}>
-              <div className={styles.viewerVideoWrap}>
-                <video className={styles.viewerVideo} src={viewer.url} controls autoPlay loop playsInline />
-              </div>
-
-              <div className={styles.viewerRecipe}>
-                <div className={styles.viewerRecipeTitle}>RECIPE</div>
-
-                <div className={styles.recipeGrid}>
-                  <div className={styles.recipeItem}>
-                    <div className={styles.recipeLabel}>Model</div>
-                    <div className={styles.recipeValue}>{prettyVideoModelLabel(viewerRecipeInfo?.modelId || null)}</div>
-                  </div>
-
-                  <div className={styles.recipeItem}>
-                    <div className={styles.recipeLabel}>Aspect</div>
-                    <div className={styles.recipeValue}>{viewerRecipeInfo?.aspectRatio || "—"}</div>
-                  </div>
-
-                  <div className={styles.recipeItem}>
-                    <div className={styles.recipeLabel}>Resolution</div>
-                    <div className={styles.recipeValue}>{viewerRecipeInfo?.resolution || "—"}</div>
-                  </div>
-
-                  <div className={styles.recipeItem}>
-                    <div className={styles.recipeLabel}>Duration</div>
-                    <div className={styles.recipeValue}>
-                      {viewerRecipeInfo?.durationSeconds != null ? `${viewerRecipeInfo.durationSeconds}s` : "—"}
-                    </div>
-                  </div>
-
-                  {(viewerRecipeInfo?.klingMode || viewerRecipeInfo?.klingShotType) && (
-                    <div className={styles.recipeItemWide}>
-                      <div className={styles.recipeLabel}>Kling</div>
-                      <div className={styles.recipeValue}>
-                        {viewerRecipeInfo.klingMode ? `mode: ${viewerRecipeInfo.klingMode}` : ""}
-                        {viewerRecipeInfo.klingShotType ? ` • shot: ${viewerRecipeInfo.klingShotType}` : ""}
-                        {viewerRecipeInfo.klingSound != null ? ` • sound: ${viewerRecipeInfo.klingSound ? "on" : "off"}` : ""}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                <div className={styles.recipeRefs}>
-                  <div className={styles.recipeLabel}>Frames</div>
-                  <div className={styles.recipeRefStrip}>
-                    {viewerRecipeInfo?.first ? (
-                      <div className={styles.recipeRefThumb} title="FIRST">
-                        <img src={viewerRecipeInfo.first.url} alt="FIRST" />
-                        <span className={styles.recipeRefTag}>FIRST</span>
-                      </div>
-                    ) : (
-                      <div className={styles.recipeEmpty}>No FIRST</div>
-                    )}
-
-                    {viewerRecipeInfo?.last ? (
-                      <div className={styles.recipeRefThumb} title="LAST">
-                        <img src={viewerRecipeInfo.last.url} alt="LAST" />
-                        <span className={styles.recipeRefTag}>LAST</span>
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-
-                <div className={styles.recipeBlock}>
-                  <div className={styles.recipeLabel}>Prompt</div>
-                  <div className={styles.recipeValue}>{viewer.prompt || "—"}</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Picker modal */}
-      {pickerOpen && (
-        <div className={styles.modalOverlay} role="dialog" aria-modal="true">
-          <div className={styles.modal}>
-            <div className={styles.modalHeader}>
-              <div className={styles.modalTitle}>
-                Pick {pickerSlot === "first" ? "FIRST" : "LAST"} Frame
-              </div>
-              <button className={styles.modalClose} onClick={() => setPickerOpen(false)} type="button">
-                ×
-              </button>
-            </div>
-
-            <div className={styles.modalActions}>
-              <input
-                className={styles.search}
-                placeholder="Search in history..."
-                value={pickerQuery}
-                onChange={(e) => setPickerQuery(e.target.value)}
-              />
-
-              <label className={styles.uploadBtn}>
-                Upload
-                <input
-                  type="file"
-                  accept="image/*"
-                  style={{ display: "none" }}
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) handleUploadForSlot(pickerSlot, f);
-                    e.currentTarget.value = "";
-                  }}
-                />
-              </label>
-            </div>
-
-              {hasMorePicker && (
-                <div className={styles.pickerLoadMoreWrap}>
-                  <button type="button" className={styles.loadMoreBtn} onClick={handleLoadMorePicker}>
-                    Cargar más
-                  </button>
-                  <div className={styles.loadMoreHint}>
-                    Mostrando {visiblePickerAssets.length} de {filteredPickerAssetsAll.length}
-                  </div>
-                </div>
-              )}
-
-            <div className={styles.pickerGrid}>
-              {isLoadingImages ? (
-                <div className={styles.pickerEmpty}>Cargando imágenes…</div>
-              ) : visiblePickerAssets.length === 0 ? (
-                <div className={styles.pickerEmpty}>
-                  No hay imágenes en tu historial. Genera una imagen o usa Upload.
-                </div>
-              ) : (
-                visiblePickerAssets.map((a) => (
-                  <button
-                    key={a.id}
-                    type="button"
-                    className={styles.pickerTile}
-                    onClick={() => setFrameFromAsset(pickerSlot, a)}
-                  >
-                    <img src={getAssetUrl(a) || a.url} alt={a.name} />
-                    <div className={styles.pickerCap}>{shortText(a.prompt || a.name, 56)}</div>
-                  </button>
-                ))
-              )}
-            </div>
-
-            {pickerSlot === "last" && !hasFirst && (
-              <div className={styles.modalNote}>
-                LAST está bloqueado: primero carga FIRST.
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Multishot modal (Kling V3) */}
-      {multishotOpen && (
-        <div className={styles.modalOverlay} role="dialog" aria-modal="true">
-          <div className={styles.modal}>
-            <div className={styles.modalHeader}>
-              <div className={styles.modalTitle}>Multishot</div>
-              <button className={styles.modalClose} onClick={() => setMultishotOpen(false)} type="button">
-                ×
-              </button>
-            </div>
-
-            <div className={styles.modalActions}>
-              <button
-                type="button"
-                className={styles.uploadBtn}
-                onClick={() =>
-                  setKlingShots((prev) =>
-                    prev.length >= 10 ? prev : [...prev, { prompt: "", durationSeconds: 3 }]
-                  )
-                }
-              >
-                + Add shot
-              </button>
-
-              <div className={styles.segmentMeta}>
-                Total: {multishotTotalSeconds}s (cada shot 3–15s · max 10)
-              </div>
-            </div>
-
-            <div className={styles.modalActions}>
-              <label className={styles.formLabel} style={{ width: 110 }}>Shot type</label>
-              <div className={styles.segment}>
-                <button
-                  type="button"
-                  className={`${styles.segmentBtn} ${klingShotType === "customize" ? styles.segmentBtnActive : ""}`}
-                  onClick={() => setKlingShotType("customize")}
-                >
-                  customize
-                </button>
-                <button
-                  type="button"
-                  className={`${styles.segmentBtn} ${klingShotType === "intelligent" ? styles.segmentBtnActive : ""}`}
-                  onClick={() => setKlingShotType("intelligent")}
-                  disabled={!!firstFrame?.id} // i2v: solo customize
-                >
-                  intelligent
-                </button>
-                <div className={styles.segmentMeta}>
-                  {firstFrame?.id ? "Con FIRST frame solo permite customize" : "Text-only permite intelligent"}
-                </div>
-              </div>
-            </div>
-
-            <div className={styles.shotsList}>
-              {klingShots.map((s, i) => (
-                <div key={i} className={styles.shotRow}>
-                  <div className={styles.shotHeader}>
-                    <div className={styles.shotTitle}>Shot {i + 1}</div>
-                    <button
-                      type="button"
-                      className={styles.swapBtn}
-                      onClick={() => setKlingShots((prev) => prev.filter((_, idx) => idx !== i))}
-                      disabled={klingShots.length <= 1}
-                    >
-                      Remove
-                    </button>
-                  </div>
-
-                  <textarea
-                    className={styles.textarea}
-                    rows={2}
-                    value={s.prompt}
-                    onChange={(e) =>
-                      setKlingShots((prev) =>
-                        prev.map((x, idx) => (idx === i ? { ...x, prompt: e.target.value } : x))
-                      )
-                    }
-                    placeholder="Prompt de este shot..."
-                  />
-
-                  <div className={styles.formRow}>
-                    <label className={styles.formLabel}>Duration</label>
-                    <input
-                      className={styles.input}
-                      type="number"
-                      min={3}
-                      max={15}
-                      value={s.durationSeconds}
-                      onChange={(e) =>
-                        setKlingShots((prev) =>
-                          prev.map((x, idx) =>
-                            idx === i ? { ...x, durationSeconds: Number(e.target.value) } : x
-                          )
-                        )
-                      }
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className={styles.modalNote}>
-              Si Multishot está ON, el backend enviará `multi_prompt` y usará la suma de durations.
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Elements modal (Kling V3) */}
-      {elementsOpen && (
-        <div className={styles.modalOverlay} role="dialog" aria-modal="true">
-          <div className={styles.modal}>
-            <div className={styles.modalHeader}>
-              <div className={styles.modalTitle}>Kling Elements</div>
-              <button className={styles.modalClose} onClick={() => setElementsOpen(false)} type="button">
-                ×
-              </button>
-            </div>
-
-            <div className={styles.modalActions}>
-              <input
-                className={styles.search}
-                placeholder="Search elements..."
-                value={elementsQuery}
-                onChange={(e) => setElementsQuery(e.target.value)}
-              />
-              <button
-                type="button"
-                className={styles.swapBtn}
-                onClick={() => setSelectedKlingElementIds([])}
-              >
-                Clear
-              </button>
-            </div>
-
-            <div className={styles.pickerGrid}>
-              {klingElements
-                .filter((el) => {
-                  const q = elementsQuery.trim().toLowerCase();
-                  if (!q) return true;
-                  const t = `${el.elementName} ${el.elementDescription}`.toLowerCase();
-                  return t.includes(q);
-                })
-                .map((el) => {
-                  const selected = selectedKlingElementIds.includes(el.id);
-                  const thumbAsset =
-                    imageAssets.find((a) => a.id === el.frontalAssetId) || null;
-
-                  return (
-                    <button
-                      key={el.id}
-                      type="button"
-                      className={`${styles.pickerTile} ${selected ? styles.pickerTileActive : ""}`}
-                      onClick={() => {
-                        setSelectedKlingElementIds((prev) => {
-                          const has = prev.includes(el.id);
-                          if (has) return prev.filter((x) => x !== el.id);
-                          if (prev.length >= 5) return prev; // max 5
-                          return [...prev, el.id];
-                        });
-                      }}
-                    >
-                      <img
-                        src={thumbAsset?.url || "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="}
-                        alt={el.elementName}
-                      />
-                      <div className={styles.pickerCap}>
-                        {el.elementName}
-                        {selected ? " ✓" : ""}
-                      </div>
-                    </button>
-                  );
-                })}
-            </div>
-
-            {!firstFrame?.id && (
-              <div className={styles.modalNote}>
-                Para usar Elements en Kling V3 primero debes cargar FIRST frame.
-              </div>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 };
