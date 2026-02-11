@@ -7,6 +7,8 @@ import {
 
 export function createAiVideoRouter(ctx) {
 
+  // Utilidad: pausa para loops de "polling" (Node.js)
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   const router = express.Router();
 
@@ -19,7 +21,6 @@ export function createAiVideoRouter(ctx) {
     apiError,
     httpError,
     ensureAI,
-    sleep,
 
     // storage helpers
     parseDataUrl,
