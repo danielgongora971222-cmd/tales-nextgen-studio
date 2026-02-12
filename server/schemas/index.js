@@ -56,7 +56,10 @@ export const VideoRequestSchema = z.object({
   klingSound: z.boolean().optional(),
   klingCfgScale: z.coerce.number().min(0).max(2).optional(),
   klingVoiceIds: z.array(z.string()).max(2).optional(),
-  klingShotType: z.string().max(40).optional(),
+  klingShotType: z.preprocess(
+    (v) => (typeof v === "string" ? v.trim().toLowerCase() : v),
+    z.enum(["customize", "intelligent"]).optional()
+  ),
   klingMultiPrompt: z
     .array(
       z.object({

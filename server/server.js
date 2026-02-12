@@ -720,6 +720,31 @@ function verifyJobToken(token) {
     throw httpError(401, "JOB_TOKEN_EXPIRED", "Job token expiró.");
   }
   return payload;
+  // ---- Fal helpers: formateo de errores para evitar mensajes tipo "[object Object]" ----
+  function falStringify(value, maxLen = 800) {
+    if (value === undefined || value === null) return "";
+    if (typeof value === "string") return value.slice(0, maxLen);
+    try {
+      const s = JSON.stringify(value);
+      return s.length > maxLen ? s.slice(0, maxLen) + "…" : s;
+    } catch {
+      const s = String(value);
+      return s.length > maxLen ? s.slice(0, maxLen) + "…" : s;
+    }
+  }
+}
+
+// ---- Fal helpers: evita "[object Object]" en errores ----
+function falStringify(value, maxLen = 800) {
+  if (value === undefined || value === null) return "";
+  if (typeof value === "string") return value.slice(0, maxLen);
+  try {
+    const s = JSON.stringify(value);
+    return s.length > maxLen ? s.slice(0, maxLen) + "…" : s;
+  } catch {
+    const s = String(value);
+    return s.length > maxLen ? s.slice(0, maxLen) + "…" : s;
+  }
 }
 
 
@@ -743,10 +768,14 @@ async function falQueueSubmit(endpointId, input) {
   }
 
   if (!submitResp.ok) {
+    const upstream = submitJson?.detail ?? submitJson?.message ?? submitJson ?? submitText;
+    const mapped = submitResp.status >= 400 && submitResp.status < 500 ? 400 : 502;
+
     throw httpError(
-      502,
+      mapped,
       "FAL_SUBMIT_FAILED",
-      `Fal submit HTTP ${submitResp.status}: ${submitJson?.detail || submitJson?.message || submitText}`.slice(0, 400)
+      `Fal submit HTTP ${submitResp.status}: ${falStringify(upstream, 900)}`.slice(0, 400),
+      { upstreamStatus: submitResp.status, upstream }
     );
   }
 
@@ -776,13 +805,16 @@ async function falQueueStatus(statusUrl) {
   }
 
   if (!statusResp.ok) {
+    const upstream = statusJson?.detail ?? statusJson?.message ?? statusJson ?? statusText;
+    const mapped = statusResp.status >= 400 && statusResp.status < 500 ? 400 : 502;
+
     throw httpError(
-      502,
+      mapped,
       "FAL_STATUS_FAILED",
-      `Fal status HTTP ${statusResp.status}: ${statusJson?.detail || statusJson?.message || statusText}`.slice(0, 400)
+      `Fal status HTTP ${statusResp.status}: ${falStringify(upstream, 900)}`.slice(0, 400),
+      { upstreamStatus: statusResp.status, upstream }
     );
   }
-
   return statusJson;
 }
 
@@ -801,10 +833,14 @@ async function falQueueResult(responseUrl) {
   }
 
   if (!resultResp.ok) {
+    const upstream = falJson?.detail ?? falJson?.message ?? falJson ?? resultText;
+    const mapped = resultResp.status >= 400 && resultResp.status < 500 ? 400 : 502;
+
     throw httpError(
-      502,
+      mapped,
       "FAL_RESULT_FAILED",
-      `Fal result HTTP ${resultResp.status}: ${falJson?.detail || falJson?.message || resultText}`.slice(0, 400)
+      `Fal result HTTP ${resultResp.status}: ${falStringify(upstream, 900)}`.slice(0, 400),
+      { upstreamStatus: resultResp.status, upstream }
     );
   }
 

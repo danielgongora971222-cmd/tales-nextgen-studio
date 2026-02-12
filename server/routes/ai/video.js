@@ -145,7 +145,35 @@ export function createAiVideoRouter(ctx) {
     if (isKling) {
       // ✅ KLING V3 PRO via FAL (fal-ai/kling-video/v3/pro/*)
       if (selectedModelNorm === "kling-v3") {
-        const hasElements = Array.isArray(klingElementIds) && klingElementIds.length > 0;
+
+      const hasElements = Array.isArray(klingElementIds) && klingElementIds.length > 0;
+
+      // ⚠️ Importante: Fal/Kling debe poder descargar las imágenes (start/end/elements).
+      // Si el job queda en cola mucho tiempo, URLs firmadas muy cortas pueden expirar y causar 422 (image_load_error).
+      // Usamos un TTL más largo para evitar fallos intermitentes.
+      const INPUT_URL_TTL_SECONDS = 60 * 60 * 6; // 6 horas
+
+      // Audio nativo (Fal: generate_audio)
+      // Fal indica default true para Kling V3; si el usuario no manda nada, respetamos ese comportamiento.
+      const generateAudio = klingSound !== undefined ? Boolean(klingSound) : true;
+
+      // Voice IDs (limpiamos vacíos, max 2)
+      const voiceIds = Array.isArray(klingVoiceIds)
+        ? klingVoiceIds
+            .map((v) => String(v || "").trim())
+            .filter(Boolean)
+            .slice(0, 2)
+        : [];
+
+      // Shot type (solo aplica cuando hay multi_prompt)
+      // - Text-to-video: customize | intelligent
+      // - Image-to-video: SOLO customize (abajo forzamos customize)
+      const shotType = klingShotType === "intelligent" ? "intelligent" : "customize";
+
+      const u = await signStoragePath(p, INPUT_URL_TTL_SECONDS);
+
+      falInput.start_image_url = await assetIdToSignedUrl(firstFrameAssetId, user.id, INPUT_URL_TTL_SECONDS);
+      falInput.end_image_url = await assetIdToSignedUrl(lastFrameAssetId, user.id, INPUT_URL_TTL_SECONDS);
 
         // Duración (Fal: 3..15)
         let dur = durationSeconds != null ? Number(durationSeconds) : 5;
@@ -154,9 +182,6 @@ export function createAiVideoRouter(ctx) {
         if (dur > 15) dur = 15;
 
         const ar = aspectRatio || "16:9";
-
-        // Audio nativo (Fal: generate_audio)
-        const generateAudio = klingSound !== undefined ? Boolean(klingSound) : false;
 
         // Multi-shot (Fal: multi_prompt + shot_type)
         const multi =
@@ -224,7 +249,7 @@ export function createAiVideoRouter(ctx) {
             // firmamos hasta 4 imágenes
             const urls = [];
             for (const p of paths.slice(0, 4)) {
-              const u = await signStoragePath(p, 60 * 30);
+              const u = await signStoragePath(p, INPUT_URL_TTL_SECONDS);
               urls.push(u);
             }
             if (!urls.length) continue;
@@ -249,23 +274,21 @@ export function createAiVideoRouter(ctx) {
           generate_audio: generateAudio,
           ...(negativePrompt ? { negative_prompt: negativePrompt } : {}),
           ...(klingCfgScale !== undefined ? { cfg_scale: klingCfgScale } : {}),
-          ...(Array.isArray(klingVoiceIds) && klingVoiceIds.length
-            ? { voice_ids: klingVoiceIds.slice(0, 2) }
-            : {}),
+          ...(voiceIds.length ? { voice_ids: voiceIds } : {}),
         };
 
         if (multi && multi.length) {
           falInput.multi_prompt = multi;
-          falInput.shot_type = klingShotType || "customize";
+          falInput.shot_type = normalizedShotType;
         } else {
           falInput.prompt = prompt;
         }
 
         if (hasFirst) {
           endpointId = "fal-ai/kling-video/v3/pro/image-to-video";
-          falInput.start_image_url = await assetIdToSignedUrl(firstFrameAssetId, user.id, 60 * 30);
+          falInput.start_image_url = await assetIdToSignedUrl(firstFrameAssetId, user.id, INPUT_URL_TTL_SECONDS);
           if (hasLast) {
-            falInput.end_image_url = await assetIdToSignedUrl(lastFrameAssetId, user.id, 60 * 30);
+            falInput.end_image_url = await assetIdToSignedUrl(lastFrameAssetId, user.id, INPUT_URL_TTL_SECONDS);
           }
           if (elements) falInput.elements = elements;
 
