@@ -24,6 +24,17 @@ export function createAiVideoRouter(ctx) {
     apiError,
     httpError,
     ensureAI,
+  
+  // kling + fal helpers (vienen desde server.js)
+    createImage2VideoTask,
+    createText2VideoTask,
+    pollTaskUntilDone,
+    falQueueSubmit,
+    falQueueRun,
+    signJobToken,
+    assetIdToSignedUrl,
+    assetIdToInlinePart,
+    assetIdToImageObject,
 
     // storage helpers
     parseDataUrl,
@@ -320,45 +331,6 @@ export function createAiVideoRouter(ctx) {
         });
 
         await uploadBytesToStorageAtPath({ storagePath, bytes, mimeType });
-        async function uploadStreamToStorageAtPath({ storagePath, stream, mimeType }) {
-          if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-            throw httpError(500, "SUPABASE_NOT_CONFIGURED", "Supabase no está configurado en el backend.");
-          }
-          if (!stream) {
-            throw httpError(502, "VIDEO_STREAM_MISSING", "No pude obtener el stream del video para subirlo a Storage.");
-          }
-
-          const encodedPath = String(storagePath)
-            .split("/")
-            .map(encodeURIComponent)
-            .join("/");
-
-          const url = `${SUPABASE_URL}/storage/v1/object/${SUPABASE_BUCKET}/${encodedPath}`;
-
-          const resp = await fetch(url, {
-            method: "POST",
-            headers: {
-              apikey: SUPABASE_SERVICE_ROLE_KEY,
-              Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-              "Content-Type": mimeType || "application/octet-stream",
-              "x-upsert": "false",
-            },
-            body: stream,
-            // Node fetch exige esto cuando mandas un stream como body
-            duplex: "half",
-          });
-
-          const txt = await resp.text();
-          if (!resp.ok) {
-            throw httpError(
-              502,
-              "SUPABASE_UPLOAD_FAILED",
-              `Supabase Storage upload failed (HTTP ${resp.status}): ${txt.slice(0, 200)}`
-            );
-          }
-
-          return storagePath;
-        }
 
         const meta = {
           tool: toolName,
@@ -539,12 +511,13 @@ export function createAiVideoRouter(ctx) {
       }
 
       const mimeType = videoResp.headers.get("content-type") || "video/mp4";
+      const bytes = Buffer.from(await videoResp.arrayBuffer());
 
-      // ✅ Subida por streaming (no cargamos todo el mp4 en memoria)
-      await uploadStreamToStorageAtPath({
-        storagePath,
-        stream: videoResp.body,
+      const storagePath = buildAssetPath({
+        userId: user.id,
+        tool: toolName,
         mimeType,
+        nameHint: hint,
       });
 
       await uploadBytesToStorageAtPath({ storagePath, bytes, mimeType });

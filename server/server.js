@@ -213,6 +213,17 @@ app.use(
     httpError,
     ensureAI,
 
+  // kling + fal helpers (se usan dentro de routes/ai/video.js)
+    createImage2VideoTask,
+    createText2VideoTask,
+    pollTaskUntilDone,
+    falQueueSubmit,
+    falQueueRun,
+    signJobToken,
+    assetIdToSignedUrl,
+    assetIdToInlinePart,
+    assetIdToImageObject,
+
     // storage helpers
     parseDataUrl,
     extFromMime,
