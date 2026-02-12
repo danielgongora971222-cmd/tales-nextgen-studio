@@ -1141,7 +1141,14 @@ async function uploadBytesToStorageAtPath({ storagePath, bytes, mimeType }) {
     .from(SUPABASE_BUCKET)
     .upload(storagePath, bytes, { contentType: mimeType || "image/png", upsert: false });
 
-  if (up.error) throw new Error(up.error.message);
+  if (up.error) {
+    throw httpError(
+      500,
+      "STORAGE_UPLOAD_FAILED",
+      "No pude subir el archivo a Storage.",
+      { storagePath, mimeType, supabase: up.error }
+    );
+  }
   return storagePath;
 }
 
