@@ -24,9 +24,9 @@ const ErrorModal: React.FC<ErrorModalProps> = ({ error, onClose }) => {
 
         {/* Content */}
         <div className="mb-8">
-          <p className="text-gray-300 text-sm leading-relaxed border-l-2 border-red-900/50 pl-4 py-1">
+          <pre className="text-gray-300 text-sm leading-relaxed border-l-2 border-red-900/50 pl-4 py-1 whitespace-pre-wrap break-words">
             {error}
-          </p>
+          </pre>
         </div>
 
         {/* Action */}

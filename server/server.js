@@ -1832,7 +1832,7 @@ app.use((err, req, res, _next) => {
     ok: false,
     error: {
       code: "INTERNAL_ERROR",
-      message: "Error inesperado en el servidor.",
+      message: `Error inesperado en el servidor. (ID: ${errorId})`,
       details: {
         errorId,
         ...(isDebug

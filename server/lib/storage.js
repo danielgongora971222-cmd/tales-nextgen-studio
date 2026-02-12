@@ -1,10 +1,12 @@
+import { httpError } from "./errors.js";
+
 export function createStorageHelpers(supabaseAdmin, bucket) {
   function ensureSupabase() {
     if (!supabaseAdmin) {
-      throw new Error("Supabase no está configurado en el backend.");
+      throw httpError(500, "SUPABASE_NOT_CONFIGURED", "Supabase no está configurado en el backend.");
     }
     if (!bucket) {
-      throw new Error("SUPABASE_BUCKET no está configurado.");
+      throw httpError(500, "SUPABASE_BUCKET_MISSING", "SUPABASE_BUCKET no está configurado.");
     }
   }
 
@@ -95,7 +97,14 @@ export function createStorageHelpers(supabaseAdmin, bucket) {
       .from(bucket)
       .createSignedUrl(storagePath, expiresSeconds);
 
-    if (error) throw new Error(error.message);
+    if (error) {
+      throw httpError(
+        500,
+        "STORAGE_SIGN_URL_FAILED",
+        "No pude firmar la URL del archivo en Storage.",
+        { storagePath, expiresSeconds, supabase: error }
+      );
+    }
     return data.signedUrl;
   }
 
