@@ -8,6 +8,7 @@ import { listKlingElements, type KlingElement } from "../../services/klingElemen
 import { formatErr, loadPendingFalJob, clearPendingFalJob, resumeFalFinalize, type PendingFalJob } from "../../services/videoGenApi";
 import { FramePickerModal } from "./video/FramePickerModal";
 import { MultishotModal } from "./video/multishotmodal";
+import { LimitedTextarea, KLING_V3_SHOT_PROMPT_LIMIT } from "./video/LimitedTextarea";
 import { KlingElementsModal } from "./video/KlingElementsModal";
 import { HistorySection } from "./video/HistorySection";
 import { FrameStrip } from "./video/FrameStrip";
@@ -740,11 +741,17 @@ const multishotTotalSeconds = useMemo(() => {
   return multishotValidShots.reduce((acc, s) => acc + s.durationSeconds, 0);
 }, [isKlingV3, multishotEnabled, multishotValidShots]);
 
+const multishotHasOverLimitPrompt = useMemo(() => {
+  if (!isKlingV3 || !multishotEnabled) return false;
+  return klingShots.some((s) => (s.prompt || "").length > KLING_V3_SHOT_PROMPT_LIMIT);
+}, [isKlingV3, multishotEnabled, klingShots]);
+
 const multishotIsReady = useMemo(() => {
   if (!isKlingV3 || !multishotEnabled) return true;
   if (multishotValidShots.length < 2) return false;
+  if (multishotHasOverLimitPrompt) return false;
   return multishotTotalSeconds >= 3 && multishotTotalSeconds <= 15;
-}, [isKlingV3, multishotEnabled, multishotValidShots.length, multishotTotalSeconds]);
+}, [isKlingV3, multishotEnabled, multishotValidShots.length, multishotTotalSeconds, multishotHasOverLimitPrompt]);
 
 const durationLabel = useMemo(() => {
   if (isKlingV3 && multishotEnabled) {
@@ -1114,17 +1121,28 @@ const durationLabel = useMemo(() => {
                             </button>
                           </div>
 
-                          <textarea
-                            className={styles.multishotTextarea}
+                          <LimitedTextarea
+                            surfaceClassName={styles.multishotTextarea}
                             rows={2}
                             value={s.prompt}
-                            onChange={(e) =>
+                            onChange={(next) =>
                               setKlingShots((prev) =>
-                                prev.map((x, idx) => (idx === i ? { ...x, prompt: e.target.value } : x))
+                                prev.map((x, idx) => (idx === i ? { ...x, prompt: next } : x))
                               )
                             }
                             placeholder="Describe este shot… (acción, cámara, estilo, iluminación)"
+                            limit={KLING_V3_SHOT_PROMPT_LIMIT}
+                            inputResize="none"
                           />
+
+                          <div className={styles.multishotCharRow}>
+                            <span className={s.prompt.length > KLING_V3_SHOT_PROMPT_LIMIT ? styles.multishotCharOver : undefined}>
+                              {s.prompt.length}/{KLING_V3_SHOT_PROMPT_LIMIT}
+                              {s.prompt.length > KLING_V3_SHOT_PROMPT_LIMIT
+                                ? ` (+${s.prompt.length - KLING_V3_SHOT_PROMPT_LIMIT})`
+                                : ""}
+                            </span>
+                          </div>
 
                           <div className={styles.multishotDurationRow}>
                             <span className={styles.multishotDurationLabel}>
@@ -1153,7 +1171,7 @@ const durationLabel = useMemo(() => {
 
                     {!multishotIsReady && (
                       <div className={styles.multishotWarn}>
-                        Para generar: mínimo 2 shots y la suma total entre 3s y 15s.
+                        Para generar: mínimo 2 shots, suma total entre 3s y 15s, y cada shot ≤ 512 caracteres (el exceso se ve en rojo).
                       </div>
                     )}
                   </div>

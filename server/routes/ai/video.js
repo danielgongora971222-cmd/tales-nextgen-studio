@@ -177,17 +177,27 @@ export function createAiVideoRouter(ctx) {
         const ar = aspectRatio || "16:9";
 
         // Multi-shot (Fal: multi_prompt + shot_type)
+        const KLING_V3_SHOT_PROMPT_LIMIT = 512;
         const multi =
           Array.isArray(klingMultiPrompt) && klingMultiPrompt.length
-            ? klingMultiPrompt.map((s) => {
-                let sDur =
-                  s?.durationSeconds != null ? Number(s.durationSeconds) : 5;
+            ? klingMultiPrompt.map((s, idx) => {
+                const p = String(s?.prompt || "");
+                if (p.length > KLING_V3_SHOT_PROMPT_LIMIT) {
+                  throw httpError(
+                    400,
+                    "KLING_V3_MULTISHOT_PROMPT_TOO_LONG",
+                    `Kling V3 Multishot: el prompt del shot ${idx + 1} supera ${KLING_V3_SHOT_PROMPT_LIMIT} caracteres (${p.length}).`
+                  );
+                }
+
+                let sDur = s?.durationSeconds != null ? Number(s.durationSeconds) : 5;
                 sDur = Math.trunc(sDur);
                 if (sDur < 3) sDur = 3;
                 if (sDur > 15) sDur = 15;
-                return { prompt: String(s.prompt || ""), duration: String(sDur) };
+                return { prompt: p, duration: String(sDur) };
               })
             : null;
+
 
         // Si hay multishot: suma total debe ser 3..15
         let totalDur = dur;

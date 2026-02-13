@@ -3,13 +3,22 @@ import { KLING_V3 } from "./ids";
 import { normalizeModelId, coerceAllowedNumber } from "./utils";
 import type { BuildPlanArgs, BuildPlanResult, KlingV3Shot, VideoModelHandler } from "./types";
 
-function clampShot(s: KlingV3Shot): KlingV3Shot {
+const KLING_V3_MULTISHOT_PROMPT_LIMIT = 512;
+
+function clampShot(s: KlingV3Shot, idx: number): KlingV3Shot {
+  const raw = String(s.prompt || "");
+  if (raw.length > KLING_V3_MULTISHOT_PROMPT_LIMIT) {
+    throw new Error(
+      `Multishot: el prompt del shot ${idx + 1} supera ${KLING_V3_MULTISHOT_PROMPT_LIMIT} caracteres (${raw.length}).`
+    );
+  }
+
   const dur = Math.max(3, Math.min(15, Math.trunc(Number(s.durationSeconds) || 3)));
-  return { prompt: (s.prompt || "").trim(), durationSeconds: dur };
+  return { prompt: raw.trim(), durationSeconds: dur };
 }
 
 function validShots(shots: KlingV3Shot[]) {
-  return (shots || []).map(clampShot).filter((x) => x.prompt.length > 0);
+  return (shots || []).map((s, i) => clampShot(s, i)).filter((x) => x.prompt.length > 0);
 }
 
 function totalSeconds(shots: KlingV3Shot[]) {

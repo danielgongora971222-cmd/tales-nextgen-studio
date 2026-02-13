@@ -1239,6 +1239,90 @@
     inset 0 -10px 18px rgba(0,0,0,0.65);
 }
 
+/* ===== Prompt limit overlay (Kling V3 Multishot) ===== */
+
+.limitSurface{
+  position: relative;
+  padding: 0 !important;
+}
+
+.limitOverlay{
+  position: absolute;
+  inset: 0;
+  padding: 10px 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: auto;
+  pointer-events: none;
+  color: inherit;
+  border-radius: inherit;
+  font: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+}
+
+/* placeholder “visual” (el placeholder real queda oculto porque el texto del textarea es transparente) */
+.limitOverlay[data-placeholder="true"]{
+  color: rgba(255,255,255,0.35);
+}
+
+.limitOverlay{
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.limitOverlay::-webkit-scrollbar{
+  display: none;
+}
+
+.limitInput{
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  border: none;
+  padding: 10px 12px;
+  outline: none;
+
+  /* el texto real es transparente: lo “vemos” por el overlay */
+  color: transparent;
+  caret-color: currentColor;
+
+  border-radius: inherit;
+  font: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+}
+
+.limitInput::placeholder{
+  color: transparent;
+}
+
+.limitInputResizeNone{
+  resize: none;
+}
+
+.limitInputResizeVertical{
+  resize: vertical;
+}
+
+.limitOverflow{
+  color: rgba(255, 86, 94, 0.95);
+}
+
+.multishotCharRow{
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: rgba(255,255,255,0.55);
+}
+
+.multishotCharOver{
+  color: rgba(255, 86, 94, 0.95);
+}
+
 /* ===== Inline Multishot (reemplaza el prompt cuando está ON) ===== */
 
 .multishotInline {

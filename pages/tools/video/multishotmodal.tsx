@@ -1,5 +1,6 @@
 import React from "react";
 import styles from "../VideoGeneratorTool.module.css";
+import { LimitedTextarea, KLING_V3_SHOT_PROMPT_LIMIT } from "./LimitedTextarea";
 
 type KlingV3Shot = { prompt: string; durationSeconds: number };
 type KlingShotType = "customize" | "intelligent";
@@ -85,15 +86,26 @@ export function MultishotModal({
                   </button>
                 </div>
 
-                <textarea
-                  className={styles.textarea}
+                <LimitedTextarea
+                  surfaceClassName={styles.textarea}
                   rows={2}
                   value={s.prompt}
-                  onChange={(e) =>
-                    setShots((prev) => prev.map((x, idx) => (idx === i ? { ...x, prompt: e.target.value } : x)))
+                  onChange={(next) =>
+                    setShots((prev) => prev.map((x, idx) => (idx === i ? { ...x, prompt: next } : x)))
                   }
                   placeholder="Prompt de este shot..."
+                  limit={KLING_V3_SHOT_PROMPT_LIMIT}
+                  inputResize="vertical"
                 />
+
+                <div className={styles.multishotCharRow}>
+                  <span className={s.prompt.length > KLING_V3_SHOT_PROMPT_LIMIT ? styles.multishotCharOver : undefined}>
+                    {s.prompt.length}/{KLING_V3_SHOT_PROMPT_LIMIT}
+                    {s.prompt.length > KLING_V3_SHOT_PROMPT_LIMIT
+                      ? ` (+${s.prompt.length - KLING_V3_SHOT_PROMPT_LIMIT})`
+                      : ""}
+                  </span>
+                </div>
 
                 <div className={styles.formRow}>
                   <label className={styles.formLabel}>Duration</label>
