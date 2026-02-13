@@ -144,36 +144,29 @@ export function createAiVideoRouter(ctx) {
 
     if (isKling) {
       // ✅ KLING V3 PRO via FAL (fal-ai/kling-video/v3/pro/*)
-      if (selectedModelNorm === "kling-v3") {
+            if (selectedModelNorm === "kling-v3") {
+        const hasElements =
+          Array.isArray(klingElementIds) && klingElementIds.length > 0;
 
-      const hasElements = Array.isArray(klingElementIds) && klingElementIds.length > 0;
+        // ⚠️ Fal/Kling debe poder descargar imágenes (start/end/elements).
+        // Si el job queda en cola, URLs firmadas muy cortas pueden expirar.
+        const INPUT_URL_TTL_SECONDS = 60 * 60 * 6; // 6 horas
 
-      // ⚠️ Importante: Fal/Kling debe poder descargar las imágenes (start/end/elements).
-      // Si el job queda en cola mucho tiempo, URLs firmadas muy cortas pueden expirar y causar 422 (image_load_error).
-      // Usamos un TTL más largo para evitar fallos intermitentes.
-      const INPUT_URL_TTL_SECONDS = 60 * 60 * 6; // 6 horas
+        // Audio nativo (Fal: generate_audio). Si no viene nada, Fal suele default true.
+        const generateAudio =
+          klingSound !== undefined ? Boolean(klingSound) : true;
 
-      // Audio nativo (Fal: generate_audio)
-      // Fal indica default true para Kling V3; si el usuario no manda nada, respetamos ese comportamiento.
-      const generateAudio = klingSound !== undefined ? Boolean(klingSound) : true;
+        // Voice IDs (limpiamos vacíos, max 2)
+        const voiceIds = Array.isArray(klingVoiceIds)
+          ? klingVoiceIds
+              .map((v) => String(v || "").trim())
+              .filter(Boolean)
+              .slice(0, 2)
+          : [];
 
-      // Voice IDs (limpiamos vacíos, max 2)
-      const voiceIds = Array.isArray(klingVoiceIds)
-        ? klingVoiceIds
-            .map((v) => String(v || "").trim())
-            .filter(Boolean)
-            .slice(0, 2)
-        : [];
-
-      // Shot type (solo aplica cuando hay multi_prompt)
-      // - Text-to-video: customize | intelligent
-      // - Image-to-video: SOLO customize (abajo forzamos customize)
-      const shotType = klingShotType === "intelligent" ? "intelligent" : "customize";
-
-      const u = await signStoragePath(p, INPUT_URL_TTL_SECONDS);
-
-      falInput.start_image_url = await assetIdToSignedUrl(firstFrameAssetId, user.id, INPUT_URL_TTL_SECONDS);
-      falInput.end_image_url = await assetIdToSignedUrl(lastFrameAssetId, user.id, INPUT_URL_TTL_SECONDS);
+        // Shot type (solo aplica en TEXT-TO-VIDEO cuando hay multi_prompt)
+        const normalizedShotType =
+          klingShotType === "intelligent" ? "intelligent" : "customize";
 
         // Duración (Fal: 3..15)
         let dur = durationSeconds != null ? Number(durationSeconds) : 5;
@@ -187,18 +180,22 @@ export function createAiVideoRouter(ctx) {
         const multi =
           Array.isArray(klingMultiPrompt) && klingMultiPrompt.length
             ? klingMultiPrompt.map((s) => {
-                let sDur = s?.durationSeconds != null ? Number(s.durationSeconds) : 5;
+                let sDur =
+                  s?.durationSeconds != null ? Number(s.durationSeconds) : 5;
                 sDur = Math.trunc(sDur);
                 if (sDur < 3) sDur = 3;
                 if (sDur > 15) sDur = 15;
-                return { prompt: s.prompt, duration: String(sDur) };
+                return { prompt: String(s.prompt || ""), duration: String(sDur) };
               })
             : null;
 
-        // Si hay multishot: usamos la suma de shots como duración total (debe quedar 3..15)
+        // Si hay multishot: suma total debe ser 3..15
         let totalDur = dur;
         if (multi && multi.length) {
-          totalDur = multi.reduce((acc, s) => acc + Number(s.duration || 0), 0);
+          totalDur = multi.reduce(
+            (acc, s) => acc + Number(s.duration || 0),
+            0
+          );
           if (totalDur < 3 || totalDur > 15) {
             throw httpError(
               400,
@@ -208,7 +205,7 @@ export function createAiVideoRouter(ctx) {
           }
         }
 
-        // Elements (Fal) desde tu tabla kling_elements + imágenes en Storage
+        // Elements (requieren first frame)
         let elements = undefined;
         if (hasElements) {
           if (!hasFirst) {
@@ -226,7 +223,9 @@ export function createAiVideoRouter(ctx) {
             .eq("owner_id", user.id);
 
           if (rowsErr) {
-            throw httpError(500, "DB_ERROR", "No pude leer tus Elements.", { rowsErr });
+            throw httpError(500, "DB_ERROR", "No pude leer tus Elements.", {
+              rowsErr,
+            });
           }
 
           const byId = new Map((rows || []).map((r) => [r.id, r]));
@@ -248,18 +247,23 @@ export function createAiVideoRouter(ctx) {
 
             // firmamos hasta 4 imágenes
             const urls = [];
-            for (const p of paths.slice(0, 4)) {
-              const u = await signStoragePath(p, INPUT_URL_TTL_SECONDS);
-              urls.push(u);
+            for (const storagePath of paths.slice(0, 4)) {
+              const signed = await signStoragePath(
+                storagePath,
+                INPUT_URL_TTL_SECONDS
+              );
+              urls.push(signed);
             }
             if (!urls.length) continue;
 
             const frontal = urls[0];
             const refs = urls.slice(1, 4);
-            // Fal requiere al menos 1 reference_image_url
             if (!refs.length) refs.push(frontal);
 
-            out.push({ frontal_image_url: frontal, reference_image_urls: refs });
+            out.push({
+              frontal_image_url: frontal,
+              reference_image_urls: refs,
+            });
           }
 
           if (out.length) elements = out;
@@ -277,6 +281,7 @@ export function createAiVideoRouter(ctx) {
           ...(voiceIds.length ? { voice_ids: voiceIds } : {}),
         };
 
+        // Text-to-video (single o multishot)
         if (multi && multi.length) {
           falInput.multi_prompt = multi;
           falInput.shot_type = normalizedShotType;
@@ -284,12 +289,23 @@ export function createAiVideoRouter(ctx) {
           falInput.prompt = prompt;
         }
 
+        // Image-to-video (si hay first frame)
         if (hasFirst) {
           endpointId = "fal-ai/kling-video/v3/pro/image-to-video";
-          falInput.start_image_url = await assetIdToSignedUrl(firstFrameAssetId, user.id, INPUT_URL_TTL_SECONDS);
+          falInput.start_image_url = await assetIdToSignedUrl(
+            firstFrameAssetId,
+            user.id,
+            INPUT_URL_TTL_SECONDS
+          );
+
           if (hasLast) {
-            falInput.end_image_url = await assetIdToSignedUrl(lastFrameAssetId, user.id, INPUT_URL_TTL_SECONDS);
+            falInput.end_image_url = await assetIdToSignedUrl(
+              lastFrameAssetId,
+              user.id,
+              INPUT_URL_TTL_SECONDS
+            );
           }
+
           if (elements) falInput.elements = elements;
 
           // i2v: shot_type solo "customize"
@@ -298,7 +314,10 @@ export function createAiVideoRouter(ctx) {
 
         // ✅ Modo async para evitar el timeout 120s de Vercel
         if (asyncMode) {
-          const { requestId, statusUrl, responseUrl } = await falQueueSubmit(endpointId, falInput);
+          const { requestId, statusUrl, responseUrl } = await falQueueSubmit(
+            endpointId,
+            falInput
+          );
 
           const jobToken = signJobToken({
             uid: user.id,
@@ -328,13 +347,15 @@ export function createAiVideoRouter(ctx) {
           falJson?.output?.video?.url;
 
         if (!videoUrl) {
-          throw httpError(502, "FAL_KLING_V3_NO_VIDEO", "Fal/Kling V3 no devolvió video.", {
-            endpointId,
-            response: falJson,
-          });
+          throw httpError(
+            502,
+            "FAL_KLING_V3_NO_VIDEO",
+            "Fal/Kling V3 no devolvió video.",
+            { endpointId, response: falJson }
+          );
         }
 
-        // Descargar video y guardarlo como Asset (igual que Kling directo)
+        // Descargar video y guardarlo como Asset
         const videoResp = await fetch(videoUrl);
         if (!videoResp.ok) {
           throw httpError(
@@ -360,16 +381,16 @@ export function createAiVideoRouter(ctx) {
           provider: "fal",
           model: selectedModelNorm,
           falEndpointId: endpointId,
-
           aspectRatio: ar,
           durationSeconds: totalDur,
           firstFrameAssetId: firstFrameAssetId || null,
           lastFrameAssetId: lastFrameAssetId || null,
-
           klingSound: generateAudio,
           negativePrompt: negativePrompt || null,
           klingCfgScale: klingCfgScale ?? null,
-          klingVoiceIds: Array.isArray(klingVoiceIds) ? klingVoiceIds.slice(0, 2) : null,
+          klingVoiceIds: Array.isArray(klingVoiceIds)
+            ? klingVoiceIds.slice(0, 2)
+            : null,
           klingElementIds: hasElements ? klingElementIds : null,
           klingMultiPrompt: multi || null,
         };
