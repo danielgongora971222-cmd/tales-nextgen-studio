@@ -9,6 +9,7 @@ import { formatErr, loadPendingFalJob, clearPendingFalJob, resumeFalFinalize, ty
 import { FramePickerModal } from "./video/FramePickerModal";
 import { MultishotModal } from "./video/multishotmodal";
 import { LimitedTextarea, KLING_V3_SHOT_PROMPT_LIMIT } from "./video/LimitedTextarea";
+import { MentionTextarea } from "./video/MentionTextarea";
 import { KlingElementsModal } from "./video/KlingElementsModal";
 import { HistorySection } from "./video/HistorySection";
 import { FrameStrip } from "./video/FrameStrip";
@@ -187,6 +188,40 @@ const VideoGeneratorTool: React.FC = () => {
   };
   const [elementsQuery, setElementsQuery] = useState("");
   const [selectedKlingElementIds, setSelectedKlingElementIds] = useState<string[]>([]);
+
+  // Cuando el usuario selecciona un Element desde el @-picker del prompt,
+  // lo añadimos también a la selección global para que el backend reciba su imagen.
+  const ensureKlingElementSelected = useCallback((id: string) => {
+    setSelectedKlingElementIds((prev) => {
+      if (prev.includes(id)) return prev;
+      if (prev.length >= 5) {
+        setError("Kling V3: Máximo 5 Elements.");
+        return prev;
+      }
+      return [...prev, id];
+    });
+  }, []);
+
+  // En multishot, el límite de 5 es global (unión entre shots).
+  const ensureKlingElementSelectedInShot = useCallback((shotIndex: number, id: string) => {
+    setKlingShots((prev) => {
+      const next = prev.map((s, idx) => {
+        if (idx !== shotIndex) return s;
+        const ids = Array.isArray(s.elementIds) ? s.elementIds : [];
+        if (ids.includes(id)) return s;
+        return { ...s, elementIds: [...ids, id] };
+      });
+
+      const union = new Set<string>();
+      for (const s of next) for (const x of (s.elementIds || [])) union.add(String(x));
+      if (union.size > 5) {
+        setError("Kling V3: Máximo 5 Elements en total (unión global entre todos los shots).");
+        return prev;
+      }
+      return next;
+    });
+  }, []);
+
 
   const [multishotEnabled, setMultishotEnabled] = useState(false);
   const [multishotOpen, setMultishotOpen] = useState(false);
@@ -707,6 +742,19 @@ const VideoGeneratorTool: React.FC = () => {
     }
   }, []);
 
+  // Cargamos Elements también cuando el modelo es Kling V3 aunque el modal no esté abierto,
+  // para que el @-picker del prompt tenga datos.
+  useEffect(() => {
+    if (!isKlingV3) return;
+    refreshKlingElements();
+  }, [isKlingV3, refreshKlingElements]);
+
+  useEffect(() => {
+    if (!isKlingV3) return;
+    if (!elementsOpen) return;
+    refreshKlingElements();
+  }, [isKlingV3, elementsOpen, refreshKlingElements]);
+
   useEffect(() => {
     if (!isKlingV3) return;
     if (!elementsOpen) return;
@@ -1168,18 +1216,18 @@ const durationLabel = useMemo(() => {
                             </div>
                           </div>
 
-                          <LimitedTextarea
+                          <MentionTextarea
                             surfaceClassName={styles.multishotTextarea}
                             rows={2}
                             value={s.prompt}
                             onChange={(next) =>
-                              setKlingShots((prev) =>
-                                prev.map((x, idx) => (idx === i ? { ...x, prompt: next } : x))
-                              )
+                              setKlingShots((prev) => prev.map((x, idx) => (idx === i ? { ...x, prompt: next } : x)))
                             }
                             placeholder="Describe este shot… (acción, cámara, estilo, iluminación)"
                             limit={KLING_V3_SHOT_PROMPT_LIMIT}
                             inputResize="none"
+                            elements={klingElements}
+                            onPickElement={(el) => ensureKlingElementSelectedInShot(i, String(el.id))}
                           />
 
                           <div className={styles.multishotCharRow}>
@@ -1222,15 +1270,26 @@ const durationLabel = useMemo(() => {
                       </div>
                     )}
                   </div>
-                ) : (
-                  <textarea
-                    className={styles.prompt}
-                    value={prompt}
-                    onChange={(e) => setPrompt(e.target.value)}
-                    placeholder="Describe el video… (ej: cinematic neon city, rain, slow dolly in, high detail)"
-                    rows={2}
-                  />
-                )}
+                ) : isKlingV3 ? (
+                    <MentionTextarea
+                      surfaceClassName={styles.promptSurface}
+                      value={prompt}
+                      onChange={setPrompt}
+                      placeholder="Describe el video… (ej: cinematic neon city, rain, slow dolly in, high detail)"
+                      rows={2}
+                      inputResize="none"
+                      elements={klingElements}
+                      onPickElement={(el) => ensureKlingElementSelected(String(el.id))}
+                    />
+                  ) : (
+                    <textarea
+                      className={styles.prompt}
+                      value={prompt}
+                      onChange={(e) => setPrompt(e.target.value)}
+                      placeholder="Describe el video… (ej: cinematic neon city, rain, slow dolly in, high detail)"
+                      rows={2}
+                    />
+                  )}
               </div>
             </div>
 
@@ -1379,6 +1438,8 @@ const durationLabel = useMemo(() => {
         shotType={klingShotType}
         setShotType={setKlingShotType}
         totalSeconds={multishotTotalSeconds}
+        elements={klingElements}
+        onPickElement={(shotIndex, el) => ensureKlingElementSelectedInShot(shotIndex, String(el.id))}
       />
 
       <KlingElementsModal

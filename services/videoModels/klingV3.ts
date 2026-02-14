@@ -5,6 +5,30 @@ import type { BuildPlanArgs, BuildPlanResult, KlingV3Shot, VideoModelHandler } f
 
 const KLING_V3_MULTISHOT_PROMPT_LIMIT = 512;
 
+// Mentions insertadas desde el UI: @{<elementId>} (se convierten a @ElementN antes de enviar a Fal)
+const ELEMENT_TOKEN_RE = /@\{([^}]+)\}/g;
+const ELEMENT_TOKEN_TEST_RE = /@\{[^}]+\}/;
+
+function extractTokenElementIds(text: string) {
+  const out: string[] = [];
+  const s = String(text || "");
+  for (const m of s.matchAll(ELEMENT_TOKEN_RE)) {
+    const id = String(m[1] || "").trim();
+    if (id && !out.includes(id)) out.push(id);
+  }
+  return out;
+}
+
+function replaceTokenMentionsWithRefs(text: string, indexById: Map<string, number>) {
+  const s = String(text || "");
+  if (!ELEMENT_TOKEN_TEST_RE.test(s)) return s;
+  return s.replace(ELEMENT_TOKEN_RE, (_full, idRaw) => {
+    const id = String(idRaw || "").trim();
+    const idx = indexById.get(id);
+    return typeof idx === "number" ? `@Element${idx}` : "";
+  });
+}
+
 function uniqueStrings(xs: string[]) {
   const out: string[] = [];
   for (const x of xs) if (x && !out.includes(x)) out.push(x);
@@ -28,6 +52,9 @@ function injectRefsIfMissing(prompt: string, indexes: number[]) {
 
   // Si el usuario ya escribió @ElementN manualmente, no tocamos el prompt
   if (/@Element\s*\d+/i.test(p)) return p;
+
+  // Si el usuario está usando tokens @{id} (UI), no inyectamos refs (se reemplazan antes)
+  if (ELEMENT_TOKEN_TEST_RE.test(p)) return p;
 
   const refs = refsFromIndexes(indexes);
   return `${p}\n\nUse ${refs}.`.trim();
@@ -86,11 +113,18 @@ export const klingV3Handler: VideoModelHandler = {
     const baseShots = isMulti ? validShotsBase(args.klingShots) : [];
 
     // Unión global (orden estable por primera aparición)
+    // Unión global (orden estable por primera aparición)
+    // Incluye:
+    //  - elementIds seleccionados (UI)
+    //  - menciones en el prompt (tokens @{id} insertados por el UI)
     let globalElementIds: string[] = [];
 
     if (isMulti) {
       for (const s of baseShots) {
-        const ids = Array.isArray((s as any).elementIds) ? (s as any).elementIds : [];
+        const fromTokens = extractTokenElementIds(s.prompt);
+        const fromSelection = Array.isArray((s as any).elementIds) ? (s as any).elementIds : [];
+        const ids = uniqueStrings([...fromTokens, ...fromSelection]);
+
         for (const id of ids) {
           if (!globalElementIds.includes(id)) globalElementIds.push(id);
           if (globalElementIds.length > 5) {
@@ -101,8 +135,13 @@ export const klingV3Handler: VideoModelHandler = {
         }
       }
     } else {
-      // modo normal: selección global (máx 5)
-      globalElementIds = args.selectedKlingElementIds.slice(0, 5);
+      const fromTokens = extractTokenElementIds(args.prompt);
+      const fromSelection = Array.isArray(args.selectedKlingElementIds) ? args.selectedKlingElementIds : [];
+      globalElementIds = uniqueStrings([...fromTokens, ...fromSelection]);
+
+      if (globalElementIds.length > 5) {
+        throw new Error("Kling V3: Máximo 5 Elements. Reduce tu selección / menciones en el prompt.");
+      }
     }
 
     const elementIndexById = new Map<string, number>(
@@ -112,14 +151,22 @@ export const klingV3Handler: VideoModelHandler = {
     // Prompts finales (por shot) con refs inyectadas solo si ese shot usa Elements
     const vShots = isMulti
       ? baseShots.map((s, i) => {
-          const ids = Array.isArray((s as any).elementIds) ? (s as any).elementIds : [];
+          const fromTokens = extractTokenElementIds(s.prompt);
+          const fromSelection = Array.isArray((s as any).elementIds) ? (s as any).elementIds : [];
+          const ids = uniqueStrings([...fromTokens, ...fromSelection]);
+
           const indexes = uniqueNumbers(
             ids
               .map((id: string) => elementIndexById.get(id))
               .filter((x: any) => typeof x === "number")
           );
 
-          const injected = injectRefsIfMissing(s.prompt, indexes);
+          // 1) Convertimos @{id} -> @ElementN
+          const promptWithRefs = replaceTokenMentionsWithRefs(s.prompt, elementIndexById);
+
+          // 2) Si no hay refs explícitas, inyectamos "Use @ElementN"
+          const injected = injectRefsIfMissing(promptWithRefs, indexes);
+
           assertPromptLimit(
             injected,
             KLING_V3_MULTISHOT_PROMPT_LIMIT,
@@ -130,10 +177,15 @@ export const klingV3Handler: VideoModelHandler = {
         })
       : [];
 
+
     // Prompt efectivo (solo para UI/registro)
     const effectivePrompt = isMulti
       ? (vShots[0]?.prompt || "multishot")
-      : injectRefsIfMissing(args.prompt, globalElementIds.map((_, idx) => idx + 1));
+      : injectRefsIfMissing(
+          replaceTokenMentionsWithRefs(args.prompt, elementIndexById),
+          globalElementIds.map((_, idx) => idx + 1)
+        );
+
 
     // Duración
     const multiTotalSeconds = isMulti ? totalSeconds(vShots) : 0;

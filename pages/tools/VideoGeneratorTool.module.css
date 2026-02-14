@@ -1309,6 +1309,102 @@
   color: rgba(255, 86, 94, 0.95);
 }
 
+/* ===== Mentions (@ Elements) ===== */
+
+.mentionSurface{
+  overflow: visible;
+}
+
+.mentionChip{
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  margin: 0 1px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.10);
+  border: 1px solid rgba(255,255,255,0.16);
+  box-shadow: 0 8px 18px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.06);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.mentionPicker{
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  transform: translateY(100%);
+  margin-top: 8px;
+  background: rgba(16,16,18,0.98);
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 14px;
+  box-shadow: 0 28px 70px rgba(0,0,0,0.65);
+  overflow: hidden;
+  z-index: 50;
+}
+
+.mentionItem{
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text-main);
+}
+
+.mentionItem:hover{
+  background: rgba(255,255,255,0.06);
+}
+
+.mentionItemActive{
+  background: rgba(255,255,255,0.08);
+}
+
+.mentionThumb{
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  object-fit: cover;
+  background: rgba(255,255,255,0.07);
+  border: 1px solid rgba(255,255,255,0.10);
+  flex: 0 0 auto;
+}
+
+.mentionText{
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mentionName{
+  font-weight: 800;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mentionTag{
+  font-size: 12px;
+  opacity: 0.72;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mentionEmpty{
+  padding: 12px;
+  font-size: 13px;
+  opacity: 0.75;
+}
+
 .multishotCharRow{
   display: flex;
   justify-content: flex-end;
@@ -1872,6 +1968,39 @@
   min-height:46px;
   line-height:1.25;
   font-size:13px;
+}
+
+/* Variante "surface" del prompt para componentes tipo overlay (MentionTextarea / LimitedTextarea)
+   - la altura/focus se maneja por :focus-within del contenedor */
+.promptSurface{
+  flex:1;
+  width:100%;
+  border:none;
+  outline:none;
+  resize:none;
+  border-radius:18px;
+  font-family: var(--font);
+  color: var(--text-main);
+  background: rgba(16,16,18,0.92);
+  box-shadow:
+    0 16px 34px rgba(0,0,0,0.55),
+    inset 0 1px 0 rgba(255,255,255,0.06),
+    inset 0 -10px 22px rgba(0,0,0,0.20);
+  transition: transform .18s ease, box-shadow .18s ease, background .18s ease, height .18s ease;
+  height:46px;
+  min-height:46px;
+  line-height:1.25;
+  font-size:13px;
+}
+
+.promptSurface:focus-within{
+  height:86px;
+  background: rgba(16,16,18,0.96);
+  box-shadow:
+    0 24px 54px rgba(0,0,0,0.65),
+    inset 0 1px 0 rgba(255,255,255,0.07),
+    inset 0 -18px 28px rgba(0,0,0,0.22);
+  transform: translateY(-1px);
 }
 
 
