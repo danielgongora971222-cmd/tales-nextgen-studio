@@ -5,15 +5,22 @@ import type { BuildPlanArgs, BuildPlanResult, KlingV3Shot, VideoModelHandler } f
 
 const KLING_V3_MULTISHOT_PROMPT_LIMIT = 512;
 
-// Mentions insertadas desde el UI: @{<elementId>} (se convierten a @ElementN antes de enviar a Fal)
-const ELEMENT_TOKEN_RE = /@\{([^}]+)\}/g;
-const ELEMENT_TOKEN_TEST_RE = /@\{[^}]+\}/;
+// Tokens/mentions soportadas:
+//  1) @{<elementId>}  (legacy)
+//  2) @<uuid>         (algunas UIs insertan el id directo en el texto)
+// Ambas se convierten a @ElementN antes de enviar a Fal.
+// Importante: NO capturamos cosas tipo @Element1 (eso ya es la sintaxis final para Kling).
+const ELEMENT_TOKEN_ANY_RE =
+  /@\{([^}]+)\}|@([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})/gi;
+
+const ELEMENT_TOKEN_ANY_TEST_RE =
+  /@\{[^}]+\}|@[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i;
 
 function extractTokenElementIds(text: string) {
   const out: string[] = [];
   const s = String(text || "");
-  for (const m of s.matchAll(ELEMENT_TOKEN_RE)) {
-    const id = String(m[1] || "").trim();
+  for (const m of s.matchAll(ELEMENT_TOKEN_ANY_RE)) {
+    const id = String(m[1] || m[2] || "").trim();
     if (id && !out.includes(id)) out.push(id);
   }
   return out;
@@ -21,9 +28,9 @@ function extractTokenElementIds(text: string) {
 
 function replaceTokenMentionsWithRefs(text: string, indexById: Map<string, number>) {
   const s = String(text || "");
-  if (!ELEMENT_TOKEN_TEST_RE.test(s)) return s;
-  return s.replace(ELEMENT_TOKEN_RE, (_full, idRaw) => {
-    const id = String(idRaw || "").trim();
+  if (!ELEMENT_TOKEN_ANY_TEST_RE.test(s)) return s;
+  return s.replace(ELEMENT_TOKEN_ANY_RE, (_full, bracedId, uuidId) => {
+    const id = String(bracedId || uuidId || "").trim();
     const idx = indexById.get(id);
     return typeof idx === "number" ? `@Element${idx}` : "";
   });
@@ -53,8 +60,9 @@ function injectRefsIfMissing(prompt: string, indexes: number[]) {
   // Si el usuario ya escribió @ElementN manualmente, no tocamos el prompt
   if (/@Element\s*\d+/i.test(p)) return p;
 
-  // Si el usuario está usando tokens @{id} (UI), no inyectamos refs (se reemplazan antes)
-  if (ELEMENT_TOKEN_TEST_RE.test(p)) return p;
+  // Si el usuario está usando tokens con id (UI), no inyectamos refs (se reemplazan antes)
+  if (ELEMENT_TOKEN_ANY_TEST_RE.test(p)) return p;
+
 
   const refs = refsFromIndexes(indexes);
   return `${p}\n\nUse ${refs}.`.trim();
@@ -112,35 +120,37 @@ export const klingV3Handler: VideoModelHandler = {
 
     const baseShots = isMulti ? validShotsBase(args.klingShots) : [];
 
-    // Unión global (orden estable por primera aparición)
-    // Unión global (orden estable por primera aparición)
+    // Unión global (orden estable, priorizando el orden del selector).
     // Incluye:
-    //  - elementIds seleccionados (UI)
-    //  - menciones en el prompt (tokens @{id} insertados por el UI)
-    let globalElementIds: string[] = [];
+    //  - args.selectedKlingElementIds (orden del selector global)
+    //  - elementIds por shot (si aplica)
+    //  - menciones en el prompt con id (tokens UI)
+    let globalElementIds: string[] = uniqueStrings(
+      Array.isArray(args.selectedKlingElementIds) ? args.selectedKlingElementIds : []
+    );
+
+    const addGlobal = (id: string, maxMsg: string) => {
+      if (!id) return;
+      if (!globalElementIds.includes(id)) globalElementIds.push(id);
+      if (globalElementIds.length > 5) throw new Error(maxMsg);
+    };
 
     if (isMulti) {
       for (const s of baseShots) {
-        const fromTokens = extractTokenElementIds(s.prompt);
         const fromSelection = Array.isArray((s as any).elementIds) ? (s as any).elementIds : [];
-        const ids = uniqueStrings([...fromTokens, ...fromSelection]);
+        const fromTokens = extractTokenElementIds(s.prompt);
+
+        // Importante: primero la selección (orden UI), luego tokens (fallback)
+        const ids = uniqueStrings([...fromSelection, ...fromTokens]);
 
         for (const id of ids) {
-          if (!globalElementIds.includes(id)) globalElementIds.push(id);
-          if (globalElementIds.length > 5) {
-            throw new Error(
-              "Kling V3: Máximo 5 Elements en total (unión global entre todos los shots). Reduce selección."
-            );
-          }
+          addGlobal(id, "Kling V3: Máximo 5 Elements en total (unión global entre todos los shots). Reduce selección.");
         }
       }
     } else {
       const fromTokens = extractTokenElementIds(args.prompt);
-      const fromSelection = Array.isArray(args.selectedKlingElementIds) ? args.selectedKlingElementIds : [];
-      globalElementIds = uniqueStrings([...fromTokens, ...fromSelection]);
-
-      if (globalElementIds.length > 5) {
-        throw new Error("Kling V3: Máximo 5 Elements. Reduce tu selección / menciones en el prompt.");
+      for (const id of fromTokens) {
+        addGlobal(id, "Kling V3: Máximo 5 Elements. Reduce tu selección / menciones en el prompt.");
       }
     }
 

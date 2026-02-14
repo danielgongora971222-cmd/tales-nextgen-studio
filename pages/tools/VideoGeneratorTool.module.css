@@ -1275,26 +1275,29 @@
 }
 
 .limitInput{
-  position: relative;
-  width: 100%;
-  height: 100%;
   background: transparent;
   border: none;
-  padding: 10px 12px;
-  outline: none;
-
-  /* el texto real es transparente: lo “vemos” por el overlay */
+  resize: none;
+  width: 100%;
+  height: 100%;
   color: transparent;
-  caret-color: currentColor;
-
-  border-radius: inherit;
-  font: inherit;
-  line-height: inherit;
-  letter-spacing: inherit;
+  caret-color: var(--hud-text); /* ✅ caret visible aunque el texto sea transparente */
+  position: relative;
+  z-index: 2;
+  padding: 10px 12px;
+  line-height: 1.3;
 }
-
 .limitInput::placeholder{
   color: transparent;
+}
+
+/* ✅ Variante visible (sin overlay) para el prompt de Elements */
+.limitInputVisible{
+  color: var(--hud-text);
+  caret-color: var(--hud-text);
+}
+.limitInputVisible::placeholder{
+  color: var(--hud-muted);
 }
 
 .limitInputResizeNone{
