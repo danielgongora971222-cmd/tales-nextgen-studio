@@ -27,7 +27,7 @@ export function KlingElementsModal({
   query,
   setQuery,
   selectedIds,
-  onToggleElement,
+  setSelectedIds,
   onClear,
   imageAssets,
   getAssetUrl,
@@ -39,7 +39,7 @@ export function KlingElementsModal({
   query: string;
   setQuery: (v: string) => void;
   selectedIds: string[];
-  onToggleElement: (el: KlingElement, nextSelected: boolean) => void;
+  setSelectedIds: React.Dispatch<React.SetStateAction<string[]>>;
   onClear: () => void;
   imageAssets: Asset[];
   getAssetUrl: (a: Asset) => string | null;
@@ -124,10 +124,13 @@ export function KlingElementsModal({
     }
   }
 
-  const toggleSelectElement = (el: KlingElement) => {
-    const selected = selectedIds.includes(el.id);
-    if (!selected && selectedIds.length >= 5) return;
-    onToggleElement(el, !selected);
+  const toggleSelectElement = (id: string) => {
+    setSelectedIds((prev) => {
+      const has = prev.includes(id);
+      if (has) return prev.filter((x) => x !== id);
+      if (prev.length >= 5) return prev; // max 5
+      return [...prev, id];
+    });
   };
 
   const togglePickAsset = (assetId: string) => {
@@ -190,11 +193,8 @@ export function KlingElementsModal({
     try {
       await deleteKlingElement(id);
 
-      // si estaba seleccionado, lo desmarcamos (y el padre también lo quitará del prompt)
-    if (selectedIds.includes(id)) {
-      const el = elements.find((e) => e.id === id);
-      if (el) onToggleElement(el, false);
-    }
+      // si estaba seleccionado, lo quitamos
+      setSelectedIds((prev) => prev.filter((x) => x !== id));
 
       await onRefresh();
     } catch (e: any) {
@@ -288,7 +288,7 @@ export function KlingElementsModal({
                         selected ? styles.pickerTileActive : ""
                       }`}
                       style={{ position: "relative" }}
-                      onClick={() => toggleSelectElement(el)}
+                      onClick={() => toggleSelectElement(el.id)}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" || e.key === " ")
                           toggleSelectElement(el.id);

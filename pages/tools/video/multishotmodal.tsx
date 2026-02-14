@@ -1,9 +1,6 @@
 import React from "react";
 import styles from "../VideoGeneratorTool.module.css";
-import { KLING_V3_SHOT_PROMPT_LIMIT } from "./LimitedTextarea";
-import { MentionTextarea } from "./MentionTextarea";
-import type { KlingElement } from "../../../services/klingElementsService";
-
+import { LimitedTextarea, KLING_V3_SHOT_PROMPT_LIMIT } from "./LimitedTextarea";
 
 type KlingV3Shot = { prompt: string; durationSeconds: number };
 type KlingShotType = "customize" | "intelligent";
@@ -16,8 +13,6 @@ export function MultishotModal({
   shotType,
   setShotType,
   totalSeconds,
-  elements,
-  onPickElement,
 }: {
   open: boolean;
   onClose: () => void;
@@ -26,8 +21,6 @@ export function MultishotModal({
   shotType: KlingShotType;
   setShotType: React.Dispatch<React.SetStateAction<KlingShotType>>;
   totalSeconds: number;
-  elements: KlingElement[];
-  onPickElement?: (shotIndex: number, el: KlingElement) => void;
 }) {
   if (!open) return null;
 
@@ -93,7 +86,7 @@ export function MultishotModal({
                   </button>
                 </div>
 
-                <MentionTextarea
+                <LimitedTextarea
                   surfaceClassName={styles.textarea}
                   rows={2}
                   value={s.prompt}
@@ -103,8 +96,6 @@ export function MultishotModal({
                   placeholder="Prompt de este shot..."
                   limit={KLING_V3_SHOT_PROMPT_LIMIT}
                   inputResize="vertical"
-                  elements={elements}
-                  onPickElement={(el) => onPickElement?.(i, el)}
                 />
 
                 <div className={styles.multishotCharRow}>

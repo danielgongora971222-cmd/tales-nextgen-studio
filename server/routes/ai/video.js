@@ -221,7 +221,7 @@ export function createAiVideoRouter(ctx) {
 
           const { data: rows, error: rowsErr } = await supabaseAdmin
             .from("kling_elements")
-            .select("id, owner_id, name, image_paths")
+            .select("id, owner_id, image_paths")
             .in("id", klingElementIds)
             .eq("owner_id", user.id);
 
@@ -246,13 +246,7 @@ export function createAiVideoRouter(ctx) {
           for (const elementId of klingElementIds) {
             const row = byId.get(elementId);
             const paths = Array.isArray(row?.image_paths) ? row.image_paths : [];
-            if (!paths.length) {
-              throw httpError(
-                400,
-                "KLING_V3_ELEMENT_MISSING_IMAGES",
-                "Uno de tus Elements no tiene imágenes guardadas (image_paths vacío)."
-              );
-            }
+            if (!paths.length) continue;
 
             // firmamos hasta 4 imágenes
             const urls = [];
@@ -275,53 +269,7 @@ export function createAiVideoRouter(ctx) {
             });
           }
 
-          // --- Normalización de mentions para Kling V3 (Fal) ---
-          // Fal espera @Element1, @Element2... según el orden del array `elements`.
-          const escapeRegExp = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-          const normalizeKey = (s) =>
-            String(s || "")
-              .toLowerCase()
-              .trim()
-              .replace(/[^a-z0-9_-]+/g, ""); // dejamos letras/números/_/-
-
-          const replaceMention = (text, key, replacement) => {
-            if (!key) return text;
-            const k = escapeRegExp(key);
-            // Delimitador “seguro” (no usamos \b porque '-' no es word-char)
-            const re = new RegExp(`@${k}(?=$|[\\s\\n\\t\\r.,;:!?()\\[\\]{}"'“”‘’])`, "gi");
-            return text.replace(re, replacement);
-          };
-
-          const normalizeKlingV3MentionsInText = (text, orderedRows) => {
-            let t = String(text || "");
-
-            // Compatibilidad con sintaxis vieja tipo <<<element_1>>> o @element_1
-            t = t.replace(/<<<\s*element_(\d+)\s*>>>/gi, (_, n) => `@Element${n}`);
-            t = t.replace(/@element_(\d+)/gi, (_, n) => `@Element${n}`);
-
-            // Mapear por nombre/slug: @mi-personaje -> @ElementN
-            for (let i = 0; i < orderedRows.length; i++) {
-              const row = orderedRows[i];
-              const idx = i + 1;
-
-              const rawName = String(row?.name || "").trim();
-              const slug = safeSlug(rawName);                // ej: "mi-personaje"
-              const compact = slug.replace(/-/g, "");         // ej: "mipersonaje"
-
-              const k1 = normalizeKey(rawName);
-              const k2 = normalizeKey(slug);
-              const k3 = normalizeKey(compact);
-
-              const replacement = `@Element${idx}`;
-
-              // Variantes: @Nombre, @slug, @slugSinGuiones
-              t = replaceMention(t, k1, replacement);
-              t = replaceMention(t, k2, replacement);
-              t = replaceMention(t, k3, replacement);
-            }
-
-            return t;
-          };
+          if (out.length) elements = out;
         }
 
         // Armamos el input Fal
@@ -336,25 +284,12 @@ export function createAiVideoRouter(ctx) {
           ...(voiceIds.length ? { voice_ids: voiceIds } : {}),
         };
 
-        // `orderedRows` debe ser el orden exacto de klingElementIds.
-        // Si no lo tienes ya, créalo donde haces `byId`:
-        const orderedRows = hasElements
-          ? klingElementIds.map((id) => byId.get(id))
-          : [];
-
-        const normalizeText = (s) =>
-          hasElements && elements && orderedRows.length
-            ? normalizeKlingV3MentionsInText(s, orderedRows)
-            : String(s || "");
-
+        // Text-to-video (single o multishot)
         if (multi && multi.length) {
-          falInput.multi_prompt = multi.map((shot) => ({
-            ...shot,
-            prompt: normalizeText(shot.prompt),
-          }));
+          falInput.multi_prompt = multi;
           falInput.shot_type = normalizedShotType;
         } else {
-          falInput.prompt = normalizeText(prompt);
+          falInput.prompt = prompt;
         }
 
         if (elements) falInput.elements = elements;
