@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { AppRoute } from '../types';
 import Background3D from './Background3D';
 import { TOOLS_REGISTRY } from '../config/tools';
+import { VIDEO_TOOLS_REGISTRY } from '../config/videoTools';
 import { useAuth } from '../contexts/AuthContext';
 
 interface LayoutProps {
@@ -68,20 +69,18 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
   const videoMenuTimer = useRef<number | null>(null);
   const myCreationsMenuTimer = useRef<number | null>(null);
 
-  const isImageTool =
+    const isImageTool =
     TOOLS_REGISTRY.some((tool) => tool.route === currentRoute) || currentRoute === AppRoute.IMAGE_GEN_ROOT;
-  const videoTools = [
-    {
-      id: 'general-video',
-      label: 'General Video Generator',
-      status: 'ready' as const
-    },
-    {
-      id: 'motion-control',
-      label: 'Motion Control',
-      status: 'beta' as const
-    }
-  ];
+
+  const isVideoTool =
+    VIDEO_TOOLS_REGISTRY.some((tool) => tool.route === currentRoute) || currentRoute === AppRoute.VIDEO_GEN;
+
+  // Si en tu rama Motion Control ya está dentro del desplegable de Image Gen,
+  // solo inyectamos "Edit Video" ahí. Si no está, agregamos ambos.
+  const hasMotionControlInImageMenu = TOOLS_REGISTRY.some(
+    (tool) => tool.id === 'motion-control' || tool.label.toLowerCase().includes('motion control')
+  );
+
   const myCreationsFilters = [
     { key: 'all', label: 'Todos' },
     { key: 'favorites', label: 'Favoritos' },
@@ -326,8 +325,11 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
           <div className="relative" onMouseEnter={handleVideoMenuEnter} onMouseLeave={handleVideoMenuLeave}>
             <NavItem
               label={sidebarOpen ? 'Video Gen' : ''}
-              active={currentRoute === AppRoute.VIDEO_GEN}
-              onClick={() => onNavigate(AppRoute.VIDEO_GEN)}
+              active={isVideoTool}
+              onClick={() => {
+                if (!sidebarOpen) setSidebarOpen(true);
+                onNavigate(AppRoute.VIDEO_GEN);
+              }}
               expanded={sidebarOpen ? videoMenuOpen : undefined}
               icon={
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -430,27 +432,62 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
             }}
             onMouseLeave={handleImageMenuLeave}
           >
-            {TOOLS_REGISTRY.map((tool) => {
-              const isPrimary = tool.id === 'generator';
-              return (
+            {/*
+              Si en tu rama "Motion Control" ya está dentro del desplegable de Image Gen,
+              aquí solo agregamos "Edit Video" para que quede junto a Motion Control.
+
+              Si NO está, agregamos ambos (Motion Control + Edit Video).
+            */}
+            {hasMotionControlInImageMenu ? (
+              <button
+                key="edit-video"
+                onClick={() => onNavigate(AppRoute.TOOL_VIDEO_EDIT)}
+                className={`w-full text-left px-3 py-2 rounded-xl text-xs font-medium transition-all border ${
+                  currentRoute === AppRoute.TOOL_VIDEO_EDIT
+                    ? 'border-[rgba(241,225,148,0.45)] text-white bg-[rgba(241,225,148,0.08)]'
+                    : 'border-transparent text-white/60 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span>Edit Video</span>
+                  <span className="text-[9px] bg-white/10 px-1 rounded text-white/70">SOON</span>
+                </div>
+              </button>
+            ) : (
+              <>
+                <div className="hud-divider my-2 mx-2" />
+
                 <button
-                  key={tool.id}
-                  onClick={() => onNavigate(tool.route)}
+                  key="motion-control"
+                  onClick={() => onNavigate(AppRoute.TOOL_MOTION_CONTROL)}
                   className={`w-full text-left px-3 py-2 rounded-xl text-xs font-medium transition-all border ${
-                    currentRoute === tool.route
+                    currentRoute === AppRoute.TOOL_MOTION_CONTROL
                       ? 'border-[rgba(241,225,148,0.45)] text-white bg-[rgba(241,225,148,0.08)]'
-                      : isPrimary
-                        ? 'border-[rgba(241,225,148,0.35)] text-white bg-[rgba(241,225,148,0.14)] shadow-[0_0_18px_rgba(241,225,148,0.18)]'
-                        : 'border-transparent text-white/60 hover:text-white hover:bg-white/5'
+                      : 'border-transparent text-white/60 hover:text-white hover:bg-white/5'
                   }`}
                 >
                   <div className="flex items-center justify-between">
-                    <span>{tool.label}</span>
-                    {tool.status === 'beta' && <span className="text-[9px] bg-white/20 px-1 rounded">BETA</span>}
+                    <span>Motion Control</span>
+                    <span className="text-[9px] bg-white/20 px-1 rounded">BETA</span>
                   </div>
                 </button>
-              );
-            })}
+
+                <button
+                  key="edit-video"
+                  onClick={() => onNavigate(AppRoute.TOOL_VIDEO_EDIT)}
+                  className={`w-full text-left px-3 py-2 rounded-xl text-xs font-medium transition-all border ${
+                    currentRoute === AppRoute.TOOL_VIDEO_EDIT
+                      ? 'border-[rgba(241,225,148,0.45)] text-white bg-[rgba(241,225,148,0.08)]'
+                      : 'border-transparent text-white/60 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span>Edit Video</span>
+                    <span className="text-[9px] bg-white/10 px-1 rounded text-white/70">SOON</span>
+                  </div>
+                </button>
+              </>
+            )}
           </div>
         )}
 
@@ -468,21 +505,24 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
             }}
             onMouseLeave={handleVideoMenuLeave}
           >
-            {videoTools.map((tool) => {
-              const isPrimary = tool.id === 'general-video';
+            {VIDEO_TOOLS_REGISTRY.map((tool) => {
+              const isPrimary = tool.id === 'video-generator';
               return (
                 <button
                   key={tool.id}
-                  onClick={() => onNavigate(AppRoute.VIDEO_GEN)}
+                  onClick={() => onNavigate(tool.route)}
                   className={`w-full text-left px-3 py-2 rounded-xl text-xs font-medium transition-all border ${
-                    isPrimary
-                      ? 'border-[rgba(241,225,148,0.35)] text-white bg-[rgba(241,225,148,0.14)] shadow-[0_0_18px_rgba(241,225,148,0.18)]'
-                      : 'border-transparent text-white/60 hover:text-white hover:bg-white/5'
+                    currentRoute === tool.route
+                      ? 'border-[rgba(241,225,148,0.45)] text-white bg-[rgba(241,225,148,0.08)]'
+                      : isPrimary
+                        ? 'border-[rgba(241,225,148,0.35)] text-white bg-[rgba(241,225,148,0.14)] shadow-[0_0_18px_rgba(241,225,148,0.18)]'
+                        : 'border-transparent text-white/60 hover:text-white hover:bg-white/5'
                   }`}
                 >
                   <div className="flex items-center justify-between">
                     <span>{tool.label}</span>
                     {tool.status === 'beta' && <span className="text-[9px] bg-white/20 px-1 rounded">BETA</span>}
+                    {tool.status === 'coming_soon' && <span className="text-[9px] bg-white/10 px-1 rounded text-white/70">SOON</span>}
                   </div>
                 </button>
               );

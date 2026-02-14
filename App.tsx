@@ -3,6 +3,7 @@ import Layout from './components/Layout';
 import Home from './pages/Home';
 import Login from './pages/Login';
 import ImageGenHub from './pages/ImageGenHub';
+import VideoGenHub from './pages/VideoGenHub';
 import MyCreations from './pages/MyCreations';
 import ImageGeneratorTool from './pages/tools/ImageGeneratorTool';
 import RestylerTool from './pages/tools/RestylerTool';
@@ -11,6 +12,8 @@ import UpscalerTool from './pages/tools/UpscalerTool';
 import EditorTool from './pages/tools/EditorTool';
 import CameraAnglesTool from './pages/tools/CameraAnglesTool';
 import CollageTool from './pages/tools/CollageTool';
+import EditVideoTool from './pages/tools/EditVideoTool';
+import MotionControlTool from './pages/tools/MotionControlTool';
 import VideoGeneratorTool from './pages/tools/VideoGeneratorTool';
 import Background3D from './components/Background3D';
 import { AppRoute } from './types';
@@ -79,7 +82,14 @@ const AppContent: React.FC = () => {
         return <CollageTool />;
 
       case AppRoute.VIDEO_GEN:
+        return <VideoGenHub onNavigate={setRoute} />;
+
+      case AppRoute.TOOL_VIDEO_GENERATOR:
         return <VideoGeneratorTool />;
+      case AppRoute.TOOL_VIDEO_EDIT:
+        return <EditVideoTool />;
+      case AppRoute.TOOL_MOTION_CONTROL:
+        return <MotionControlTool />;
       case AppRoute.MY_CREATIONS:
         return <MyCreations />;
       case AppRoute.CHAT:

@@ -15,6 +15,11 @@ export enum AppRoute {
   TOOL_UPSCALER = 'tool-upscaler',
   TOOL_ANGLES = 'tool-angles',
   TOOL_COLLAGE = 'tool-collage',
+
+  // Video Tools
+  TOOL_VIDEO_GENERATOR = 'tool-video-generator',
+  TOOL_VIDEO_EDIT = 'tool-video-edit',
+  TOOL_MOTION_CONTROL = 'tool-motion-control',
   
   CHAT = 'chat'
 }
