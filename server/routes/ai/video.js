@@ -1,7 +1,4 @@
 import express from "express";
-import os from "node:os";
-import fs from "node:fs/promises";
-import { join as pathJoin } from "node:path";
 import {
   VideoRequestSchema,
   FalJobSchema,
@@ -609,139 +606,164 @@ export function createAiVideoRouter(ctx) {
       });
     }
 
-    const aiClient = await ensureAI();
+    // =========================
+    // ✅ VEO via FAL (sin Gemini)
+    // =========================
 
-    // Si usan frames, forzamos Veo 3.1 (first/last frames es feature de 3.1)
+    // Si usan last frame, forzamos Veo 3.1 (first/last frame es feature de 3.1)
     let veoModel = selectedModelNorm;
     const isVeo31 = veoModel.startsWith("veo-3.1");
-    if ((hasFirst || hasLast) && !isVeo31) {
+    if (hasLast && !isVeo31) {
       veoModel = "veo-3.1-generate-preview";
     }
 
-    const cfg = {};
+    const isFast = veoModel.includes("-fast-");
+    const baseEndpoint = isVeo31
+      ? `fal-ai/veo3.1${isFast ? "/fast" : ""}`
+      : `fal-ai/veo3${isFast ? "/fast" : ""}`;
 
-    // numberOfVideos (count)
-    // Nota: Veo 3 / 3.1 (Gemini API) limita salida a 1 video por request.
-    let requestedCount = Math.max(1, Math.min(Number(count || 1), 4));
-    if (String(veoModel).startsWith("veo-3.")) {
-      requestedCount = 1;
+    // Elegimos el endpoint según frames
+    let endpointId = baseEndpoint;
+    if (hasFirst && hasLast) {
+      // Solo 3.1 tiene first/last
+      endpointId = `${baseEndpoint}/first-last-frame-to-video`;
+    } else if (hasFirst) {
+      endpointId = `${baseEndpoint}/image-to-video`;
     }
-    cfg.numberOfVideos = requestedCount;
 
-    // resolution
-    if (resolution) cfg.resolution = resolution;
+    // Fal: Veo retorna 1 video por request. Para no romper UI, forzamos 1.
+    const requestedCount = 1;
 
-    // durationSeconds: Veo 3/3.1 acepta 4/6/8 y 1080p/4k/frames fuerzan 8s
+    // Aspect ratio
+    let ar = aspectRatio || "16:9";
+    if (ar === "1:1") ar = "16:9";
+    // Parche conocido (también existe en el front): veo-3.0 + 1080p + 9:16
+    if (veoModel.startsWith("veo-3.0") && !hasFirst && resolution === "1080p" && ar === "9:16") {
+      ar = "16:9";
+    }
+
+    // Resolution
+    let reso = resolution || "720p";
+    if (!isVeo31 && reso === "4k") reso = "1080p";
+
+    // Duration (Fal usa "4s"/"6s"/"8s")
     let dur = durationSeconds != null ? Number(durationSeconds) : 8;
     dur = Math.trunc(dur);
-    if (![4, 6, 8].includes(dur)) dur = 8;   if ((cfg.resolution && cfg.resolution !== "720p") || hasFirst || hasLast) dur = 8;
-    cfg.durationSeconds = dur; // ✅ NUMBER (no string)
-    console.log("[VEO DEBUG] durationSeconds =", cfg.durationSeconds, "typeof =", typeof cfg.durationSeconds);
+    if (![4, 6, 8].includes(dur)) dur = 8;
+    if ((reso && reso !== "720p") || hasFirst || hasLast) dur = 8;
+    const duration = `${dur}s`;
 
-    // aspectRatio solo si NO hay first frame
-    if (!hasFirst) {
-      cfg.aspectRatio = aspectRatio || "16:9";
-    }
-
-    // Construir image / lastFrame si aplica
-    // Usamos el helper correcto ya existente: assetIdToImageObject()
-    let firstImage = null;
-
-    if (hasFirst) {
-      firstImage = await assetIdToImageObject(firstFrameAssetId, user.id);
-    }
-
-    if (hasLast) {
-      cfg.lastFrame = await assetIdToImageObject(lastFrameAssetId, user.id);
-    }
-
-    // 1) iniciar operación
-    let operation = await aiClient.models.generateVideos({
-      model: veoModel,
+    // Input base Fal
+    const falInput = {
       prompt,
-      ...(firstImage ? { image: firstImage } : {}),
-      config: cfg,
-    });
+      aspect_ratio: hasFirst ? "auto" : ar,
+      duration,
+      resolution: reso,
 
-    // 2) polling hasta done (máx 6 min)
-    const start = Date.now();
-    const maxWaitMs = 6 * 60 * 1000;
+      // Igualamos el comportamiento anterior (Gemini): sin audio.
+      // Si luego quieres habilitar sonido para Veo, lo añadimos como toggle en la UI.
+      generate_audio: false,
 
-    while (!operation.done) {
-      if (Date.now() - start > maxWaitMs) {
-        throw httpError(504, "VIDEO_TIMEOUT", "La generación de video tardó demasiado. Intenta otra vez.", {
-          operationName: operation?.name || null,
-        });
-      }
-      await sleep(5000);
-      operation = await aiClient.operations.getVideosOperation({ operation });
+      auto_fix: true,
+      ...(negativePrompt ? { negative_prompt: negativePrompt } : {}),
+    };
+
+    // Frames: Fal necesita URLs accesibles
+    // Si el job queda en cola, URLs firmadas muy cortas pueden expirar.
+    const INPUT_URL_TTL_SECONDS = 60 * 60 * 6; // 6 horas
+
+    if (hasFirst && hasLast) {
+      falInput.first_frame_url = await assetIdToSignedUrl(
+        firstFrameAssetId,
+        user.id,
+        INPUT_URL_TTL_SECONDS
+      );
+      falInput.last_frame_url = await assetIdToSignedUrl(
+        lastFrameAssetId,
+        user.id,
+        INPUT_URL_TTL_SECONDS
+      );
+    } else if (hasFirst) {
+      falInput.image_url = await assetIdToSignedUrl(
+        firstFrameAssetId,
+        user.id,
+        INPUT_URL_TTL_SECONDS
+      );
     }
 
-    const generated = operation?.response?.generatedVideos || [];
-    if (!generated.length) {
-      throw httpError(500, "NO_VIDEO_RETURNED", "Veo no devolvió videos en la respuesta.", {
-        model: veoModel,
+    // Ejecutar en modo síncrono (la UI de Veo no implementa el flujo async/jobToken)
+    const falJson = await falQueueRun(endpointId, falInput);
+
+    const videoUrl =
+      falJson?.video?.url ||
+      falJson?.data?.video?.url ||
+      falJson?.videos?.[0]?.url ||
+      falJson?.output?.video?.url;
+
+    if (!videoUrl) {
+      throw httpError(502, "FAL_VEO_NO_VIDEO", "Fal/Veo no devolvió video.", {
+        endpointId,
+        response: falJson,
       });
     }
 
-    // 3) descargar mp4, subir a Supabase Storage, crear asset row
+    // Descargar mp4, subir a Supabase Storage, crear asset row
     const urlExpiresInSeconds = 60 * 60;
-    const items = [];
 
-    for (let i = 0; i < generated.length; i++) {
-      const tmpPath = pathJoin(os.tmpdir(), `veo_${Date.now()}_${i}.mp4`);
-
-      try {
-        await aiClient.files.download({
-          file: generated[i].video,
-          downloadPath: tmpPath,
-        });
-
-        const bytes = await fs.readFile(tmpPath);
-        const mimeType = "video/mp4";
-        const storagePath = buildAssetPath({
-          userId: user.id,
-          tool: toolName,
-          mimeType,
-          nameHint: hint,
-        });
-
-        await uploadBytesToStorageAtPath({ storagePath, bytes, mimeType });
-
-        const meta = {
-          tool: toolName,
-          model: veoModel,
-          aspectRatio: hasFirst ? null : (cfg.aspectRatio || null),
-          resolution: cfg.resolution || "720p",
-          durationSeconds: cfg.durationSeconds,
-          count: cfg.numberOfVideos,
-          firstFrameAssetId: firstFrameAssetId || null,
-          lastFrameAssetId: lastFrameAssetId || null,
-        };
-
-        const assetId = await insertAssetRow({
-          ownerId: user.id,
-          type: "video",
-          tool: toolName,
-          name: hint,
-          prompt,
-          storagePath,
-          isPublic: false,
-          meta,
-        });
-
-        const url = await signStoragePath(storagePath, urlExpiresInSeconds);
-        items.push({ url, assetId });
-      } finally {
-        fs.unlink(tmpPath).catch(() => {});
-      }
+    const videoResp = await fetch(videoUrl);
+    if (!videoResp.ok) {
+      throw httpError(
+        502,
+        "FAL_VEO_VIDEO_DOWNLOAD_FAILED",
+        `No pude descargar el video de Fal (${videoResp.status}).`
+      );
     }
+
+    const mimeType = videoResp.headers.get("content-type") || "video/mp4";
+    const bytes = Buffer.from(await videoResp.arrayBuffer());
+
+    const storagePath = buildAssetPath({
+      userId: user.id,
+      tool: toolName,
+      mimeType,
+      nameHint: hint,
+    });
+
+    await uploadBytesToStorageAtPath({ storagePath, bytes, mimeType });
+
+    const meta = {
+      tool: toolName,
+      provider: "fal",
+      model: veoModel,
+      endpointId,
+      aspectRatio: hasFirst ? null : ar,
+      resolution: reso,
+      durationSeconds: dur,
+      count: requestedCount,
+      firstFrameAssetId: firstFrameAssetId || null,
+      lastFrameAssetId: lastFrameAssetId || null,
+      generateAudio: false,
+      negativePrompt: negativePrompt || null,
+    };
+
+    const assetId = await insertAssetRow({
+      ownerId: user.id,
+      type: "video",
+      tool: toolName,
+      name: hint,
+      prompt,
+      storagePath,
+      isPublic: false,
+      meta,
+    });
+
+    const url = await signStoragePath(storagePath, urlExpiresInSeconds);
 
     return res.json({
       ok: true,
-      items,
-      url: items[0]?.url,
-      assetId: items[0]?.assetId,
+      items: [{ url, assetId }],
+      url,
+      assetId,
       urlExpiresInSeconds,
     });
   } catch (err) {
