@@ -215,16 +215,9 @@ export function createAiVideoRouter(ctx) {
           }
         }
 
-        // Elements (requieren first frame)
+        // Elements (se pueden usar también en text-to-video)
         let elements = undefined;
         if (hasElements) {
-          if (!hasFirst) {
-            throw httpError(
-              400,
-              "KLING_V3_ELEMENTS_REQUIRE_FIRST_FRAME",
-              "Kling V3: Para usar Elements necesitas un First Frame (start image)."
-            );
-          }
 
           const { data: rows, error: rowsErr } = await supabaseAdmin
             .from("kling_elements")
@@ -298,6 +291,8 @@ export function createAiVideoRouter(ctx) {
         } else {
           falInput.prompt = prompt;
         }
+
+        if (elements) falInput.elements = elements;
 
         // Image-to-video (si hay first frame)
         if (hasFirst) {

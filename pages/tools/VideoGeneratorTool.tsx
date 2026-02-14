@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import styles from "./VideoGeneratorTool.module.css";
 import ErrorModal from "../../components/ErrorModal";
 import { deleteAsset, listMyAssets, publishAsset, unpublishAsset, uploadUserAsset } from "../../services/assetsApi";
@@ -47,7 +47,7 @@ type VideoGenResponse =
   | { ok: true; items: VideoGenItem[]; urlExpiresInSeconds?: number }
   | { ok: false; error: any };
 
-type KlingV3Shot = { prompt: string; durationSeconds: number };
+type KlingV3Shot = { prompt: string; durationSeconds: number; elementIds?: string[] };
 
 const TOOL_ID = "video-generator";
 const FRAME_UPLOAD_TOOL = "video-gen-frame";
@@ -179,14 +179,20 @@ const VideoGeneratorTool: React.FC = () => {
   // ===============================
   const [klingElements, setKlingElements] = useState<KlingElement[]>([]);
   const [elementsOpen, setElementsOpen] = useState(false);
+  // ✅ NUEVO: en multishot, el modal edita los elements de un shot específico
+  const [elementsShotIndex, setElementsShotIndex] = useState<number | null>(null);
+  const openElementsForShot = (shotIndex: number | null) => {
+    setElementsShotIndex(shotIndex);
+    setElementsOpen(true);
+  };
   const [elementsQuery, setElementsQuery] = useState("");
   const [selectedKlingElementIds, setSelectedKlingElementIds] = useState<string[]>([]);
 
   const [multishotEnabled, setMultishotEnabled] = useState(false);
   const [multishotOpen, setMultishotOpen] = useState(false);
   const [klingShots, setKlingShots] = useState<KlingV3Shot[]>([
-    { prompt: "", durationSeconds: 3 },
-    { prompt: "", durationSeconds: 3 },
+    { prompt: "", durationSeconds: 3, elementIds: [] },
+    { prompt: "", durationSeconds: 3, elementIds: [] },
   ]);
   const [klingShotType, setKlingShotType] = useState<"customize" | "intelligent">("customize");
 
@@ -692,29 +698,21 @@ const VideoGeneratorTool: React.FC = () => {
     klingShots,
   ]);
 
+  const refreshKlingElements = useCallback(async () => {
+    try {
+      const items = await listKlingElements();
+      setKlingElements(items || []);
+    } catch (e: any) {
+      setError(e?.message || "No pude cargar tus Elements.");
+    }
+  }, []);
+
   useEffect(() => {
     if (!isKlingV3) return;
     if (!elementsOpen) return;
+    refreshKlingElements();
+  }, [isKlingV3, elementsOpen, refreshKlingElements]);
 
-    (async () => {
-      try {
-        const items = await listKlingElements();
-        setKlingElements(items || []);
-      } catch (e: any) {
-        setError(e?.message || "No pude cargar tus Elements.");
-      }
-    })();
-  }, [isKlingV3, elementsOpen]);
-
-  useEffect(() => {
-    if (!isKlingV3) return;
-    if (firstFrame?.id) return;
-
-    // Si quitas FIRST, dejamos elements en 0 para evitar errores
-    if (selectedKlingElementIds.length > 0) {
-      setSelectedKlingElementIds([]);
-    }
-  }, [isKlingV3, firstFrame?.id, selectedKlingElementIds.length]);
 
   const modelLabel = useMemo(() => prettyVideoModelLabel(modelNorm), [modelNorm]);
 
@@ -999,6 +997,37 @@ const durationLabel = useMemo(() => {
     };
   }, [viewer, imageAssets])
 
+  const effectiveElementsShotIndex = multishotEnabled ? (elementsShotIndex ?? 0) : null;
+
+  const modalSelectedIds = multishotEnabled
+    ? (klingShots[effectiveElementsShotIndex ?? 0]?.elementIds ?? [])
+    : selectedKlingElementIds;
+
+  const setModalSelectedIds: React.Dispatch<React.SetStateAction<string[]>> = (next) => {
+    if (multishotEnabled) {
+      const idx = effectiveElementsShotIndex ?? 0;
+      setKlingShots((prev) =>
+        prev.map((s, i) => {
+          if (i !== idx) return s;
+          const current = s.elementIds ?? [];
+          const value = typeof next === "function" ? (next as any)(current) : next;
+          return { ...s, elementIds: value };
+        })
+      );
+    } else {
+      setSelectedKlingElementIds(next);
+    }
+  };
+
+  const clearModalSelectedIds = () => {
+    if (multishotEnabled) {
+      const idx = effectiveElementsShotIndex ?? 0;
+      setKlingShots((prev) => prev.map((s, i) => (i === idx ? { ...s, elementIds: [] } : s)));
+    } else {
+      setSelectedKlingElementIds([]);
+    }
+  };
+
   return (
     <div
       ref={rootRef}
@@ -1082,7 +1111,7 @@ const durationLabel = useMemo(() => {
                           className={styles.multishotAddBtn}
                           onClick={() =>
                             setKlingShots((prev) =>
-                              prev.length >= 10 ? prev : [...prev, { prompt: "", durationSeconds: 3 }]
+                              prev.length >= 10 ? prev : [...prev, { prompt: "", durationSeconds: 3, elementIds: [] }]
                             )
                           }
                           title="Agregar un shot"
@@ -1110,15 +1139,27 @@ const durationLabel = useMemo(() => {
                         <div key={i} className={styles.multishotShotRow}>
                           <div className={styles.multishotShotHeader}>
                             <div className={styles.multishotShotName}>Shot {i + 1}</div>
-                            <button
-                              type="button"
-                              className={styles.multishotRemoveBtn}
-                              onClick={() => setKlingShots((prev) => prev.filter((_, idx) => idx !== i))}
-                              disabled={klingShots.length <= 1}
-                              title={klingShots.length <= 1 ? "Debe existir al menos 1 shot" : "Eliminar shot"}
-                            >
-                              <Icon name="trash" />
-                            </button>
+
+                            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                              <button
+                                type="button"
+                                className={styles.swapBtn}
+                                onClick={() => openElementsForShot(i)}
+                                title="Seleccionar Elements para este shot"
+                              >
+                                Elements {Array.isArray(s.elementIds) && s.elementIds.length ? `(${s.elementIds.length})` : ""}
+                              </button>
+
+                              <button
+                                type="button"
+                                className={styles.multishotRemoveBtn}
+                                onClick={() => setKlingShots((prev) => prev.filter((_, idx) => idx !== i))}
+                                disabled={klingShots.length <= 1}
+                                title={klingShots.length <= 1 ? "Debe existir al menos 1 shot" : "Eliminar shot"}
+                              >
+                                <Icon name="trash" />
+                              </button>
+                            </div>
                           </div>
 
                           <LimitedTextarea
@@ -1246,9 +1287,8 @@ const durationLabel = useMemo(() => {
             klingSound={klingSound}
             toggleSound={toggleSound}
             isKlingV3={isKlingV3}
-            hasFirstFrame={!!firstFrame?.id}
             selectedKlingElementCount={selectedKlingElementIds.length}
-            openElements={() => setElementsOpen(true)}
+            openElements={() => openElementsForShot(multishotEnabled ? 0 : null)}
             multishotEnabled={multishotEnabled}
             setMultishotEnabled={setMultishotEnabled}
             multishotTotalSeconds={multishotTotalSeconds}
@@ -1337,18 +1377,20 @@ const durationLabel = useMemo(() => {
 
       <KlingElementsModal
         open={elementsOpen}
-        onClose={() => setElementsOpen(false)}
+        onClose={() => {
+          setElementsOpen(false);
+          setElementsShotIndex(null);
+        }}
         elements={klingElements}
         query={elementsQuery}
         setQuery={setElementsQuery}
-        selectedIds={selectedKlingElementIds}
-        setSelectedIds={setSelectedKlingElementIds}
-        onClear={() => setSelectedKlingElementIds([])}
+        selectedIds={modalSelectedIds}
+        setSelectedIds={setModalSelectedIds}
+        onClear={clearModalSelectedIds}
         imageAssets={imageAssets}
-        hasFirstFrame={!!firstFrame?.id}
         getAssetUrl={getAssetUrl}
+        onRefresh={refreshKlingElements}
       />
-
     </div>
   );
 };

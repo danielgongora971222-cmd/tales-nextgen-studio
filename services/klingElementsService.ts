@@ -1,22 +1,21 @@
 import { supabase } from "./supabaseClient";
 
-export type KlingElementTagId =
-  | "o_101" | "o_102" | "o_103" | "o_104"
-  | "o_105" | "o_106" | "o_107" | "o_108";
+/**
+ * Shapes y endpoints reales según server/server.js:
+ *  - GET    /api/kling/elements
+ *  - POST   /api/kling/elements
+ *  - DELETE /api/kling/elements/:id
+ */
 
 export type KlingElement = {
   id: string;
-  elementId: number;
-  elementName: string;
-  elementDescription: string;
-  frontalAssetId: string;
-  referAssetIds: string[];
-  tagIds: KlingElementTagId[];
+  name: string;
+  tag?: string;
+  klingElementId?: string | null;
+  previewUrl?: string | null;
+  imageUrls: string[];
   createdAt: number;
 };
-
-type ApiOk<T> = { ok: true; item?: T; items?: T[] };
-type ApiFail = { ok: false; error: any };
 
 async function authHeadersJson() {
   const { data: sessionData } = await supabase.auth.getSession();
@@ -37,15 +36,12 @@ function mapRowToKlingElement(row: any): KlingElement {
         : Date.now();
 
   return {
-    id: row.id,
-    elementId: Number(row.element_id ?? row.elementId),
-    elementName: String(row.element_name ?? row.elementName ?? ""),
-    elementDescription: String(row.element_description ?? row.elementDescription ?? ""),
-    frontalAssetId: String(row.frontal_asset_id ?? row.frontalAssetId ?? ""),
-    referAssetIds: Array.isArray(row.refer_asset_ids ?? row.referAssetIds)
-      ? (row.refer_asset_ids ?? row.referAssetIds).map((x: any) => String(x))
-      : [],
-    tagIds: Array.isArray(row.tag_ids ?? row.tagIds) ? (row.tag_ids ?? row.tagIds) : [],
+    id: String(row.id),
+    name: String(row.name ?? ""),
+    tag: row.tag ? String(row.tag) : undefined,
+    klingElementId: row.klingElementId ?? row.kling_element_id ?? null,
+    previewUrl: row.previewUrl ?? row.preview_url ?? null,
+    imageUrls: Array.isArray(row.imageUrls ?? row.image_urls) ? (row.imageUrls ?? row.image_urls).map(String) : [],
     createdAt,
   };
 }
@@ -62,11 +58,9 @@ export async function listKlingElements(): Promise<KlingElement[]> {
 }
 
 export async function createKlingElement(payload: {
-  elementName: string;
-  elementDescription: string;
-  frontalAssetId: string;
-  referAssetIds: string[];
-  tagIds?: KlingElementTagId[];
+  name: string;
+  tag?: string;
+  images: Array<{ assetId: string } | { dataUrl: string }>;
 }): Promise<KlingElement> {
   const headers = await authHeadersJson();
   const resp = await fetch("/api/kling/elements", {
@@ -82,12 +76,11 @@ export async function createKlingElement(payload: {
   return mapRowToKlingElement(data.item);
 }
 
-export async function deleteKlingElement(rowId: string): Promise<void> {
+export async function deleteKlingElement(id: string): Promise<void> {
   const headers = await authHeadersJson();
-  const resp = await fetch("/api/kling/elements/delete", {
-    method: "POST",
+  const resp = await fetch(`/api/kling/elements/${encodeURIComponent(id)}`, {
+    method: "DELETE",
     headers,
-    body: JSON.stringify({ id: rowId }),
   });
   const data = await resp.json();
 

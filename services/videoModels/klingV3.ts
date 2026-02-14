@@ -5,20 +5,56 @@ import type { BuildPlanArgs, BuildPlanResult, KlingV3Shot, VideoModelHandler } f
 
 const KLING_V3_MULTISHOT_PROMPT_LIMIT = 512;
 
-function clampShot(s: KlingV3Shot, idx: number): KlingV3Shot {
-  const raw = String(s.prompt || "");
-  if (raw.length > KLING_V3_MULTISHOT_PROMPT_LIMIT) {
-    throw new Error(
-      `Multishot: el prompt del shot ${idx + 1} supera ${KLING_V3_MULTISHOT_PROMPT_LIMIT} caracteres (${raw.length}).`
-    );
-  }
-
-  const dur = Math.max(3, Math.min(15, Math.trunc(Number(s.durationSeconds) || 3)));
-  return { prompt: raw.trim(), durationSeconds: dur };
+function uniqueStrings(xs: string[]) {
+  const out: string[] = [];
+  for (const x of xs) if (x && !out.includes(x)) out.push(x);
+  return out;
 }
 
-function validShots(shots: KlingV3Shot[]) {
-  return (shots || []).map((s, i) => clampShot(s, i)).filter((x) => x.prompt.length > 0);
+function uniqueNumbers(xs: number[]) {
+  const out: number[] = [];
+  for (const x of xs) if (Number.isFinite(x) && !out.includes(x)) out.push(x);
+  return out;
+}
+
+function refsFromIndexes(indexes: number[]) {
+  const uniq = uniqueNumbers(indexes).sort((a, b) => a - b);
+  return uniq.map((i) => `@Element${i}`).join(" ");
+}
+
+function injectRefsIfMissing(prompt: string, indexes: number[]) {
+  const p = String(prompt || "").trim();
+  if (indexes.length <= 0) return p;
+
+  // Si el usuario ya escribió @ElementN manualmente, no tocamos el prompt
+  if (/@Element\s*\d+/i.test(p)) return p;
+
+  const refs = refsFromIndexes(indexes);
+  return `${p}\n\nUse ${refs}.`.trim();
+}
+
+function assertPromptLimit(prompt: string, limit: number, label: string) {
+  if (prompt.length > limit) {
+    throw new Error(`${label} supera ${limit} caracteres (${prompt.length}).`);
+  }
+}
+
+function normalizeShot(s: KlingV3Shot, idx: number): KlingV3Shot {
+  const basePrompt = String(s.prompt || "").trim();
+  if (!basePrompt) return { ...s, prompt: "", durationSeconds: 0 };
+
+  assertPromptLimit(basePrompt, KLING_V3_MULTISHOT_PROMPT_LIMIT, `Multishot: prompt del shot ${idx + 1}`);
+
+  const dur = Math.max(3, Math.min(15, Math.trunc(Number(s.durationSeconds) || 3)));
+  const elementIds = Array.isArray((s as any).elementIds) ? uniqueStrings((s as any).elementIds) : [];
+
+  return { ...s, prompt: basePrompt, durationSeconds: dur, elementIds };
+}
+
+function validShotsBase(shots: KlingV3Shot[]) {
+  return (shots || [])
+    .map((s, i) => normalizeShot(s, i))
+    .filter((x) => x.prompt.length > 0 && x.durationSeconds > 0);
 }
 
 function totalSeconds(shots: KlingV3Shot[]) {
@@ -44,21 +80,71 @@ export const klingV3Handler: VideoModelHandler = {
     const modelNorm = normalizeModelId(args.model);
     const hasFirst = Boolean(args.firstFrameAssetId);
 
-    const vShots = args.multishotEnabled ? validShots(args.klingShots) : [];
-    const tot = args.multishotEnabled ? totalSeconds(vShots) : 0;
+    // ✅ Multishot: cada shot tiene sus elementIds; el request necesita unión global + refs correctas
+    const isMulti = Boolean(args.multishotEnabled);
 
-    if (args.multishotEnabled) {
-      if (vShots.length < 2) throw new Error("Multishot: necesitas 2+ shots con prompt.");
-      if (tot < 3 || tot > 15) throw new Error("Multishot: la suma debe ser 3–15s.");
+    const baseShots = isMulti ? validShotsBase(args.klingShots) : [];
+
+    // Unión global (orden estable por primera aparición)
+    let globalElementIds: string[] = [];
+
+    if (isMulti) {
+      for (const s of baseShots) {
+        const ids = Array.isArray((s as any).elementIds) ? (s as any).elementIds : [];
+        for (const id of ids) {
+          if (!globalElementIds.includes(id)) globalElementIds.push(id);
+          if (globalElementIds.length > 5) {
+            throw new Error(
+              "Kling V3: Máximo 5 Elements en total (unión global entre todos los shots). Reduce selección."
+            );
+          }
+        }
+      }
     } else {
-      if (!args.prompt.trim()) throw new Error("Escribe un prompt.");
+      // modo normal: selección global (máx 5)
+      globalElementIds = args.selectedKlingElementIds.slice(0, 5);
     }
 
-    const effectivePrompt =
-      args.multishotEnabled ? (vShots[0]?.prompt || "multishot") : args.prompt;
+    const elementIndexById = new Map<string, number>(
+      globalElementIds.map((id, idx) => [id, idx + 1])
+    );
 
-    const effectiveDurationSeconds =
-      args.multishotEnabled ? Number(tot || 5) : coerceAllowedNumber(args.durationSeconds, [3,4,5,6,7,8,9,10,11,12,13,14,15], 5);
+    // Prompts finales (por shot) con refs inyectadas solo si ese shot usa Elements
+    const vShots = isMulti
+      ? baseShots.map((s, i) => {
+          const ids = Array.isArray((s as any).elementIds) ? (s as any).elementIds : [];
+          const indexes = uniqueNumbers(
+            ids
+              .map((id: string) => elementIndexById.get(id))
+              .filter((x: any) => typeof x === "number")
+          );
+
+          const injected = injectRefsIfMissing(s.prompt, indexes);
+          assertPromptLimit(
+            injected,
+            KLING_V3_MULTISHOT_PROMPT_LIMIT,
+            `Multishot: prompt del shot ${i + 1} (con Elements)`
+          );
+
+          return { prompt: injected, durationSeconds: s.durationSeconds };
+        })
+      : [];
+
+    // Prompt efectivo (solo para UI/registro)
+    const effectivePrompt = isMulti
+      ? (vShots[0]?.prompt || "multishot")
+      : injectRefsIfMissing(args.prompt, globalElementIds.map((_, idx) => idx + 1));
+
+    // Duración
+    const multiTotalSeconds = isMulti ? totalSeconds(vShots) : 0;
+
+    const effectiveDurationSeconds = isMulti
+      ? (multiTotalSeconds > 0 ? multiTotalSeconds : 5)
+      : coerceAllowedNumber(
+          args.durationSeconds,
+          [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+          5
+        );
 
     const body: any = {
       prompt: effectivePrompt,
@@ -76,13 +162,10 @@ export const klingV3Handler: VideoModelHandler = {
     // si NO hay first frame, se permite escoger aspect ratio
     if (!hasFirst) body.aspectRatio = args.aspectRatio;
 
-    // Elements
-    if (args.selectedKlingElementIds.length > 0) {
-      if (!hasFirst) throw new Error("Kling V3: Para usar Elements debes cargar FIRST frame.");
-      body.klingElementIds = args.selectedKlingElementIds.slice(0, 5);
-    }
+    // ✅ Elements: SIEMPRE global (unión en multishot / global en normal)
+    if (globalElementIds.length > 0) body.klingElementIds = globalElementIds;
 
-    // Multishot
+    // ✅ Multishot: prompts ya vienen con refs correctas
     if (args.multishotEnabled) {
       body.klingMultiPrompt = vShots;
       if (!hasFirst) body.klingShotType = args.klingShotType;

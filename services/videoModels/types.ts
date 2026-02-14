@@ -4,7 +4,11 @@ export type Resolution = "720p" | "1080p" | "4k";
 export type KlingMode = "std" | "pro";
 export type KlingShotType = "customize" | "intelligent";
 
-export type KlingV3Shot = { prompt: string; durationSeconds: number };
+export type KlingV3Shot = {
+  prompt: string;
+  durationSeconds: number;
+  elementIds?: string[]; // ✅ AGREGADO: ids de Elements seleccionados para ESTE shot
+};
 
 export type VideoGenItem = { url: string; assetId: string };
 

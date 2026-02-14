@@ -25,7 +25,6 @@ type Props = {
   toggleSound: () => void;
 
   isKlingV3: boolean;
-  hasFirstFrame: boolean;
   selectedKlingElementCount: number;
   openElements: () => void;
 
@@ -50,7 +49,6 @@ export function ControlsRow({
   klingSound,
   toggleSound,
   isKlingV3,
-  hasFirstFrame,
   selectedKlingElementCount,
   openElements,
   multishotEnabled,
@@ -158,19 +156,14 @@ export function ControlsRow({
               setPanel(null);
               openElements();
             }}
-            disabled={!hasFirstFrame}
-            title={!hasFirstFrame ? "Para usar Elements primero carga FIRST frame" : "Seleccionar Elements"}
+            title="Seleccionar Elements"
           >
             <span className={styles.controlBtnLeft}>
               <Icon name="elements" />
               <span>Elements</span>
             </span>
             <span className={styles.controlBtnMeta}>
-              {!hasFirstFrame
-                ? "Need FIRST"
-                : selectedKlingElementCount
-                  ? `${selectedKlingElementCount} sel`
-                  : "Optional"}
+              {selectedKlingElementCount ? `${selectedKlingElementCount} sel` : "Optional"}
             </span>
           </button>
 
