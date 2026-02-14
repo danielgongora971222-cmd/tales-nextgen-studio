@@ -713,6 +713,12 @@ const VideoGeneratorTool: React.FC = () => {
     refreshKlingElements();
   }, [isKlingV3, elementsOpen, refreshKlingElements]);
 
+  useEffect(() => {
+  if (!isKlingV3) return;
+  if (!elementsOpen) return;
+  // Refresca imágenes para el selector del creador de Elements
+  reloadImages();
+}, [isKlingV3, elementsOpen]);
 
   const modelLabel = useMemo(() => prettyVideoModelLabel(modelNorm), [modelNorm]);
 

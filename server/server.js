@@ -1210,89 +1210,81 @@ async function klingCreateElement({ name, tag, imageUrls }) {
 
   const url = resolveKlingCreateElementUrl();
 
-  const base = { name };
-  const payloads = [
-    // Formato común (lista)
-    {
-      ...base,
-      ...(tag ? { tag } : {}),
-      image_list: imageUrls.map((u) => ({ image: u })),
-    },
-
-        {
-      ...base,
-      ...(tag ? { tag } : {}),
-      image_list: imageUrls.map((u) => ({ url: u })),
-    },
-
-    // Alternativa (cover + extras)
-    {
-      ...base,
-      ...(tag ? { tag } : {}),
-      coverImage: imageUrls[0],
-      images: imageUrls,
-    },
-    // Alternativa (array simple)
-    {
-      ...base,
-      ...(tag ? { tag } : {}),
-      image_urls: imageUrls,
-    },
-  ];
-
-  let lastErr = null;
-
-    for (const payload of payloads) {
-    try {
-      const resp = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-          Authorization: `Bearer ${makeKlingJwt(accessKey, secretKey, 300)}`,
-        },
-        body: JSON.stringify(payload),
-      });
-
-      const text = await resp.text();
-      let json = null;
-      try {
-        json = text ? JSON.parse(text) : null;
-      } catch {}
-
-      if (resp.ok && json && (json.code === 0 || json.code === undefined || json.success === true)) {
-        const data = json.data || json;
-        const elementId =
-          data.element_id ||
-          data.elementId ||
-          data.id ||
-          data.element?.id ||
-          data.element?.element_id;
-
-        if (elementId) return { elementId, raw: json };
-      }
-
-      const msgFromJson =
-        json?.message ||
-        json?.msg ||
-        json?.error?.message ||
-        json?.error ||
-        null;
-
-      const statusLine = `HTTP ${resp.status}${resp.statusText ? ` ${resp.statusText}` : ""}`;
-      const snippet = (text || "").slice(0, 280);
-
-      lastErr = new Error(`${msgFromJson || statusLine}${snippet ? ` | body: ${snippet}` : ""}`);
-    } catch (e) {
-      lastErr = e;
-    }
+  // Kling Custom Element API requiere:
+  // element_name, element_description, element_frontal_image, element_refer_list (1..3)
+  const frontal = imageUrls?.[0];
+  if (!frontal) {
+    throw httpError(400, "KLING_ELEMENT_NO_IMAGES", "No hay imágenes para crear el Element.");
   }
 
-  throw httpError(
-    502,
-    "KLING_CREATE_ELEMENT_FAILED",
-    `Kling no aceptó el payload para crear el Element. URL usada: ${url}. Detalles: ${lastErr?.message || "unknown"}`
-  );
+  const refer = (imageUrls || []).slice(1, 4);
+  const referList = refer.length ? refer : [frontal]; // Kling exige mínimo 1 referencia
+
+  const t = String(tag || "").trim().toLowerCase();
+  const tagId =
+    t === "scene" ? "o_106" : t === "object" || t === "item" ? "o_104" : t === "character" ? "o_102" : "o_102";
+
+  const elementDescription = (() => {
+    const base = t ? `${t} element` : "custom element";
+    const desc = `${base} created in Tales NextGen Studio.`;
+    return desc.slice(0, 100);
+  })();
+
+  const payload = {
+    element_name: name,
+    element_description: elementDescription,
+    element_frontal_image: frontal,
+    element_refer_list: referList.map((u) => ({ image_url: u })),
+    ...(tagId ? { tag_list: [{ tag_id: tagId }] } : {}),
+  };
+
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        Authorization: `Bearer ${makeKlingJwt(accessKey, secretKey, 300)}`,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const text = await resp.text();
+    let json = null;
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch {}
+
+    if (resp.ok && json && (json.code === 0 || json.code === undefined || json.success === true)) {
+      const data = json.data || json;
+      const elementId =
+        data.element_id ||
+        data.elementId ||
+        data.id ||
+        data.element?.id ||
+        data.element?.element_id;
+
+      if (elementId) return { elementId, raw: json };
+    }
+
+    const msgFromJson = json?.message || json?.msg || json?.error?.message || json?.error || null;
+    const statusLine = `HTTP ${resp.status}${resp.statusText ? ` ${resp.statusText}` : ""}`;
+    const snippet = (text || "").slice(0, 280);
+    const lastErr = new Error(`${msgFromJson || statusLine}${snippet ? ` | body: ${snippet}` : ""}`);
+
+    throw httpError(
+      502,
+      "KLING_CREATE_ELEMENT_FAILED",
+      `Kling no aceptó el payload para crear el Element. URL usada: ${url}. Detalles: ${lastErr?.message || "unknown"}`
+    );
+  } catch (e) {
+    if (e?.statusCode) throw e;
+    throw httpError(
+      502,
+      "KLING_CREATE_ELEMENT_FAILED",
+      `Kling no aceptó el payload para crear el Element. URL usada: ${url}. Detalles: ${e?.message || "unknown"}`
+    );
+  }
 }
 
 // GET /api/kling/elements  -> lista elementos del usuario

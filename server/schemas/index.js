@@ -112,8 +112,8 @@ export const KlingElementImageSchema = z.union([
 ]);
 
 export const CreateKlingElementRequestSchema = z.object({
-  name: z.string().min(1).max(80),
-  tag: z.string().optional(), // e.g. "character" | "object" | "scene" (depende de Kling)
+  name: z.string().min(1).max(20),
+  tag: z.string().optional(),
   images: z.array(KlingElementImageSchema).min(1).max(4),
 });
 

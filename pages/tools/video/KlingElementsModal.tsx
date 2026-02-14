@@ -47,13 +47,20 @@ export function KlingElementsModal({
 }) {
   const [mode, setMode] = useState<Mode>("library");
 
+  // Historial de imágenes dentro del creador de Elements
+  const ASSET_INITIAL_COUNT = 12;
+  const ASSET_LOAD_MORE_COUNT = 9;
+
   // Create form
   const [newName, setNewName] = useState("");
   const [newTag, setNewTag] = useState("character");
   const [assetQuery, setAssetQuery] = useState("");
   const [pickedAssetIds, setPickedAssetIds] = useState<string[]>([]);
+  const [assetVisibleCount, setAssetVisibleCount] = useState(ASSET_INITIAL_COUNT);
+  const [isLoadingMoreAssets, setIsLoadingMoreAssets] = useState(false);
   const [busy, setBusy] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+
 
   useEffect(() => {
     if (!open) return;
@@ -63,7 +70,10 @@ export function KlingElementsModal({
     setNewTag("character");
     setAssetQuery("");
     setPickedAssetIds([]);
-  }, [open]);
+    setAssetVisibleCount(ASSET_INITIAL_COUNT);
+    setIsLoadingMoreAssets(false);
+  }, [open, ASSET_INITIAL_COUNT]);
+
 
   const filteredElements = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -75,7 +85,7 @@ export function KlingElementsModal({
     });
   }, [elements, query]);
 
-  const filteredAssets = useMemo(() => {
+    const filteredAssets = useMemo(() => {
     const q = assetQuery.trim().toLowerCase();
     const base = Array.isArray(imageAssets) ? imageAssets : [];
     if (!q) return base;
@@ -84,6 +94,35 @@ export function KlingElementsModal({
       return t.includes(q);
     });
   }, [assetQuery, imageAssets]);
+
+  const sortedAssets = useMemo(() => {
+    const base = Array.isArray(filteredAssets) ? [...filteredAssets] : [];
+    base.sort((a: any, b: any) => {
+      const taRaw = a?.createdAt ?? a?.created_at ?? a?.insertedAt ?? a?.updatedAt ?? a?.updated_at ?? 0;
+      const tbRaw = b?.createdAt ?? b?.created_at ?? b?.insertedAt ?? b?.updatedAt ?? b?.updated_at ?? 0;
+      const ta = typeof taRaw === "string" ? new Date(taRaw).getTime() : Number(taRaw) || 0;
+      const tb = typeof tbRaw === "string" ? new Date(tbRaw).getTime() : Number(tbRaw) || 0;
+      return tb - ta;
+    });
+    return base;
+  }, [filteredAssets]);
+
+  const visibleAssets = useMemo(
+    () => sortedAssets.slice(0, Math.min(assetVisibleCount, sortedAssets.length)),
+    [sortedAssets, assetVisibleCount]
+  );
+  const hasMoreAssets = assetVisibleCount < sortedAssets.length;
+
+  async function handleLoadMoreAssets() {
+    if (isLoadingMoreAssets) return;
+    setIsLoadingMoreAssets(true);
+    try {
+      await new Promise((r) => setTimeout(r, 120));
+      setAssetVisibleCount((c) => Math.min(c + ASSET_LOAD_MORE_COUNT, sortedAssets.length));
+    } finally {
+      setIsLoadingMoreAssets(false);
+    }
+  }
 
   const toggleSelectElement = (id: string) => {
     setSelectedIds((prev) => {
@@ -108,7 +147,11 @@ export function KlingElementsModal({
 
     const name = newName.trim();
     if (!name) {
-      setLocalError("Ponle un nombre al Element.");
+      setLocalError("Debes asignarle un nombre a tu Elemento (campo obligatorio).");
+      return;
+    }
+    if (name.length > 20) {
+      setLocalError("El nombre debe tener máximo 20 caracteres (requisito de Kling).");
       return;
     }
     if (pickedAssetIds.length < 1) {
@@ -322,7 +365,7 @@ export function KlingElementsModal({
                 placeholder="Element name (required)"
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
-                maxLength={80}
+                maxLength={20}
               />
 
               <select
@@ -341,7 +384,7 @@ export function KlingElementsModal({
                 type="button"
                 className={styles.uploadBtn}
                 onClick={handleCreate}
-                disabled={busy || !newName.trim() || pickedAssetIds.length < 1}
+                disabled={busy}
               >
                 {busy ? "CREATING…" : `CREATE (${pickedCount}/4)`}
               </button>
@@ -362,14 +405,29 @@ export function KlingElementsModal({
               </div>
             </div>
 
+            {hasMoreAssets && (
+              <div className={styles.pickerLoadMoreWrap}>
+                <button
+                  type="button"
+                  className={styles.loadMoreBtn}
+                  onClick={handleLoadMoreAssets}
+                  disabled={busy || isLoadingMoreAssets}
+                >
+                  {isLoadingMoreAssets ? "CARGANDO…" : "Cargar más"}
+                </button>
+                <div className={styles.loadMoreHint}>
+                  Mostrando {visibleAssets.length} de {sortedAssets.length}
+                </div>
+              </div>
+            )}
+
             <div className={styles.pickerGrid}>
-              {filteredAssets.length === 0 ? (
+              {sortedAssets.length === 0 ? (
                 <div className={styles.pickerEmpty}>
-                  No veo imágenes en tu librería. Sube imágenes primero (por
-                  ejemplo, cargando un FIRST frame o usando el Image Tool).
+                  No veo imágenes en tu librería...
                 </div>
               ) : (
-                filteredAssets.map((a) => {
+                visibleAssets.map((a) => {
                   const picked = pickedAssetIds.includes(a.id);
                   const src = assetThumb(a, getAssetUrl);
 
