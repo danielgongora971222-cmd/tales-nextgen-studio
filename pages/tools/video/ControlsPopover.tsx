@@ -2,9 +2,11 @@ import React from "react";
 import styles from "../VideoGeneratorTool.module.css";
 import { Icon } from "./icon";
 import {
+  DEFAULT_VIDEO_MODEL,
   KLING_2_5_TURBO,
   KLING_2_6,
   KLING_V3,
+  KLING_O3_PRO,
   VEO_3,
   VEO_3_FAST,
   VEO_3_1,
@@ -174,6 +176,18 @@ export function ControlsPopover({
             >
               <div className={styles.modelName}>Kling 2.6</div>
               <div className={styles.modelDesc}>Mejorado · audio solo en PRO</div>
+            </button>
+
+            <button
+              type="button"
+              className={`${styles.modelOption} ${model === KLING_O3_PRO ? styles.modelOptionActive : ""}`}
+              onClick={() => {
+                setModel(KLING_O3_PRO);
+                setPanel(null);
+              }}
+            >
+              <div className={styles.modelName}>Kling O3 Pro</div>
+              <div className={styles.modelDesc}>Pro (Fal) · 3–15s · T2V + I2V + audio</div>
             </button>
 
             <button

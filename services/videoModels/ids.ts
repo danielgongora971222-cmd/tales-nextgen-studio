@@ -6,6 +6,7 @@ export const VEO_3_1_FAST = "veo-3.1-fast-generate-preview";
 export const KLING_2_5_TURBO = "kling-v2-5-turbo";
 export const KLING_2_6 = "kling-v2-6";
 export const KLING_V3 = "kling-v3";
+export const KLING_O3_PRO = "kling-o3-pro";
 
 // ✅ Este es el default REAL. No renombres VEO_3 ni otros.
 export const DEFAULT_VIDEO_MODEL = VEO_3_1;

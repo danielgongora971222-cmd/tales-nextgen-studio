@@ -141,7 +141,8 @@ export function createAiVideoRouter(ctx) {
 
     if (isKling) {
       // ✅ KLING V3 PRO via FAL (fal-ai/kling-video/v3/pro/*)
-            if (selectedModelNorm === "kling-v3") {
+            if (selectedModelNorm === "kling-v3" || selectedModelNorm === "kling-o3-pro") {
+              const isO3 = selectedModelNorm === "kling-o3-pro";
         const hasElements =
           Array.isArray(klingElementIds) && klingElementIds.length > 0;
 
@@ -270,7 +271,15 @@ export function createAiVideoRouter(ctx) {
         }
 
         // Armamos el input Fal
-        let endpointId = "fal-ai/kling-video/v3/pro/text-to-video";
+        let endpointId = isO3
+          ? "fal-ai/kling-video/o3/pro/text-to-video"
+          : "fal-ai/kling-video/v3/pro/text-to-video";
+
+        if (hasFirst) {
+          endpointId = isO3
+            ? "fal-ai/kling-video/o3/pro/image-to-video"
+            : "fal-ai/kling-video/v3/pro/image-to-video";
+        }
 
         const falInput = {
           aspect_ratio: ar,
@@ -284,7 +293,7 @@ export function createAiVideoRouter(ctx) {
         // Text-to-video (single o multishot)
         if (multi && multi.length) {
           falInput.multi_prompt = multi;
-          falInput.shot_type = normalizedShotType;
+          falInput.shot_type = isO3 ? "customize" : klingShotType;
         } else {
           falInput.prompt = prompt;
         }
@@ -293,14 +302,16 @@ export function createAiVideoRouter(ctx) {
 
         // Image-to-video (si hay first frame)
         if (hasFirst) {
-          endpointId = "fal-ai/kling-video/v3/pro/image-to-video";
-          falInput.start_image_url = await assetIdToSignedUrl(
+          // O3 usa image_url, V3 usa start_image_url
+          falInput[isO3 ? "image_url" : "start_image_url"] = await assetIdToSignedUrl(
             firstFrameAssetId,
             user.id,
             INPUT_URL_TTL_SECONDS
           );
 
-          if (hasLast) {
+          // End frame: lo dejamos igual que estaba para V3
+          // (y evitamos mandarlo en O3 para no romper)
+          if (hasLast && !isO3) {
             falInput.end_image_url = await assetIdToSignedUrl(
               lastFrameAssetId,
               user.id,
@@ -313,7 +324,7 @@ export function createAiVideoRouter(ctx) {
           // i2v: shot_type solo "customize"
           if (multi && multi.length) falInput.shot_type = "customize";
         }
-
+        
         // ✅ Modo async para evitar el timeout 120s de Vercel
         if (asyncMode) {
           const { requestId, statusUrl, responseUrl } = await falQueueSubmit(
