@@ -62,9 +62,12 @@ export const klingO3ProHandler: VideoModelHandler = {
   label: "Kling O3 Pro",
   matches: (m) => m === KLING_O3_PRO,
 
-  getCapability: () => ({
+    getCapability: ({ hasFirst }) => ({
     supportsResolution: false,
-    supportsAspectRatio: true,
+
+    // ✅ Si hay FIRST frame: se bloquea aspect ratio (igual que Kling V3)
+    supportsAspectRatio: !hasFirst,
+
     supportsAspectRatio1x1: true,
     durations: [3,4,5,6,7,8,9,10,11,12,13,14,15],
     supportsSound: true,
@@ -81,8 +84,23 @@ export const klingO3ProHandler: VideoModelHandler = {
     const baseShots = isMulti ? validShotsBase(args.klingShots) : [];
 
     // Elements solo aplica cuando hay imagen base (I2V)
+    // ✅ Elements: unión global (en multishot) / selección global (modo normal)
     let globalElementIds: string[] = [];
-    if (hasFirst) globalElementIds = args.selectedKlingElementIds.slice(0, 5);
+    if (isMulti) {
+      for (const s of baseShots) {
+        const ids = Array.isArray((s as any).elementIds) ? (s as any).elementIds : [];
+        for (const id of ids) {
+          if (!globalElementIds.includes(id)) globalElementIds.push(id);
+          if (globalElementIds.length > 5) {
+            throw new Error(
+              "Kling O3: Máximo 5 Elements en total (unión global entre todos los shots). Reduce selección."
+            );
+          }
+        }
+      }
+    } else {
+      globalElementIds = args.selectedKlingElementIds.slice(0, 5);
+    }
 
     const elementIndexById = new Map<string, number>(globalElementIds.map((id, idx) => [id, idx + 1]));
 
@@ -90,7 +108,7 @@ export const klingO3ProHandler: VideoModelHandler = {
       ? baseShots.map((s, i) => {
           const ids = Array.isArray((s as any).elementIds) ? (s as any).elementIds : [];
           const indexes = uniqueNumbers(ids.map((id: string) => elementIndexById.get(id)).filter((x: any) => typeof x === "number"));
-          const injected = hasFirst ? injectRefsIfMissing(s.prompt, indexes) : s.prompt;
+          const injected = injectRefsIfMissing(s.prompt, indexes);
           assertPromptLimit(injected, KLING_O3_MULTISHOT_PROMPT_LIMIT, `Multishot: prompt del shot ${i + 1}`);
           return { prompt: injected, durationSeconds: s.durationSeconds };
         })

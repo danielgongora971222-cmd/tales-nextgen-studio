@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
-import styles from "../VideoGeneratorTool.module.css";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import styles from "../ImageGeneratorTool.module.css";
 import type { Asset } from "../../../types";
 import {
   createKlingElement,
@@ -209,270 +209,367 @@ export function KlingElementsModal({
   const selectedCount = selectedIds.length;
   const pickedCount = pickedAssetIds.length;
 
-  return (
-    <div className={styles.modalOverlay} role="dialog" aria-modal="true">
-      <div className={styles.modal}>
-        <div className={styles.modalHeader}>
-          <div className={styles.modalTitle}>Kling Elements</div>
-          <button className={styles.modalClose} onClick={onClose} type="button">
+    return (
+    <div
+      className={styles.elementBackdrop}
+      role="dialog"
+      aria-modal="true"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className={styles.elementModal} onMouseDown={(e) => e.stopPropagation()}>
+        <div className={styles.elementHeader}>
+          <div className={styles.elementTitle}>
+            {mode === "create" ? "Create Element/Person" : "All Elements"}
+          </div>
+          <button type="button" className={styles.iconBtn} onClick={onClose} title="Close">
             ×
           </button>
         </div>
 
-        {mode === "library" ? (
-          <>
-            <div className={styles.modalActions}>
-              <input
-                className={styles.search}
-                placeholder="Search elements..."
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-              />
-              <button
-                type="button"
-                className={styles.uploadBtn}
-                onClick={() => setMode("create")}
-                disabled={busy}
-              >
-                NEW
-              </button>
-              <button
-                type="button"
-                className={styles.swapBtn}
-                onClick={onClear}
-                disabled={busy}
-              >
-                Clear
-              </button>
-            </div>
-
-            <div className={styles.pickerGrid}>
-              {filteredElements.length === 0 ? (
-                <div className={styles.pickerEmpty}>
-                  <div style={{ maxWidth: 520 }}>
-                    <div
-                      style={{
-                        marginBottom: 10,
-                        fontFamily: "var(--mono)",
-                        letterSpacing: "0.10em",
-                      }}
-                    >
-                      No tienes Elements todavía.
-                    </div>
-                    <div style={{ marginBottom: 14 }}>
-                      Crea uno con 1–4 imágenes (ej: tu personaje). Luego, al
-                      seleccionar Elements, Kling los referenciará como{" "}
-                      <b>@Element1</b>, <b>@Element2</b>, etc.
-                    </div>
-                    <button
-                      type="button"
-                      className={styles.uploadBtn}
-                      onClick={() => setMode("create")}
-                      disabled={busy}
-                    >
-                      CREATE FIRST ELEMENT
-                    </button>
-                  </div>
+        <div className={styles.elementBody}>
+          {mode === "library" ? (
+            <>
+              <div className={styles.elementAllTop}>
+                <div className={styles.elementAllMeta}>
+                  Selected: <b>{selectedCount}</b>/5
                 </div>
-              ) : (
-                filteredElements.map((el) => {
-                  const selected = selectedIds.includes(el.id);
+
+                <input
+                  className={styles.search}
+                  placeholder="Search elements..."
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
+
+                <button
+                  type="button"
+                  className={styles.smallBtn}
+                  onClick={() => setMode("create")}
+                  disabled={busy}
+                  title="Create a new Element"
+                >
+                  Create
+                </button>
+
+                <button
+                  type="button"
+                  className={styles.smallBtnGhost}
+                  onClick={onClear}
+                  disabled={busy || selectedCount === 0}
+                  title="Clear selection"
+                >
+                  Clear
+                </button>
+
+                <button
+                  type="button"
+                  className={styles.smallBtnGhost}
+                  onClick={async () => {
+                    setLocalError(null);
+                    setBusy(true);
+                    try {
+                      await onRefresh();
+                    } catch (e: any) {
+                      setLocalError(e?.message || "No pude refrescar los Elements.");
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                  disabled={busy}
+                  title="Refresh"
+                >
+                  Refresh
+                </button>
+              </div>
+
+              <div className={styles.elementAllGrid}>
+                {filteredElements.map((el) => {
+                  const active = selectedIds.includes(el.id);
                   const src = elementThumb(el);
 
                   return (
                     <div
                       key={el.id}
-                      role="button"
-                      tabIndex={0}
-                      className={`${styles.pickerTile} ${
-                        selected ? styles.pickerTileActive : ""
-                      }`}
-                      style={{ position: "relative" }}
-                      onClick={() => toggleSelectElement(el.id)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ")
-                          toggleSelectElement(el.id);
-                      }}
-                      aria-pressed={selected}
+                      className={`${styles.elementAllCard} ${active ? styles.elementAllCardActive : ""}`}
                     >
-                      <img src={src} alt={el.name} />
-                      <div className={styles.pickerCap}>
-                        {el.name}
-                        {selected ? " ✓" : ""}
-                      </div>
-
                       <button
                         type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDelete(el.id, el.name);
-                        }}
-                        disabled={busy}
-                        aria-label={`Delete ${el.name}`}
-                        title="Delete"
-                        style={{
-                          position: "absolute",
-                          top: 8,
-                          right: 8,
-                          width: 34,
-                          height: 34,
-                          borderRadius: 12,
-                          border: "1px solid rgba(255,255,255,0.12)",
-                          background: "rgba(0,0,0,0.35)",
-                          color: "rgba(255,255,255,0.85)",
-                          cursor: "pointer",
-                        }}
+                        className={styles.elementAllThumb}
+                        onClick={() => toggleSelectElement(el.id)}
+                        title={el.name}
                       >
-                        🗑
+                        <img src={src} alt={el.name} />
+                        <span className={styles.elementAllBadge}>{active ? "SELECTED" : "SELECT"}</span>
                       </button>
-                    </div>
-                  );
-                })
-              )}
-            </div>
 
-            {!!localError && (
-              <div
-                className={styles.modalNote}
-                style={{ color: "rgba(255,160,160,0.9)" }}
-              >
-                {localError}
-              </div>
-            )}
+                      {active && (
+                        <button
+                          type="button"
+                          className={styles.elementAllDeselect}
+                          onClick={() => setSelectedIds((prev) => prev.filter((x) => x !== el.id))}
+                          aria-label={`Deselect ${el.name}`}
+                          title="Deselect"
+                        >
+                          ×
+                        </button>
+                      )}
 
-            <div className={styles.modalNote}>
-              Seleccionados: <b>{selectedCount}</b> / 5. <br />
-              En Fal/Kling V3, los Elements se referencian en el prompt como{" "}
-              <b>@Element1</b>, <b>@Element2</b>, etc. Si no escribes esas
-              referencias, el sistema las inyecta automáticamente al enviar la
-              generación.
-            </div>
-          </>
-        ) : (
-          <>
-            <div className={styles.modalActions}>
-              <button
-                type="button"
-                className={styles.uploadBtn}
-                onClick={() => setMode("library")}
-                disabled={busy}
-              >
-                BACK
-              </button>
+                      <div className={styles.elementAllName}>{el.name}</div>
 
-              <input
-                className={styles.search}
-                placeholder="Element name (required)"
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                maxLength={20}
-              />
+                      <div className={styles.elementAllActions}>
+                        <button
+                          type="button"
+                          className={styles.smallBtn}
+                          onClick={() => toggleSelectElement(el.id)}
+                          disabled={busy}
+                          title={active ? "Deselect" : "Select"}
+                        >
+                          {active ? "Deselect" : "Select"}
+                        </button>
 
-              <select
-                className={styles.search}
-                value={newTag}
-                onChange={(e) => setNewTag(e.target.value)}
-                title="Tag"
-                style={{ maxWidth: 180 }}
-              >
-                <option value="character">character</option>
-                <option value="object">object</option>
-                <option value="scene">scene</option>
-              </select>
-
-              <button
-                type="button"
-                className={styles.uploadBtn}
-                onClick={handleCreate}
-                disabled={busy}
-              >
-                {busy ? "CREATING…" : `CREATE (${pickedCount}/4)`}
-              </button>
-            </div>
-
-            <div
-              className={styles.modalActions}
-              style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}
-            >
-              <input
-                className={styles.search}
-                placeholder="Search your images..."
-                value={assetQuery}
-                onChange={(e) => setAssetQuery(e.target.value)}
-              />
-              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>
-                Selecciona 1–4 imágenes
-              </div>
-            </div>
-
-            {hasMoreAssets && (
-              <div className={styles.pickerLoadMoreWrap}>
-                <button
-                  type="button"
-                  className={styles.loadMoreBtn}
-                  onClick={handleLoadMoreAssets}
-                  disabled={busy || isLoadingMoreAssets}
-                >
-                  {isLoadingMoreAssets ? "CARGANDO…" : "Cargar más"}
-                </button>
-                <div className={styles.loadMoreHint}>
-                  Mostrando {visibleAssets.length} de {sortedAssets.length}
-                </div>
-              </div>
-            )}
-
-            <div className={styles.pickerGrid}>
-              {sortedAssets.length === 0 ? (
-                <div className={styles.pickerEmpty}>
-                  No veo imágenes en tu librería...
-                </div>
-              ) : (
-                visibleAssets.map((a) => {
-                  const picked = pickedAssetIds.includes(a.id);
-                  const src = assetThumb(a, getAssetUrl);
-
-                  return (
-                    <div
-                      key={a.id}
-                      role="button"
-                      tabIndex={0}
-                      className={`${styles.pickerTile} ${
-                        picked ? styles.pickerTileActive : ""
-                      }`}
-                      onClick={() => togglePickAsset(a.id)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ")
-                          togglePickAsset(a.id);
-                      }}
-                      aria-pressed={picked}
-                    >
-                      <img src={src} alt={a.name || "asset"} />
-                      <div className={styles.pickerCap}>
-                        {a.name || "Image"}
-                        {picked ? " ✓" : ""}
+                        <button
+                          type="button"
+                          className={styles.smallBtnGhost}
+                          onClick={() => handleDelete(el.id, el.name)}
+                          disabled={busy}
+                          title="Delete"
+                        >
+                          Delete
+                        </button>
                       </div>
                     </div>
                   );
-                })
-              )}
-            </div>
-
-            {!!localError && (
-              <div
-                className={styles.modalNote}
-                style={{ color: "rgba(255,160,160,0.9)" }}
-              >
-                {localError}
+                })}
               </div>
-            )}
 
-            <div className={styles.modalNote}>
-              Consejo: elige imágenes consistentes del personaje/objeto (cara y
-              cuerpo claros, buena luz). Kling V3 usa estas referencias para
-              mantener identidad y coherencia en el video.
-            </div>
-          </>
-        )}
+              {filteredElements.length === 0 && (
+                <div className={styles.elementPickerEmpty}>
+                  <div style={{ maxWidth: 640 }}>
+                    <div style={{ marginBottom: 10 }}>
+                      No tienes Elements todavía. Crea uno con 1–4 imágenes (ej: tu personaje).
+                    </div>
+                    <button
+                      type="button"
+                      className={styles.elementPrimaryBtn}
+                      onClick={() => setMode("create")}
+                      disabled={busy}
+                    >
+                      Create first Element
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {!!localError && (
+                <div className={styles.elementHint} style={{ color: "rgba(255,160,160,0.9)" }}>
+                  {localError}
+                </div>
+              )}
+
+              <div className={styles.elementHint}>
+                Seleccionados: <b>{selectedCount}</b> / 5. <br />
+                En Kling (V3/O3), los Elements se referencian en el prompt como <b>@Element1</b>, <b>@Element2</b>, etc.
+                Si no escribes esas referencias, el sistema puede inyectarlas automáticamente al enviar la generación.
+              </div>
+
+              <div className={styles.elementFooter}>
+                <button type="button" className={styles.elementPrimaryBtn} onClick={onClose}>
+                  Done
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className={styles.elementFormRow}>
+                <div className={styles.elementField}>
+                  <div className={styles.elementLabel}>Name *</div>
+                  <input
+                    className={styles.search}
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    placeholder='Ej: "Wow Poppy"'
+                    maxLength={20}
+                  />
+                </div>
+
+                <div className={styles.elementField}>
+                  <div className={styles.elementLabel}>Tag</div>
+                  <select
+                    className={styles.select}
+                    value={newTag}
+                    onChange={(e) => setNewTag(e.target.value)}
+                    title="Tag"
+                  >
+                    <option value="character">character</option>
+                    <option value="object">object</option>
+                    <option value="scene">scene</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className={styles.elementLabel}>Images (1–4)</div>
+
+              <div className={styles.elementSlots}>
+                {[0, 1, 2, 3].map((idx) => {
+                  const assetId = pickedAssetIds[idx] || null;
+                  const asset = assetId ? imageAssets.find((x) => x.id === assetId) : null;
+                  const src = asset ? assetThumb(asset, getAssetUrl) : PLACEHOLDER;
+
+                  return (
+                    <div key={idx} className={styles.elementSlotCard}>
+                      <div className={styles.elementSlotThumb} data-empty={asset ? "false" : "true"}>
+                        {asset ? (
+                          <img src={src} alt={asset.name || `slot-${idx + 1}`} />
+                        ) : (
+                          <div className={styles.elementSlotEmpty}>Slot {idx + 1}</div>
+                        )}
+                      </div>
+
+                      <div className={styles.elementSlotActions}>
+                        <button
+                          type="button"
+                          className={styles.smallBtn}
+                          onClick={() => {
+                            document.getElementById("kling-elements-picker")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                          }}
+                          disabled={busy}
+                          title="Elegir desde tu librería"
+                        >
+                          Library
+                        </button>
+
+                        <button
+                          type="button"
+                          className={styles.smallBtn}
+                          disabled
+                          title="En Video Elements se eligen imágenes desde tu librería (sin collage)."
+                        >
+                          Upload
+                        </button>
+
+                        {assetId && (
+                          <button
+                            type="button"
+                            className={styles.smallBtnGhost}
+                            onClick={() => setPickedAssetIds((prev) => prev.filter((x) => x !== assetId))}
+                            disabled={busy}
+                            title="Clear"
+                          >
+                            Clear
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div id="kling-elements-picker" className={styles.elementPicker}>
+                <div className={styles.elementPickerTop}>
+                  <div className={styles.elementPickerTitle}>Pick from your library</div>
+                  <button
+                    type="button"
+                    className={styles.smallBtnGhost}
+                    onClick={() => {
+                      setMode("library");
+                      setLocalError(null);
+                    }}
+                    disabled={busy}
+                    title="Back"
+                  >
+                    Back
+                  </button>
+                </div>
+
+                <input
+                  className={styles.search}
+                  value={assetQuery}
+                  onChange={(e) => setAssetQuery(e.target.value)}
+                  placeholder="Search images..."
+                />
+
+                {hasMoreAssets && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
+                    <button
+                      type="button"
+                      className={styles.smallBtn}
+                      onClick={handleLoadMoreAssets}
+                      disabled={busy || isLoadingMoreAssets}
+                      title="Load more"
+                    >
+                      {isLoadingMoreAssets ? "Loading..." : "Load more"}
+                    </button>
+                    <div className={styles.elementAllMeta}>
+                      Showing <b>{visibleAssets.length}</b> of <b>{sortedAssets.length}</b>
+                    </div>
+                  </div>
+                )}
+
+                <div className={styles.pickerArea}>
+                  <div className={styles.pickerGrid}>
+                    {sortedAssets.length === 0 ? (
+                      <div className={styles.elementPickerEmpty}>No images found</div>
+                    ) : (
+                      visibleAssets.map((a) => {
+                        const picked = pickedAssetIds.includes(a.id);
+                        const src = assetThumb(a, getAssetUrl);
+
+                        return (
+                          <button
+                            key={a.id}
+                            type="button"
+                            className={styles.pickerTile}
+                            onClick={() => togglePickAsset(a.id)}
+                            disabled={busy}
+                            title={a.name || "Image"}
+                          >
+                            <img src={src} alt={a.name || "asset"} />
+                            <div className={styles.pickerTileCap}>
+                              {a.name || "Untitled"}
+                              {picked ? " ✓" : ""}
+                            </div>
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {!!localError && (
+                <div className={styles.elementHint} style={{ color: "rgba(255,160,160,0.9)" }}>
+                  {localError}
+                </div>
+              )}
+
+              <div className={styles.elementFooter}>
+                <button
+                  type="button"
+                  className={styles.smallBtnGhost}
+                  onClick={() => setMode("library")}
+                  disabled={busy}
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="button"
+                  className={styles.elementPrimaryBtn}
+                  onClick={handleCreate}
+                  disabled={busy}
+                >
+                  {busy ? "Creating..." : `Create (${pickedCount}/4)`}
+                </button>
+              </div>
+
+              <div className={styles.elementHint}>
+                Tip: elige imágenes consistentes del personaje/objeto (cara y cuerpo claros, buena luz). Kling usa estas referencias para mantener identidad y coherencia en el video.
+              </div>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -115,6 +115,9 @@ export function ControlsPopover({
 }: Props) {
   if (!panel || panel === "frames") return null;
 
+  const isKlingV2 = model === KLING_2_5_TURBO || model === KLING_2_6;
+  const isKlingO3 = model === KLING_O3_PRO;
+
   return (
     <div ref={popoverRef} className={styles.popover}>
       <div className={styles.popoverInner}>
@@ -287,7 +290,7 @@ export function ControlsPopover({
               </div>
             </div>
 
-            {isKling && (
+            {isKlingV2 && (
               <div className={styles.formRow}>
                 <label className={styles.formLabel}>Kling mode</label>
                 <div className={styles.segment}>
@@ -305,7 +308,9 @@ export function ControlsPopover({
                   >
                     PRO
                   </button>
-                  <span className={styles.segmentMeta}>{model === KLING_2_6 ? "2.6: audio solo PRO" : "STD/PRO"}</span>
+                  <span className={styles.segmentMeta}>
+                    {model === KLING_2_6 ? "2.6: audio solo PRO" : "STD/PRO"}
+                  </span>
                 </div>
               </div>
             )}
@@ -353,11 +358,18 @@ export function ControlsPopover({
                     </button>
                     <button
                       type="button"
-                      className={`${styles.segmentBtn} ${klingShotType === "intelligent" ? styles.segmentBtnActive : ""}`}
-                      onClick={() => setKlingShotType("intelligent")}
+                      className={`${styles.segmentBtn} ${klingShotType === "intelligent" ? styles.segmentBtnActive : ""} ${
+                        isKlingO3 ? styles.segmentBtnDisabled : ""
+                      }`}
+                      onClick={() => !isKlingO3 && setKlingShotType("intelligent")}
+                      disabled={isKlingO3}
+                      title={isKlingO3 ? "Kling O3 Pro solo soporta shot_type=customize" : "intelligent"}
                     >
                       intelligent
                     </button>
+
+                    {isKlingO3 && <span className={styles.segmentMeta}>O3: solo customize</span>}
+
                   </div>
                 </div>
 
