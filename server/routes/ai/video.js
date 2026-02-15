@@ -293,7 +293,7 @@ export function createAiVideoRouter(ctx) {
         // Text-to-video (single o multishot)
         if (multi && multi.length) {
           falInput.multi_prompt = multi;
-          falInput.shot_type = isO3 ? "customize" : klingShotType;
+          falInput.shot_type = isO3 ? "customize" : normalizedShotType;
         } else {
           falInput.prompt = prompt;
         }
