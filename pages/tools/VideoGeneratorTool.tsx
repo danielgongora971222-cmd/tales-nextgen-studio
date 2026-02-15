@@ -28,6 +28,7 @@ import {
   KLING_2_5_TURBO,
   KLING_2_6,
   KLING_V3,
+  KLING_O3_PRO,
   VEO_3,
   VEO_3_FAST,
   VEO_3_1,
@@ -469,7 +470,10 @@ const VideoGeneratorTool: React.FC = () => {
 
   const isKling = modelNorm.startsWith("kling-");
   const isKlingV2 = modelNorm === KLING_2_5_TURBO || modelNorm === KLING_2_6;
-  const isKlingV3 = modelNorm === KLING_V3;
+
+  // ✅ Kling O3 se comporta como “V3 family” en UI (Elements + Multishot)
+  const isKlingO3 = modelNorm === KLING_O3_PRO;
+  const isKlingV3 = modelNorm === KLING_V3 || isKlingO3;
 
   const isVeoFamily = modelNorm.startsWith("veo-");
   const veoIsFast = modelNorm === VEO_3_FAST || modelNorm === VEO_3_1_FAST;
