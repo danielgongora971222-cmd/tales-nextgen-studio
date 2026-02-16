@@ -18,6 +18,7 @@ export type IconName =
   | "mode"
   | "image"
   | "upload"
+  | "video"
   | "swap";
 
 export function Icon({ name }: { name: IconName }) {
@@ -143,6 +144,15 @@ export function Icon({ name }: { name: IconName }) {
       return (
         <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
           <path fill="currentColor" d="M5 20h14v-2H5v2zm7-18 5 5h-3v6h-4V7H7l5-5z" />
+        </svg>
+      );
+    case "video":
+      return (
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <path
+            fill="currentColor"
+            d="M4 6h10a2 2 0 0 1 2 2v1.2l4-2.3v10.2l-4-2.3V16a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2zm10 10V8H4v8h10z"
+          />
         </svg>
       );
     case "close":

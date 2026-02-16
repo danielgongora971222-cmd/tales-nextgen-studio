@@ -101,6 +101,53 @@ export const MotionControlRequestSchema = z.object({
   nameHint: z.string().optional(),
 });
 
+// ===============================
+// Video Edit (Kling O3 Pro) - async Fal
+// POST /api/ai/video/edit
+// ===============================
+export const VideoEditRequestSchema = z.object({
+  // Selector de modelos (mapeado en el server a Fal endpointId)
+  model: z.enum([
+    "kling-o3-ref-to-video-pro",
+    "kling-o3-edit-video-pro",
+    "kling-o3-ref-video-to-video-pro",
+  ]),
+
+  // Prompt / Multishot (solo aplica a reference-to-video)
+  prompt: z.string().max(14000).optional(),
+  klingMultiPrompt: z
+    .array(
+      z.object({
+        prompt: z.string().min(1).max(4000),
+        durationSeconds: z.coerce.number().optional(),
+      })
+    )
+    .max(10)
+    .optional(),
+
+  // Reference-to-video (frames)
+  startImageAssetId: z.string().uuid().optional(),
+  endImageAssetId: z.string().uuid().optional(),
+
+  // Video-to-video (reference)
+  videoAssetId: z.string().uuid().optional(),
+
+  // Refs (máximo recomendado: 4 combinadas con Elements)
+  referenceImageAssetIds: z.array(z.string().uuid()).max(4).optional(),
+  klingElementIds: z.array(z.string().uuid()).max(5).optional(),
+
+  // Opciones
+  generateAudio: z.boolean().optional(), // reference-to-video
+  keepAudio: z.boolean().optional(), // video-to-video
+  durationSeconds: z.coerce.number().optional(),
+  aspectRatio: z.enum(["auto", "16:9", "9:16", "1:1"]).optional(),
+
+  // Identidad en assets
+  toolName: z.string().optional(),
+  hint: z.string().optional(),
+  async: z.boolean().optional(),
+});
+
 export const RestyleSchema = z.object({
   imageDataUrl: Base64ImageSchema,
   prompt: z.string().min(1).max(4000),

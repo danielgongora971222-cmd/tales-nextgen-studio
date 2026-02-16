@@ -1683,7 +1683,11 @@ app.post("/api/ai/video/fal/finalize", async (req, res, next) => {
 
       // Motion Control recipe (si aplica)
       motionControl: t.motionControl || null,
+
+      // Video Edit recipe (si aplica)
+      editVideo: t.editVideo || null,
     };
+
 
     const assetId = await insertAssetRow({
       ownerId: user.id,

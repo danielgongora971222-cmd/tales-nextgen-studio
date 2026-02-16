@@ -13,14 +13,14 @@ export const VIDEO_TOOLS_REGISTRY: ToolDefinition[] = [
     id: 'video-edit',
     label: 'Edit Video',
     route: AppRoute.TOOL_VIDEO_EDIT,
-    description: 'Edit and enhance an existing video (trim, upscale, AI edits).',
-    status: 'coming_soon'
+    description: 'Edit videos with Kling O3 Pro (video-to-video, reference, and reference-to-video).',
+    status: 'ready'
   },
   {
     id: 'motion-control',
     label: 'Motion Control',
     route: AppRoute.TOOL_MOTION_CONTROL,
     description: 'Direct camera moves and motion paths for cinematic control.',
-    status: 'beta'
+    status: 'ready'
   }
 ];

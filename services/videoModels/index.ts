@@ -39,6 +39,9 @@ export function prettyVideoModelLabel(modelId: string | null) {
   if (m === KLING_2_6) return "Kling 2.6";
   if (m === KLING_V3) return "Kling V3";
   if (m === KLING_O3_PRO) return "Kling O3 Pro";
+  if (m === "kling-o3-ref-to-video-pro") return "Kling O3 Pro — Reference to Video";
+  if (m === "kling-o3-edit-video-pro") return "Kling O3 Pro — Edit Video";
+  if (m === "kling-o3-ref-video-to-video-pro") return "Kling O3 Pro — Reference Video→Video";
   return m;
 }
 
