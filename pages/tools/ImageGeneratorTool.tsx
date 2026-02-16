@@ -7,7 +7,7 @@ import { supabase } from "../../services/supabaseClient";
 import { Asset, GeminiModel } from "../../types";
 import ErrorModal from "../../components/ErrorModal";
 
-type StylePreset = {
+export type StylePreset = {
   id: string;
   name: string;
   prompt: string;
@@ -57,7 +57,7 @@ function applyStylePresetToPrompt(input: string, presetPrompt: string) {
   return `${block}${base}`.trim();
 }
 
-const STYLE_PRESETS: StylePreset[] = [
+export const STYLE_PRESETS: StylePreset[] = [
   {
     id: "live_action",
     name: "Live Action",
