@@ -34,7 +34,6 @@ export function FrameStrip({ firstFrame, lastFrame, hasFirst, openPicker, clearF
               <Icon name="image" />
               <Icon name="upload" />
             </div>
-              <div className={styles.frameCardEmptyText}>Elegir</div>
           </div>
         )}
 
@@ -84,7 +83,6 @@ export function FrameStrip({ firstFrame, lastFrame, hasFirst, openPicker, clearF
               <Icon name="image" />
               <Icon name="upload" />
             </div>
-            <div className={styles.frameCardEmptyText}>Elegir</div>
           </div>
         )}
 
