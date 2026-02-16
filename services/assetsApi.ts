@@ -205,10 +205,20 @@ export async function uploadUserAsset(
   });
 
   const text = await resp.text();
-  const data = JSON.parse(text);
+  let data: any;
+
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error(
+      `El backend devolvió HTML/texto en vez de JSON en uploadUserAsset. Inicio: ${text.slice(0, 60)}`
+    );
+  }
 
   if (!resp.ok || data?.ok === false) {
-    throw new Error(data?.error?.message || "Upload failed");
+    const e = data?.error;
+    const msg = typeof e === "string" ? e : e?.message;
+    throw new Error(msg || `Upload failed: ${resp.status}`);
   }
 
   // backend devuelve { item: { ... } }

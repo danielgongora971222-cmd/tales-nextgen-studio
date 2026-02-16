@@ -10,7 +10,7 @@ export default defineConfig(() => {
       proxy: {
         // Dev convenience: frontend calls /api/* and Vite proxies to the local API server.
         "/api": {
-          target: "http://127.0.0.1:8788",
+          target: "http://127.0.0.1:8080",
           changeOrigin: true,
         },
       },

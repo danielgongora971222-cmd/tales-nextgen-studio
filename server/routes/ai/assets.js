@@ -243,8 +243,8 @@ router.post("/assets/upload", async (req, res, next) => {
       tool: toolName,
       category: category || null,
       createdAt: new Date().toISOString(),
-      originalMimeType: mime,
-      sizeBytes: buffer.length,
+      originalMimeType: mimeType,
+      sizeBytes,
     };
 
     const assetId = await insertAssetRow({

@@ -25,9 +25,10 @@ const FileUploader: React.FC<FileUploaderProps> = ({ label, onAssetReady, accept
   }, [preview]);
 
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+    const inputEl = event.currentTarget;
+    const file = inputEl.files?.[0];
     if (!file) return;
-    
+
     setError(null);
     setUploading(true);
 
@@ -43,6 +44,8 @@ const FileUploader: React.FC<FileUploaderProps> = ({ label, onAssetReady, accept
       setPreview(null);
     } finally {
       setUploading(false);
+      // Permite volver a seleccionar el mismo archivo y dispara onChange
+      inputEl.value = "";
     }
   };
 
@@ -60,6 +63,7 @@ const FileUploader: React.FC<FileUploaderProps> = ({ label, onAssetReady, accept
         />
         
         <button
+          type="button"
           onClick={() => fileInputRef.current?.click()}
           disabled={uploading}
           className="relative w-full aspect-video rounded-2xl border-2 border-dashed border-white/10 hover:border-white/20 transition-colors bg-black/30 overflow-hidden"
