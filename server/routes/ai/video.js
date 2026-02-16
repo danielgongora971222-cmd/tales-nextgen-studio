@@ -1,6 +1,7 @@
 import express from "express";
 import {
   VideoRequestSchema,
+  MotionControlRequestSchema,
   FalJobSchema,
   FalFinalizeSchema,
 } from "../../schemas/index.js";
@@ -783,6 +784,68 @@ export function createAiVideoRouter(ctx) {
 });
 
   // --- PASTE END ---
+  // ===============================
+  // KLING 2.6 - Motion Control (Fal)
+  // ===============================
+  router.post("/ai/video/motion-control", async (req, res, next) => {
+    try {
+      ensureAI();
+
+      const { user, error } = await requireUser(req);
+      if (error) return res.status(401).json({ ok: false, error });
+
+      const body = MotionControlRequestSchema.parse(req.body);
+
+      const toolName = body.tool || "motion-control";
+      const hint = body.nameHint || "motion-control";
+
+      const keepOriginalSound = body.keepOriginalSound !== false; // default true
+      const characterOrientation = body.characterOrientation === "image" ? "image" : "video";
+
+      // signed URLs so Fal.ai can fetch them
+      const imageUrl = await assetIdToSignedUrl(body.imageAssetId, user.id, 6 * 60 * 60);
+      const videoUrl = await assetIdToSignedUrl(body.videoAssetId, user.id, 6 * 60 * 60);
+
+      const endpointId = "fal-ai/kling-video/v2.6/pro/motion-control";
+
+      const falInput = {
+        image_url: imageUrl,
+        video_url: videoUrl,
+        keep_original_sound: keepOriginalSound,
+        character_orientation: characterOrientation,
+      };
+
+      if (body.prompt && body.prompt.trim()) {
+        falInput.prompt = body.prompt.trim();
+      }
+
+      // ✅ Siempre async (evita timeouts y permite videos largos)
+      const { requestId, statusUrl, responseUrl } = await falQueueSubmit(endpointId, falInput);
+
+      const jobToken = signJobToken({
+        uid: user.id,
+        requestId,
+        statusUrl,
+        responseUrl,
+        endpointId,
+        toolName,
+        hint,
+        model: "kling-2.6-motion-control",
+        motionControl: {
+          imageAssetId: body.imageAssetId,
+          videoAssetId: body.videoAssetId,
+          keepOriginalSound,
+          characterOrientation,
+        },
+        createdAt: Date.now(),
+        exp: Date.now() + 6 * 60 * 60 * 1000,
+      });
+
+      return res.json({ ok: true, mode: "async", jobToken, requestId });
+    } catch (err) {
+      next(err);
+    }
+  });
 
   return router;
 }

@@ -168,12 +168,22 @@ export async function deleteAsset(assetId: string) {
   return { ok: true };
 }
 
-export async function uploadUserAsset(file: File, tool = "upload"): Promise<Asset> {
+export async function uploadUserAsset(
+  file: File,
+  toolOrOpts: string | { tool?: string; category?: string; name?: string; type?: "image" | "video" } = "upload"
+): Promise<Asset> {
   const { data: sessionData } = await supabase.auth.getSession();
   const token = sessionData.session?.access_token;
 
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const inferredType: "image" | "video" = file.type.startsWith("video") ? "video" : "image";
+
+  const opts =
+    typeof toolOrOpts === "string"
+      ? { tool: toolOrOpts }
+      : toolOrOpts || {};
 
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -185,7 +195,13 @@ export async function uploadUserAsset(file: File, tool = "upload"): Promise<Asse
   const resp = await fetch("/api/assets/upload", {
     method: "POST",
     headers,
-    body: JSON.stringify({ dataUrl, name: file.name, tool, type: file.type.startsWith("video") ? "video" : "image" }),
+    body: JSON.stringify({
+      dataUrl,
+      name: opts.name ?? file.name,
+      tool: opts.tool ?? "upload",
+      category: opts.category,
+      type: opts.type ?? inferredType,
+    }),
   });
 
   const text = await resp.text();
@@ -210,3 +226,4 @@ export async function uploadUserAsset(file: File, tool = "upload"): Promise<Asse
     comments: [],
   };
 }
+

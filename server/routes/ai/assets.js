@@ -224,7 +224,7 @@ router.post("/assets/upload", async (req, res, next) => {
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
 
-    const { dataUrl, name, tool, type } = UploadAssetSchema.parse(req.body);
+    const { dataUrl, name, tool, type, category } = UploadAssetSchema.parse(req.body);
 
     const toolName = tool || "upload";
     const assetType = type || "image";
@@ -241,9 +241,10 @@ router.post("/assets/upload", async (req, res, next) => {
     const meta = {
       source: "upload",
       tool: toolName,
-      mimeType: mimeType || null,
-      sizeBytes: typeof sizeBytes === "number" ? sizeBytes : null,
-      uploadedAt: new Date().toISOString(),
+      category: category || null,
+      createdAt: new Date().toISOString(),
+      originalMimeType: mime,
+      sizeBytes: buffer.length,
     };
 
     const assetId = await insertAssetRow({

@@ -197,8 +197,8 @@ const aiLimiter = rateLimit({
 
 // Aplica este limitador a TODAS las rutas /api/ai/*
 app.use("/api/ai", aiLimiter);
-app.use(express.json({ limit: "25mb" }));
-app.use(express.urlencoded({ extended: true, limit: "25mb" }));
+app.use(express.json({ limit: "512mb" }));
+app.use(express.urlencoded({ extended: true, limit: "512mb" }));
 
 app.use("/api", createHealthRouter());
 
@@ -1667,16 +1667,22 @@ app.post("/api/ai/video/fal/finalize", async (req, res, next) => {
 
     await uploadBytesToStorageAtPath({ storagePath, bytes, mimeType });
 
-    const meta = {
+        const meta = {
       tool: toolName,
       provider: "fal",
       model: selectedModelNorm,
       falEndpointId: endpointId || null,
+      requestId: t.requestId || null,
+
+      // Kling V3 recipe (si aplica)
       aspectRatio: t.ar || null,
       durationSeconds: t.totalDur || null,
       firstFrameAssetId: t.firstFrameAssetId || null,
       lastFrameAssetId: t.lastFrameAssetId || null,
       klingSound: Boolean(t.generateAudio),
+
+      // Motion Control recipe (si aplica)
+      motionControl: t.motionControl || null,
     };
 
     const assetId = await insertAssetRow({

@@ -312,7 +312,7 @@ export async function waitFalJob(
     if (opts?.signal?.aborted) throw makeCanceledError();
 
     const elapsed = Math.round((Date.now() - t0) / 1000);
-    opts?.onProgress?.(`Procesando (Kling V3) · ${elapsed}s`);
+    opts?.onProgress?.(`Procesando (Fal) · ${elapsed}s`);
 
     const st = await apiPostJson<any>(
       "/api/ai/video/fal/status",

@@ -8,6 +8,14 @@ export const Base64ImageSchema = z
   .min(10)
   .refine((v) => v.startsWith("data:image/"), "Expected a data:image/*;base64,... dataUrl");
 
+export const Base64MediaSchema = z
+  .string()
+  .min(10)
+  .refine(
+    (v) => /^data:(image|video)\/[^;]+;base64,/.test(v),
+    "Expected a data:image/*;base64,... or data:video/*;base64,... dataUrl"
+  );
+
 export const ImageRequestSchema = z.object({
   prompt: z.string().min(1).max(14000),
   model: z.string().optional(),
@@ -81,6 +89,18 @@ export const VideoRequestSchema = z.object({
   klingElementIds: z.array(z.string().uuid()).max(5).optional(),
 });
 
+
+export const MotionControlRequestSchema = z.object({
+  prompt: z.string().max(14000).optional(),
+  imageAssetId: z.string().uuid(),
+  videoAssetId: z.string().uuid(),
+  keepOriginalSound: z.boolean().optional(),
+  characterOrientation: z.enum(["image", "video"]).optional(),
+  async: z.boolean().optional(),
+  tool: z.string().optional(),
+  nameHint: z.string().optional(),
+});
+
 export const RestyleSchema = z.object({
   imageDataUrl: Base64ImageSchema,
   prompt: z.string().min(1).max(4000),
@@ -100,9 +120,10 @@ export const UpscaleSchema = z.object({
 });
 
 export const UploadAssetSchema = z.object({
-  dataUrl: Base64ImageSchema,
+  dataUrl: Base64MediaSchema,
   name: z.string().max(200).optional(),
   tool: z.string().max(50).optional(),
+  category: z.string().max(50).optional(),
   type: z.enum(["image","video"]).optional(),
 });
 
