@@ -26,17 +26,16 @@ const CameraAngleSimulator3D: React.FC<Props> = ({ imageUrl, value, onChange, di
   const valueRef = useRef<CameraAngleValue>(value);
   const onChangeRef = useRef(onChange);
 
-  const dragRef = useRef<
+    const dragRef = useRef<
     | null
     | {
-        mode: "xy" | "zoom";
         startX: number;
         startY: number;
         startAz: number;
         startEl: number;
-        startZoom: number;
       }
   >(null);
+
 
   const [cubeSize, setCubeSize] = useState(240); // px
 
@@ -79,27 +78,18 @@ const CameraAngleSimulator3D: React.FC<Props> = ({ imageUrl, value, onChange, di
       const dx = e.clientX - s.startX;
       const dy = e.clientY - s.startY;
 
-      if (s.mode === "zoom") {
-        // Arrastrar hacia arriba = más zoom
-        const nextZoom = clamp(s.startZoom + (-dy) * 0.02, 0, 10);
-        onChangeRef.current({
-          azimuth: valueRef.current.azimuth,
-          elevation: valueRef.current.elevation,
-          zoom: nextZoom,
-        });
-        return;
-      }
-
-      // XY: diagonal permitido (dx y dy al mismo tiempo)
+      // Rotación XY: diagonal permitido (dx y dy al mismo tiempo)
       const nextAz = wrap360(s.startAz + dx * 0.35);
       const nextEl = clamp(s.startEl + (-dy) * 0.22, -30, 90);
 
+      // Importante: aquí NO tocamos el zoom (solo lo mueve el slider de la izquierda)
       onChangeRef.current({
         azimuth: nextAz,
         elevation: nextEl,
         zoom: valueRef.current.zoom,
       });
     };
+
 
     const onPointerUp = () => {
       dragRef.current = null;
@@ -119,57 +109,26 @@ const CameraAngleSimulator3D: React.FC<Props> = ({ imageUrl, value, onChange, di
     const stage = stageRef.current;
     if (!stage) return;
 
+    // Si el usuario está interactuando con el slider de zoom, no iniciamos drag del cubo
     const target = e.target as HTMLElement;
+    const isZoomSlider = !!target.closest?.("[data-role='zoom-slider']");
+    if (isZoomSlider) return;
+
     // Mantiene el drag incluso si el cursor sale del área
     try { (e.currentTarget as any).setPointerCapture?.(e.pointerId); } catch {}
 
-    const isZoomHandle = !!target.closest?.("[data-role='z-handle']");
-
     dragRef.current = {
-      mode: isZoomHandle ? "zoom" : "xy",
       startX: e.clientX,
       startY: e.clientY,
       startAz: value.azimuth,
       startEl: value.elevation,
-      startZoom: value.zoom,
     };
   };
 
-  const onWheel = (e: React.WheelEvent) => {
-    if (disabled) return;
-    e.preventDefault();
-    const delta = e.deltaY > 0 ? -0.4 : 0.4;
-    const next = clamp(value.zoom + delta, 0, 10);
-    onChange({ azimuth: value.azimuth, elevation: value.elevation, zoom: next });
-  };
 
   const az = value.azimuth;
   const el = value.elevation;
   const zm = value.zoom;
-
-  const sphereHandle = useMemo(() => {
-    // Proyección simple de una esfera (solo para UI)
-    const cx = 50;
-    const cy = 50;
-    const r = 42;
-
-    const a = (az * Math.PI) / 180;
-    const e = (clamp(el, -30, 90) * Math.PI) / 180;
-
-    const y = Math.sin(e);
-    const rXZ = Math.cos(e);
-    const x = Math.sin(a) * rXZ;
-    const z = Math.cos(a) * rXZ;
-
-    // “Profundidad” muy ligera: si z está atrás, lo atenuamos
-    const depthFade = clamp(0.55 + (z + 1) * 0.225, 0.55, 1);
-
-    return {
-      x: cx + x * r,
-      y: cy - y * r,
-      depthFade,
-    };
-  }, [az, el]);
 
   const cubeDepth = cubeSize / 2;
 
@@ -192,11 +151,10 @@ const CameraAngleSimulator3D: React.FC<Props> = ({ imageUrl, value, onChange, di
       <div
         ref={stageRef}
         onPointerDown={startDrag}
-        onWheel={onWheel}
         className="relative w-full aspect-square rounded-3xl overflow-hidden border border-white/10 bg-black/40 select-none"
         style={{ cursor: disabled ? "not-allowed" : "grab" }}
       >
-        {/* fondo suave */}
+      {/* fondo suave */}
         <div
           className="absolute inset-0 opacity-50"
           style={{
@@ -205,64 +163,53 @@ const CameraAngleSimulator3D: React.FC<Props> = ({ imageUrl, value, onChange, di
           }}
         />
 
-        {/* esfera + ejes (SVG) */}
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <svg viewBox="0 0 100 100" className="w-[94%] h-[94%]">
-            {/* esfera */}
-            <circle cx="50" cy="50" r="42" fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="1.3" />
-
-            {/* anillos (lat/long) */}
-            <ellipse cx="50" cy="50" rx="42" ry="16" fill="none" stroke="rgba(255,255,255,0.10)" strokeWidth="1" />
-            <ellipse
-              cx="50"
-              cy="50"
-              rx="16"
-              ry="42"
-              fill="none"
-              stroke="rgba(255,255,255,0.08)"
-              strokeWidth="1"
-              transform="rotate(20 50 50)"
-            />
-
-            {/* ejes: X (rojo), Y (verde), Z (azul) */}
-            <line x1="10" y1="50" x2="90" y2="50" stroke="rgba(255,80,80,0.85)" strokeWidth="1.4" />
-            <line x1="50" y1="10" x2="50" y2="90" stroke="rgba(80,255,120,0.85)" strokeWidth="1.4" />
-            <line x1="50" y1="50" x2="82" y2="82" stroke="rgba(80,160,255,0.9)" strokeWidth="1.4" />
-
-            {/* labels ejes */}
-            <text x="92" y="49" textAnchor="end" fontSize="4.5" fill="rgba(255,80,80,0.9)" fontFamily="monospace">
-              X
-            </text>
-            <text x="51" y="12" textAnchor="start" fontSize="4.5" fill="rgba(80,255,120,0.9)" fontFamily="monospace">
-              Y
-            </text>
-            <text x="84" y="84" textAnchor="start" fontSize="4.5" fill="rgba(80,160,255,0.95)" fontFamily="monospace">
-              Z
-            </text>
-
-            {/* handle (posición cámara sobre la esfera) */}
-            <line
-              x1="50"
-              y1="50"
-              x2={sphereHandle.x}
-              y2={sphereHandle.y}
-              stroke={`rgba(255,255,255,${0.25 * sphereHandle.depthFade})`}
-              strokeWidth="1"
-            />
-            <circle
-              cx={sphereHandle.x}
-              cy={sphereHandle.y}
-              r="2.8"
-              fill={`rgba(255,255,255,${0.85 * sphereHandle.depthFade})`}
-            />
-            <circle
-              cx={sphereHandle.x}
-              cy={sphereHandle.y}
-              r="6.8"
-              fill={`rgba(255,255,255,${0.12 * sphereHandle.depthFade})`}
-            />
+        {/* Zoom slider (solo aquí se cambia el zoom) */}
+        <div
+          data-role="zoom-slider"
+          className="absolute left-3 top-1/2 -translate-y-1/2 flex flex-col items-center gap-2 rounded-2xl bg-black/60 border border-white/10 px-2 py-3 pointer-events-auto"
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            className="text-white/70"
+          >
+            <circle cx="11" cy="11" r="7" />
+            <line x1="11" y1="8" x2="11" y2="14" />
+            <line x1="8" y1="11" x2="14" y2="11" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
           </svg>
+
+          <input
+            aria-label="Zoom"
+            type="range"
+            min={0}
+            max={10}
+            step={0.1}
+            value={zm}
+            onChange={(e) =>
+              onChangeRef.current({
+                azimuth: valueRef.current.azimuth,
+                elevation: valueRef.current.elevation,
+                zoom: Number(e.target.value),
+              })
+            }
+            className="w-4 accent-white"
+            style={{
+              writingMode: "bt-lr",
+              WebkitAppearance: "slider-vertical" as any,
+              height: "170px",
+            }}
+          />
+
+          <div className="text-[10px] font-mono text-white/70">{zm.toFixed(1)}</div>
         </div>
+
 
         {/* cubo (CSS 3D) */}
         <div className="absolute inset-0 flex items-center justify-center">
@@ -342,18 +289,6 @@ const CameraAngleSimulator3D: React.FC<Props> = ({ imageUrl, value, onChange, di
           </div>
         </div>
 
-        {/* Handle Z (zoom) - SÍ acepta pointer */}
-        <div
-          data-role="z-handle"
-          className="absolute right-[8%] bottom-[8%] w-11 h-11 rounded-2xl border border-white/15 bg-black/60 flex items-center justify-center"
-          style={{ cursor: disabled ? "not-allowed" : "ns-resize" }}
-        >
-          <div className="text-[11px] font-mono text-white/70 leading-none text-center">
-            Z
-            <div className="text-[9px] text-white/35 mt-1">ZOOM</div>
-          </div>
-        </div>
-
         {/* Readout */}
         <div className="absolute top-3 left-3 px-3 py-2 rounded-xl bg-black/60 border border-white/10 text-xs font-mono text-white/80">
           <div>
@@ -367,10 +302,10 @@ const CameraAngleSimulator3D: React.FC<Props> = ({ imageUrl, value, onChange, di
           </div>
         </div>
 
-        {/* Hint */}
+      {/* Hint */}
         <div className="absolute bottom-3 left-3 right-3 px-3 py-2 rounded-xl bg-black/55 border border-white/10 text-[11px] font-mono text-white/60">
-          Arrastra para mover <span className="text-white/80">X</span> (horizontal) + <span className="text-white/80">Y</span> (vertical) al mismo tiempo.
-          <div className="text-white/35 mt-1">Scroll para zoom, o arrastra el handle <span className="text-white/70">Z</span>.</div>
+          Arrastra el cubo para cambiar <span className="text-white/80">Azimuth</span> (horizontal) + <span className="text-white/80">Elevation</span> (vertical) al mismo tiempo.
+          <div className="text-white/35 mt-1">El zoom se ajusta solo con la barra de la izquierda.</div>
         </div>
       </div>
     </div>
