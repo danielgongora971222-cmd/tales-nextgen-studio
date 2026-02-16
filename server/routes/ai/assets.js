@@ -1,8 +1,15 @@
 import express from "express";
+import multer from "multer";
 import { UploadAssetSchema } from "../../schemas/index.js";
 
 export function createAssetsRouter(ctx) {
   const router = express.Router();
+
+  const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
+  });
+
 
   const {
     // deps/core
@@ -219,29 +226,76 @@ router.post("/assets/:id/unpublish", async (req, res) => {
   return res.json({ ok: true, id: data.id, isPublic: !!data.is_public });
 });
 
-router.post("/assets/upload", async (req, res, next) => {
+router.post("/assets/upload", upload.single("file"), async (req, res, next) => {
   try {
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
 
-    const { dataUrl, name, tool, type, category } = UploadAssetSchema.parse(req.body);
+    // Soportamos 2 modos:
+    // 1) multipart/form-data con req.file (recomendado)
+    // 2) JSON con dataUrl (compatibilidad)
 
-    const toolName = tool || "upload";
-    const assetType = type || "image";
+    let toolName = "upload";
+    let assetType = "image";
+    let name = "upload";
+    let category = null;
 
-    const { storagePath, mimeType, sizeBytes } = await uploadBase64ToStorage({
-      userId: user.id,
-      tool: toolName,
-      dataUrl,
-      nameHint: name || "upload",
-    });
+    let storagePath;
+    let mimeType;
+    let sizeBytes;
 
-    // Este endpoint es SOLO para subir un asset (por ejemplo, una referencia).
-    // No está ligado a la generación.
+    if (req.file) {
+      // ---- MODO MULTIPART ----
+      const body = req.body || {};
+
+      toolName = typeof body.tool === "string" && body.tool.trim() ? body.tool.trim() : "upload";
+      name =
+        typeof body.name === "string" && body.name.trim()
+          ? body.name.trim()
+          : (req.file.originalname || "upload");
+
+      category = typeof body.category === "string" && body.category.trim() ? body.category.trim() : null;
+
+      const forcedType = typeof body.type === "string" ? body.type.trim().toLowerCase() : "";
+      const inferred = req.file.mimetype?.startsWith("video") ? "video" : "image";
+      assetType = forcedType === "video" || forcedType === "image" ? forcedType : inferred;
+
+      const up = await uploadBufferToStorage({
+        userId: user.id,
+        tool: toolName,
+        buffer: req.file.buffer,
+        mimeType: req.file.mimetype || "application/octet-stream",
+        nameHint: name,
+      });
+
+      storagePath = up.storagePath;
+      mimeType = up.mimeType;
+      sizeBytes = up.sizeBytes;
+    } else {
+      // ---- MODO JSON (BASE64) ----
+      const parsed = UploadAssetSchema.parse(req.body);
+
+      toolName = parsed.tool || "upload";
+      assetType = parsed.type || "image";
+      name = parsed.name || "upload";
+      category = parsed.category || null;
+
+      const up = await uploadBase64ToStorage({
+        userId: user.id,
+        tool: toolName,
+        dataUrl: parsed.dataUrl,
+        nameHint: name,
+      });
+
+      storagePath = up.storagePath;
+      mimeType = up.mimeType;
+      sizeBytes = up.sizeBytes;
+    }
+
     const meta = {
       source: "upload",
       tool: toolName,
-      category: category || null,
+      category,
       createdAt: new Date().toISOString(),
       originalMimeType: mimeType,
       sizeBytes,
@@ -251,7 +305,7 @@ router.post("/assets/upload", async (req, res, next) => {
       ownerId: user.id,
       type: assetType,
       tool: toolName,
-      name: name || "upload",
+      name,
       prompt: null,
       storagePath,
       isPublic: false,
@@ -267,7 +321,7 @@ router.post("/assets/upload", async (req, res, next) => {
         url,
         type: assetType,
         tool: toolName,
-        name: name || "upload",
+        name,
         ownerId: user.id,
         isPublic: false,
         createdAt: new Date().toISOString(),

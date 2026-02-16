@@ -12,7 +12,7 @@
     "start": "SERVE_CLIENT=1 node server/server.js",
     "start:api": "SERVE_CLIENT=0 node server/server.js"
   },
-  "dependencies": {
+ "dependencies": {
     "@google/genai": "^1.39.0",
     "@supabase/supabase-js": "^2.93.3",
     "cors": "^2.8.6",
@@ -20,6 +20,7 @@
     "express": "^4.19.2",
     "express-rate-limit": "^8.2.1",
     "helmet": "^8.1.0",
+    "multer": "^1.4.5-lts.1",
     "pino-http": "^11.0.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",

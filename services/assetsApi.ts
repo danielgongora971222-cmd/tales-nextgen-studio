@@ -175,9 +175,6 @@ export async function uploadUserAsset(
   const { data: sessionData } = await supabase.auth.getSession();
   const token = sessionData.session?.access_token;
 
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-
   const inferredType: "image" | "video" = file.type.startsWith("video") ? "video" : "image";
 
   const opts =
@@ -185,23 +182,26 @@ export async function uploadUserAsset(
       ? { tool: toolOrOpts }
       : toolOrOpts || {};
 
-  const dataUrl = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = () => reject(new Error("No se pudo leer el archivo"));
-    reader.readAsDataURL(file);
-  });
+  const tool = opts.tool ?? "upload";
+  const name = opts.name ?? file.name;
+  const type = opts.type ?? inferredType;
+  const category = opts.category;
+
+  // ---------- 1) INTENTO PRINCIPAL: multipart/form-data ----------
+  const form = new FormData();
+  form.append("file", file, name);
+  form.append("tool", tool);
+  form.append("name", name);
+  form.append("type", type);
+  if (category) form.append("category", category);
+
+  const headersMultipart: Record<string, string> = {};
+  if (token) headersMultipart["Authorization"] = `Bearer ${token}`;
 
   const resp = await fetch("/api/assets/upload", {
     method: "POST",
-    headers,
-    body: JSON.stringify({
-      dataUrl,
-      name: opts.name ?? file.name,
-      tool: opts.tool ?? "upload",
-      category: opts.category,
-      type: opts.type ?? inferredType,
-    }),
+    headers: headersMultipart,
+    body: form,
   });
 
   const text = await resp.text();
@@ -215,13 +215,69 @@ export async function uploadUserAsset(
     );
   }
 
+  // Si el backend aún no soporta multipart, normalmente devuelve VALIDATION_ERROR por falta de dataUrl.
+  const shouldFallbackToJsonBase64 =
+    (!resp.ok || data?.ok === false) &&
+    data?.error?.code === "VALIDATION_ERROR" &&
+    Array.isArray(data?.error?.details) &&
+    data.error.details.some((d: any) => d?.field === "dataUrl");
+
+  if (shouldFallbackToJsonBase64) {
+    // ---------- 2) FALLBACK: JSON (base64) ----------
+    const headersJson: Record<string, string> = { "Content-Type": "application/json" };
+    if (token) headersJson["Authorization"] = `Bearer ${token}`;
+
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(new Error("No se pudo leer el archivo"));
+      reader.readAsDataURL(file);
+    });
+
+    const resp2 = await fetch("/api/assets/upload", {
+      method: "POST",
+      headers: headersJson,
+      body: JSON.stringify({ dataUrl, name, tool, category, type }),
+    });
+
+    const text2 = await resp2.text();
+    let data2: any;
+
+    try {
+      data2 = JSON.parse(text2);
+    } catch {
+      throw new Error(
+        `El backend devolvió HTML/texto en vez de JSON en uploadUserAsset (fallback). Inicio: ${text2.slice(0, 60)}`
+      );
+    }
+
+    if (!resp2.ok || data2?.ok === false) {
+      const e2 = data2?.error;
+      const msg2 = typeof e2 === "string" ? e2 : e2?.message;
+      throw new Error(msg2 || `Upload failed: ${resp2.status}`);
+    }
+
+    const row2 = data2.item;
+    return {
+      id: row2.id,
+      url: row2.url,
+      type: row2.type === "video" ? "video" : "image",
+      name: row2.name || file.name,
+      prompt: undefined,
+      createdAt: row2.createdAt ? new Date(row2.createdAt).getTime() : Date.now(),
+      ownerId: row2.ownerId,
+      isPublic: !!row2.isPublic,
+      likes: [],
+      comments: [],
+    };
+  }
+
   if (!resp.ok || data?.ok === false) {
     const e = data?.error;
     const msg = typeof e === "string" ? e : e?.message;
     throw new Error(msg || `Upload failed: ${resp.status}`);
   }
 
-  // backend devuelve { item: { ... } }
   const row = data.item;
   return {
     id: row.id,

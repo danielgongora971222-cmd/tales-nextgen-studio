@@ -59,15 +59,42 @@ export function createStorageHelpers(supabaseAdmin, bucket) {
 
   async function uploadBase64ToStorage({ userId, tool, dataUrl, nameHint }) {
     ensureSupabase();
-    const { mimeType, base64 } = parseDataUrl(dataUrl);
-    const bytes = Buffer.from(base64, "base64");
+
+    let parsed;
+    try {
+      parsed = parseDataUrl(dataUrl);
+    } catch (e) {
+      throw httpError(400, "INVALID_DATA_URL", "El archivo no es un dataUrl válido.", { tool, nameHint });
+    }
+
+    const mimeType = parsed.mimeType || "application/octet-stream";
+
+    let bytes;
+    try {
+      bytes = Buffer.from(parsed.base64, "base64");
+    } catch (e) {
+      throw httpError(400, "INVALID_BASE64", "El archivo no se pudo decodificar (base64 inválido).", {
+        tool,
+        nameHint,
+        mimeType,
+      });
+    }
+
     const path = buildAssetPath({ userId, tool, mimeType, nameHint });
 
     const up = await supabaseAdmin.storage
       .from(bucket)
       .upload(path, bytes, { contentType: mimeType, upsert: false });
 
-    if (up.error) throw new Error(up.error.message);
+    if (up.error) {
+      throw httpError(500, "STORAGE_UPLOAD_FAILED", "No se pudo subir el archivo a Supabase Storage.", {
+        bucket,
+        path,
+        mimeType,
+        supabase: { message: up.error.message, name: up.error.name },
+      });
+    }
+
     return { storagePath: path, mimeType, sizeBytes: bytes.length };
   }
 
@@ -79,7 +106,11 @@ export function createStorageHelpers(supabaseAdmin, bucket) {
     nameHint,
   }) {
     ensureSupabase();
-    if (!buffer) throw new Error("Missing buffer");
+
+    if (!buffer || !Buffer.isBuffer(buffer)) {
+      throw httpError(400, "MISSING_FILE_BUFFER", "No llegó el archivo al servidor (buffer vacío).", { tool, nameHint });
+    }
+
     const ct = mimeType || "application/octet-stream";
     const path = buildAssetPath({ userId, tool, mimeType: ct, nameHint });
 
@@ -87,7 +118,15 @@ export function createStorageHelpers(supabaseAdmin, bucket) {
       .from(bucket)
       .upload(path, buffer, { contentType: ct, upsert: false });
 
-    if (up.error) throw new Error(up.error.message);
+    if (up.error) {
+      throw httpError(500, "STORAGE_UPLOAD_FAILED", "No se pudo subir el archivo a Supabase Storage.", {
+        bucket,
+        path,
+        mimeType: ct,
+        supabase: { message: up.error.message, name: up.error.name },
+      });
+    }
+
     return { storagePath: path, mimeType: ct, sizeBytes: buffer.length };
   }
 
@@ -119,6 +158,7 @@ export function createStorageHelpers(supabaseAdmin, bucket) {
     meta,
   }) {
     ensureSupabase();
+
     const payload = {
       owner_id: ownerId,
       type: type || "image",
@@ -136,7 +176,14 @@ export function createStorageHelpers(supabaseAdmin, bucket) {
       .select("id")
       .single();
 
-    if (error) throw new Error(error.message);
+    if (error) {
+      throw httpError(500, "DB_INSERT_FAILED", "No se pudo guardar el asset en la base de datos.", {
+        table: "assets",
+        supabase: { message: error.message, code: error.code, details: error.details, hint: error.hint },
+        payloadKeys: Object.keys(payload),
+      });
+    }
+
     return data.id;
   }
 
