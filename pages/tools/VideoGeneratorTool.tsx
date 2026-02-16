@@ -1141,8 +1141,15 @@ const durationLabel = useMemo(() => {
                     </div>
 
                     <div className={styles.multishotMeta}>
-                      Total: {multishotTotalSeconds}s · mínimo 2 shots · suma entre 3s y 15s
+                      Total: {multishotTotalSeconds}s · mínimo 2 shots · suma entre 3s y 15s · Shot type:{" "}
+                      {isKlingO3 ? "customize (O3 fijo)" : hasFirst ? "customize (bloqueado por FIRST)" : klingShotType}
                     </div>
+
+                    {!isKlingO3 && !hasFirst && klingShotType === "intelligent" && (
+                      <div className={styles.multishotHint}>
+                        Modo intelligent: escribe prompts más generales por shot; el modelo conecta transiciones automáticamente.
+                      </div>
+                    )}
 
                     <div className={styles.multishotShots}>
                       {klingShots.map((s, i) => (
@@ -1153,7 +1160,7 @@ const durationLabel = useMemo(() => {
                             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                               <button
                                 type="button"
-                                className={styles.swapBtn}
+                                className={styles.multishotElementsBtn}
                                 onClick={() => openElementsForShot(i)}
                                 title="Seleccionar Elements para este shot"
                               >
@@ -1181,7 +1188,11 @@ const durationLabel = useMemo(() => {
                                 prev.map((x, idx) => (idx === i ? { ...x, prompt: next } : x))
                               )
                             }
-                            placeholder="Describe este shot… (acción, cámara, estilo, iluminación)"
+                            placeholder={
+                              klingShotType === "intelligent"
+                                ? "Describe este shot… (idea principal; el modelo conecta transiciones automáticamente)"
+                                : "Describe este shot… (acción, cámara, estilo, iluminación)"
+                            }
                             limit={KLING_V3_SHOT_PROMPT_LIMIT}
                             inputResize="none"
                           />

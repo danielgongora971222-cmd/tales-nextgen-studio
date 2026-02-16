@@ -184,6 +184,7 @@
 }
 .modal {
   width: min(980px, 100%);
+  height: min(86vh, 900px);
   max-height: min(86vh, 900px);
   overflow: hidden;
   border-radius: 20px;
@@ -257,16 +258,20 @@
   flex: 1;
   min-height: 0;
   padding: 14px;
-  overflow: auto;
+
+  overflow-y: auto;
+  overflow-x: hidden;
+
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
   gap: 10px;
+  align-content: start;
 }
-@media (max-width: 900px) {
-  .pickerGrid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-}
+
 @media (max-width: 650px) {
-  .pickerGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pickerGrid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  }
 }
 
 .pickerEmpty{
@@ -1396,6 +1401,12 @@
   color: rgba(255,255,255,0.55);
 }
 
+.multishotHint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: rgba(241,225,148,0.75);
+}
+
 .multishotShots {
   margin-top: 10px;
   display: flex;
@@ -1427,6 +1438,33 @@
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: rgba(241,225,148,0.9);
+}
+
+.multishotElementsBtn {
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(241,225,148,0.14);
+  background: rgba(0,0,0,0.22);
+  color: rgba(241,225,148,0.92);
+  cursor: pointer;
+
+  display: inline-flex;
+  align-items: center;
+
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  white-space: nowrap;
+
+  transition: transform .18s ease, border-color .18s ease, background .18s ease;
+}
+
+.multishotElementsBtn:hover {
+  transform: translateY(-1px);
+  border-color: rgba(241,225,148,0.28);
+  background: rgba(241,225,148,0.08);
 }
 
 .multishotRemoveBtn {

@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import styles from "../VideoGeneratorTool.module.css";
 import type { Asset } from "../../../types";
 import { shortText } from "./text";
@@ -38,6 +38,25 @@ export function FramePickerModal({
 }) {
   if (!open) return null;
 
+  const gridRef = useRef<HTMLDivElement>(null);
+  const prevCountRef = useRef<number>(visibleAssets.length);
+
+  useEffect(() => {
+    const prev = prevCountRef.current;
+    const next = visibleAssets.length;
+
+    // Si aumentó el número de assets (por "Cargar más"), bajamos el scroll
+    if (next > prev) {
+      const el = gridRef.current;
+      if (el) {
+        el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+      }
+    }
+
+    prevCountRef.current = next;
+  }, [visibleAssets.length]);
+
+
   return (
     <div className={styles.modalOverlay} role="dialog" aria-modal="true">
       <div className={styles.modal}>
@@ -71,29 +90,31 @@ export function FramePickerModal({
           </label>
         </div>
 
-        {hasMore && (
-          <div className={styles.pickerLoadMoreWrap}>
-            <button type="button" className={styles.loadMoreBtn} onClick={onLoadMore}>
-              Cargar más
-            </button>
-            <div className={styles.loadMoreHint}>
-              Mostrando {visibleAssets.length} de {totalCount}
-            </div>
-          </div>
-        )}
-
-        <div className={styles.pickerGrid}>
+        <div className={styles.pickerGrid} ref={gridRef}>
           {isLoading ? (
             <div className={styles.pickerEmpty}>Cargando imágenes…</div>
           ) : visibleAssets.length === 0 ? (
             <div className={styles.pickerEmpty}>No hay imágenes en tu historial. Genera una imagen o usa Upload.</div>
           ) : (
-            visibleAssets.map((a) => (
-              <button key={a.id} type="button" className={styles.pickerTile} onClick={() => onPick(a)}>
-                <img src={getAssetUrl(a) || a.url} alt={a.name} />
-                <div className={styles.pickerCap}>{shortText(a.prompt || a.name, 56)}</div>
-              </button>
-            ))
+            <>
+              {visibleAssets.map((a) => (
+                <button key={a.id} type="button" className={styles.pickerTile} onClick={() => onPick(a)}>
+                  <img src={getAssetUrl(a) || a.url} alt={a.name} />
+                  <div className={styles.pickerCap}>{shortText(a.prompt || a.name, 56)}</div>
+                </button>
+              ))}
+
+              {hasMore && (
+                <div className={styles.pickerLoadMoreWrap}>
+                  <button type="button" className={styles.loadMoreBtn} onClick={onLoadMore}>
+                    Cargar más
+                  </button>
+                  <div className={styles.loadMoreHint}>
+                    Mostrando {visibleAssets.length} de {totalCount}
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
 

@@ -348,29 +348,38 @@ export function ControlsPopover({
               <>
                 <div className={styles.formRow}>
                   <label className={styles.formLabel}>Shot type</label>
-                  <div className={styles.segment}>
-                    <button
-                      type="button"
-                      className={`${styles.segmentBtn} ${klingShotType === "customize" ? styles.segmentBtnActive : ""}`}
-                      onClick={() => setKlingShotType("customize")}
-                    >
-                      customize
-                    </button>
-                    <button
-                      type="button"
-                      className={`${styles.segmentBtn} ${klingShotType === "intelligent" ? styles.segmentBtnActive : ""} ${
-                        isKlingO3 ? styles.segmentBtnDisabled : ""
-                      }`}
-                      onClick={() => !isKlingO3 && setKlingShotType("intelligent")}
-                      disabled={isKlingO3}
-                      title={isKlingO3 ? "Kling O3 Pro solo soporta shot_type=customize" : "intelligent"}
-                    >
-                      intelligent
-                    </button>
 
-                    {isKlingO3 && <span className={styles.segmentMeta}>O3: solo customize</span>}
+                  {!multishotEnabled ? (
+                    <div className={styles.noteSmall}>Activa <b>Multishot</b> para habilitar shot_type.</div>
+                  ) : hasFirst ? (
+                    <div className={styles.noteSmall}>
+                      Bloqueado por <b>FIRST</b> frame (Fal solo aplica shot_type en Text-to-Video Multishot).
+                    </div>
+                  ) : (
+                    <div className={styles.segment}>
+                      <button
+                        type="button"
+                        className={`${styles.segmentBtn} ${klingShotType === "customize" ? styles.segmentBtnActive : ""}`}
+                        onClick={() => setKlingShotType("customize")}
+                      >
+                        customize
+                      </button>
 
-                  </div>
+                      <button
+                        type="button"
+                        className={`${styles.segmentBtn} ${klingShotType === "intelligent" ? styles.segmentBtnActive : ""} ${
+                          isKlingO3 ? styles.segmentBtnDisabled : ""
+                        }`}
+                        onClick={() => !isKlingO3 && setKlingShotType("intelligent")}
+                        disabled={isKlingO3}
+                        title={isKlingO3 ? "Kling O3 Pro solo soporta shot_type=customize" : "intelligent"}
+                      >
+                        intelligent
+                      </button>
+
+                      {isKlingO3 && <span className={styles.segmentMeta}>O3: solo customize</span>}
+                    </div>
+                  )}
                 </div>
 
                 <div className={styles.formRow}>
