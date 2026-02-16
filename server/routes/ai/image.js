@@ -853,7 +853,7 @@ export function createAiImageRouter(ctx) {
       }
 
       const refAssetId = refIds[0];
-      const refUrl = await assetIdToSignedUrl({ assetId: refAssetId, urlExpiresInSeconds });
+      const refUrl = await assetIdToSignedUrl(refAssetId, user.id, urlExpiresInSeconds);
 
       const h = typeof horizontalAngle === "number" ? horizontalAngle : 0;
       const v = typeof verticalAngle === "number" ? verticalAngle : 0;
