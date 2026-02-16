@@ -35,6 +35,17 @@ export const ImageRequestSchema = z.object({
   // ✅ Kling-only (Element Library): IDs UUID de tu tabla public.kling_elements
   // (estos NO son los element_id bigint que devuelve Kling)
   klingElementIds: z.array(z.string().uuid()).max(5).optional(),
+
+    // ✅ Camera Angles (Qwen Multiple Angles, Fal.ai)
+  // Ranges basados en la doc del endpoint:
+  // - horizontal_angle: 0..360 (0=front, 90=right, 180=back, 270=left)
+  // - vertical_angle:  -30..90 (-30=low, 0=eye-level, 90=top-down)
+  // - zoom:           0..10  (0=wide, 10=close)
+  // - lora_scale:     0..4   (strength)
+  horizontalAngle: z.number().min(0).max(360).optional(),
+  verticalAngle: z.number().min(-30).max(90).optional(),
+  zoom: z.number().min(0).max(10).optional(),
+  loraScale: z.number().min(0).max(4).optional(),
 });
 
 export const VideoRequestSchema = z.object({

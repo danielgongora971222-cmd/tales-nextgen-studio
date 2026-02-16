@@ -78,6 +78,12 @@ export function createAiImageRouter(ctx) {
       characterAssetIds,
       styleAssetId,
       backgroundAssetId,
+
+      // ✅ Camera Angles (Qwen Multiple Angles)
+      horizontalAngle,
+      verticalAngle,
+      zoom,
+      loraScale,
     } = ImageRequestSchema.parse(req.body);
 
     const { user, error } = await requireUser(req);
@@ -791,6 +797,132 @@ export function createAiImageRouter(ctx) {
           tool: toolName,
           name: hint,
           prompt,
+          storagePath,
+          isPublic: false,
+          meta,
+        });
+
+        const url = await signStoragePath(storagePath, urlExpiresInSeconds);
+        items.push({ url, assetId });
+      }
+
+      return res.json({
+        ok: true,
+        items,
+        url: items[0]?.url,
+        assetId: items[0]?.assetId,
+        urlExpiresInSeconds,
+      });
+    }
+
+    // =============================
+    // QWEN MULTIPLE ANGLES (Fal.ai)
+    // Endpoint: fal-ai/qwen-image-edit-2511-multiple-angles
+    // Genera la misma escena desde diferentes ángulos:
+    // - horizontal_angle: 0..360 (0=front, 90=right, 180=back, 270=left)
+    // - vertical_angle:  -30..90 (-30=low, 0=eye-level, 90=top-down)
+    // - zoom:           0..10  (0=wide, 10=close)
+    // - lora_scale:     0..4   (strength)
+    // =============================
+    if (selectedModel === "fal-ai/qwen-image-edit-2511-multiple-angles") {
+      const nRequested = Math.max(1, Math.min(Number(count || 1), 4, maxCount));
+      const toolName = tool || "camera-angles";
+      const hint = nameHint || "camera-angle";
+      const urlExpiresInSeconds = 60 * 60;
+
+      // Para esta herramienta exigimos EXACTAMENTE 1 imagen de referencia
+      const refIds = [
+        ...((characterAssetIds || []).map((id) => id)),
+        ...(styleAssetId ? [styleAssetId] : []),
+        ...(backgroundAssetId ? [backgroundAssetId] : []),
+      ].filter(Boolean);
+
+      if (!refIds.length) {
+        throw httpError(
+          400,
+          "REF_REQUIRED",
+          "Camera Angles necesita 1 imagen de referencia. Sube una imagen en el panel izquierdo."
+        );
+      }
+      if (refIds.length > 1) {
+        throw httpError(
+          400,
+          "TOO_MANY_REFS",
+          "Camera Angles solo acepta 1 imagen de referencia (no múltiples refs)."
+        );
+      }
+
+      const refAssetId = refIds[0];
+      const refUrl = await assetIdToSignedUrl({ assetId: refAssetId, urlExpiresInSeconds });
+
+      const h = typeof horizontalAngle === "number" ? horizontalAngle : 0;
+      const v = typeof verticalAngle === "number" ? verticalAngle : 0;
+      const z = typeof zoom === "number" ? zoom : 5;
+      const ls = typeof loraScale === "number" ? loraScale : 1;
+
+      const extraPrompt = typeof prompt === "string" && prompt.trim().length ? prompt.trim() : undefined;
+
+      const falInput = {
+        image_urls: [refUrl],
+        horizontal_angle: h,
+        vertical_angle: v,
+        zoom: z,
+        lora_scale: ls,
+        additional_prompt: extraPrompt,
+        output_format: "png",
+        num_images: nRequested,
+      };
+
+      const falJson = await falQueueRun(selectedModel, falInput);
+      const images = falJson?.images || falJson?.data?.images || [];
+      const urls = (Array.isArray(images) ? images : [])
+        .map((x) => x?.url)
+        .filter(Boolean)
+        .slice(0, nRequested);
+
+      if (!urls.length) {
+        throw httpError(502, "FAL_NO_IMAGES", "Fal: tarea completada pero sin URLs de imagen.", { response: falJson });
+      }
+
+      const items = [];
+      for (const imageUrl of urls) {
+        const imgRes = await fetch(imageUrl);
+        if (!imgRes.ok) {
+          throw httpError(502, "FAL_IMAGE_DOWNLOAD_FAILED", `Fal: no pude descargar la imagen final (${imgRes.status}).`, {
+            imageUrl,
+          });
+        }
+
+        const buf = Buffer.from(await imgRes.arrayBuffer());
+        const mime = imgRes.headers.get("content-type") || "image/png";
+        const dataUrl = `data:${mime};base64,${buf.toString("base64")}`;
+
+        const { storagePath } = await uploadBase64ToStorage({
+          userId: user.id,
+          tool: toolName,
+          dataUrl,
+          nameHint: hint,
+        });
+
+        const meta = {
+          tool: toolName,
+          provider: "fal",
+          model: selectedModel,
+          count: nRequested,
+          referenceAssetId: refAssetId,
+          horizontalAngle: h,
+          verticalAngle: v,
+          zoom: z,
+          loraScale: ls,
+          additionalPrompt: extraPrompt || null,
+        };
+
+        const assetId = await insertAssetRow({
+          ownerId: user.id,
+          type: "image",
+          tool: toolName,
+          name: hint,
+          prompt: extraPrompt || "",
           storagePath,
           isPublic: false,
           meta,

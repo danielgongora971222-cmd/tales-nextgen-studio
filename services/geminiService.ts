@@ -106,6 +106,12 @@ export type GenerateImageBatchOptions = {
   characterAssetIds?: string[];
   styleAssetId?: string;
   backgroundAssetId?: string;
+
+  // ✅ Camera Angles (Qwen Multiple Angles, Fal.ai)
+  horizontalAngle?: number; // 0..360
+  verticalAngle?: number;   // -30..90
+  zoom?: number;            // 0..10
+  loraScale?: number;       // 0..4
 };
 
 export type GenerateImageBatchResult = {
@@ -119,19 +125,26 @@ export const generateImageBatch = async (
   options?: GenerateImageBatchOptions
 ): Promise<GenerateImageBatchResult> => {
   const res: any = await apiPost("/api/ai/image", {
-    prompt,
-    model,
-    aspectRatio: options?.aspectRatio,
-    count: options?.count,
-    quality: options?.quality,
-    tool: options?.tool,
-    nameHint: options?.nameHint,
-    characterAssetIds: options?.characterAssetIds,
-    styleAssetId: options?.styleAssetId,
-    backgroundAssetId: options?.backgroundAssetId,
-    // Kling-only
-    klingElementIds: options?.klingElementIds,
-  });
+  prompt,
+  model,
+  aspectRatio: options?.aspectRatio,
+  count: options?.count,
+  quality: options?.quality,
+  tool: options?.tool,
+  nameHint: options?.nameHint,
+  characterAssetIds: options?.characterAssetIds,
+  styleAssetId: options?.styleAssetId,
+  backgroundAssetId: options?.backgroundAssetId,
+
+  // ✅ Camera Angles
+  horizontalAngle: options?.horizontalAngle,
+  verticalAngle: options?.verticalAngle,
+  zoom: options?.zoom,
+  loraScale: options?.loraScale,
+
+  // Kling-only
+  klingElementIds: options?.klingElementIds,
+});
 
   const items: ImageGenItem[] = Array.isArray(res?.items) ? res.items : [];
 
