@@ -8,7 +8,7 @@ import { generateImageBatch } from "../../services/geminiService";
 import { deleteAsset, listMyAssets, publishAsset, unpublishAsset, uploadUserAsset } from "../../services/assetsApi";
 
 import { AssetPickerModal } from "./video/AssetPickerModal";
-import { STYLE_PRESETS } from "./ImageGeneratorTool";
+import { STYLE_PRESETS } from "../../config/presets/restyle";
 
 type Quality = "1K" | "2K" | "4K";
 type PanelKey = "model" | "quality" | null;

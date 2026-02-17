@@ -10,8 +10,10 @@
     "dev:client": "vite",
     "dev:api": "node server/server.js",
     "start": "SERVE_CLIENT=1 node server/server.js",
-    "start:api": "SERVE_CLIENT=0 node server/server.js"
+    "start:api": "SERVE_CLIENT=0 node server/server.js",
+    "preset:wizard": "node tools/preset-wizard/server.mjs"
   },
+
  "dependencies": {
     "@google/genai": "^1.39.0",
     "@supabase/supabase-js": "^2.93.3",

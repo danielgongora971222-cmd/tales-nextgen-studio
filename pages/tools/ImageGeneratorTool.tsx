@@ -6,279 +6,23 @@ import { useAuth } from "../../contexts/AuthContext";
 import { supabase } from "../../services/supabaseClient";
 import { Asset, GeminiModel } from "../../types";
 import ErrorModal from "../../components/ErrorModal";
+import { STYLE_PRESETS } from "../../config/presets/restyle";
 
-export type StylePreset = {
-  id: string;
-  name: string;
-  prompt: string;
-  coverUrl?: string;
-  exampleUrls?: [string, string, string, string];
-};
-
-type ElementItem = {
-  // Guardamos como Asset (upload normal), no depende de ninguna IA.
-  // id === assetId
-  id: string;
-  name: string;
-  createdAt: string;
-  url: string; // mosaico 2x2 (también lo usamos como thumbnail, recortando el cuadrante 1)
-};
-
-type ElementImageInput =
-  | { kind: "asset"; assetId: string; previewUrl: string; label: string }
-  | { kind: "dataUrl"; dataUrl: string; previewUrl: string; label: string };
-
-const STYLE_PRESET_BLOCK_START = "[[STYLE_PRESET_START]]";
-const STYLE_PRESET_BLOCK_END = "[[STYLE_PRESET_END]]";
-const LEGACY_STYLE_PRESET_BLOCK_START = "/* STYLE_PRESET_START */";
-const LEGACY_STYLE_PRESET_BLOCK_END = "/* STYLE_PRESET_END */";
-
-function escapeRegExp(s: string) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function removeStylePresetBlock(input: string) {
-  let out = input;
-  const pairs = [
-    { start: STYLE_PRESET_BLOCK_START, end: STYLE_PRESET_BLOCK_END },
-    { start: LEGACY_STYLE_PRESET_BLOCK_START, end: LEGACY_STYLE_PRESET_BLOCK_END },
-  ];
-
-  for (const { start, end } of pairs) {
-    const re = new RegExp(`${escapeRegExp(start)}[\\s\\S]*?${escapeRegExp(end)}\\n*`, "g");
-    out = out.replace(re, "");
-  }
-  return out.trim();
-}
-
-function applyStylePresetToPrompt(input: string, presetPrompt: string) {
-  const base = removeStylePresetBlock(input).trim();
-  const block = `${STYLE_PRESET_BLOCK_START}\n${presetPrompt}\n${STYLE_PRESET_BLOCK_END}\n\n`;
-  return `${block}${base}`.trim();
-}
-
-export const STYLE_PRESETS: StylePreset[] = [
-  {
-    id: "live_action",
-    name: "Live Action",
-    coverUrl: "/style-presets/LiveAction/cover.png",
-    exampleUrls: [
-      "/style-presets/LiveAction/1.png",
-      "/style-presets/LiveAction/2.jpeg",
-      "/style-presets/LiveAction/3.png",
-      "/style-presets/LiveAction/4.jpeg",
-    ],
-    prompt: `
-STYLE: Apply photorealistic materials and cinematic lighting to the provided image using TEXTURE AND MATERIAL
-TRANSLATION ONLY.
-
-ABSOLUTE PRESERVATION RULE:
-Preserve the original image EXACTLY as-is in design and identity. This is a material/lighting pass only.
-Do not reinterpret any described traits from the text prompt. Do not reinterpret any traits shown in reference images.
-Even if features are stylized, non-realistic, simplified or exaggerated, they must remain EXACTLY the same.
-
-PRESERVE ORIGINAL CHARACTERS EXACTLY (LOCKED DESIGN):
-- identical facial structure and proportions
-- identical head shape and stylized geometry
-- identical mouth shape and facial expressions
-- identical silhouette, body proportions, and overall character identity
-- identical hairstyle shape, hairline, hair volume and hair design (only add strand-level texture without changing the shape)
-- identical clothing design, seams, patterns, logos, symbols, text, graphics, jewelry, accessories, props (do NOT alter, replace, add, or remove anything)
-
-EYES AND FACIAL EXPRESSIONS ARE ABSOLUTELY LOCKED (HIGHEST PRIORITY):
-- do not change eye size, eye shape, iris size, pupil size or eye spacing
-- do not add shine, emotion, intensity, wetness, sparkle, reflections or realism to the eyes
-- do not modify eyelids, eyebrows, lashes, or facial muscle tension
-- do not change gaze direction, head tilt, micro-expression, or “mood”
-- eyes and expressions must remain pixel-identical in pose and emotion to the original image
-Facial expressions are the HIGHEST PRIORITY and must remain completely unchanged.
-
-FACE PROTECTION (NO BEAUTIFICATION / NO REPAIR):
-Do NOT reinterpret, redesign, enhance, beautify, “improve”, or “fix” faces.
-Do NOT correct anatomy or add realism to facial features.
-Do NOT change facial identity, symmetry, jawline, cheek volume, nose shape, lips shape, or skin contour.
-Treat all facial geometry, eyes, and expressions as LOCKED reference design.
-
-ALLOWED CHANGES (ONLY THESE):
-Only upgrade:
-- fur texture and hair strands (micro-detail only; keep original hair/fur shape and clumps)
-- skin material detail (material response only; do NOT change facial features or perceived age)
-- material depth (PBR-like roughness/normal depth; subtle, controlled)
-- cinematic lighting and shadows applied to the scene/environment, not the face
-- improved global shading coherence without altering design or colors
-
-TEXT / LOGO / GRAPHICS LOCK:
-If there is ANY text, logo, signage, UI, symbols, or typography:
-- keep EXACT content, spelling, font shape, placement, size, and alignment
-- do not redraw, restyle, translate, “correct”, or replace text
-- do not add new text
-
-COLOR AND LIGHTING DIRECTION (NO NIGHT CONDITION):
-- cinematic color grading
-- natural, film-like colors
-- slightly desaturated palette
-- soft highlights, controlled shadows
-- NO oversaturation, NO HDR plastic look
-- match the original time-of-day and scene intent from the input (day stays day, indoor stays indoor, etc.)
-- preserve original light direction and key-to-fill logic; enhance it cinematically without changing mood/emotion
-- avoid any dramatic face/eye lighting; keep face lighting consistent with the original
-
-COMPOSITION & CAMERA LOCK:
-Maintain original composition, pose, framing, lens feel, perspective, and emotion.
-Do not crop, zoom, warp, or change camera angle.
-Soft depth of field (subtle, cinematic) while preserving original focus intent.
-
-Negative prompt:
-face redesign, eye variation, expression change, emotional enhancement, eye sparkle, wet eyes, added eye reflections,
-beautification, symmetry correction, anatomy correction, realistic facial anatomy conversion, new facial identity,
-generic lion face, wildlife photography look, realistic lion anatomy, new accessories, removed accessories, added props,
-text changes, logo changes, typography changes, oversaturated colors, HDR look, dramatic eye lighting, face relighting,
-pose change, framing change, crop, zoom, perspective change
-    `.trim(),
-  },
-  {
-    id: "luxury_product",
-    name: "Luxury Product",
-    coverUrl: "/style-presets/luxury/cover.jpg",
-    exampleUrls: ["/style-presets/luxury/1.jpg", "/style-presets/luxury/2.jpg", "/style-presets/luxury/3.jpg", "/style-presets/luxury/4.jpg"],
-    prompt: `
-STYLE: Luxury product advertising. Clean studio, premium reflections.
-Lighting: controlled specular highlights, soft gradients, no harsh glare.
-Composition: centered hero shot, elegant negative space, minimal clutter.
-Quality: extremely sharp, high contrast micro-detail, commercial polish.
-    `.trim(),
-  },
-    {
-    id: "pixar_3d",
-    name: "3D Pixar-ish",
-    coverUrl: "/style-presets/pixar/cover.jpg",
-    exampleUrls: ["/style-presets/pixar/1.jpg", "/style-presets/pixar/2.jpg", "/style-presets/pixar/3.jpg", "/style-presets/pixar/4.jpg"],
-    prompt: `
-STYLE: High-quality 3D animation look (family-friendly, stylized).
-Materials: smooth but detailed shaders, soft bounce light, clean render.
-Colors: vibrant but balanced, pleasing tones, gentle bloom.
-Rules: no uncanny realism, keep shapes clean, avoid noise/artifacts.
-    `.trim(),
-  },
-];
-
-// ✅ New: Lighting presets (used by the Lightroom tool)
-// NOTE: coverUrl/exampleUrls are optional; you can add real preview images later in /public/lighting-presets/...
-export const LIGHTING_PRESETS: StylePreset[] = [
-  {
-    id: "golden_hour",
-    name: "Golden Hour",
-    prompt: `
-LIGHTING ONLY: Warm golden-hour sun.
-- Preserve the subject identity, pose, composition, and style EXACTLY.
-- Do NOT change clothing, props, background layout, or add/remove objects.
-- Change ONLY lighting/exposure: warm highlights, soft shadows, gentle glow.
-- Color grade: warm temperature, slightly desaturated, natural film look.
-Negative: face redesign, eye change, new objects, pose change, crop, zoom.
-    `.trim(),
-  },
-  {
-    id: "blue_hour",
-    name: "Blue Hour",
-    prompt: `
-LIGHTING ONLY: Cool blue-hour ambient light.
-- Preserve the scene and subject EXACTLY; no design/style changes.
-- Change ONLY lighting: cool shadows, subtle cyan/blue cast, soft contrast.
-- Keep readability; avoid underexposure and heavy noise.
-Negative: face change, new props, background swap, crop/zoom.
-    `.trim(),
-  },
-  {
-    id: "studio_softbox",
-    name: "Studio Softbox",
-    prompt: `
-LIGHTING ONLY: Clean studio softbox lighting.
-- Preserve identity and composition EXACTLY.
-- Smooth, flattering soft key + gentle fill; controlled specular highlights.
-- Neutral color temp, minimal color shift, premium product-grade polish.
-Negative: redesign, texture/style change, extra objects, crop.
-    `.trim(),
-  },
-  {
-    id: "dramatic_rim",
-    name: "Dramatic Rim Light",
-    prompt: `
-LIGHTING ONLY: Strong rim/back light with cinematic separation.
-- Preserve subject and environment EXACTLY.
-- Add rim highlight on edges; keep face lighting natural (no harsh relight).
-- Increase depth with controlled shadows; avoid crushed blacks.
-Negative: face/eye changes, new objects, pose/camera changes.
-    `.trim(),
-  },
-  {
-    id: "moody_low_key",
-    name: "Moody Low-Key",
-    prompt: `
-LIGHTING ONLY: Low-key moody lighting.
-- Preserve identity and composition EXACTLY.
-- Deeper shadows, selective highlights, subtle film grain, rich blacks.
-- Keep important details readable; avoid extreme darkness.
-Negative: face redesign, scene change, crop/zoom.
-    `.trim(),
-  },
-  {
-    id: "high_key_beauty",
-    name: "High-Key Beauty",
-    prompt: `
-LIGHTING ONLY: High-key bright beauty lighting.
-- Preserve identity and composition EXACTLY.
-- Even illumination, soft shadows, clean whites; minimal contrast.
-- Keep textures natural; no plastic HDR look.
-Negative: face reshape, new props, background change.
-    `.trim(),
-  },
-  {
-    id: "overcast_soft",
-    name: "Overcast Soft",
-    prompt: `
-LIGHTING ONLY: Overcast daylight (soft, shadowless).
-- Preserve the subject and scene EXACTLY.
-- Soft diffuse light, low contrast, neutral tones; gentle lift in shadows.
-Negative: redesign, new objects, crop, zoom.
-    `.trim(),
-  },
-  {
-    id: "neon_night",
-    name: "Neon Night",
-    prompt: `
-LIGHTING ONLY: Night neon signage glow.
-- Preserve identity and composition EXACTLY.
-- Add colored neon bounce (magenta/cyan), reflective highlights, soft haze.
-- Do NOT change scene layout; only lighting + grading.
-Negative: new objects, face/eye change, pose change.
-    `.trim(),
-  },
-  {
-    id: "candlelight",
-    name: "Candlelight",
-    prompt: `
-LIGHTING ONLY: Warm candlelight.
-- Preserve identity and composition EXACTLY.
-- Warm, localized highlights; soft falloff; gentle shadow movement feel.
-- Avoid smoky noise; keep details clean.
-Negative: redesign, new objects, crop/zoom.
-    `.trim(),
-  },
-  {
-    id: "hard_noon_sun",
-    name: "Hard Noon Sun",
-    prompt: `
-LIGHTING ONLY: Hard midday sun.
-- Preserve identity and composition EXACTLY.
-- Strong directional light, crisp shadows, higher contrast; natural colors.
-- Avoid overexposure; keep skin and highlights controlled.
-Negative: face change, new props, camera change.
-    `.trim(),
-  },
-];
 
 type Quality = "" | "1K" | "2K" | "4K";
 type PanelKey = "reference" | "model" | "params" | "styles";
+
+type ElementItem = {
+  id: string;
+  name: string;
+  createdAt: string | number;
+  url: string;
+};
+
+type ElementImageInput =
+  | { kind: "dataUrl"; dataUrl: string; previewUrl: string; label: string }
+  | { kind: "asset"; assetId: string; previewUrl: string; label: string };
+
 
 const TOOL_ID = "image-generator";
 const REF_TOOL_ID = "image-generator-ref";
@@ -303,8 +47,58 @@ function formatErr(err: any): string {
 }
 
 // ===== Hidden Style Prompt =====
+const STYLE_PRESET_BLOCK_START = "[[STYLE_PRESET_START]]";
+const STYLE_PRESET_BLOCK_END = "[[STYLE_PRESET_END]]";
+const LEGACY_STYLE_PRESET_BLOCK_START = "/* STYLE_PRESET_START */";
+const LEGACY_STYLE_PRESET_BLOCK_END = "/* STYLE_PRESET_END */";
+
+// Lightroom usa estos marcadores. Aquí los soportamos SOLO para limpiar el prompt en UI.
+const LIGHTING_PRESET_BLOCK_START = "[[LIGHTING_PRESET_START]]";
+const LIGHTING_PRESET_BLOCK_END = "[[LIGHTING_PRESET_END]]";
+
 const STYLE_BLOCK_START = STYLE_PRESET_BLOCK_START;
 const STYLE_BLOCK_END = STYLE_PRESET_BLOCK_END;
+
+function escapeRegExp(s: string) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Para UI: limpia cualquier bloque oculto (STYLE + LIGHTING) para mostrar un prompt “limpio”.
+function removeStylePresetBlock(input: string) {
+  let out = input;
+  const pairs = [
+    { start: STYLE_PRESET_BLOCK_START, end: STYLE_PRESET_BLOCK_END },
+    { start: LEGACY_STYLE_PRESET_BLOCK_START, end: LEGACY_STYLE_PRESET_BLOCK_END },
+    { start: LIGHTING_PRESET_BLOCK_START, end: LIGHTING_PRESET_BLOCK_END },
+  ];
+
+  for (const { start, end } of pairs) {
+    const re = new RegExp(`${escapeRegExp(start)}[\\s\\S]*?${escapeRegExp(end)}\\n*`, "g");
+    out = out.replace(re, "");
+  }
+  return out.trim();
+}
+
+// Para generación: SOLO reemplaza el bloque STYLE (si existía) y deja intacto cualquier bloque LIGHTING.
+function removeStyleBlocksOnly(input: string) {
+  let out = input;
+  const pairs = [
+    { start: STYLE_PRESET_BLOCK_START, end: STYLE_PRESET_BLOCK_END },
+    { start: LEGACY_STYLE_PRESET_BLOCK_START, end: LEGACY_STYLE_PRESET_BLOCK_END },
+  ];
+
+  for (const { start, end } of pairs) {
+    const re = new RegExp(`${escapeRegExp(start)}[\\s\\S]*?${escapeRegExp(end)}\\n*`, "g");
+    out = out.replace(re, "");
+  }
+  return out.trim();
+}
+
+function applyStylePresetToPrompt(input: string, presetPrompt: string) {
+  const base = removeStyleBlocksOnly(input).trim();
+  const block = `${STYLE_PRESET_BLOCK_START}\n${presetPrompt}\n${STYLE_PRESET_BLOCK_END}\n\n`;
+  return `${block}${base}`.trim();
+}
 
 function splitStyleBlock(text: string): { cleaned: string; style: string | null } {
   const pairs = [
@@ -345,6 +139,7 @@ function attachStyleBlock(userPrompt: string, stylePrompt: string | null): strin
   }
   return `${STYLE_BLOCK_START}\n${s}\n${STYLE_BLOCK_END}\n\n${p}`.trim();
 }
+
 
 function makeTempAsset(item: { assetId: string; url: string }, prompt: string, ownerId: string): Asset {
   return {
