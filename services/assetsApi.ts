@@ -39,6 +39,15 @@ function mapRowToAsset(row: any): Asset {
   };
 }
 
+function isInternalAsset(asset: Asset): boolean {
+  const meta: any = (asset as any)?.meta || {};
+  const step = meta?.step;
+
+  // Oculta outputs internos del Paso 1 de FaceSwap (mannequin)
+  return meta?.tool === "faceswap" && meta?.mode === "mannequin" && (step === 1 || step === "1");
+}
+
+
 export async function listMyAssets(opts?: { type?: "image" | "video"; limit?: number }): Promise<Asset[]> {
   // 1) sacar token del login actual
   const { data: sessionData } = await supabase.auth.getSession();
@@ -76,7 +85,8 @@ export async function listMyAssets(opts?: { type?: "image" | "video"; limit?: nu
 
   return (Array.isArray(data.items) ? data.items : [])
     .map(mapRowToAsset)
-    .filter((a) => a.url); // quita vacíos
+    .filter((a) => a.url) // quita vacíos
+    .filter((a) => !isInternalAsset(a));
 }
 
 export async function listPublicAssets(opts?: { type?: "image" | "video"; limit?: number }): Promise<Asset[]> {
@@ -114,7 +124,8 @@ export async function listPublicAssets(opts?: { type?: "image" | "video"; limit?
 
   return (Array.isArray(data.items) ? data.items : [])
     .map(mapRowToAsset)
-    .filter((a) => a.url);
+    .filter((a) => a.url)
+    .filter((a) => !isInternalAsset(a));
 }
 
 async function authHeadersJson() {

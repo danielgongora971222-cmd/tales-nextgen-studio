@@ -191,12 +191,20 @@ export default function FaceSwapTool() {
           {step1Error && <div className="text-sm text-red-400">{step1Error}</div>}
 
           <div className="space-y-2">
-            <div className="text-sm font-bold">Resultado Paso 1</div>
-            {mannequin?.url ? (
-              <img src={mannequin.url} alt="Paso 1 maniquí" className="w-full rounded-2xl border border-white/10" />
+            <div className="text-sm font-bold">Estado Paso 1</div>
+
+            {step1Loading ? (
+              <div className="text-xs text-white/60 flex items-center gap-2">
+                Generando base…
+                <span className={styles.generateSpinner} />
+              </div>
+            ) : mannequin?.assetId ? (
+              <div className="text-sm text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-4">
+                ✅ Tarea completada. Continúa al <b>Paso 2</b>.
+              </div>
             ) : (
               <div className="text-xs text-white/60">
-                Ejecuta el Paso 1 para generar la base.
+                Ejecuta el Paso 1 para preparar la base (no se mostrará la imagen intermedia).
               </div>
             )}
           </div>
