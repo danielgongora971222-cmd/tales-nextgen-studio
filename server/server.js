@@ -21,6 +21,8 @@ import {
   VideoRequestSchema,
   RestyleSchema,
   FaceSwapSchema,
+  FaceSwapMannequinSchema,
+  FaceSwapInsertSchema,
   UpscaleSchema,
   UploadAssetSchema,
   KlingElementImageSchema,
@@ -1466,37 +1468,194 @@ app.delete("/api/kling/elements/:id", async (req, res) => {
 });
 
 
-app.post("/api/ai/faceswap", async (req, res, next) => {
-  try {
-    const aiClient = await ensureAI();
-    const body = FaceSwapSchema.parse(req.body);
+// ===============================
+// FACE SWAP (2 pasos)
+//  - Paso 1: convertir a maniquí
+//  - Paso 2: insertar identidad desde Element/Person SIN contaminar estilo
+// Modelo fijo: NanoBanana Pro (gemini-3-pro-image-preview)
+// ===============================
 
+const FACESWAP_MODEL = "gemini-3-pro-image-preview";
+
+function faceswapQualityHint(q) {
+  if (q === "1K") return "high quality, clean, sharp";
+  if (q === "2K") return "very high quality, ultra-detailed, crisp";
+  if (q === "4K") return "ultra high quality, 4k, hyper-detailed, razor sharp";
+  return "";
+}
+
+function mannequinSwapPrompt(swapType) {
+  switch (swapType) {
+    case "face":
+      return `
+MODE: FACE ONLY (KEEP HAIR/NECK/BODY/SCENE).
+- Convert ONLY the face region into a basic matte-white mannequin surface.
+- KEEP hair, neck, body, clothing, accessories, background EXACTLY unchanged.
+- Preserve the original expression/pose and camera.
+- CRITICAL: If there are wounds, dirt, stains, makeup smears, blood marks on the original face, preserve them EXACTLY (same position/shape/scale). Do NOT smear into a single red blob.
+`.trim();
+
+    case "face_hair":
+      return `
+MODE: FACE + HAIR (MANNEQUIN HEAD, NO HAIR).
+- Convert the face into a matte-white mannequin AND remove all hair (render a mannequin scalp).
+- KEEP neck, body, clothing, accessories, background EXACTLY unchanged.
+- Preserve expression/pose and camera.
+- CRITICAL: Preserve wounds/dirt/stains EXACTLY (same position/shape/scale). Do NOT turn them into one big stain.
+`.trim();
+
+    case "body":
+      return `
+MODE: FULL SUBJECT INCLUDING FACE + HAIR (KEEP CLOTHING/ACCESSORIES).
+- Convert the entire visible human anatomy (face + hair + neck + limbs/skin) into a matte-white mannequin.
+- KEEP clothing and accessories EXACTLY unchanged: same garments, textures, logos, folds, placement.
+- Keep background/lighting/camera identical.
+- CRITICAL: Preserve any visible wounds/dirt/stains on the person EXACTLY (position/shape/scale).
+`.trim();
+
+    case "body_clothes":
+    default:
+      return `
+MODE: FULL SUBJECT INCLUDING FACE + HAIR, REMOVE CLOTHING (MANNEQUIN BODY).
+- Convert the entire visible human anatomy (face + hair + neck + body) into a matte-white mannequin.
+- Remove clothing from the subject (mannequin should not wear the clothes), but keep the rest of the scene identical.
+- Keep background/lighting/camera identical.
+- Preserve any visible wounds/dirt/stains EXACTLY (position/shape/scale) as surface marks on the mannequin.
+`.trim();
+  }
+}
+
+function insertSwapPrompt(swapType) {
+  switch (swapType) {
+    case "face":
+      return `
+MODE: FACE ONLY (KEEP HAIR FROM IMAGE 1).
+- Replace ONLY the mannequin facial structure in IMAGE 1 with the donor person's face identity.
+- KEEP hair from IMAGE 1 EXACTLY: same silhouette, strands, volume, hairline and integration.
+- Preserve the mannequin base essence: if IMAGE 1 has stains/dirt/wounds on the face area, keep them as an overlay in the exact same places.
+- Match face size to the mannequin skull EXACTLY (NO big head / NO shrink head).
+`.trim();
+
+    case "face_hair":
+      return `
+MODE: FACE + HAIR (FULL HEAD).
+- Replace the entire mannequin head region in IMAGE 1 with the donor person's full head (including hair).
+- Preserve base essence: keep stains/dirt/wounds from IMAGE 1 in the same places (overlay them naturally).
+- Match head size, neck thickness, and alignment to IMAGE 1 EXACTLY (no disproportion).
+`.trim();
+
+    case "body":
+      return `
+MODE: FULL SUBJECT (INCLUDING FACE + HAIR), KEEP CLOTHING & ACCESSORIES FROM IMAGE 1.
+- Replace mannequin anatomy (head/face/hair/neck/arms/hands/legs as visible) with the donor person's anatomy.
+- CRITICAL: Keep clothing and accessories from IMAGE 1 EXACTLY as they are (same garments, logos, folds, placement).
+- Preserve base essence: keep stains/dirt/wounds from IMAGE 1 in the same places over the inserted anatomy.
+- Match proportions/pose exactly (no resizing body parts).
+`.trim();
+
+    case "body_clothes":
+    default:
+      return `
+MODE: FULL SUBJECT (INCLUDING FACE + HAIR) WITH CLOTHING REMOVED IN BASE.
+- Replace mannequin body with the donor person, preserving pose/scale exactly.
+- IMPORTANT SAFETY: Do NOT produce explicit nudity. If needed, render a neutral seamless base-layer (plain bodysuit) to preserve modesty.
+- Preserve base essence: keep stains/dirt/wounds from IMAGE 1 in the same places over the inserted anatomy.
+- Match proportions exactly (no disproportion).
+`.trim();
+  }
+}
+
+async function klingElementIdToInlineParts({ donorElementId, requesterId, max = 4 }) {
+  const { data: row, error: dbErr } = await supabaseAdmin
+    .from("kling_elements")
+    .select("id, owner_id, image_paths")
+    .eq("id", donorElementId)
+    .single();
+
+  if (dbErr || !row) {
+    throw httpError(404, "ELEMENT_NOT_FOUND", "Element/person no encontrado.");
+  }
+  if (row.owner_id !== requesterId) {
+    throw httpError(403, "ELEMENT_FORBIDDEN", "No tienes acceso a ese Element/person.");
+  }
+
+  const paths = Array.isArray(row.image_paths) ? row.image_paths.slice(0, max) : [];
+  if (!paths.length) {
+    throw httpError(400, "ELEMENT_NO_IMAGES", "El Element/person no tiene imágenes.");
+  }
+
+  const signedUrls = await Promise.all(paths.map((p) => signStoragePath(p, 60 * 10)));
+
+  const parts = [];
+  for (let i = 0; i < signedUrls.length; i++) {
+    const u = signedUrls[i];
+    const r = await fetch(u);
+    if (!r.ok) {
+      throw httpError(502, "ELEMENT_IMAGE_FETCH_FAILED", `No pude descargar una imagen del Element/person (HTTP ${r.status}).`);
+    }
+    const mimeType = r.headers.get("content-type") || "image/png";
+    const buf = Buffer.from(await r.arrayBuffer());
+    parts.push({ inlineData: { mimeType, data: buf.toString("base64") } });
+  }
+
+  return parts;
+}
+
+// -------------------------------
+// PASO 1: convertir imagen a MANIQUÍ
+// -------------------------------
+app.post("/api/ai/faceswap/mannequin", async (req, res, next) => {
+  try {
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
 
-    const selectedModel = body.model || "imagen-3.0-generate-002";
+    const body = FaceSwapMannequinSchema.parse(req.body);
+    const { targetAssetId, swapType, quality } = body;
 
-    const src = parseDataUrl(body.sourceDataUrl);
-    const tgt = parseDataUrl(body.targetDataUrl);
+    const aiClient = await ensureAI();
 
-    const prompt =
-      body.prompt ||
-      "Swap the face from the SOURCE onto the TARGET naturally. Match lighting, skin tone, and preserve realism.";
+    const qHint = faceswapQualityHint(quality);
+    const systemText = `
+You are a senior, high-end PHOTO-REALISTIC VFX compositor.
+
+GOAL:
+- IMAGE 1 is the ORIGINAL photo. You must edit it as instructed.
+- Keep camera, framing, lighting, background, props, mood and composition pixel-consistent.
+- Output a SINGLE image (never a collage/grid). No text/logos/watermarks/UI.
+
+HARD RULES:
+- Do NOT change scene lighting or color grading.
+- Do NOT change hair/clothes/background unless the mode explicitly says so.
+- Preserve micro-details (dirt, wounds, stains, makeup, scratches) with exact placement.
+${qHint ? `QUALITY: ${qHint}` : ""}
+`.trim();
+
+    const swapSpecific = mannequinSwapPrompt(swapType);
+
+    const imgPart = await assetIdToInlinePart(targetAssetId, user.id);
+
+    const config = {
+      responseModalities: ["Image"],
+      imageConfig: { imageSize: quality },
+      temperature: 0.1,
+      topP: 0.5,
+      topK: 16,
+    };
 
     const response = await aiClient.models.generateContent({
-      model: selectedModel,
+      model: FACESWAP_MODEL,
       contents: [
         {
           role: "user",
           parts: [
-            { text: "SOURCE IMAGE (face to copy):" },
-            { inlineData: { mimeType: src.mimeType, data: src.base64 } },
-            { text: "TARGET IMAGE (face to replace):" },
-            { inlineData: { mimeType: tgt.mimeType, data: tgt.base64 } },
-            { text: `INSTRUCTIONS: ${prompt}` },
+            { text: systemText },
+            { text: "IMAGE 1 — ORIGINAL (edit this image):" },
+            imgPart,
+            { text: swapSpecific },
           ],
         },
       ],
+      config,
     });
 
     const dataUrl = await extractImageDataUrl(response);
@@ -1505,18 +1664,194 @@ app.post("/api/ai/faceswap", async (req, res, next) => {
       userId: user.id,
       tool: "faceswap",
       dataUrl,
-      nameHint: "faceswap",
+      nameHint: `faceswap-mannequin-${swapType}-${quality}`,
     });
+
+    const meta = {
+      tool: "faceswap",
+      step: 1,
+      mode: "mannequin",
+      provider: "google",
+      model: FACESWAP_MODEL,
+      swapType,
+      quality,
+      sourceAssetId: targetAssetId,
+    };
 
     const assetId = await insertAssetRow({
       ownerId: user.id,
       type: "image",
       tool: "faceswap",
-      name: "faceswap",
-      prompt,
+      name: `faceswap-step1-${swapType}`,
+      prompt: `faceswap step1 mannequin (${swapType})`,
       storagePath,
       isPublic: false,
-      meta: { toolVersion: 1 },
+      meta,
+    });
+
+    const urlExpiresInSeconds = 60 * 60;
+    const url = await signStoragePath(storagePath, urlExpiresInSeconds);
+
+    return res.json({ ok: true, url, assetId, urlExpiresInSeconds });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// -------------------------------
+// PASO 2: insertar identidad desde Element/Person EN el MANIQUÍ
+// -------------------------------
+app.post("/api/ai/faceswap/insert", async (req, res, next) => {
+  try {
+    const { user, error } = await requireUser(req);
+    if (error) return res.status(401).json({ ok: false, error });
+
+    const body = FaceSwapInsertSchema.parse(req.body);
+    const { baseAssetId, donorElementId, swapType, quality } = body;
+
+    const aiClient = await ensureAI();
+
+    const qHint = faceswapQualityHint(quality);
+    const systemText = `
+You are a senior, high-end PHOTO-REALISTIC VFX compositor.
+
+GOAL:
+- IMAGE 1 is the MANNEQUIN BASE and defines the final canvas, lighting, camera, environment and composition.
+- IMAGE 2..N are DONOR ID references (may be collages/multiple angles). Use them ONLY for identity/appearance.
+- Replace ONLY the mannequin region indicated by the mode with donor identity.
+- Everything else must remain pixel-consistent with IMAGE 1.
+
+GLOBAL HARD RULES:
+- Keep EXACT framing, crop, perspective, lens look and composition from IMAGE 1.
+- Do NOT import donor lighting, background, composition, or camera.
+- Output a SINGLE image (never a collage/grid). No text/logos/watermarks/UI.
+- Preserve the "essence" of IMAGE 1: dirt/wounds/stains/marks should remain in the same locations after insertion (overlay naturally).
+- Avoid proportion errors: match head size/neck thickness/body scale to IMAGE 1 EXACTLY (no big head, no tiny head).
+${qHint ? `QUALITY: ${qHint}` : ""}
+`.trim();
+
+    const swapSpecific = insertSwapPrompt(swapType);
+
+    const basePart = await assetIdToInlinePart(baseAssetId, user.id);
+    const donorParts = await klingElementIdToInlineParts({ donorElementId, requesterId: user.id, max: 4 });
+
+    const parts = [
+      { text: systemText },
+      { text: "IMAGE 1 — MANNEQUIN BASE (defines final canvas):" },
+      basePart,
+      { text: "IMAGE 2..N — DONOR ID REFERENCES (identity only; ignore their background/layout):" },
+    ];
+
+    for (let i = 0; i < donorParts.length; i++) {
+      parts.push({ text: `DONOR REF ${i + 1}` });
+      parts.push(donorParts[i]);
+    }
+
+    parts.push({ text: swapSpecific });
+
+    const config = {
+      responseModalities: ["Image"],
+      imageConfig: { imageSize: quality },
+      temperature: 0.1,
+      topP: 0.5,
+      topK: 16,
+    };
+
+    const response = await aiClient.models.generateContent({
+      model: FACESWAP_MODEL,
+      contents: [{ role: "user", parts }],
+      config,
+    });
+
+    const dataUrl = await extractImageDataUrl(response);
+
+    const { storagePath } = await uploadBase64ToStorage({
+      userId: user.id,
+      tool: "faceswap",
+      dataUrl,
+      nameHint: `faceswap-insert-${swapType}-${quality}`,
+    });
+
+    const meta = {
+      tool: "faceswap",
+      step: 2,
+      mode: "insert",
+      provider: "google",
+      model: FACESWAP_MODEL,
+      swapType,
+      quality,
+      baseAssetId,
+      donorElementId,
+    };
+
+    const assetId = await insertAssetRow({
+      ownerId: user.id,
+      type: "image",
+      tool: "faceswap",
+      name: `faceswap-step2-${swapType}`,
+      prompt: `faceswap step2 insert (${swapType})`,
+      storagePath,
+      isPublic: false,
+      meta,
+    });
+
+    const urlExpiresInSeconds = 60 * 60;
+    const url = await signStoragePath(storagePath, urlExpiresInSeconds);
+
+    return res.json({ ok: true, url, assetId, urlExpiresInSeconds });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// -------------------------------
+// (Opcional) Compat: endpoint viejo /api/ai/faceswap (NO lo usamos en el nuevo tool)
+// -------------------------------
+app.post("/api/ai/faceswap", async (req, res, next) => {
+  try {
+    const { user, error } = await requireUser(req);
+    if (error) return res.status(401).json({ ok: false, error });
+
+    const body = FaceSwapSchema.parse(req.body);
+    const { sourceDataUrl, targetDataUrl } = body;
+
+    const aiClient = await ensureAI();
+
+    const response = await aiClient.models.generateContent({
+      model: FACESWAP_MODEL,
+      contents: [
+        {
+          role: "user",
+          parts: [
+            { text: "Replace the face from the source image into the target image. Keep target style/lighting." },
+            { inlineData: { data: sourceDataUrl.split(",")[1], mimeType: "image/png" } },
+            { inlineData: { data: targetDataUrl.split(",")[1], mimeType: "image/png" } },
+          ],
+        },
+      ],
+      config: { responseModalities: ["Image"], imageConfig: { imageSize: "2K" } },
+    });
+
+    const dataUrl = await extractImageDataUrl(response);
+
+    const { storagePath } = await uploadBase64ToStorage({
+      userId: user.id,
+      tool: "faceswap",
+      dataUrl,
+      nameHint: "faceswap-legacy",
+    });
+
+    const meta = { tool: "faceswap", step: 0, mode: "legacy", provider: "google", model: FACESWAP_MODEL };
+
+    const assetId = await insertAssetRow({
+      ownerId: user.id,
+      type: "image",
+      tool: "faceswap",
+      name: "faceswap-legacy",
+      prompt: "faceswap legacy",
+      storagePath,
+      isPublic: false,
+      meta,
     });
 
     const urlExpiresInSeconds = 60 * 60;

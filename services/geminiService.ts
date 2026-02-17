@@ -173,19 +173,44 @@ export const generateRestyle = async (assetUrl: string, prompt: string): Promise
   return out;
 };
 
-export const generateFaceSwap = async (sourceUrl: string, targetUrl: string): Promise<string> => {
-  const sourceDataUrl = await backend.getAssetData(sourceUrl);
-  const targetDataUrl = await backend.getAssetData(targetUrl);
+export type FaceSwapType = "face" | "face_hair" | "body" | "body_clothes";
 
-  const res: any = await apiPost("/api/ai/faceswap", {
-    sourceDataUrl,
-    targetDataUrl,
-    model: GeminiModel.IMAGE,
+export type FaceSwapResult = { url: string; assetId: string; urlExpiresInSeconds?: number };
+
+export const faceswapStep1MakeMannequin = async (params: {
+  targetAssetId: string;
+  swapType: FaceSwapType;
+  quality: ImageGenQuality;
+}): Promise<FaceSwapResult> => {
+  const res: any = await apiPost("/api/ai/faceswap/mannequin", {
+    targetAssetId: params.targetAssetId,
+    swapType: params.swapType,
+    quality: params.quality,
   });
+
   const out = res.url || res.dataUrl;
   if (!out) throw new Error("No image returned from API.");
-  return out;
+  return { url: out, assetId: res.assetId || "unknown", urlExpiresInSeconds: res.urlExpiresInSeconds };
 };
+
+export const faceswapStep2InsertFromElement = async (params: {
+  baseAssetId: string;
+  donorElementId: string;
+  swapType: FaceSwapType;
+  quality: ImageGenQuality;
+}): Promise<FaceSwapResult> => {
+  const res: any = await apiPost("/api/ai/faceswap/insert", {
+    baseAssetId: params.baseAssetId,
+    donorElementId: params.donorElementId,
+    swapType: params.swapType,
+    quality: params.quality,
+  });
+
+  const out = res.url || res.dataUrl;
+  if (!out) throw new Error("No image returned from API.");
+  return { url: out, assetId: res.assetId || "unknown", urlExpiresInSeconds: res.urlExpiresInSeconds };
+};
+
 
 export const generateUpscale = async (assetUrl: string, scale: number): Promise<string> => {
   const imageDataUrl = await backend.getAssetData(assetUrl);

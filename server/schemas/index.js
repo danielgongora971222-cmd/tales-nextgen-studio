@@ -171,6 +171,19 @@ export const FaceSwapSchema = z.object({
   model: z.string().optional(),
 });
 
+export const FaceSwapMannequinSchema = z.object({
+  targetAssetId: z.string().uuid(),
+  swapType: z.enum(["face", "face_hair", "body", "body_clothes"]).default("face"),
+  quality: z.enum(["1K", "2K", "4K"]).default("2K"),
+});
+
+export const FaceSwapInsertSchema = z.object({
+  baseAssetId: z.string().uuid(),
+  donorElementId: z.string().uuid(),
+  swapType: z.enum(["face", "face_hair", "body", "body_clothes"]).default("face"),
+  quality: z.enum(["1K", "2K", "4K"]).default("2K"),
+});
+
 export const UpscaleSchema = z.object({
   imageDataUrl: Base64ImageSchema,
   scale: z.number().int().min(2).max(8).default(2),
