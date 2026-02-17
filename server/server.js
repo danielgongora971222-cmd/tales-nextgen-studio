@@ -1885,7 +1885,7 @@ app.post("/api/ai/faceswap/insert", async (req, res, next) => {
 
   const swapSpecific = insertSwapPrompt(swapType);
 
-  const parts = [
+    const parts = [
     { text: systemText },
     { text: "IMAGE 1 — BASE (Paso 1, define el canvas final):" },
     basePart,
@@ -1894,20 +1894,13 @@ app.post("/api/ai/faceswap/insert", async (req, res, next) => {
     { text: swapSpecific },
   ];
 
-    for (let i = 0; i < donorParts.length; i++) {
-      parts.push({ text: `DONOR REF ${i + 1}` });
-      parts.push(donorParts[i]);
-    }
-
-    parts.push({ text: swapSpecific });
-
-    const config = {
-      responseModalities: ["Image"],
-      imageConfig: { imageSize: quality },
-      temperature: 0.1,
-      topP: 0.5,
-      topK: 16,
-    };
+  const config = {
+    responseModalities: ["Image"],
+    imageConfig: { imageSize: quality },
+    temperature: 0.1,
+    topP: 0.5,
+    topK: 16,
+  };
 
     const response = await aiClient.models.generateContent({
       model: FACESWAP_MODEL,
