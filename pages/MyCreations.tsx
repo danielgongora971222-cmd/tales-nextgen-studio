@@ -29,6 +29,39 @@ const FILTERS: { key: FilterKey; label: string }[] = [
   { key: "extras", label: "Extras" },
 ];
 
+function escapeRegExp(input: string) {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function removeHiddenBlocks(input: string) {
+  let out = input || "";
+  const pairs = [
+    { start: "[[STYLE_PRESET_START]]", end: "[[STYLE_PRESET_END]]" },
+    { start: "/* STYLE_PRESET_START */", end: "/* STYLE_PRESET_END */" },
+    { start: "[[LIGHTING_PRESET_START]]", end: "[[LIGHTING_PRESET_END]]" },
+    { start: "[[UPSCALE_MASTER_START]]", end: "[[UPSCALE_MASTER_END]]" },
+  ];
+
+  for (const { start, end } of pairs) {
+    const re = new RegExp(`${escapeRegExp(start)}[\\s\\S]*?${escapeRegExp(end)}\\n*`, "g");
+    out = out.replace(re, "");
+  }
+  return out.trim();
+}
+
+function getToolId(asset: Asset) {
+  const meta = (asset as any)?.meta || {};
+  return typeof meta.tool === "string" ? meta.tool : "";
+}
+
+function getCaption(asset: Asset) {
+  const tool = getToolId(asset);
+  if (tool === "upscaler") return "UPSCALE";
+  const cleaned = removeHiddenBlocks(asset.prompt || "");
+  return cleaned || asset.name || "—";
+}
+
+
 const MyCreations: React.FC = () => {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(false);
@@ -75,7 +108,13 @@ const MyCreations: React.FC = () => {
         case "element":
           return tool === "element-library" || meta.isElement === true;
         case "reference":
-          return tool === "image-generator-ref" || category === "reference";
+          return (
+            tool === "image-generator-ref" ||
+            tool === "upscaler-ref" ||
+            tool === "restyler-ref" ||
+            tool === "lightroom-ref" ||
+            category === "reference"
+          );
         case "audio":
           return tool === "audio" || category === "audio";
         case "extras":
@@ -136,7 +175,7 @@ const MyCreations: React.FC = () => {
 
                 <div className={generatorStyles.tileMeta}>
                   <span className={generatorStyles.tileCaption}>
-                    {asset.prompt || asset.name || "—"}
+                    {getCaption(asset)}
                   </span>
                 </div>
 

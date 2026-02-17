@@ -1,0 +1,9 @@
+[[STYLE_PRESET_START]]
+(AQUÍ VA EL PROMPT DEL PRESET)
+[[STYLE_PRESET_END]]
+
+cd C:\PROYECTOS\tales-nextgen-studio
+git status
+git add .
+git commit -m "Add Lightroom tool (lighting presets, no mixing with styles)"
+git push origin staging

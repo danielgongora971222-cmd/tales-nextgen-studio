@@ -23,7 +23,13 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
     let out = input;
     const pairs = [
       { start: '[[STYLE_PRESET_START]]', end: '[[STYLE_PRESET_END]]' },
-      { start: '/* STYLE_PRESET_START */', end: '/* STYLE_PRESET_END */' }
+      { start: '/* STYLE_PRESET_START */', end: '/* STYLE_PRESET_END */' },
+
+      // Lightroom hidden lighting block
+      { start: '[[LIGHTING_PRESET_START]]', end: '[[LIGHTING_PRESET_END]]' },
+
+      // Upscaler hidden master block
+      { start: '[[UPSCALE_MASTER_START]]', end: '[[UPSCALE_MASTER_END]]' }
     ];
 
     for (const { start, end } of pairs) {
@@ -31,6 +37,11 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
       out = out.replace(re, '');
     }
     return out.trim();
+  }
+
+  function isUpscalerAsset(asset: Asset) {
+    const meta = (asset as any)?.meta || {};
+    return typeof meta.tool === 'string' && meta.tool === 'upscaler';
   }
 
   function prettyModelLabel(modelId: string | null) {
@@ -158,7 +169,7 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
 
               <div className={generatorStyles.tileMeta}>
                 <span className={generatorStyles.tileCaption}>
-                  {removeStylePresetBlock(asset.prompt || '') || asset.name || '—'}
+                  {isUpscalerAsset(asset) ? 'UPSCALE' : (removeStylePresetBlock(asset.prompt || '') || asset.name || '—')}
                 </span>
                 <span className={styles.feedOwner}>by User_{asset.ownerId.slice(0,4)}</span>
               </div>
@@ -254,7 +265,7 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
                 <div className={generatorStyles.recipeBlock}>
                   <div className={generatorStyles.recipeLabel}>Prompt</div>
                   <div className={generatorStyles.recipeValue}>
-                    {removeStylePresetBlock(viewer.prompt || '') || '—'}
+                    {isUpscalerAsset(viewer) ? 'Hidden' : (removeStylePresetBlock(viewer.prompt || '') || '—')}
                   </div>
                 </div>
 
