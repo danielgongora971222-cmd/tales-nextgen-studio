@@ -7,6 +7,7 @@ import VideoGenHub from './pages/VideoGenHub';
 import MyCreations from './pages/MyCreations';
 import ImageGeneratorTool from './pages/tools/ImageGeneratorTool';
 import RestylerTool from './pages/tools/RestylerTool';
+import LightroomTool from './pages/tools/LightroomTool';
 import FaceSwapTool from './pages/tools/FaceSwapTool';
 import UpscalerTool from './pages/tools/UpscalerTool';
 import EditorTool from './pages/tools/EditorTool';
@@ -70,6 +71,8 @@ const AppContent: React.FC = () => {
         return <ImageGeneratorTool />;
       case AppRoute.TOOL_RESTYLER:
         return <RestylerTool />;
+      case AppRoute.TOOL_LIGHTROOM:
+        return <LightroomTool />;
       case AppRoute.TOOL_FACESWAP:
         return <FaceSwapTool />;
       case AppRoute.TOOL_UPSCALER:

@@ -17,6 +17,19 @@ const getIconForTool = (id: string) => {
         case 'restyler': return (
             <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="m9.06 11.9 8.07-8.06a2.85 2.85 0 1 1 4.03 4.03l-8.06 8.08"/><path d="M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2.5 2.24 0 .46.62.82 1 .82a3 3 0 0 0 3-3 3 3 0 0 0 3-3c0-1.67-1.34-3.02-3-3.02z"/></svg>
         );
+        case 'lightroom': return (
+            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M12 3v2"/>
+              <path d="M12 19v2"/>
+              <path d="M3 12h2"/>
+              <path d="M19 12h2"/>
+              <path d="M5.6 5.6l1.4 1.4"/>
+              <path d="M17 17l1.4 1.4"/>
+              <path d="M18.4 5.6 17 7"/>
+              <path d="M7 17l-1.4 1.4"/>
+              <circle cx="12" cy="12" r="4"/>
+            </svg>
+        );
         case 'faceswap': return (
             <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="7" r="4"/><path d="M12 11c0 2-2 3-5 3"/><path d="M12 11c0 2 2 3 5 3"/><path d="M5 21v-3.8c0-1.8 1.4-3.2 3.2-3.2h7.6c1.8 0 3.2 1.4 3.2 3.2V21"/></svg>
         );

@@ -11,6 +11,7 @@ export enum AppRoute {
   TOOL_GENERATOR = 'tool-generator',
   TOOL_EDITOR = 'tool-editor',
   TOOL_RESTYLER = 'tool-restyler',
+  TOOL_LIGHTROOM = 'tool-lightroom',
   TOOL_FACESWAP = 'tool-faceswap',
   TOOL_UPSCALER = 'tool-upscaler',
   TOOL_ANGLES = 'tool-angles',

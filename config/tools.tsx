@@ -24,11 +24,18 @@ export const TOOLS_REGISTRY: ToolDefinition[] = [
     description: 'Advanced controls: Seed, Steps, Negative Prompts.',
     status: 'ready'
   },
-  {
+    {
     id: 'restyler',
     label: 'Restyler',
     route: AppRoute.TOOL_RESTYLER,
     description: 'Transform existing images into new styles.',
+    status: 'ready'
+  },
+  {
+    id: 'lightroom',
+    label: 'Lightroom',
+    route: AppRoute.TOOL_LIGHTROOM,
+    description: 'Relight and color-grade images using lighting presets.',
     status: 'ready'
   },
   {

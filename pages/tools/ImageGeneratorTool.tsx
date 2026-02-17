@@ -148,7 +148,7 @@ Composition: centered hero shot, elegant negative space, minimal clutter.
 Quality: extremely sharp, high contrast micro-detail, commercial polish.
     `.trim(),
   },
-  {
+    {
     id: "pixar_3d",
     name: "3D Pixar-ish",
     coverUrl: "/style-presets/pixar/cover.jpg",
@@ -158,6 +158,121 @@ STYLE: High-quality 3D animation look (family-friendly, stylized).
 Materials: smooth but detailed shaders, soft bounce light, clean render.
 Colors: vibrant but balanced, pleasing tones, gentle bloom.
 Rules: no uncanny realism, keep shapes clean, avoid noise/artifacts.
+    `.trim(),
+  },
+];
+
+// ✅ New: Lighting presets (used by the Lightroom tool)
+// NOTE: coverUrl/exampleUrls are optional; you can add real preview images later in /public/lighting-presets/...
+export const LIGHTING_PRESETS: StylePreset[] = [
+  {
+    id: "golden_hour",
+    name: "Golden Hour",
+    prompt: `
+LIGHTING ONLY: Warm golden-hour sun.
+- Preserve the subject identity, pose, composition, and style EXACTLY.
+- Do NOT change clothing, props, background layout, or add/remove objects.
+- Change ONLY lighting/exposure: warm highlights, soft shadows, gentle glow.
+- Color grade: warm temperature, slightly desaturated, natural film look.
+Negative: face redesign, eye change, new objects, pose change, crop, zoom.
+    `.trim(),
+  },
+  {
+    id: "blue_hour",
+    name: "Blue Hour",
+    prompt: `
+LIGHTING ONLY: Cool blue-hour ambient light.
+- Preserve the scene and subject EXACTLY; no design/style changes.
+- Change ONLY lighting: cool shadows, subtle cyan/blue cast, soft contrast.
+- Keep readability; avoid underexposure and heavy noise.
+Negative: face change, new props, background swap, crop/zoom.
+    `.trim(),
+  },
+  {
+    id: "studio_softbox",
+    name: "Studio Softbox",
+    prompt: `
+LIGHTING ONLY: Clean studio softbox lighting.
+- Preserve identity and composition EXACTLY.
+- Smooth, flattering soft key + gentle fill; controlled specular highlights.
+- Neutral color temp, minimal color shift, premium product-grade polish.
+Negative: redesign, texture/style change, extra objects, crop.
+    `.trim(),
+  },
+  {
+    id: "dramatic_rim",
+    name: "Dramatic Rim Light",
+    prompt: `
+LIGHTING ONLY: Strong rim/back light with cinematic separation.
+- Preserve subject and environment EXACTLY.
+- Add rim highlight on edges; keep face lighting natural (no harsh relight).
+- Increase depth with controlled shadows; avoid crushed blacks.
+Negative: face/eye changes, new objects, pose/camera changes.
+    `.trim(),
+  },
+  {
+    id: "moody_low_key",
+    name: "Moody Low-Key",
+    prompt: `
+LIGHTING ONLY: Low-key moody lighting.
+- Preserve identity and composition EXACTLY.
+- Deeper shadows, selective highlights, subtle film grain, rich blacks.
+- Keep important details readable; avoid extreme darkness.
+Negative: face redesign, scene change, crop/zoom.
+    `.trim(),
+  },
+  {
+    id: "high_key_beauty",
+    name: "High-Key Beauty",
+    prompt: `
+LIGHTING ONLY: High-key bright beauty lighting.
+- Preserve identity and composition EXACTLY.
+- Even illumination, soft shadows, clean whites; minimal contrast.
+- Keep textures natural; no plastic HDR look.
+Negative: face reshape, new props, background change.
+    `.trim(),
+  },
+  {
+    id: "overcast_soft",
+    name: "Overcast Soft",
+    prompt: `
+LIGHTING ONLY: Overcast daylight (soft, shadowless).
+- Preserve the subject and scene EXACTLY.
+- Soft diffuse light, low contrast, neutral tones; gentle lift in shadows.
+Negative: redesign, new objects, crop, zoom.
+    `.trim(),
+  },
+  {
+    id: "neon_night",
+    name: "Neon Night",
+    prompt: `
+LIGHTING ONLY: Night neon signage glow.
+- Preserve identity and composition EXACTLY.
+- Add colored neon bounce (magenta/cyan), reflective highlights, soft haze.
+- Do NOT change scene layout; only lighting + grading.
+Negative: new objects, face/eye change, pose change.
+    `.trim(),
+  },
+  {
+    id: "candlelight",
+    name: "Candlelight",
+    prompt: `
+LIGHTING ONLY: Warm candlelight.
+- Preserve identity and composition EXACTLY.
+- Warm, localized highlights; soft falloff; gentle shadow movement feel.
+- Avoid smoky noise; keep details clean.
+Negative: redesign, new objects, crop/zoom.
+    `.trim(),
+  },
+  {
+    id: "hard_noon_sun",
+    name: "Hard Noon Sun",
+    prompt: `
+LIGHTING ONLY: Hard midday sun.
+- Preserve identity and composition EXACTLY.
+- Strong directional light, crisp shadows, higher contrast; natural colors.
+- Avoid overexposure; keep skin and highlights controlled.
+Negative: face change, new props, camera change.
     `.trim(),
   },
 ];
