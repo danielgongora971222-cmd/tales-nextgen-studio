@@ -8,9 +8,22 @@ interface FileUploaderProps {
   accept?: string;
   uploadTool?: string;
   uploadCategory?: string;
+  /**
+   * Cómo ajustar la preview dentro del recuadro.
+   * - "cover" recorta para llenar.
+   * - "contain" muestra completa sin recorte (letterboxing).
+   */
+  previewFit?: "cover" | "contain";
 }
 
-const FileUploader: React.FC<FileUploaderProps> = ({ label, onAssetReady, accept = "image/*", uploadTool = "upload", uploadCategory }) => {
+  const FileUploader: React.FC<FileUploaderProps> = ({
+    label,
+    onAssetReady,
+    accept = "image/*",
+    uploadTool = "upload",
+    uploadCategory,
+    previewFit = "cover",
+  }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [preview, setPreview] = useState<{ url: string; kind: "image" | "video" } | null>(null);
@@ -23,6 +36,9 @@ const FileUploader: React.FC<FileUploaderProps> = ({ label, onAssetReady, accept
       }
     };
   }, [preview]);
+
+  const fitClass = previewFit === "contain" ? "object-contain" : "object-cover";
+
 
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const inputEl = event.currentTarget;
@@ -73,14 +89,20 @@ const FileUploader: React.FC<FileUploaderProps> = ({ label, onAssetReady, accept
             {preview.kind === "video" ? (
               <video
                 src={preview.url}
-                className="w-full h-full object-cover"
+                className={`w-full h-full ${fitClass}`}
+                style={{ objectFit: previewFit, objectPosition: "center" }}
                 muted
                 playsInline
                 loop
                 autoPlay
               />
             ) : (
-              <img src={preview.url} alt="Upload preview" className="w-full h-full object-cover" />
+              <img
+                src={preview.url}
+                alt="Upload preview"
+                className={`w-full h-full ${fitClass}`}
+                style={{ objectFit: previewFit, objectPosition: "center" }}
+              />
             )}
             {!uploading && (
               <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">

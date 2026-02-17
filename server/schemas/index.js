@@ -173,14 +173,14 @@ export const FaceSwapSchema = z.object({
 
 export const FaceSwapMannequinSchema = z.object({
   targetAssetId: z.string().uuid(),
-  swapType: z.enum(["face", "face_hair", "body", "body_clothes"]).default("face"),
+  swapType: z.enum(["face", "face_hair", "body", "body_clothes", "clothes_only"]).default("face"),
   quality: z.enum(["1K", "2K", "4K"]).default("2K"),
 });
 
 export const FaceSwapInsertSchema = z.object({
   baseAssetId: z.string().uuid(),
   donorElementId: z.string().uuid(),
-  swapType: z.enum(["face", "face_hair", "body", "body_clothes"]).default("face"),
+  swapType: z.enum(["face", "face_hair", "body", "body_clothes", "clothes_only"]).default("face"),
   quality: z.enum(["1K", "2K", "4K"]).default("2K"),
 });
 

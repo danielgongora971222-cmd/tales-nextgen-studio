@@ -173,7 +173,8 @@ export const generateRestyle = async (assetUrl: string, prompt: string): Promise
   return out;
 };
 
-export type FaceSwapType = "face" | "face_hair" | "body" | "body_clothes";
+// NOTE: "clothes_only" = Solo Ropa (mantiene identidad del base; solo reemplaza ropa en Paso 2)
+export type FaceSwapType = "face" | "face_hair" | "body" | "body_clothes" | "clothes_only";
 
 export type FaceSwapResult = { url: string; assetId: string; urlExpiresInSeconds?: number };
 

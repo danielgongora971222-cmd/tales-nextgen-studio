@@ -1513,6 +1513,16 @@ MODE: FULL SUBJECT INCLUDING FACE + HAIR (KEEP CLOTHING/ACCESSORIES).
 - CRITICAL: Preserve any visible wounds/dirt/stains on the person EXACTLY (position/shape/scale).
 `.trim();
 
+case "clothes_only":
+  return `
+MODE: CLOTHES ONLY (KEEP PERSON IDENTITY/PHYSIQUE).
+- KEEP the person's face, hair, skin, body shape, hands, and pose EXACTLY unchanged.
+- Convert ONLY the clothing/garments into a matte-white neutral placeholder (like a mannequin cloth surface).
+- Keep accessories that are not clothing (jewelry, glasses) unless they are part of the garment.
+- Keep background/lighting/camera identical.
+- CRITICAL: Do NOT remove/change any skin. Preserve modesty and coverage.
+`.trim();
+
     case "body_clothes":
     default:
       return `
@@ -1534,6 +1544,7 @@ MODE: FACE ONLY (KEEP HAIR FROM IMAGE 1).
 - KEEP hair from IMAGE 1 EXACTLY: same silhouette, strands, volume, hairline and integration.
 - Preserve the mannequin base essence: if IMAGE 1 has stains/dirt/wounds on the face area, keep them as an overlay in the exact same places.
 - Match face size to the mannequin skull EXACTLY (NO big head / NO shrink head).
+- FINAL CHECK: There must be ZERO visible mannequin surface on the face. Replace any remaining mannequin material with natural skin.
 `.trim();
 
     case "face_hair":
@@ -1542,6 +1553,7 @@ MODE: FACE + HAIR (FULL HEAD).
 - Replace the entire mannequin head region in IMAGE 1 with the donor person's full head (including hair).
 - Preserve base essence: keep stains/dirt/wounds from IMAGE 1 in the same places (overlay them naturally).
 - Match head size, neck thickness, and alignment to IMAGE 1 EXACTLY (no disproportion).
+- FINAL CHECK: There must be ZERO visible mannequin surface on head/neck. Replace any remaining mannequin material with natural skin.
 `.trim();
 
     case "body":
@@ -1551,6 +1563,7 @@ MODE: FULL SUBJECT (INCLUDING FACE + HAIR), KEEP CLOTHING & ACCESSORIES FROM IMA
 - CRITICAL: Keep clothing and accessories from IMAGE 1 EXACTLY as they are (same garments, logos, folds, placement).
 - Preserve base essence: keep stains/dirt/wounds from IMAGE 1 in the same places over the inserted anatomy.
 - Match proportions/pose exactly (no resizing body parts).
+- FINAL CHECK: There must be ZERO visible mannequin surface anywhere. Replace any remaining mannequin material with natural skin.
 `.trim();
 
     case "body_clothes":
@@ -1561,9 +1574,88 @@ MODE: FULL SUBJECT (INCLUDING FACE + HAIR) WITH CLOTHING REMOVED IN BASE.
 - IMPORTANT SAFETY: Do NOT produce explicit nudity. If needed, render a neutral seamless base-layer (plain bodysuit) to preserve modesty.
 - Preserve base essence: keep stains/dirt/wounds from IMAGE 1 in the same places over the inserted anatomy.
 - Match proportions exactly (no disproportion).
+- FINAL CHECK: There must be ZERO visible mannequin surface anywhere. Replace any remaining mannequin material with natural skin.
+`.trim();
+
+    case "clothes_only":
+      return `
+MODE: CLOTHES ONLY (KEEP PERSON FROM IMAGE 1).
+- Replace ONLY the clothing/garment placeholder region in IMAGE 1 with the donor outfit/clothing identity from IMAGE 2.
+- KEEP the person's face, hair, skin, body shape, hands, and pose from IMAGE 1 EXACTLY unchanged.
+- Match garment scale, folds and drape to the pose in IMAGE 1 (no floating clothes).
+- IMPORTANT SAFETY: Do NOT produce explicit nudity. Keep modesty. If needed, keep a neutral base-layer under the outfit.
+- FINAL CHECK: There must be ZERO visible mannequin/placeholder material anywhere. If any remains, replace it with realistic fabric or skin.
 `.trim();
   }
 }
+
+function tryGetImageDimsFromBuffer(buf, mimeType) {
+  try {
+    const mt = String(mimeType || "").toLowerCase();
+
+    if (mt.includes("png") && buf.length >= 24) {
+      const isPng =
+        buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47 &&
+        buf[4] === 0x0d && buf[5] === 0x0a && buf[6] === 0x1a && buf[7] === 0x0a;
+      if (isPng) {
+        const width = buf.readUInt32BE(16);
+        const height = buf.readUInt32BE(20);
+        if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
+          return { width, height };
+        }
+      }
+    }
+
+    if ((mt.includes("jpeg") || mt.includes("jpg")) && buf.length >= 4) {
+      if (buf[0] !== 0xff || buf[1] !== 0xd8) return null;
+
+      let i = 2;
+      while (i + 9 < buf.length) {
+        if (buf[i] !== 0xff) {
+          i += 1;
+          continue;
+        }
+
+        const marker = buf[i + 1];
+
+        if (marker === 0xd9 || marker === 0xd8) {
+          i += 2;
+          continue;
+        }
+
+        if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+          i += 2;
+          continue;
+        }
+
+        const length = buf.readUInt16BE(i + 2);
+        if (!length || length < 2) break;
+
+        const isSOF =
+          marker === 0xc0 || marker === 0xc1 || marker === 0xc2 || marker === 0xc3 ||
+          marker === 0xc5 || marker === 0xc6 || marker === 0xc7 ||
+          marker === 0xc9 || marker === 0xca || marker === 0xcb ||
+          marker === 0xcd || marker === 0xce || marker === 0xcf;
+
+        if (isSOF) {
+          const height = buf.readUInt16BE(i + 5);
+          const width = buf.readUInt16BE(i + 7);
+          if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
+            return { width, height };
+          }
+          return null;
+        }
+
+        i += 2 + length;
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
 
 async function klingElementIdToInlineParts({ donorElementId, requesterId, max = 4 }) {
   const { data: row, error: dbErr } = await supabaseAdmin
@@ -1706,41 +1798,101 @@ app.post("/api/ai/faceswap/insert", async (req, res, next) => {
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
 
-    const body = FaceSwapInsertSchema.parse(req.body);
-    const { baseAssetId, donorElementId, swapType, quality } = body;
+  const body = FaceSwapInsertSchema.parse(req.body);
+  const { baseAssetId, donorElementId } = body;
+  let { swapType, quality } = body;
 
-    const aiClient = await ensureAI();
+  // -----------------------------
+  // 🔒 BLOQUEO (Paso 2 hereda SIEMPRE swapType + quality del Paso 1)
+  // -----------------------------
+  const { data: baseRow, error: baseErr } = await supabaseAdmin
+    .from("assets")
+    .select("id, owner_id, is_public, type, meta")
+    .eq("id", baseAssetId)
+    .maybeSingle();
 
-    const qHint = faceswapQualityHint(quality);
-    const systemText = `
-You are a senior, high-end PHOTO-REALISTIC VFX compositor.
+  if (baseErr) throw httpError(500, "DB_ERROR", baseErr.message);
+  if (!baseRow) throw httpError(404, "ASSET_NOT_FOUND", "Base asset no encontrado.");
+  if (baseRow.type !== "image") throw httpError(400, "ASSET_NOT_IMAGE", "El baseAssetId no es una imagen.");
+  if (baseRow.owner_id !== user.id && !baseRow.is_public) {
+    throw httpError(403, "ASSET_FORBIDDEN", "No tienes acceso al baseAssetId.");
+  }
 
-GOAL:
-- IMAGE 1 is the MANNEQUIN BASE and defines the final canvas, lighting, camera, environment and composition.
-- IMAGE 2..N are DONOR ID references (may be collages/multiple angles). Use them ONLY for identity/appearance.
-- Replace ONLY the mannequin region indicated by the mode with donor identity.
-- Everything else must remain pixel-consistent with IMAGE 1.
+  const baseMeta = baseRow.meta || {};
+  const lockedSwapType = baseMeta?.swapType || swapType;
+  const lockedQuality = baseMeta?.quality || quality;
+  swapType = lockedSwapType;
+  quality = lockedQuality;
 
-GLOBAL HARD RULES:
-- Keep EXACT framing, crop, perspective, lens look and composition from IMAGE 1.
-- Do NOT import donor lighting, background, composition, or camera.
-- Output a SINGLE image (never a collage/grid). No text/logos/watermarks/UI.
-- Preserve the "essence" of IMAGE 1: dirt/wounds/stains/marks should remain in the same locations after insertion (overlay naturally).
-- Avoid proportion errors: match head size/neck thickness/body scale to IMAGE 1 EXACTLY (no big head, no tiny head).
-${qHint ? `QUALITY: ${qHint}` : ""}
-`.trim();
+  // -----------------------------
+  // ✅ Donor debe venir de Element Library (General Image Generator)
+  // -----------------------------
+  const { data: donorRow, error: donorErr } = await supabaseAdmin
+    .from("assets")
+    .select("id, owner_id, is_public, type, meta")
+    .eq("id", donorElementId)
+    .maybeSingle();
 
-    const swapSpecific = insertSwapPrompt(swapType);
+  if (donorErr) throw httpError(500, "DB_ERROR", donorErr.message);
+  if (!donorRow) throw httpError(404, "ASSET_NOT_FOUND", "Donor element no encontrado.");
+  if (donorRow.type !== "image") throw httpError(400, "ASSET_NOT_IMAGE", "El donorElementId no es una imagen.");
+  if (donorRow.owner_id !== user.id && !donorRow.is_public) {
+    throw httpError(403, "ASSET_FORBIDDEN", "No tienes acceso al donorElementId.");
+  }
 
-    const basePart = await assetIdToInlinePart(baseAssetId, user.id);
-    const donorParts = await klingElementIdToInlineParts({ donorElementId, requesterId: user.id, max: 4 });
+  const donorMeta = donorRow.meta || {};
+  const isElementLibrary = donorMeta?.tool === "element-library" || donorMeta?.isElement === true;
+  if (!isElementLibrary) {
+    throw httpError(
+      400,
+      "DONOR_NOT_ELEMENT_LIBRARY",
+      "El donante debe ser un Element creado en General Image Generator (tool: element-library)."
+    );
+  }
 
-    const parts = [
-      { text: systemText },
-      { text: "IMAGE 1 — MANNEQUIN BASE (defines final canvas):" },
-      basePart,
-      { text: "IMAGE 2..N — DONOR ID REFERENCES (identity only; ignore their background/layout):" },
-    ];
+  const aiClient = await ensureAI();
+
+  const qHint = faceswapQualityHint(quality);
+  const basePart = await assetIdToInlinePart(baseAssetId, user.id);
+  const donorPart = await assetIdToInlinePart(donorElementId, user.id);
+
+  const baseBuf = Buffer.from(basePart.inlineData.data, "base64");
+  const dims = tryGetImageDimsFromBuffer(baseBuf, basePart.inlineData.mimeType);
+  const sizeRule = dims
+    ? `OUTPUT SIZE: EXACTLY ${dims.width}x${dims.height} pixels (same as IMAGE 1). Do NOT crop or resize.`
+    : "OUTPUT SIZE: Keep EXACT pixel dimensions and aspect ratio of IMAGE 1. Do NOT crop or resize.";
+
+  const systemText = `
+  You are a senior, high-end PHOTO-REALISTIC VFX compositor.
+
+  GOAL:
+  - IMAGE 1 is the BASE from Step 1 and defines the final canvas, lighting, camera, environment and composition.
+  - IMAGE 2 is the DONOR Element reference. Use it ONLY for identity/appearance/clothing.
+  - Replace ONLY the placeholder/mannequin region indicated by the mode with donor identity/clothing.
+  - Everything else must remain pixel-consistent with IMAGE 1.
+
+  GLOBAL HARD RULES:
+  - Keep EXACT framing, crop, perspective, lens look and composition from IMAGE 1.
+  - ${sizeRule}
+  - Do NOT import donor lighting, background, composition, or camera.
+  - Output a SINGLE image (never a collage/grid). No text/logos/watermarks/UI.
+  - Preserve the "essence" of IMAGE 1: dirt/wounds/stains/marks should remain in the same locations after insertion (overlay naturally).
+  - Avoid proportion errors: match head size/neck thickness/body scale to IMAGE 1 EXACTLY (no big head, no tiny head).
+  - ABSOLUTE: There must be ZERO visible mannequin/plastic/ceramic surface anywhere in the final image.
+  - If any mannequin material remains, you MUST replace it with realistic human skin (or realistic fabric for clothes).
+  ${qHint ? `QUALITY: ${qHint}` : ""}
+  `.trim();
+
+  const swapSpecific = insertSwapPrompt(swapType);
+
+  const parts = [
+    { text: systemText },
+    { text: "IMAGE 1 — BASE (Paso 1, define el canvas final):" },
+    basePart,
+    { text: "IMAGE 2 — DONOR Element (Element Library, identidad/ropa solamente):" },
+    donorPart,
+    { text: swapSpecific },
+  ];
 
     for (let i = 0; i < donorParts.length; i++) {
       parts.push({ text: `DONOR REF ${i + 1}` });
