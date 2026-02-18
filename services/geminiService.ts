@@ -93,6 +93,15 @@ export const generateImage = async (
 export type ImageGenQuality = "1K" | "2K" | "4K";
 export type ImageGenItem = { url: string; assetId: string };
 
+// Token -> Asset binding for prompts that use @mentions (e.g. "add @logo to @img2").
+// The backend uses this to order refs and adapt the prompt per provider/model.
+export type PromptReferenceRole = "character" | "background" | "element";
+export type PromptReference = {
+  token: string;   // e.g. "@img1" | "@bg" | "@logo"
+  assetId: string; // UUID from your assets table
+  role: PromptReferenceRole;
+};
+
 export type GenerateImageBatchOptions = {
   aspectRatio?: string;
   count?: number;
@@ -106,6 +115,9 @@ export type GenerateImageBatchOptions = {
   characterAssetIds?: string[];
   styleAssetId?: string;
   backgroundAssetId?: string;
+
+  // ✅ Token bindings (robust @mentions)
+  promptReferences?: PromptReference[];
 
   // ✅ Camera Angles (Qwen Multiple Angles, Fal.ai)
   horizontalAngle?: number; // 0..360
@@ -135,6 +147,9 @@ export const generateImageBatch = async (
   characterAssetIds: options?.characterAssetIds,
   styleAssetId: options?.styleAssetId,
   backgroundAssetId: options?.backgroundAssetId,
+
+  // ✅ @mentions bindings
+  promptReferences: options?.promptReferences,
 
   // ✅ Camera Angles
   horizontalAngle: options?.horizontalAngle,

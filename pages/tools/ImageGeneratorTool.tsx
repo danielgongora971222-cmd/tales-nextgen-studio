@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import styles from "./ImageGeneratorTool.module.css";
-import { generateImageBatch } from "../../services/geminiService";
+import { generateImageBatch, type PromptReference } from "../../services/geminiService";
+import { MentionTextarea, type MentionItem } from "../../components/MentionTextarea";
 import { deleteAsset, listMyAssets, publishAsset, unpublishAsset, uploadUserAsset } from "../../services/assetsApi";
 import { useAuth } from "../../contexts/AuthContext";
 import { supabase } from "../../services/supabaseClient";
@@ -987,11 +988,67 @@ useEffect(() => {
   }
 
   function getRefTag(slot: RefSlot): string {
-    if (slot === "background") return "@background";
-    if (slot === "char1") return "@reference1";
-    if (slot === "char2") return "@reference2";
-    return "@reference3";
+    if (slot === "background") return "@bg";
+    if (slot === "char1") return "@img1";
+    if (slot === "char2") return "@img2";
+    return "@img3";
   }
+
+  const promptMentionItems: MentionItem[] = useMemo(() => {
+  const used = new Set<string>();
+  const out: MentionItem[] = [];
+
+  const pushUnique = (it: MentionItem) => {
+    let token = String(it.token || "").trim();
+    if (!token) return;
+
+    if (used.has(token)) {
+      const base = token;
+      let n = 2;
+      while (used.has(`${base}_${n}`)) n++;
+      token = `${base}_${n}`;
+    }
+
+    used.add(token);
+    out.push({ ...it, token });
+  };
+
+  if (refs.char1) pushUnique({ id: refs.char1.id, token: "@img1", label: "img1", kind: "ref", previewUrl: refs.char1.url });
+  if (refs.char2) pushUnique({ id: refs.char2.id, token: "@img2", label: "img2", kind: "ref", previewUrl: refs.char2.url });
+  if (refs.char3) pushUnique({ id: refs.char3.id, token: "@img3", label: "img3", kind: "ref", previewUrl: refs.char3.url });
+
+  const selected = (selectedElementAssetIds || []).slice(0, 5);
+  for (let i = 0; i < selected.length; i++) {
+    const id = selected[i];
+    const el = elements.find((x) => x.id === id);
+    const name = el?.name || `element_${i + 1}`;
+    const token = makeElementTag(name) || `@element_${i + 1}`;
+    pushUnique({ id, token, label: name, kind: "element", previewUrl: el?.url || null });
+  }
+
+  if (refs.background) pushUnique({ id: refs.background.id, token: "@bg", label: "bg", kind: "bg", previewUrl: refs.background.url });
+
+  return out;
+}, [refs, selectedElementAssetIds, elements]);
+
+const promptReferences: PromptReference[] = useMemo(() => {
+  const base: PromptReference[] = (promptMentionItems || []).map((it) => ({
+    token: it.token,
+    assetId: it.id,
+    role: it.kind === "bg" ? "background" : it.kind === "element" ? "element" : "character",
+  }));
+
+  // Compat prompts viejos
+  const alias: PromptReference[] = [];
+  for (const r of base) {
+    if (r.token === "@img1") alias.push({ ...r, token: "@reference1" });
+    if (r.token === "@img2") alias.push({ ...r, token: "@reference2" });
+    if (r.token === "@img3") alias.push({ ...r, token: "@reference3" });
+    if (r.token === "@bg") alias.push({ ...r, token: "@background" });
+  }
+
+  return [...base, ...alias];
+}, [promptMentionItems]);
 
   async function resolveInputToUrl(input: ElementImageInput): Promise<string> {
     if (input.kind === "dataUrl") return input.dataUrl;
@@ -1334,9 +1391,6 @@ useEffect(() => {
 
   function setRefSlot(slot: RefSlot, asset: Asset | null) {
     setRefs((prev) => {
-      if (asset) {
-        appendPromptTag(getRefTag(slot));
-      }
       // Background es independiente
       if (slot === "background") {
         return { ...prev, background: asset };
@@ -1411,6 +1465,20 @@ useEffect(() => {
       // lo limpiamos y re-adjuntamos una versión corta para no romper el límite.
       const split = kling ? splitStyleBlock(basePrompt) : { cleaned: basePrompt, style: null };
       let finalPrompt = kling ? split.cleaned : basePrompt;
+      {
+        const tokenRe = /@[a-z0-9_]+/gi;
+        const tokensInPrompt: string[] = Array.from(
+          new Set<string>((finalPrompt.match(tokenRe) ?? []).map((t) => String(t)))
+        );
+        const known = new Set((promptMentionItems || []).map((x) => x.token));
+        const unknown = tokensInPrompt.filter((t) => !known.has(t));
+        if (unknown.length) {
+          throw new Error(
+            `Tokens no vinculados: ${unknown.join(", ")}. ` +
+              `Selecciona las referencias/Elements primero y luego usa '@' para insertarlos.`
+          );
+        }
+      }
 
       if (backgroundAssetId) {
         finalPrompt = `${finalPrompt}\n\n${BACKGROUND_AUTO_PROMPT}`.trim();
@@ -1471,6 +1539,7 @@ useEffect(() => {
         nameHint: "generated",
         characterAssetIds: mergedCharacterAssetIds,
         backgroundAssetId,
+        promptReferences,
       });
 
       await reloadHistory();
@@ -1957,12 +2026,13 @@ useEffect(() => {
               </div>           
 
               <div className={styles.promptEditor}>
-                <textarea
-                  className={styles.prompt}
+                <MentionTextarea
                   value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
+                  onChange={setPrompt}
                   placeholder="Escribe tu prompt y comienza a crear..."
                   rows={2}
+                  textareaClassName={styles.prompt}
+                  items={promptMentionItems}
                 />
               </div>
             </div>

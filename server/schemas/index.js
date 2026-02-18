@@ -31,10 +31,25 @@ export const ImageRequestSchema = z.object({
   // Referencias por Asset IDs (opcional)
   characterAssetIds: z.array(z.string()).max(10).optional(),
   styleAssetId: z.string().optional(),
-  backgroundAssetId: z.string().optional(),
+    backgroundAssetId: z.string().optional(),
+
+  // ✅ Token -> Asset binding for robust @mentions in prompt
+  // Example: [{ token:"@img1", assetId:"uuid", role:"character" }]
+  promptReferences: z
+    .array(
+      z.object({
+        token: z.string().min(2).max(64),
+        assetId: z.string().uuid(),
+        role: z.enum(["character", "background", "element"]),
+      })
+    )
+    .max(20)
+    .optional(),
+
   // ✅ Kling-only (Element Library): IDs UUID de tu tabla public.kling_elements
   // (estos NO son los element_id bigint que devuelve Kling)
   klingElementIds: z.array(z.string().uuid()).max(5).optional(),
+
 
     // ✅ Camera Angles (Qwen Multiple Angles, Fal.ai)
   // Ranges basados en la doc del endpoint:

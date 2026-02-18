@@ -66,25 +66,29 @@ export function createAiImageRouter(ctx) {
   router.post("/ai/image", async (req, res, next) => {
   try {
 
-    const {
-      prompt,
-      model,
-      aspectRatio,
-      count,
-      quality,
-      tool,
-      nameHint,
-      klingElementIds,
-      characterAssetIds,
-      styleAssetId,
-      backgroundAssetId,
+      const {
+        prompt,
+        model,
+        aspectRatio,
+        count,
+        quality,
+        tool,
+        nameHint,
+        klingElementIds,
+        characterAssetIds,
+        styleAssetId,
+        backgroundAssetId,
 
-      // ✅ Camera Angles (Qwen Multiple Angles)
-      horizontalAngle,
-      verticalAngle,
-      zoom,
-      loraScale,
-    } = ImageRequestSchema.parse(req.body);
+        // ✅ @mentions binding
+        promptReferences,
+
+        // ✅ Camera Angles (Qwen Multiple Angles)
+        horizontalAngle,
+        verticalAngle,
+        zoom,
+        loraScale,
+      } = ImageRequestSchema.parse(req.body);
+
 
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
@@ -103,16 +107,115 @@ export function createAiImageRouter(ctx) {
     const arNonOpenAI = aspectRatio === "auto" ? undefined : aspectRatio;
 
     // =============================
+    // @mentions binding (token -> asset) for robust multi-reference prompts
+    // =============================
+    const legacyRefs = [
+      ...((characterAssetIds || []).map((id, i) => ({ label: `Character reference ${i + 1}`, id }))),
+      ...(styleAssetId ? [{ label: "Style reference", id: styleAssetId }] : []),
+      ...(backgroundAssetId ? [{ label: "Background reference", id: backgroundAssetId }] : []),
+    ];
+
+    const tokenRefs = (() => {
+      const list = Array.isArray(promptReferences) ? promptReferences : [];
+      if (!list.length) return [];
+
+      // map token -> { assetId, role }
+      const map = new Map();
+      for (const r of list) {
+        const token = typeof r?.token === "string" ? r.token.trim() : "";
+        const assetId = typeof r?.assetId === "string" ? r.assetId.trim() : "";
+        const role = typeof r?.role === "string" ? r.role : "character";
+        if (!token || !assetId) continue;
+        map.set(token, { token, assetId, role });
+      }
+      if (!map.size) return [];
+
+      // tokens in prompt (unique, in order)
+      const orderedTokens = [];
+      const seen = new Set();
+      const re = /@[a-z0-9_]+/gi;
+      const txt = String(prompt || "");
+      let m;
+      while ((m = re.exec(txt)) !== null) {
+        const t = String(m[0]);
+        if (seen.has(t)) continue;
+        seen.add(t);
+        orderedTokens.push(t);
+      }
+
+      const out = [];
+      const used = new Set();
+
+      for (const t of orderedTokens) {
+        const r = map.get(t);
+        if (!r) continue;
+        used.add(r.token);
+        out.push({ label: r.token, id: r.assetId, role: r.role });
+      }
+
+      // include remaining bindings not mentioned in prompt (stable order)
+      for (const r of map.values()) {
+        if (used.has(r.token)) continue;
+        out.push({ label: r.token, id: r.assetId, role: r.role });
+      }
+
+      return out;
+    })();
+
+    const hasTokenRefs = Array.isArray(tokenRefs) && tokenRefs.length > 0;
+    const effectiveRefs = hasTokenRefs ? tokenRefs : legacyRefs;
+
+    const escapeRegExp = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    const replaceTokenExact = (text, token, replacement) => {
+      // match token but NOT as a prefix of a longer token
+      const re = new RegExp(`${escapeRegExp(token)}(?![a-z0-9_])`, "g");
+      return String(text || "").replace(re, replacement);
+    };
+
+    const replaceMentionsWithImageNumbers = (text, refs) => {
+      let out = String(text || "");
+      for (let i = 0; i < refs.length; i++) {
+        const token = refs[i]?.label;
+        if (!token) continue;
+        out = replaceTokenExact(out, token, `image ${i + 1}`);
+      }
+      return out;
+    };
+
+    const replaceMentionsWithFalImageTags = (text, refs) => {
+      let out = String(text || "");
+      for (let i = 0; i < refs.length; i++) {
+        const token = refs[i]?.label;
+        if (!token) continue;
+        out = replaceTokenExact(out, token, `@Image${i + 1}`);
+      }
+      return out;
+    };
+
+    const replaceMentionsWithKlingPlaceholders = (text, refs) => {
+      let out = String(text || "");
+      for (let i = 0; i < refs.length; i++) {
+        const token = refs[i]?.label;
+        if (!token) continue;
+        out = replaceTokenExact(out, token, `<<<image_${i + 1}>>>`);
+      }
+      return out;
+    };
+
+    const appendImageNumberMapping = (text, refs) => {
+      if (!refs.length) return String(text || "");
+      const mapping = refs.map((r, i) => `image ${i + 1} = ${r.label}`).join(", ");
+      return `${String(text || "").trim()}\n\nReference mapping: ${mapping}`.trim();
+    };
+
+    // =============================
     // OPENAI GPT IMAGE
     // =============================
         if (selectedModel.startsWith("openai:")) {
       const { model: openaiModel, quality: openaiQuality } = parseOpenAIImageModel(selectedModel);
 
-      const refs = [
-        ...((characterAssetIds || []).map((id, i) => ({ label: `Character reference ${i + 1}`, id }))),
-        ...(styleAssetId ? [{ label: "Style reference", id: styleAssetId }] : []),
-        ...(backgroundAssetId ? [{ label: "Background reference", id: backgroundAssetId }] : []),
-      ];
+      const refs = effectiveRefs;
 
       // Limitar aspect ratios soportados
       if (aspectRatio && aspectRatio !== "auto" && !["1:1", "3:2", "2:3"].includes(aspectRatio)) {
@@ -141,14 +244,18 @@ export function createAiImageRouter(ctx) {
         ? await Promise.all(refs.map((r) => assetIdToImageFile(r.id, user.id)))
         : [];
 
+      const openaiPrompt = hasTokenRefs
+        ? appendImageNumberMapping(replaceMentionsWithImageNumbers(prompt, tokenRefs), tokenRefs)
+        : prompt;
+
       for (let i = 0; i < nRequested; i++) {
         const dataUrl = await openaiGenerateImageDataUrl({
           model: openaiModel,         // gpt-image-1.5
-          prompt,
+          prompt: openaiPrompt,
           size,
           quality: openaiQuality,     // auto | high
           images: imageFiles,         // refs
-        });
+        })
 
         const { storagePath } = await uploadBase64ToStorage({
           userId: user.id,
@@ -204,23 +311,31 @@ export function createAiImageRouter(ctx) {
       const dims = falDimsFromAspectQuality(aspectRatio, quality);
 
       // BFL soporta hasta 8 imágenes de referencia por request
-      const refIds = [
-        ...(Array.isArray(characterAssetIds) ? characterAssetIds : []),
-        ...(backgroundAssetId ? [backgroundAssetId] : []),
-        ...(styleAssetId ? [styleAssetId] : []),
-      ].filter(Boolean);
+            const refIds = (
+        hasTokenRefs
+          ? tokenRefs.map((r) => r.id)
+          : [
+              ...(Array.isArray(characterAssetIds) ? characterAssetIds : []),
+              ...(backgroundAssetId ? [backgroundAssetId] : []),
+              ...(styleAssetId ? [styleAssetId] : []),
+            ]
+      ).filter(Boolean);
 
       const refUrls = refIds.length
         ? await Promise.all(refIds.slice(0, 8).map((id) => assetIdToSignedUrl(id, user.id, 60 * 10)))
         : [];
 
+      const tokenRefs8 = hasTokenRefs ? tokenRefs.slice(0, Math.min(refUrls.length, 8)) : [];
       let bflPrompt = prompt;
-      if (refUrls.length) {
+      if (hasTokenRefs && tokenRefs8.length) {
+        bflPrompt = appendImageNumberMapping(replaceMentionsWithImageNumbers(prompt, tokenRefs8), tokenRefs8);
+      } else if (refUrls.length) {
         // En BFL puedes referenciar "image 1", "image 2", etc.
         bflPrompt =
           `${prompt}\n\n` +
           `Reference images by number: ${refUrls.map((_, i) => `image ${i + 1}`).join(", ")}.`;
       }
+
 
       const payload = {
         prompt: bflPrompt,
@@ -340,13 +455,18 @@ export function createAiImageRouter(ctx) {
           const klingAspectRatio = allowedAspectRatios.has(mappedAR) ? mappedAR : "auto";
 
           // Referencias -> image_list (máx 10)
-          const refIds = [
-            ...(Array.isArray(characterAssetIds) ? characterAssetIds : []),
-            ...(backgroundAssetId ? [backgroundAssetId] : []),
-            ...(styleAssetId ? [styleAssetId] : []),
-          ]
+          const refIds = (
+            hasTokenRefs
+              ? tokenRefs.map((r) => r.id)
+              : [
+                  ...(Array.isArray(characterAssetIds) ? characterAssetIds : []),
+                  ...(backgroundAssetId ? [backgroundAssetId] : []),
+                  ...(styleAssetId ? [styleAssetId] : []),
+                ]
+          )
             .filter(Boolean)
             .slice(0, 10);
+
 
           const refUrls = refIds.length
             ? await Promise.all(refIds.map((id) => assetIdToSignedUrl(id, user.id, 60 * 10)))
@@ -433,6 +553,10 @@ export function createAiImageRouter(ctx) {
 
           // Si hay imágenes y el prompt NO trae <<<image_#>>>, añadimos placeholders automáticamente
           let promptForKling = String(prompt || "");
+          if (hasTokenRefs) {
+            const tokenRefs10 = tokenRefs.slice(0, Math.min(refIds.length, 10));
+            promptForKling = replaceMentionsWithKlingPlaceholders(promptForKling, tokenRefs10);
+          }
           if (image_list.length) {
             const hasPlaceholders = /<<<\s*image_\d+\s*>>>/i.test(promptForKling);
             if (!hasPlaceholders) {
@@ -440,6 +564,7 @@ export function createAiImageRouter(ctx) {
               promptForKling = `${promptForKling}\n\n${placeholders}`.trim();
             }
           }
+
 
           // ✅ Prompt templating para elements:
           // Si el usuario no incluyó referencias, auto-agrega <<<element_1>>> ... según selección.
@@ -655,13 +780,18 @@ export function createAiImageRouter(ctx) {
       const urlExpiresInSeconds = 60 * 60;
 
       // Referencias (máx 10 para O3)
-      const refIds = [
-        ...(Array.isArray(characterAssetIds) ? characterAssetIds : []),
-        ...(backgroundAssetId ? [backgroundAssetId] : []),
-        ...(styleAssetId ? [styleAssetId] : []),
-      ]
+      const refIds = (
+        hasTokenRefs
+          ? tokenRefs.map((r) => r.id)
+          : [
+              ...(Array.isArray(characterAssetIds) ? characterAssetIds : []),
+              ...(backgroundAssetId ? [backgroundAssetId] : []),
+              ...(styleAssetId ? [styleAssetId] : []),
+            ]
+      )
         .filter(Boolean)
         .slice(0, 10);
+
 
       const refUrls = refIds.length
         ? await Promise.all(refIds.map((id) => assetIdToSignedUrl(id, user.id, 60 * 10)))
@@ -699,7 +829,12 @@ export function createAiImageRouter(ctx) {
           );
         }
 
-        const safePrompt = ensureO3Prompt(prompt, refUrls.length);
+        const tokenRefs10 = hasTokenRefs ? tokenRefs.slice(0, Math.min(refUrls.length, 10)) : [];
+        const basePrompt = hasTokenRefs && tokenRefs10.length
+          ? replaceMentionsWithFalImageTags(prompt, tokenRefs10)
+          : prompt;
+        const safePrompt = ensureO3Prompt(basePrompt, refUrls.length);
+
 
         falInput = {
           prompt: safePrompt,
@@ -831,11 +966,16 @@ export function createAiImageRouter(ctx) {
       const urlExpiresInSeconds = 60 * 60;
 
       // Para esta herramienta exigimos EXACTAMENTE 1 imagen de referencia
-      const refIds = [
-        ...((characterAssetIds || []).map((id) => id)),
-        ...(styleAssetId ? [styleAssetId] : []),
-        ...(backgroundAssetId ? [backgroundAssetId] : []),
-      ].filter(Boolean);
+      const refIds = (
+        hasTokenRefs
+          ? [tokenRefs[0]?.id].filter(Boolean)
+          : [
+              ...((characterAssetIds || []).map((id) => id)),
+              ...(styleAssetId ? [styleAssetId] : []),
+              ...(backgroundAssetId ? [backgroundAssetId] : []),
+            ]
+      ).filter(Boolean);
+
 
       if (!refIds.length) {
         throw httpError(
@@ -984,12 +1124,11 @@ export function createAiImageRouter(ctx) {
     }
 
     // 4) Referencias opcionales (IDs de assets guardados en tu DB)
-    const refs = [
-      ...((characterAssetIds || []).map((id, i) => ({ label: `Character reference ${i + 1}`, id }))),
-      ...(styleAssetId ? [{ label: "Style reference", id: styleAssetId }] : []),
-      ...(backgroundAssetId ? [{ label: "Background reference", id: backgroundAssetId }] : []),
-    ];
+    // - si vienen promptReferences, usamos labels = tokens (@img1, @bg, @logo...)
+    // - si no, caemos a la lógica legacy (Character reference 1, etc.)
+    const refs = effectiveRefs;
     const hasRefs = refs.length > 0;
+
 
     // 5) Generar N imágenes (1..4)
     const nRequested = Math.min(Number(count || 1), maxCount);
