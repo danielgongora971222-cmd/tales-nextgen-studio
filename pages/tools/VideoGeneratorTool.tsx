@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import styles from "./VideoGeneratorTool.module.css";
 import ErrorModal from "../../components/ErrorModal";
+import { MentionTextarea, type MentionItem } from "../../components/MentionTextarea";
 import { deleteAsset, listMyAssets, publishAsset, unpublishAsset, uploadUserAsset } from "../../services/assetsApi";
 import { useAuth } from "../../contexts/AuthContext";
 import type { Asset } from "../../types";
@@ -49,6 +50,48 @@ type VideoGenResponse =
   | { ok: false; error: any };
 
 type KlingV3Shot = { prompt: string; durationSeconds: number; elementIds?: string[] };
+
+function slugifyName(s: string) {
+  return (
+    (s || "")
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 28) || "element"
+  );
+}
+
+function makeElementTag(name: string) {
+  return `@${slugifyName(name || "element")}`;
+}
+
+function buildElementTokenMap(elements: KlingElement[]) {
+  const reserved = new Set(["@element1", "@element2", "@element3", "@element4", "@element5"]);
+  const used = new Set<string>(reserved);
+  const map = new Map<string, string>(); // elementId -> token
+
+  for (const el of elements) {
+    const base = makeElementTag(el.name || "element");
+    let token = base;
+
+    if (used.has(token)) {
+      let n = 2;
+      while (used.has(`${base}_${n}`)) n++;
+      token = `${base}_${n}`;
+    }
+
+    used.add(token);
+    map.set(el.id, token);
+  }
+  return map;
+}
+
+function extractMentionTokens(text: string) {
+  return (text || "").match(/@[a-z0-9_]+/gi) ?? [];
+}
+
 
 const TOOL_ID = "video-generator";
 const FRAME_UPLOAD_TOOL = "video-gen-frame";
@@ -474,6 +517,86 @@ const VideoGeneratorTool: React.FC = () => {
   // ✅ Kling O3 se comporta como “V3 family” en UI (Elements + Multishot)
   const isKlingO3 = modelNorm === KLING_O3_PRO;
   const isKlingV3 = modelNorm === KLING_V3 || isKlingO3;
+    // ===============================
+  // Mentions (@) para Elements (Kling V3 / O3)
+  // - El usuario escribe tags tipo @mi_elemento (slug del nombre).
+  // - Antes de enviar al modelo, los convertimos a @Element1, @Element2...
+  // ===============================
+  const elementTokenById = useMemo(() => (isKlingV3 ? buildElementTokenMap(klingElements) : new Map<string, string>()), [isKlingV3, klingElements]);
+
+  const elementTokenToId = useMemo(() => {
+    const m = new Map<string, string>(); // token(lower) -> elementId
+    for (const [id, token] of elementTokenById.entries()) {
+      m.set(token.toLowerCase(), id);
+    }
+    return m;
+  }, [elementTokenById]);
+
+  const elementMentionItems = useMemo<MentionItem[]>(() => {
+    if (!isKlingV3) return [];
+    return klingElements.map((el) => {
+      const token = elementTokenById.get(el.id) || makeElementTag(el.name || "element");
+      const previewUrl = el.previewUrl || el.imageUrls?.[0] || null;
+      return { id: el.id, token, label: el.name || "Element", kind: "element", previewUrl };
+    });
+  }, [isKlingV3, klingElements, elementTokenById]);
+
+  // Sync Elements con el prompt:
+  // - Si borras un token de Element del prompt -> se deselecciona.
+  // - Si agregas un token de Element al prompt -> se selecciona (hasta 5).
+  const prevPromptElementTokensRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!isKlingV3) return;
+    if (multishotEnabled) return;
+
+    const tokens = extractMentionTokens(prompt).map((t) => t.toLowerCase());
+    const current = new Set<string>();
+    for (const t of tokens) if (elementTokenToId.has(t)) current.add(t);
+
+    const prev = prevPromptElementTokensRef.current;
+    const removed: string[] = [];
+    const added: string[] = [];
+
+    for (const t of prev) if (!current.has(t)) removed.push(t);
+    for (const t of current) if (!prev.has(t)) added.push(t);
+
+    if (removed.length || added.length) {
+      setSelectedKlingElementIds((prevIds) => {
+        const beforeIds = Array.isArray(prevIds) ? prevIds : [];
+        let nextIds = beforeIds;
+
+        if (removed.length) {
+          const removedIds = removed.map((t) => elementTokenToId.get(t)).filter(Boolean) as string[];
+          if (removedIds.length) nextIds = nextIds.filter((id) => !removedIds.includes(id));
+        }
+
+        if (added.length) {
+          const temp = [...nextIds];
+          for (const t of added) {
+            const id = elementTokenToId.get(t);
+            if (!id) continue;
+            if (temp.includes(id)) continue;
+            if (temp.length >= 5) break;
+            temp.push(id);
+          }
+          nextIds = temp;
+        }
+
+        if (nextIds.length > 5) nextIds = nextIds.slice(0, 5);
+
+        const same = nextIds.length === beforeIds.length && nextIds.every((id, i) => id === beforeIds[i]);
+        return same ? beforeIds : nextIds;
+      });
+    }
+
+    prevPromptElementTokensRef.current = current;
+
+    if (current.size > 5) {
+      setError("No puedes usar más de 5 Elements a la vez. Elimina alguno del prompt.");
+    }
+  }, [prompt, elementTokenToId, isKlingV3, multishotEnabled]);
+
 
   const isVeoFamily = modelNorm.startsWith("veo-");
   const veoIsFast = modelNorm === VEO_3_FAST || modelNorm === VEO_3_1_FAST;
@@ -865,9 +988,90 @@ const durationLabel = useMemo(() => {
     try {
       const handler = getVideoModelHandler(modelNorm);
 
+      // Preparar prompts con @Elements:
+      // El usuario escribe @mi_elemento (slug). Aquí lo convertimos a @Element1..N para el modelo.
+      let promptForModel = prompt;
+      let selectedKlingElementIdsForModel = selectedKlingElementIds;
+      let klingShotsForModel: any = klingShots;
+
+      if (isKlingV3) {
+        const tokenRe = /@[a-z0-9_]+/gi;
+
+        if (!multishotEnabled) {
+          const mentionedIds: string[] = [];
+          for (const tok of extractMentionTokens(prompt)) {
+            const id = elementTokenToId.get(tok.toLowerCase());
+            if (!id) continue;
+            if (!mentionedIds.includes(id)) mentionedIds.push(id);
+          }
+
+          const orderedIds = [...mentionedIds];
+          for (const id of selectedKlingElementIds) if (!orderedIds.includes(id)) orderedIds.push(id);
+
+          if (orderedIds.length > 5) {
+            setError("No puedes usar más de 5 Elements a la vez. Elimina alguno del prompt.");
+            return;
+          }
+
+          const indexById = new Map<string, number>();
+          orderedIds.forEach((id, i) => indexById.set(id, i + 1));
+
+          promptForModel = prompt.replace(tokenRe, (m) => {
+            const id = elementTokenToId.get(m.toLowerCase());
+            if (!id) return m;
+            const n = indexById.get(id);
+            if (!n) return m;
+            return `@Element${n}`;
+          });
+
+          selectedKlingElementIdsForModel = orderedIds;
+        } else {
+          const shotsOrdered = (klingShots as any[]).map((s) => {
+            const baseIds = Array.isArray((s as any).elementIds) ? (s as any).elementIds : [];
+            const mentionedIds: string[] = [];
+
+            for (const tok of extractMentionTokens(String((s as any).prompt || ""))) {
+              const id = elementTokenToId.get(tok.toLowerCase());
+              if (!id) continue;
+              if (!mentionedIds.includes(id)) mentionedIds.push(id);
+            }
+
+            const orderedInShot = [...mentionedIds];
+            for (const id of baseIds) if (!orderedInShot.includes(id)) orderedInShot.push(id);
+
+            return { ...s, elementIds: orderedInShot };
+          });
+
+          const globalIds: string[] = [];
+          for (const s of shotsOrdered) {
+            const ids = Array.isArray((s as any).elementIds) ? (s as any).elementIds : [];
+            for (const id of ids) if (!globalIds.includes(id)) globalIds.push(id);
+          }
+
+          if (globalIds.length > 5) {
+            setError("No puedes usar más de 5 Elements a la vez (sumando todos los shots). Elimina alguno del prompt.");
+            return;
+          }
+
+          const indexById = new Map<string, number>();
+          globalIds.forEach((id, i) => indexById.set(id, i + 1));
+
+          klingShotsForModel = shotsOrdered.map((s) => ({
+            ...s,
+            prompt: String((s as any).prompt || "").replace(tokenRe, (m) => {
+              const id = elementTokenToId.get(m.toLowerCase());
+              if (!id) return m;
+              const n = indexById.get(id);
+              if (!n) return m;
+              return `@Element${n}`;
+            }),
+          }));
+        }
+      }
+
       const plan = handler.buildPlan({
         model: modelNorm,
-        prompt,
+        prompt: promptForModel,
         tool: TOOL_ID,
         nameHint: "video",
 
@@ -883,9 +1087,9 @@ const durationLabel = useMemo(() => {
         klingSound,
         klingSoundTouched,
 
-        selectedKlingElementIds,
+        selectedKlingElementIds: selectedKlingElementIdsForModel,
         multishotEnabled,
-        klingShots,
+        klingShots: klingShotsForModel,
         klingShotType,
 
         negativePrompt,
@@ -1238,12 +1442,31 @@ const durationLabel = useMemo(() => {
                     )}
                   </div>
                 ) : (
-                  <textarea
-                    className={styles.prompt}
+                  <MentionTextarea
                     value={prompt}
-                    onChange={(e) => setPrompt(e.target.value)}
+                    onChange={setPrompt}
                     placeholder="Describe el video… (ej: cinematic neon city, rain, slow dolly in, high detail)"
                     rows={2}
+                    textareaClassName={styles.prompt}
+                    items={isKlingV3 ? elementMentionItems : []}
+                    onSelectItem={(it) => {
+                      if (it.kind !== "element") return true;
+
+                      let allowed = true;
+                      setSelectedKlingElementIds((prev) => {
+                        if (prev.includes(it.id)) return prev;
+                        if (prev.length >= 5) {
+                          allowed = false;
+                          return prev;
+                        }
+                        return [...prev, it.id];
+                      });
+
+                      if (!allowed) {
+                        setError("No puedes usar más de 5 Elements a la vez. Elimina alguno del prompt.");
+                      }
+                      return allowed;
+                    }}
                   />
                 )}
               </div>

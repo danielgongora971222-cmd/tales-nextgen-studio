@@ -1924,7 +1924,7 @@
 }
 
 
-.prompt:focus{
+.prompt:focus-within {
   height:86px;
   background: rgba(18,18,20,0.96);
   box-shadow:
