@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import styles from "./MentionTextarea.module.css";
 
 export type MentionItem = {
@@ -51,7 +51,29 @@ export function MentionTextarea({
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const hiRef = useRef<HTMLDivElement | null>(null);
 
+  const syncWrapperPaddingVars = useCallback(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+
+    const cs = window.getComputedStyle(wrap);
+    wrap.style.setProperty("--mt-pad-top", cs.paddingTop || "0px");
+    wrap.style.setProperty("--mt-pad-right", cs.paddingRight || "0px");
+    wrap.style.setProperty("--mt-pad-bottom", cs.paddingBottom || "0px");
+    wrap.style.setProperty("--mt-pad-left", cs.paddingLeft || "0px");
+  }, []);
+
+  useLayoutEffect(() => {
+    syncWrapperPaddingVars();
+  }, [syncWrapperPaddingVars]);
+
+  useEffect(() => {
+    const onResize = () => syncWrapperPaddingVars();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [syncWrapperPaddingVars]);
+
   const [open, setOpen] = useState(false);
+
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const [mentionStart, setMentionStart] = useState<number | null>(null);
@@ -252,7 +274,11 @@ export function MentionTextarea({
         onKeyDown={handleKeyDown}
         onKeyUp={updateFromCaret}
         onMouseUp={updateFromCaret}
-        onFocus={updateFromCaret}
+        onFocus={() => {
+          syncWrapperPaddingVars();
+          updateFromCaret();
+        }}
+
         onScroll={syncScroll}
         placeholder={placeholder}
         aria-label={placeholder || "Prompt"}

@@ -7,13 +7,21 @@
 
 .highlighter {
   position: absolute;
-  inset: 0;
-  padding: inherit;
+  top: var(--mt-pad-top, 0px);
+  right: var(--mt-pad-right, 0px);
+  bottom: var(--mt-pad-bottom, 0px);
+  left: var(--mt-pad-left, 0px);
+
+  padding: 0;
   border-radius: inherit;
+  box-sizing: border-box;
+
   font: inherit;
   line-height: inherit;
   white-space: pre-wrap;
   word-break: break-word;
+  overflow-wrap: break-word;
+
   overflow: auto;
   pointer-events: none;
   color: inherit;
@@ -26,21 +34,30 @@
   height: 100%;
   display: block;
 
+  box-sizing: border-box;
+  margin: 0;
+
   background: transparent;
   border: none;
   outline: none;
   resize: none;
 
-  padding: inherit;
+  /* IMPORTANTE: NO heredamos padding del wrapper para evitar “doble padding” */
+  padding: 0;
   border-radius: inherit;
+
   font: inherit;
   line-height: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: break-word;
 
   color: transparent;
   caret-color: var(--text-main, rgba(255, 255, 255, 0.92));
 
   overflow: auto;
 }
+
 
 /* Placeholder visible aunque el texto sea transparente */
 .textarea::placeholder {
