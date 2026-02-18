@@ -35,6 +35,9 @@ type AspectRatio = "auto" | "16:9" | "9:16" | "1:1";
 const TOOL_NAME = "video-edit";
 const PENDING_KEY = "tales_pending_video_edit_job_v1";
 
+// 🔒 Feature flag: oculta Storyboard/Multishot SOLO en Edit Video Tool (por ahora)
+const ENABLE_EDITVIDEO_MULTISHOT = false;
+
 type PendingVideoEditJob = {
   jobToken: string;
   prompt: string;
@@ -398,6 +401,12 @@ export default function EditVideoTool() {
 
   // Keep state coherent when switching models
   useEffect(() => {
+    // Si el feature flag está apagado, multishot queda siempre desactivado
+    if (!ENABLE_EDITVIDEO_MULTISHOT) {
+      setMultishotEnabled(false);
+      setMultishotOpen(false);
+    }
+
     if (model !== "kling-o3-ref-to-video-pro") {
       setMultishotEnabled(false);
     }
@@ -405,6 +414,7 @@ export default function EditVideoTool() {
       setAspectRatio((prev) => (prev === "auto" ? "16:9" : prev));
     }
   }, [model]);
+
 
   // ===== Upload helpers =====
   const uploadImage = useCallback(async (file: File) => {
@@ -490,7 +500,7 @@ export default function EditVideoTool() {
         return { ok: false as const, error: "Selecciona una imagen START (obligatoria) para Reference→Video." };
       }
 
-      if (multishotEnabled) {
+    if (ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled) {
         const clean = shots.filter((s) => (s.prompt || "").trim().length > 0);
         if (clean.length === 0) {
           return { ok: false as const, error: "Agrega al menos 1 shot con prompt para el Storyboard." };
@@ -738,7 +748,11 @@ export default function EditVideoTool() {
     paramsLabelParts.push(keepAudio ? "Keep audio: yes" : "Keep audio: no");
   } else {
     paramsLabelParts.push(aspectRatio === "auto" ? "Aspect: auto" : `Aspect: ${aspectRatio}`);
-    paramsLabelParts.push(multishotEnabled ? `Duration: ${multishotTotalSeconds}s` : `Duration: ${durationSeconds}s`);
+    paramsLabelParts.push(
+      ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled
+        ? `Duration: ${multishotTotalSeconds}s`
+        : `Duration: ${durationSeconds}s`
+    );
     if (model === "kling-o3-ref-to-video-pro") paramsLabelParts.push(generateAudio ? "Audio: on" : "Audio: off");
     if (model !== "kling-o3-ref-to-video-pro") paramsLabelParts.push(keepAudio ? "Keep audio: yes" : "Keep audio: no");
   }
@@ -891,7 +905,7 @@ export default function EditVideoTool() {
             {/* Prompt */}
             <div className={styles.promptInputWrap}>
               <div className={styles.promptEditor}>
-                {(referenceImageIds.length > 0 || klingElementIds.length > 0 || multishotEnabled) && (
+                {(referenceImageIds.length > 0 || klingElementIds.length > 0 || (ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled)) && (
                   <div className={styles.promptTags}>
                     {referenceImageIds.length > 0 && (
                       <button type="button" className={styles.promptTag} onClick={() => setRefPickerOpen(true)}>
@@ -927,7 +941,7 @@ export default function EditVideoTool() {
                       Total refs: {combinedRefsCount}/4
                     </button>
 
-                    {multishotEnabled && (
+                    {ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled && (
                       <button type="button" className={styles.promptTag} onClick={() => setMultishotOpen(true)}>
                         Storyboard: {multishotTotalSeconds}s
                       </button>
@@ -935,7 +949,7 @@ export default function EditVideoTool() {
                   </div>
                 )}
 
-                {multishotEnabled ? (
+                {ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled ? (
                   <div className={styles.multishotInline}>
                     <div className={styles.multishotTop}>
                       <div className={styles.multishotTitle}>
@@ -1035,7 +1049,7 @@ export default function EditVideoTool() {
                   !user ||
                   combinedRefsCount > 4 ||
                   (model === "kling-o3-ref-to-video-pro"
-                    ? !startImage || (multishotEnabled ? !multishotReady : (prompt || "").trim().length === 0)
+                    ? !startImage || ((ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled) ? !multishotReady : (prompt || "").trim().length === 0)
                     : !inputVideo || (prompt || "").trim().length === 0)
                 }
                 onClick={onGenerate}
@@ -1128,7 +1142,7 @@ export default function EditVideoTool() {
                 <span className={styles.controlBtnMeta}>({klingElementIds.length})</span>
               </button>
 
-              {model === "kling-o3-ref-to-video-pro" && (
+              {ENABLE_EDITVIDEO_MULTISHOT && model === "kling-o3-ref-to-video-pro" && (
                 <button
                   type="button"
                   className={`${styles.controlBtn} ${multishotEnabled ? styles.controlBtnActive : ""}`}
@@ -1199,7 +1213,7 @@ export default function EditVideoTool() {
                                   type="button"
                                   className={`${styles.segmentBtn} ${aspectRatio === "auto" ? styles.segmentBtnActive : ""}`}
                                   onClick={() => setAspectRatio("auto")}
-                                  disabled={multishotEnabled}
+                                  disabled={ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled}
                                 >
                                   auto
                                 </button>
@@ -1208,7 +1222,7 @@ export default function EditVideoTool() {
                                 type="button"
                                 className={`${styles.segmentBtn} ${aspectRatio === "16:9" ? styles.segmentBtnActive : ""}`}
                                 onClick={() => setAspectRatio("16:9")}
-                                disabled={multishotEnabled}
+                                disabled={ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled}
                               >
                                 16:9
                               </button>
@@ -1216,7 +1230,7 @@ export default function EditVideoTool() {
                                 type="button"
                                 className={`${styles.segmentBtn} ${aspectRatio === "9:16" ? styles.segmentBtnActive : ""}`}
                                 onClick={() => setAspectRatio("9:16")}
-                                disabled={multishotEnabled}
+                                disabled={ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled}
                               >
                                 9:16
                               </button>
@@ -1224,7 +1238,7 @@ export default function EditVideoTool() {
                                 type="button"
                                 className={`${styles.segmentBtn} ${aspectRatio === "1:1" ? styles.segmentBtnActive : ""}`}
                                 onClick={() => setAspectRatio("1:1")}
-                                disabled={multishotEnabled}
+                                disabled={ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled}
                               >
                                 1:1
                               </button>
@@ -1240,14 +1254,14 @@ export default function EditVideoTool() {
                                   type="button"
                                   className={`${styles.segmentBtn} ${durationSeconds === d ? styles.segmentBtnActive : ""}`}
                                   onClick={() => setDurationSeconds(d)}
-                                  disabled={multishotEnabled}
-                                  title={multishotEnabled ? "Con Storyboard la duración viene de la suma de shots" : ""}
+                                  disabled={ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled}
+                                  title={ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled ? "Con Storyboard la duración viene de la suma de shots" : ""}
                                 >
                                   {d}s
                                 </button>
                               ))}
                             </div>
-                            {multishotEnabled && (
+                            {ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled && (
                               <div className={styles.segmentMeta}>
                                 Storyboard total: <b>{multishotTotalSeconds}s</b>
                               </div>
@@ -1382,13 +1396,15 @@ export default function EditVideoTool() {
         onRefresh={reloadKlingElements}
       />
 
-      <O3MultishotModal
-        open={multishotOpen}
-        onClose={() => setMultishotOpen(false)}
-        shots={shots}
-        setShots={setShots}
-        totalSeconds={multishotTotalSeconds}
-      />
+      {ENABLE_EDITVIDEO_MULTISHOT && (
+        <O3MultishotModal
+          open={multishotOpen}
+          onClose={() => setMultishotOpen(false)}
+          shots={shots}
+          setShots={setShots}
+          totalSeconds={multishotTotalSeconds}
+        />
+      )}
 
       <ViewerModal
         viewer={viewer}
