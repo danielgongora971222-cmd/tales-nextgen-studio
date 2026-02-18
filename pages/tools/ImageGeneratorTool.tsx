@@ -995,13 +995,27 @@ useEffect(() => {
   }
 
   const promptMentionItems: MentionItem[] = useMemo(() => {
-  const used = new Set<string>();
+  // Reservados (evita colisiones con nombres de elementos)
+  const reserved = new Set([
+    "@img1",
+    "@img2",
+    "@img3",
+    "@bg",
+    // compat prompts viejos
+    "@reference1",
+    "@reference2",
+    "@reference3",
+    "@background",
+  ]);
+
+  const used = new Set<string>(reserved);
   const out: MentionItem[] = [];
 
   const pushUnique = (it: MentionItem) => {
     let token = String(it.token || "").trim();
     if (!token) return;
 
+    // fuerza unicidad estable
     if (used.has(token)) {
       const base = token;
       let n = 2;
@@ -1013,42 +1027,111 @@ useEffect(() => {
     out.push({ ...it, token });
   };
 
-  if (refs.char1) pushUnique({ id: refs.char1.id, token: "@img1", label: "img1", kind: "ref", previewUrl: refs.char1.url });
-  if (refs.char2) pushUnique({ id: refs.char2.id, token: "@img2", label: "img2", kind: "ref", previewUrl: refs.char2.url });
-  if (refs.char3) pushUnique({ id: refs.char3.id, token: "@img3", label: "img3", kind: "ref", previewUrl: refs.char3.url });
-
-  const selected = (selectedElementAssetIds || []).slice(0, 5);
-  for (let i = 0; i < selected.length; i++) {
-    const id = selected[i];
-    const el = elements.find((x) => x.id === id);
-    const name = el?.name || `element_${i + 1}`;
-    const token = makeElementTag(name) || `@element_${i + 1}`;
-    pushUnique({ id, token, label: name, kind: "element", previewUrl: el?.url || null });
+  // ---- Refs (si existen) ----
+  if (refs.char1) {
+    pushUnique({ id: refs.char1.id, token: "@img1", label: "img1", kind: "ref", previewUrl: refs.char1.url });
+    // compat (no mostrar en dropdown)
+    pushUnique({ id: refs.char1.id, token: "@reference1", label: "reference1", kind: "ref", previewUrl: refs.char1.url, hidden: true });
+  }
+  if (refs.char2) {
+    pushUnique({ id: refs.char2.id, token: "@img2", label: "img2", kind: "ref", previewUrl: refs.char2.url });
+    pushUnique({ id: refs.char2.id, token: "@reference2", label: "reference2", kind: "ref", previewUrl: refs.char2.url, hidden: true });
+  }
+  if (refs.char3) {
+    pushUnique({ id: refs.char3.id, token: "@img3", label: "img3", kind: "ref", previewUrl: refs.char3.url });
+    pushUnique({ id: refs.char3.id, token: "@reference3", label: "reference3", kind: "ref", previewUrl: refs.char3.url, hidden: true });
+  }
+  if (refs.background) {
+    pushUnique({ id: refs.background.id, token: "@bg", label: "bg", kind: "bg", previewUrl: refs.background.url });
+    pushUnique({ id: refs.background.id, token: "@background", label: "background", kind: "bg", previewUrl: refs.background.url, hidden: true });
   }
 
-  if (refs.background) pushUnique({ id: refs.background.id, token: "@bg", label: "bg", kind: "bg", previewUrl: refs.background.url });
+  // ---- Elements ----
+  // Importante: el dropdown debe aparecer aunque no haya elements seleccionados.
+  // Orden:
+  //  1) seleccionados (hasta 5)
+  //  2) el resto (recientes)
+  const selectedSet = new Set((selectedElementAssetIds || []).slice(0, 5));
+  const selectedOrdered = (selectedElementAssetIds || [])
+    .slice(0, 5)
+    .map((id) => elements.find((x) => x.id === id))
+    .filter(Boolean) as { id: string; name: string; url?: string }[];
+
+  const rest = (elements || []).filter((x) => !selectedSet.has(x.id));
+  const ordered = [...selectedOrdered, ...rest];
+
+  for (let i = 0; i < ordered.length; i++) {
+    const el = ordered[i];
+    const name = el?.name || `element_${i + 1}`;
+    const token = makeElementTag(name) || `@element_${i + 1}`;
+    pushUnique({ id: el.id, token, label: name, kind: "element", previewUrl: el?.url || null });
+  }
 
   return out;
 }, [refs, selectedElementAssetIds, elements]);
 
 const promptReferences: PromptReference[] = useMemo(() => {
-  const base: PromptReference[] = (promptMentionItems || []).map((it) => ({
-    token: it.token,
-    assetId: it.id,
-    role: it.kind === "bg" ? "background" : it.kind === "element" ? "element" : "character",
-  }));
+  const tokenRe = /@[a-z0-9_]+/gi;
+  const tokensInPrompt: string[] = Array.from(
+    new Set<string>(((prompt || "").match(tokenRe) ?? []).map((t) => String(t)))
+  );
+  const tokensSet = new Set(tokensInPrompt);
 
-  // Compat prompts viejos
-  const alias: PromptReference[] = [];
-  for (const r of base) {
-    if (r.token === "@img1") alias.push({ ...r, token: "@reference1" });
-    if (r.token === "@img2") alias.push({ ...r, token: "@reference2" });
-    if (r.token === "@img3") alias.push({ ...r, token: "@reference3" });
-    if (r.token === "@bg") alias.push({ ...r, token: "@background" });
+  const byToken = new Map<string, MentionItem>();
+  const byIdElement = new Map<string, MentionItem>();
+
+  for (const it of promptMentionItems || []) {
+    if (it?.token) byToken.set(it.token, it);
+    if (it?.kind === "element" && it?.id) byIdElement.set(it.id, it);
   }
 
-  return [...base, ...alias];
-}, [promptMentionItems]);
+  const out: PromptReference[] = [];
+  const usedTokens = new Set<string>();
+  const add = (token: string) => {
+    if (!token || usedTokens.has(token)) return;
+    const it = byToken.get(token);
+    if (!it) return;
+    usedTokens.add(token);
+    out.push({
+      token,
+      assetId: it.id,
+      role: it.kind === "bg" ? "background" : it.kind === "element" ? "element" : "character",
+    });
+  };
+
+  // 1) Refs seleccionadas.
+  //    - Si el prompt usa alias viejos (@reference1, @background), vinculamos ese token.
+  //    - Si el prompt no menciona el token, vinculamos el token moderno para que la referencia
+  //      igualmente se adjunte (influya) cuando promptReferences != [].
+  if (refs.char1) {
+    if (tokensSet.has("@reference1") && !tokensSet.has("@img1")) add("@reference1");
+    else add("@img1");
+  }
+  if (refs.char2) {
+    if (tokensSet.has("@reference2") && !tokensSet.has("@img2")) add("@reference2");
+    else add("@img2");
+  }
+  if (refs.char3) {
+    if (tokensSet.has("@reference3") && !tokensSet.has("@img3")) add("@reference3");
+    else add("@img3");
+  }
+  if (refs.background) {
+    if (tokensSet.has("@background") && !tokensSet.has("@bg")) add("@background");
+    else add("@bg");
+  }
+
+  // 2) Elements seleccionados (hasta 5)
+  for (const id of (selectedElementAssetIds || []).slice(0, 5)) {
+    const it = byIdElement.get(id);
+    if (it?.token) add(it.token);
+  }
+
+  // 3) Tokens presentes en el prompt (incluye elements NO seleccionados)
+  for (const token of tokensInPrompt) add(token);
+
+  return out;
+}, [prompt, promptMentionItems, refs, selectedElementAssetIds]);
+
 
   async function resolveInputToUrl(input: ElementImageInput): Promise<string> {
     if (input.kind === "dataUrl") return input.dataUrl;
@@ -1450,14 +1533,35 @@ const promptReferences: PromptReference[] = useMemo(() => {
       const characterAssetIds = [refs.char1?.id, refs.char2?.id, refs.char3?.id].filter(Boolean) as string[];
       const backgroundAssetId = refs.background?.id;
 
-      // Elements (GLOBAL): mosaicos seleccionados (máx 5)
-      const elementAssetIds = selectedElementAssetIds.slice(0, 5);
+      // Elements usados (máx 5):
+      // - los seleccionados
+      // - y/o los insertados via @ en el prompt
+      const elementFromPromptRefs = Array.from(
+        new Set([
+          ...(selectedElementAssetIds || []).slice(0, 5),
+          ...((promptReferences || []).filter((r) => r.role === "element").map((r) => r.assetId)),
+        ])
+      );
 
-      // Se anexan detrás de los "character slots"
-      const mergedCharacterAssetIds = [...characterAssetIds, ...elementAssetIds];
+      if (elementFromPromptRefs.length > 5) {
+        throw new Error("No puedes usar más de 5 Elements a la vez. Quita algunos y vuelve a intentar.");
+      }
 
-      // Guardrail total referencias
-      if (mergedCharacterAssetIds.length + (backgroundAssetId ? 1 : 0) > 10) {
+      const elementAssetIds = elementFromPromptRefs.slice(0, 5);
+
+      // Se anexan detrás de los "character slots" (legacy/fallback)
+      const mergedCharacterAssetIds = Array.from(new Set([...characterAssetIds, ...elementAssetIds]));
+
+      // Guardrail total referencias (usa el set real que enviará el backend)
+      const effectiveRefIds = Array.from(
+        new Set(
+          (promptReferences && promptReferences.length)
+            ? promptReferences.map((r) => r.assetId)
+            : [...mergedCharacterAssetIds, ...(backgroundAssetId ? [backgroundAssetId] : [])]
+        )
+      );
+
+      if (effectiveRefIds.length > 10) {
         throw new Error("Demasiadas referencias: usa menos Elements o menos imágenes de personaje/fondo.");
       }
 
@@ -1506,7 +1610,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
 
       // Auto-fallback: si el usuario eligió Omni O3 pero NO puso referencias,
       // evitamos el error FAL_KLING_MISSING_REFERENCE usando el modelo texto (V3).
-      const totalRefs = mergedCharacterAssetIds.length + (backgroundAssetId ? 1 : 0);
+      const totalRefs = effectiveRefIds.length;
       const effectiveModel = model === KLING_MODEL_O3_OMNI && totalRefs === 0 ? KLING_MODEL_V3_TEXT : model;
 
       // Asegura que los parámetros sean válidos para el modelo efectivo.
@@ -2033,6 +2137,19 @@ const promptReferences: PromptReference[] = useMemo(() => {
                   rows={2}
                   textareaClassName={styles.prompt}
                   items={promptMentionItems}
+                  onSelectItem={(it) => {
+                    if (it?.kind !== "element") return;
+
+                    const already = (selectedElementAssetIds || []).includes(it.id);
+                    if (already) return;
+
+                    if ((selectedElementAssetIds || []).length >= 5) {
+                      setError("No puedes usar más de 5 Elements a la vez. Quita uno y vuelve a intentar.");
+                      return false;
+                    }
+
+                    setSelectedElementAssetIds((prev) => [...(prev || []), it.id].slice(0, 5));
+                  }}
                 />
               </div>
             </div>

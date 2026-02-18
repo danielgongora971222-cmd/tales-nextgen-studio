@@ -1,6 +1,63 @@
 .wrap {
   position: relative;
   width: 100%;
+  /* El shell (wrap) recibe estilos externos (p.ej. .prompt).
+     El textarea real va encima en modo "transparente" para poder resaltar tokens. */
+}
+
+.highlighter {
+  position: absolute;
+  inset: 0;
+  padding: inherit;
+  border-radius: inherit;
+  font: inherit;
+  line-height: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: auto;
+  pointer-events: none;
+  color: inherit;
+}
+
+.textarea {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  display: block;
+
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+
+  padding: inherit;
+  border-radius: inherit;
+  font: inherit;
+  line-height: inherit;
+
+  color: transparent;
+  caret-color: var(--text-main, rgba(255, 255, 255, 0.92));
+
+  overflow: auto;
+}
+
+/* Placeholder visible aunque el texto sea transparente */
+.textarea::placeholder {
+  color: rgba(255, 255, 255, 0.25);
+}
+
+.mention {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(90, 150, 255, 0.25);
+  border: 1px solid rgba(90, 150, 255, 0.35);
+  color: rgba(235, 245, 255, 0.98);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.2;
 }
 
 .picker {
@@ -8,7 +65,7 @@
   left: 0;
   right: 0;
   bottom: calc(100% + 8px);
-  z-index: 50;
+  z-index: 80;
 
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.12);

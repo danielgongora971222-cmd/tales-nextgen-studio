@@ -1044,7 +1044,7 @@
     inset 0 1px 0 rgba(255,255,255,0.06),
     inset 0 -10px 18px rgba(0,0,0,0.65);
 }
-.prompt:focus {
+.prompt:focus-within {
   background: rgba(16,16,18,0.96);
   outline: none;
   height: 86px; /* Expands on focus */
@@ -1053,7 +1053,8 @@
     inset 0 1px 0 rgba(255,255,255,0.08),
     inset 0 -12px 22px rgba(0,0,0,0.7);
 }
-.prompt::placeholder { color: rgba(255,255,255,0.25); }
+
+/* El placeholder ahora vive en el textarea interno (MentionTextarea) */
 
 .generateCol{
   display:flex;
