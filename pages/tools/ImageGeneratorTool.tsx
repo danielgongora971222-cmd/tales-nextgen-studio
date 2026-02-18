@@ -799,6 +799,20 @@ useEffect(() => {
     });
   }
 
+  function removePromptToken(token: string) {
+    if (!token) return;
+    setPrompt((prev) => {
+      const text = prev || "";
+      const re = new RegExp(`(^|\\s)${escapeRegExp(token)}(?=\\s|$)`, "g");
+      const next = text
+        .replace(re, " ")
+        .replace(/[ \t]{2,}/g, " ")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+      return next;
+    });
+  }
+
   function rememberImgDims(assetId: string, img: HTMLImageElement) {
     const w = img.naturalWidth || 0;
     const h = img.naturalHeight || 0;
@@ -994,81 +1008,141 @@ useEffect(() => {
     return "@img3";
   }
 
-  const promptMentionItems: MentionItem[] = useMemo(() => {
-  // Reservados (evita colisiones con nombres de elementos)
-  const reserved = new Set([
-    "@img1",
-    "@img2",
-    "@img3",
-    "@bg",
-    // compat prompts viejos
-    "@reference1",
-    "@reference2",
-    "@reference3",
-    "@background",
-  ]);
+    const elementTokenById = useMemo(() => {
+    const reserved = new Set([
+      "@img1",
+      "@img2",
+      "@img3",
+      "@bg",
+      // compat prompts viejos
+      "@reference1",
+      "@reference2",
+      "@reference3",
+      "@background",
+    ]);
 
-  const used = new Set<string>(reserved);
-  const out: MentionItem[] = [];
+    const used = new Set<string>();
+    const byId = new Map<string, string>();
 
-  const pushUnique = (it: MentionItem) => {
-    let token = String(it.token || "").trim();
-    if (!token) return;
+    const alloc = (raw: string) => {
+      let token = String(raw || "").trim();
+      if (!token) return "";
+      if (!token.startsWith("@")) token = `@${token}`;
 
-    // fuerza unicidad estable
-    if (used.has(token)) {
       const base = token;
-      let n = 2;
-      while (used.has(`${base}_${n}`)) n++;
-      token = `${base}_${n}`;
+      const isTaken = (t: string) => used.has(t) || reserved.has(t);
+
+      if (isTaken(token)) {
+        let n = 2;
+        while (isTaken(`${base}_${n}`)) n++;
+        token = `${base}_${n}`;
+      }
+
+      used.add(token);
+      return token;
+    };
+
+    for (let i = 0; i < (elements || []).length; i++) {
+      const el = elements[i];
+      const name = el?.name || `element_${i + 1}`;
+      const base = makeElementTag(name) || `@element_${i + 1}`;
+      const token = alloc(base);
+      if (el?.id && token) byId.set(el.id, token);
     }
 
-    used.add(token);
-    out.push({ ...it, token });
-  };
+    return byId;
+  }, [elements]);
 
-  // ---- Refs (si existen) ----
-  if (refs.char1) {
-    pushUnique({ id: refs.char1.id, token: "@img1", label: "img1", kind: "ref", previewUrl: refs.char1.url });
-    // compat (no mostrar en dropdown)
-    pushUnique({ id: refs.char1.id, token: "@reference1", label: "reference1", kind: "ref", previewUrl: refs.char1.url, hidden: true });
-  }
-  if (refs.char2) {
-    pushUnique({ id: refs.char2.id, token: "@img2", label: "img2", kind: "ref", previewUrl: refs.char2.url });
-    pushUnique({ id: refs.char2.id, token: "@reference2", label: "reference2", kind: "ref", previewUrl: refs.char2.url, hidden: true });
-  }
-  if (refs.char3) {
-    pushUnique({ id: refs.char3.id, token: "@img3", label: "img3", kind: "ref", previewUrl: refs.char3.url });
-    pushUnique({ id: refs.char3.id, token: "@reference3", label: "reference3", kind: "ref", previewUrl: refs.char3.url, hidden: true });
-  }
-  if (refs.background) {
-    pushUnique({ id: refs.background.id, token: "@bg", label: "bg", kind: "bg", previewUrl: refs.background.url });
-    pushUnique({ id: refs.background.id, token: "@background", label: "background", kind: "bg", previewUrl: refs.background.url, hidden: true });
-  }
+  const promptMentionItems: MentionItem[] = useMemo(() => {
+    // Reservados (evita colisiones con nombres de elementos)
+    const reserved = new Set([
+      "@img1",
+      "@img2",
+      "@img3",
+      "@bg",
+      // compat prompts viejos
+      "@reference1",
+      "@reference2",
+      "@reference3",
+      "@background",
+    ]);
 
-  // ---- Elements ----
-  // Importante: el dropdown debe aparecer aunque no haya elements seleccionados.
-  // Orden:
-  //  1) seleccionados (hasta 5)
-  //  2) el resto (recientes)
-  const selectedSet = new Set((selectedElementAssetIds || []).slice(0, 5));
-  const selectedOrdered = (selectedElementAssetIds || [])
-    .slice(0, 5)
-    .map((id) => elements.find((x) => x.id === id))
-    .filter(Boolean) as { id: string; name: string; url?: string }[];
+    const used = new Set<string>();
+    const out: MentionItem[] = [];
 
-  const rest = (elements || []).filter((x) => !selectedSet.has(x.id));
-  const ordered = [...selectedOrdered, ...rest];
+    const allocToken = (rawToken: string, disallowReserved: boolean) => {
+      let token = String(rawToken || "").trim();
+      if (!token) return "";
 
-  for (let i = 0; i < ordered.length; i++) {
-    const el = ordered[i];
-    const name = el?.name || `element_${i + 1}`;
-    const token = makeElementTag(name) || `@element_${i + 1}`;
-    pushUnique({ id: el.id, token, label: name, kind: "element", previewUrl: el?.url || null });
-  }
+      const base = token;
+      const isTaken = (t: string) => used.has(t) || (disallowReserved && reserved.has(t));
 
-  return out;
-}, [refs, selectedElementAssetIds, elements]);
+      if (isTaken(token)) {
+        let n = 2;
+        while (isTaken(`${base}_${n}`)) n++;
+        token = `${base}_${n}`;
+      }
+
+      used.add(token);
+      return token;
+    };
+
+    const push = (it: MentionItem, disallowReserved: boolean) => {
+      const tok = allocToken(it.token, disallowReserved);
+      if (!tok) return;
+      out.push({ ...it, token: tok });
+    };
+
+    // ---- Refs (si existen) ----
+    if (refs.char1) {
+      push({ id: refs.char1.id, token: "@img1", label: "img1", kind: "ref", previewUrl: refs.char1.url }, false);
+      push(
+        { id: refs.char1.id, token: "@reference1", label: "reference1", kind: "ref", previewUrl: refs.char1.url, hidden: true },
+        false
+      );
+    }
+    if (refs.char2) {
+      push({ id: refs.char2.id, token: "@img2", label: "img2", kind: "ref", previewUrl: refs.char2.url }, false);
+      push(
+        { id: refs.char2.id, token: "@reference2", label: "reference2", kind: "ref", previewUrl: refs.char2.url, hidden: true },
+        false
+      );
+    }
+    if (refs.char3) {
+      push({ id: refs.char3.id, token: "@img3", label: "img3", kind: "ref", previewUrl: refs.char3.url }, false);
+      push(
+        { id: refs.char3.id, token: "@reference3", label: "reference3", kind: "ref", previewUrl: refs.char3.url, hidden: true },
+        false
+      );
+    }
+    if (refs.background) {
+      push({ id: refs.background.id, token: "@bg", label: "bg", kind: "bg", previewUrl: refs.background.url }, false);
+      push(
+        { id: refs.background.id, token: "@background", label: "background", kind: "bg", previewUrl: refs.background.url, hidden: true },
+        false
+      );
+    }
+
+    // ---- Elements ----
+    const selectedSet = new Set((selectedElementAssetIds || []).slice(0, 5));
+    const selectedOrdered = (selectedElementAssetIds || [])
+      .slice(0, 5)
+      .map((id) => elements.find((x) => x.id === id))
+      .filter(Boolean) as { id: string; name: string; url?: string }[];
+
+    const rest = (elements || []).filter((x) => !selectedSet.has(x.id));
+    const ordered = [...selectedOrdered, ...rest];
+
+    for (let i = 0; i < ordered.length; i++) {
+      const el = ordered[i];
+      const name = el?.name || `element_${i + 1}`;
+      const stableToken = el?.id ? elementTokenById.get(el.id) : null;
+      const token = stableToken || makeElementTag(name) || `@element_${i + 1}`;
+      push({ id: el.id, token, label: name, kind: "element", previewUrl: el?.url || null }, true);
+    }
+
+    return out;
+  }, [refs, selectedElementAssetIds, elements, elementTokenById]);
 
 const promptReferences: PromptReference[] = useMemo(() => {
   const tokenRe = /@[a-z0-9_]+/gi;
@@ -1131,6 +1205,73 @@ const promptReferences: PromptReference[] = useMemo(() => {
 
   return out;
 }, [prompt, promptMentionItems, refs, selectedElementAssetIds]);
+
+
+  const elementTokenToId = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const it of promptMentionItems || []) {
+      if (it?.kind === "element" && it?.token && it?.id) m.set(it.token, it.id);
+    }
+    return m;
+  }, [promptMentionItems]);
+
+  const prevElementTokensRef = useRef<Set<string>>(new Set());
+
+  // ✅ Sync Elements con el prompt:
+  // - Si borras un token de Element del prompt -> se deselecciona.
+  // - Si agregas un token de Element al prompt -> se selecciona (hasta 5).
+  // - Refs (img1/img2/img3/bg) NO se tocan.
+  useEffect(() => {
+    const tokenRe = /@[a-z0-9_]+/gi;
+    const tokens = (prompt || "").match(tokenRe) ?? [];
+
+    const current = new Set<string>();
+    for (const t of tokens) {
+      if (elementTokenToId.has(t)) current.add(t);
+    }
+
+    const prev = prevElementTokensRef.current;
+    const removed: string[] = [];
+    const added: string[] = [];
+
+    for (const t of prev) if (!current.has(t)) removed.push(t);
+    for (const t of current) if (!prev.has(t)) added.push(t);
+
+    if (removed.length || added.length) {
+      setSelectedElementAssetIds((prevIds) => {
+        const beforeIds = Array.isArray(prevIds) ? prevIds : [];
+        let nextIds = beforeIds;
+
+        if (removed.length) {
+          const removedIds = removed.map((t) => elementTokenToId.get(t)).filter(Boolean) as string[];
+          if (removedIds.length) nextIds = nextIds.filter((id) => !removedIds.includes(id));
+        }
+
+        if (added.length) {
+          const temp = [...nextIds];
+          for (const t of added) {
+            const id = elementTokenToId.get(t);
+            if (!id) continue;
+            if (temp.includes(id)) continue;
+            if (temp.length >= 5) break;
+            temp.push(id);
+          }
+          nextIds = temp;
+        }
+
+        if (nextIds.length > 5) nextIds = nextIds.slice(0, 5);
+
+        const same = nextIds.length === beforeIds.length && nextIds.every((id, i) => id === beforeIds[i]);
+        return same ? beforeIds : nextIds;
+      });
+    }
+
+    prevElementTokensRef.current = current;
+
+    if (current.size > 5) {
+      setError("No puedes usar más de 5 Elements a la vez. Elimina alguno del prompt.");
+    }
+  }, [prompt, elementTokenToId]);
 
 
   async function resolveInputToUrl(input: ElementImageInput): Promise<string> {
@@ -2089,8 +2230,9 @@ const promptReferences: PromptReference[] = useMemo(() => {
                                 onClick={() => {
                                   setSelectedElementAssetIds((prev) => {
                                     const has = prev.includes(el.id);
+                                    const tag = (el?.id ? elementTokenById.get(el.id) : null) || makeElementTag(el.name);
+
                                     if (has) {
-                                      const tag = makeElementTag(el.name);
                                       if (tag) appendPromptTag(tag);
                                       return prev;
                                     }
@@ -2098,9 +2240,8 @@ const promptReferences: PromptReference[] = useMemo(() => {
                                       setError("Máximo 5 Elements a la vez.");
                                       return prev;
                                     }
-                                    const tag = makeElementTag(el.name);
                                     if (tag) appendPromptTag(tag);
-                                    return [el.id, ...prev];
+                                    return [el.id, ...prev].slice(0, 5);
                                   });
                                 }}
                                 title={el.name}
@@ -2112,7 +2253,11 @@ const promptReferences: PromptReference[] = useMemo(() => {
                                 <button
                                   type="button"
                                   className={styles.klingThumbRemove}
-                                  onClick={() => setSelectedElementAssetIds((prev) => prev.filter((x) => x !== el.id))}
+                                  onClick={() => {
+                                    const tag = (el?.id ? elementTokenById.get(el.id) : null) || makeElementTag(el.name);
+                                    if (tag) removePromptToken(tag);
+                                    setSelectedElementAssetIds((prev) => prev.filter((x) => x !== el.id));
+                                  }}
                                   aria-label={`Deselect ${el.name}`}
                                 >
                                   ×
