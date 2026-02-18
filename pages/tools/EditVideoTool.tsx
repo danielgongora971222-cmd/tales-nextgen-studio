@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import styles from "./VideoGeneratorTool.module.css";
 import type { Asset } from "../../types";
 import ErrorModal from "../../components/ErrorModal";
+import { MentionTextarea, type MentionItem } from "../../components/MentionTextarea";
 import { useAuth } from "../../contexts/AuthContext";
 import {
   deleteAsset,
@@ -95,6 +96,33 @@ function downloadFromUrl(url: string, filename: string) {
   a.click();
   a.remove();
 }
+
+const FRAME_UPLOAD_TOOL = "video-gen-frame";
+
+function slugifyName(s: string) {
+  return (
+    (s || "")
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 28) || "item"
+  );
+}
+
+function makeElementTag(name: string) {
+  return `@${slugifyName(name || "element")}`;
+}
+
+function makeImageTag(name: string) {
+  return `@img_${slugifyName(name || "image")}`;
+}
+
+function extractMentionTokens(text: string) {
+  return (text || "").match(/@[a-z0-9_]+/gi) ?? [];
+}
+
 
 function nowHint(model: EditModelId) {
   const short = model.replaceAll("kling-", "").replaceAll("-pro", "");
@@ -201,6 +229,193 @@ export default function EditVideoTool() {
   const combinedRefsCount = referenceImageIds.length + klingElementIds.length;
   const maxRefImages = Math.max(0, 4 - klingElementIds.length);
   const maxElements = Math.max(0, 4 - referenceImageIds.length);
+
+  // ===============================
+  // Mentions (@) para referencias + Elements (Kling O3)
+  // - El usuario escribe tokens:
+  //    - Imágenes: @img_xxx (dropdown)
+  //    - Elements: @xxx (dropdown)
+  //    - Video base (video→video): @video1
+  // - Antes de enviar al modelo:
+  //    - convertimos a @Image1.. y @Element1.. en el prompt,
+  //    - y ordenamos referenceImageIds / klingElementIds para que coincidan.
+  // - Excluimos START/END y frames (first/last) del dropdown de referencias.
+  // ===============================
+  const excludeIdsFromMentions = useMemo(() => {
+    const s = new Set<string>();
+    if (startImage?.id) s.add(startImage.id);
+    if (endImage?.id) s.add(endImage.id);
+    return s;
+  }, [startImage?.id, endImage?.id]);
+
+  const mentionableRefImages = useMemo(() => {
+    return (imageAssets || [])
+      .filter((a) => !!getAssetUrl(a))
+      .filter((a) => !excludeIdsFromMentions.has(a.id))
+      .filter((a) => getMetaTool(a) !== FRAME_UPLOAD_TOOL)
+      .sort((a: any, b: any) => {
+        const ta = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const tb = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return tb - ta;
+      });
+  }, [imageAssets, excludeIdsFromMentions]);
+
+  const refImageTokenById = useMemo(() => {
+    const reserved = new Set<string>([
+      "@video1",
+      "@image1",
+      "@image2",
+      "@image3",
+      "@image4",
+      "@element1",
+      "@element2",
+      "@element3",
+      "@element4",
+      "@element5",
+    ]);
+
+    const used = new Set<string>(reserved);
+    const map = new Map<string, string>(); // assetId -> token
+
+    const alloc = (raw: string) => {
+      let token = String(raw || "").trim();
+      if (!token) return "";
+      if (!token.startsWith("@")) token = `@${token}`;
+
+      const base = token;
+      if (used.has(token)) {
+        let n = 2;
+        while (used.has(`${base}_${n}`)) n++;
+        token = `${base}_${n}`;
+      }
+      used.add(token);
+      return token;
+    };
+
+    for (const a of mentionableRefImages) {
+      const name = String((a as any).name || (a as any).prompt || "image");
+      const base = makeImageTag(name);
+      const tok = alloc(base);
+      if (tok) map.set(a.id, tok);
+    }
+    return map;
+  }, [mentionableRefImages]);
+
+  const elementTokenById = useMemo(() => {
+    const reserved = new Set<string>([
+      "@video1",
+      "@image1",
+      "@image2",
+      "@image3",
+      "@image4",
+      "@element1",
+      "@element2",
+      "@element3",
+      "@element4",
+      "@element5",
+    ]);
+    const used = new Set<string>(reserved);
+    const map = new Map<string, string>(); // elementId -> token
+
+    for (const el of klingElements || []) {
+      const base = makeElementTag(el.name || "element");
+      let token = base;
+
+      if (used.has(token)) {
+        let n = 2;
+        while (used.has(`${base}_${n}`)) n++;
+        token = `${base}_${n}`;
+      }
+
+      used.add(token);
+      map.set(el.id, token);
+    }
+
+    return map;
+  }, [klingElements]);
+
+  const imageTokenToId = useMemo(() => {
+    const m = new Map<string, string>(); // token(lower) -> assetId
+    for (const [id, tok] of refImageTokenById.entries()) m.set(tok.toLowerCase(), id);
+    return m;
+  }, [refImageTokenById]);
+
+  const elementTokenToId = useMemo(() => {
+    const m = new Map<string, string>(); // token(lower) -> elementId
+    for (const [id, tok] of elementTokenById.entries()) m.set(tok.toLowerCase(), id);
+    return m;
+  }, [elementTokenById]);
+
+  const promptMentionItems: MentionItem[] = useMemo(() => {
+    const out: MentionItem[] = [];
+
+    const needsVideo = model !== "kling-o3-ref-to-video-pro";
+    if (needsVideo) {
+      out.push({ id: "video1", token: "@video1", label: "video1 (entrada)", kind: "video", previewUrl: null });
+      out.push({ id: "video1", token: "@Video1", label: "Video1 (entrada)", kind: "video", previewUrl: null, hidden: true });
+    }
+
+    // Aliases numéricos para lo YA seleccionado (compat + fácil de usar)
+    for (let i = 0; i < referenceImageIds.length; i++) {
+      const id = referenceImageIds[i];
+      const a = (imageAssets || []).find((x) => x.id === id) || null;
+      if (!a) continue;
+      if (excludeIdsFromMentions.has(a.id)) continue;
+      if (getMetaTool(a) === FRAME_UPLOAD_TOOL) continue;
+
+      const url = getAssetUrl(a);
+      const labelName = a?.name ? ` · ${a.name}` : "";
+      out.push({ id, token: `@image${i + 1}`, label: `image${i + 1}${labelName}`, kind: "ref", previewUrl: url });
+      out.push({ id, token: `@Image${i + 1}`, label: `Image${i + 1}${labelName}`, kind: "ref", previewUrl: url, hidden: true });
+    }
+
+    for (let i = 0; i < klingElementIds.length; i++) {
+      const id = klingElementIds[i];
+      const el = (klingElements || []).find((x) => x.id === id) || null;
+      const previewUrl = (el as any)?.previewUrl || (el as any)?.imageUrls?.[0] || null;
+      const labelName = el?.name ? ` · ${el.name}` : "";
+      out.push({ id, token: `@element${i + 1}`, label: `element${i + 1}${labelName}`, kind: "element", previewUrl });
+      out.push({ id, token: `@Element${i + 1}`, label: `Element${i + 1}${labelName}`, kind: "element", previewUrl, hidden: true });
+    }
+
+    // Elements (slug tokens)
+    const selectedElSet = new Set(klingElementIds);
+    const orderedEls = [
+      ...(klingElementIds.map((id) => klingElements.find((e) => e.id === id)).filter(Boolean) as KlingElement[]),
+      ...((klingElements || []).filter((e) => !selectedElSet.has(e.id))),
+    ];
+
+    for (const el of orderedEls) {
+      const token = elementTokenById.get(el.id) || makeElementTag(el.name || "element");
+      const previewUrl = (el as any)?.previewUrl || (el as any)?.imageUrls?.[0] || null;
+      out.push({ id: el.id, token, label: el.name || "Element", kind: "element", previewUrl });
+    }
+
+    // Referencias de imagen (slug tokens)
+    const selectedImgSet = new Set(referenceImageIds);
+    const orderedImgs = [
+      ...(referenceImageIds.map((id) => mentionableRefImages.find((a) => a.id === id)).filter(Boolean) as Asset[]),
+      ...mentionableRefImages.filter((a) => !selectedImgSet.has(a.id)),
+    ];
+
+    for (const a of orderedImgs) {
+      const token = refImageTokenById.get(a.id) || makeImageTag(a.name || "image");
+      const url = getAssetUrl(a);
+      out.push({ id: a.id, token, label: a.name || "Image", kind: "ref", previewUrl: url });
+    }
+
+    return out;
+  }, [
+    model,
+    referenceImageIds,
+    klingElementIds,
+    imageAssets,
+    klingElements,
+    elementTokenById,
+    refImageTokenById,
+    mentionableRefImages,
+    excludeIdsFromMentions,
+  ]);
 
   const multishotReady = useMemo(() => {
     if (!multishotEnabled) return true;
@@ -469,7 +684,7 @@ export default function EditVideoTool() {
     [reloadHistory]
   );
 
-  // ===== Limits for references (Elements modal + images modal) =====
+    // ===== Limits for references (Elements modal + images modal) =====
   const setKlingElementIdsLimited = useCallback<React.Dispatch<React.SetStateAction<string[]>>>(
     (next) => {
       setKlingElementIds((prev) => {
@@ -486,46 +701,330 @@ export default function EditVideoTool() {
     [maxElements, referenceImageIds.length]
   );
 
+  const setReferenceImageIdsLimited = useCallback<React.Dispatch<React.SetStateAction<string[]>>>(
+    (next) => {
+      setReferenceImageIds((prev) => {
+        const value = typeof next === "function" ? (next as any)(prev) : next;
+        if (value.length > maxRefImages) {
+          setError(
+            `Máximo ${maxRefImages} imágenes de referencia porque ya tienes ${klingElementIds.length} Elements (máx 4 combinado).`
+          );
+          return prev;
+        }
+        return value;
+      });
+    },
+    [maxRefImages, klingElementIds.length]
+  );
+
+  // ✅ Sync referencias (imágenes) con el prompt (slug tokens):
+  // - Si borras un token de imagen del prompt -> se deselecciona.
+  // - Si agregas un token -> se selecciona (hasta el límite actual).
+  const prevPromptImageTokensRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled) return;
+
+    const tokens = extractMentionTokens(prompt).map((t) => t.toLowerCase());
+
+    const current = new Set<string>();
+    for (const t of tokens) if (imageTokenToId.has(t)) current.add(t);
+
+    const prev = prevPromptImageTokensRef.current;
+    const removed: string[] = [];
+    const added: string[] = [];
+
+    for (const t of prev) if (!current.has(t)) removed.push(t);
+    for (const t of current) if (!prev.has(t)) added.push(t);
+
+    if (removed.length || added.length) {
+      setReferenceImageIdsLimited((prevIds) => {
+        const beforeIds = Array.isArray(prevIds) ? prevIds : [];
+        let nextIds = beforeIds;
+
+        if (removed.length) {
+          const removedIds = removed.map((t) => imageTokenToId.get(t)).filter(Boolean) as string[];
+          if (removedIds.length) nextIds = nextIds.filter((id) => !removedIds.includes(id));
+        }
+
+        if (added.length) {
+          const temp = [...nextIds];
+          for (const t of added) {
+            const id = imageTokenToId.get(t);
+            if (!id) continue;
+            if (temp.includes(id)) continue;
+            if (temp.length >= maxRefImages) break;
+            temp.push(id);
+          }
+          nextIds = temp;
+        }
+
+        if (nextIds.length > maxRefImages) nextIds = nextIds.slice(0, maxRefImages);
+
+        const same = nextIds.length === beforeIds.length && nextIds.every((id, i) => id === beforeIds[i]);
+        return same ? beforeIds : nextIds;
+      });
+    }
+
+    prevPromptImageTokensRef.current = current;
+
+    if (current.size > maxRefImages) {
+      setError(`No puedes usar más de ${maxRefImages} imágenes de referencia a la vez (máx 4 combinado).`);
+    }
+  }, [prompt, imageTokenToId, maxRefImages, setReferenceImageIdsLimited, multishotEnabled]);
+
+  // ✅ Sync Elements con el prompt (slug tokens):
+  // - Si borras un token de Element del prompt -> se deselecciona.
+  // - Si agregas un token -> se selecciona (hasta el límite actual).
+  const prevPromptElementTokensRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled) return;
+
+    const tokens = extractMentionTokens(prompt).map((t) => t.toLowerCase());
+
+    const current = new Set<string>();
+    for (const t of tokens) if (elementTokenToId.has(t)) current.add(t);
+
+    const prev = prevPromptElementTokensRef.current;
+    const removed: string[] = [];
+    const added: string[] = [];
+
+    for (const t of prev) if (!current.has(t)) removed.push(t);
+    for (const t of current) if (!prev.has(t)) added.push(t);
+
+    if (removed.length || added.length) {
+      setKlingElementIdsLimited((prevIds) => {
+        const beforeIds = Array.isArray(prevIds) ? prevIds : [];
+        let nextIds = beforeIds;
+
+        if (removed.length) {
+          const removedIds = removed.map((t) => elementTokenToId.get(t)).filter(Boolean) as string[];
+          if (removedIds.length) nextIds = nextIds.filter((id) => !removedIds.includes(id));
+        }
+
+        if (added.length) {
+          const temp = [...nextIds];
+          for (const t of added) {
+            const id = elementTokenToId.get(t);
+            if (!id) continue;
+            if (temp.includes(id)) continue;
+            if (temp.length >= maxElements) break;
+            temp.push(id);
+          }
+          nextIds = temp;
+        }
+
+        if (nextIds.length > maxElements) nextIds = nextIds.slice(0, maxElements);
+
+        const same = nextIds.length === beforeIds.length && nextIds.every((id, i) => id === beforeIds[i]);
+        return same ? beforeIds : nextIds;
+      });
+    }
+
+    prevPromptElementTokensRef.current = current;
+
+    if (current.size > maxElements) {
+      setError(`No puedes usar más de ${maxElements} Elements a la vez (máx 4 combinado).`);
+    }
+  }, [prompt, elementTokenToId, maxElements, setKlingElementIdsLimited, multishotEnabled]);
+
   // ===== Generation =====
-  const validateAndBuildRequest = useCallback(() => {
+    const validateAndBuildRequest = useCallback(() => {
+    // Construye prompt + orden de refs/elements en función de los @tokens.
+    // - En el prompt el usuario puede escribir:
+    //    - Imágenes: @img_xxx (dropdown) o @Image1/@image1 (alias numérico)
+    //    - Elements: @xxx (dropdown) o @Element1/@element1 (alias numérico)
+    //    - Video base: @video1 / @Video1
+    // - Antes de enviar al modelo convertimos a @ImageN/@ElementN y ordenamos arrays.
+
+    const normalizeAspectRatio = (arIn: AspectRatio): AspectRatio => {
+      // Kling O3 reference-to-video suele trabajar mejor con AR explícito
+      if (model === "kling-o3-ref-to-video-pro" && arIn === "auto") return "16:9";
+      return arIn;
+    };
+
+    const convertTokensWithMaps = (
+      raw: string,
+      imgIndexById: Map<string, number>,
+      elIndexById: Map<string, number>
+    ) => {
+      const p = String(raw || "").trim();
+
+      return p.replace(/@[a-z0-9_]+/gi, (tok) => {
+        const lower = tok.toLowerCase();
+
+        // Normaliza @video1
+        if (lower === "@video1") return "@Video1";
+
+        // Normaliza @imageN/@elementN escritos por el usuario
+        const mImg = lower.match(/^@image([1-4])$/);
+        if (mImg) return `@Image${mImg[1]}`;
+
+        const mEl = lower.match(/^@element([1-5])$/);
+        if (mEl) return `@Element${mEl[1]}`;
+
+        // Slug tokens -> numeric tokens
+        const imgId = imageTokenToId.get(lower);
+        if (imgId) {
+          const n = imgIndexById.get(imgId);
+          if (n) return `@Image${n}`;
+        }
+
+        const elId = elementTokenToId.get(lower);
+        if (elId) {
+          const n = elIndexById.get(elId);
+          if (n) return `@Element${n}`;
+        }
+
+        return tok;
+      });
+    };
+
+    const preparePromptAndRefs = (rawPrompt: string) => {
+      const p = String(rawPrompt || "").trim();
+      const tokens = extractMentionTokens(p);
+      const lowerTokens = tokens.map((t) => t.toLowerCase());
+
+      const numericImageIndices = lowerTokens
+        .map((t) => {
+          const m = t.match(/^@image([1-4])$/);
+          return m ? Number(m[1]) : 0;
+        })
+        .filter((n) => n > 0);
+
+      const numericElementIndices = lowerTokens
+        .map((t) => {
+          const m = t.match(/^@element([1-5])$/);
+          return m ? Number(m[1]) : 0;
+        })
+        .filter((n) => n > 0);
+
+      const hasNumericImages = numericImageIndices.length > 0;
+      const hasNumericElements = numericElementIndices.length > 0;
+
+      const mentionedImageIds: string[] = [];
+      const mentionedElementIds: string[] = [];
+
+      for (const t of lowerTokens) {
+        const imgId = imageTokenToId.get(t);
+        if (imgId && !mentionedImageIds.includes(imgId)) mentionedImageIds.push(imgId);
+
+        const elId = elementTokenToId.get(t);
+        if (elId && !mentionedElementIds.includes(elId)) mentionedElementIds.push(elId);
+      }
+
+      // Si el usuario usa @imageN / @elementN, preservamos el orden actual del selector
+      // (para que los números no cambien).
+      let finalImageIds = hasNumericImages ? [...referenceImageIds] : [...mentionedImageIds];
+      let finalElementIds = hasNumericElements ? [...klingElementIds] : [...mentionedElementIds];
+
+      // Merge con lo seleccionado / lo mencionado
+      if (hasNumericImages) {
+        for (const id of mentionedImageIds) if (!finalImageIds.includes(id)) finalImageIds.push(id);
+      } else {
+        for (const id of referenceImageIds) if (!finalImageIds.includes(id)) finalImageIds.push(id);
+      }
+
+      if (hasNumericElements) {
+        for (const id of mentionedElementIds) if (!finalElementIds.includes(id)) finalElementIds.push(id);
+      } else {
+        for (const id of klingElementIds) if (!finalElementIds.includes(id)) finalElementIds.push(id);
+      }
+
+      if (finalImageIds.length + finalElementIds.length > 4) {
+        return {
+          ok: false as const,
+          error: "Kling permite máximo 4 referencias combinadas (Elements + imágenes).",
+        };
+      }
+
+      const maxImgIndex = numericImageIndices.length ? Math.max(...numericImageIndices) : 0;
+      if (maxImgIndex > finalImageIds.length) {
+        return {
+          ok: false as const,
+          error: `Tu prompt usa @Image${maxImgIndex}, pero solo hay ${finalImageIds.length} imágenes de referencia disponibles.`,
+        };
+      }
+
+      const maxElIndex = numericElementIndices.length ? Math.max(...numericElementIndices) : 0;
+      if (maxElIndex > finalElementIds.length) {
+        return {
+          ok: false as const,
+          error: `Tu prompt usa @Element${maxElIndex}, pero solo hay ${finalElementIds.length} Elements disponibles.`,
+        };
+      }
+
+      const imgIndexById = new Map<string, number>();
+      finalImageIds.forEach((id, i) => imgIndexById.set(id, i + 1));
+
+      const elIndexById = new Map<string, number>();
+      finalElementIds.forEach((id, i) => elIndexById.set(id, i + 1));
+
+      const promptForModel = convertTokensWithMaps(p, imgIndexById, elIndexById);
+
+      return {
+        ok: true as const,
+        promptForModel,
+        referenceImageAssetIds: finalImageIds,
+        klingElementIds: finalElementIds,
+        imgIndexById,
+        elIndexById,
+      };
+    };
+
     if (combinedRefsCount > 4) {
       return { ok: false as const, error: "Kling permite máximo 4 referencias combinadas (Elements + imágenes)." };
     }
 
-    const ar: AspectRatio =
-      model === "kling-o3-ref-to-video-pro" && aspectRatio === "auto" ? "16:9" : aspectRatio;
+    const ar: AspectRatio = normalizeAspectRatio(aspectRatio);
 
+    // ===== Reference → Video =====
     if (model === "kling-o3-ref-to-video-pro") {
       if (!startImage) {
         return { ok: false as const, error: "Selecciona una imagen START (obligatoria) para Reference→Video." };
       }
 
-    if (ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled) {
+      // Multishot (solo si se habilita el flag)
+      if (ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled) {
         const clean = shots.filter((s) => (s.prompt || "").trim().length > 0);
         if (clean.length === 0) {
           return { ok: false as const, error: "Agrega al menos 1 shot con prompt para el Storyboard." };
         }
+
         const total = sumSeconds(clean);
         if (total < 3 || total > 15) {
           return { ok: false as const, error: "El Storyboard debe sumar entre 3s y 15s en total." };
         }
+
         const anyTooLong = clean.some((s) => (s.prompt || "").length > O3_SHOT_PROMPT_LIMIT);
         if (anyTooLong) {
           return { ok: false as const, error: `Un shot supera el límite de ${O3_SHOT_PROMPT_LIMIT} caracteres.` };
         }
 
-        const finalPrompt = buildPromptFromShots(clean);
+        // Preparamos refs/elements mirando TODOS los shots (tokens reales)
+        const allPrompts = clean.map((s) => String(s.prompt || "")).join("\n");
+        const preparedAll = preparePromptAndRefs(allPrompts);
+        if (!preparedAll.ok) return preparedAll;
+
+        // Convertimos cada shot al formato @ImageN/@ElementN usando el mismo orden final
+        const convertedShots: O3Shot[] = clean.map((s) => ({
+          ...s,
+          prompt: convertTokensWithMaps(String(s.prompt || ""), preparedAll.imgIndexById, preparedAll.elIndexById),
+        }));
+
+        const finalPrompt = buildPromptFromShots(convertedShots);
 
         return {
           ok: true as const,
           finalPrompt,
           body: {
             model,
-            klingMultiPrompt: clean,
+            klingMultiPrompt: convertedShots,
             startImageAssetId: startImage.id,
             endImageAssetId: endImage?.id || null,
-            referenceImageAssetIds: referenceImageIds,
-            klingElementIds: klingElementIds,
+            referenceImageAssetIds: preparedAll.referenceImageAssetIds,
+            klingElementIds: preparedAll.klingElementIds,
             durationSeconds: total,
             aspectRatio: ar,
             generateAudio,
@@ -536,44 +1035,60 @@ export default function EditVideoTool() {
         };
       }
 
-      const p = (prompt || "").trim();
-      if (!p) return { ok: false as const, error: "Escribe un prompt (obligatorio) para editar el video." };
+      const prepared = preparePromptAndRefs(prompt);
+      if (!prepared.ok) return prepared;
 
-      // ✅ Kling O3 Edit Video no expone duration/aspect en el API: usa los del video de entrada.
-      if (model === "kling-o3-edit-video-pro") {
-        return {
-          ok: true as const,
-          finalPrompt: p,
-          body: {
-            model,
-            prompt: p,
-            videoAssetId: inputVideo.id,
-            referenceImageAssetIds: referenceImageIds,
-            klingElementIds: klingElementIds,
-            keepAudio,
-            toolName: TOOL_NAME,
-            hint: nowHint(model),
-            async: true,
-          },
-        };
+      if (!prepared.promptForModel) {
+        return { ok: false as const, error: "Escribe un prompt (obligatorio) para generar el video." };
       }
 
-      // ✅ Reference Video→Video sí permite duration/aspect.
       if (durationSeconds < 3 || durationSeconds > 15) {
         return { ok: false as const, error: "Duración inválida: usa 3–15 segundos." };
       }
 
       return {
         ok: true as const,
-        finalPrompt: p,
+        finalPrompt: prepared.promptForModel,
         body: {
           model,
-          prompt: p,
-          videoAssetId: inputVideo.id,
-          referenceImageAssetIds: referenceImageIds,
-          klingElementIds: klingElementIds,
+          prompt: prepared.promptForModel,
+          startImageAssetId: startImage.id,
+          endImageAssetId: endImage?.id || null,
+          referenceImageAssetIds: prepared.referenceImageAssetIds,
+          klingElementIds: prepared.klingElementIds,
           durationSeconds,
           aspectRatio: ar,
+          generateAudio,
+          toolName: TOOL_NAME,
+          hint: nowHint(model),
+          async: true,
+        },
+      };
+    }
+
+    // ===== Video → Video =====
+    if (!inputVideo) {
+      return { ok: false as const, error: "Selecciona un VIDEO de entrada (obligatorio) para este modelo." };
+    }
+
+    const prepared = preparePromptAndRefs(prompt);
+    if (!prepared.ok) return prepared;
+
+    if (!prepared.promptForModel) {
+      return { ok: false as const, error: "Escribe un prompt (obligatorio) para editar el video." };
+    }
+
+    // ✅ Kling O3 Edit Video no expone duration/aspect en el API: usa los del video de entrada.
+    if (model === "kling-o3-edit-video-pro") {
+      return {
+        ok: true as const,
+        finalPrompt: prepared.promptForModel,
+        body: {
+          model,
+          prompt: prepared.promptForModel,
+          videoAssetId: inputVideo.id,
+          referenceImageAssetIds: prepared.referenceImageAssetIds,
+          klingElementIds: prepared.klingElementIds,
           keepAudio,
           toolName: TOOL_NAME,
           hint: nowHint(model),
@@ -582,26 +1097,20 @@ export default function EditVideoTool() {
       };
     }
 
-    if (!inputVideo) {
-      return { ok: false as const, error: "Selecciona un VIDEO de entrada (obligatorio) para este modelo." };
-    }
-
-    const p = (prompt || "").trim();
-    if (!p) return { ok: false as const, error: "Escribe un prompt (obligatorio) para editar el video." };
-
+    // ✅ Reference Video→Video sí permite duration/aspect.
     if (durationSeconds < 3 || durationSeconds > 15) {
       return { ok: false as const, error: "Duración inválida: usa 3–15 segundos." };
     }
 
     return {
       ok: true as const,
-      finalPrompt: p,
+      finalPrompt: prepared.promptForModel,
       body: {
         model,
-        prompt: p,
+        prompt: prepared.promptForModel,
         videoAssetId: inputVideo.id,
-        referenceImageAssetIds: referenceImageIds,
-        klingElementIds: klingElementIds,
+        referenceImageAssetIds: prepared.referenceImageAssetIds,
+        klingElementIds: prepared.klingElementIds,
         durationSeconds,
         aspectRatio: ar,
         keepAudio,
@@ -620,12 +1129,15 @@ export default function EditVideoTool() {
     inputVideo,
     referenceImageIds,
     klingElementIds,
-    generateAudio,
+    imageTokenToId,
+    elementTokenToId,
     keepAudio,
+    generateAudio,
     multishotEnabled,
     shots,
     combinedRefsCount,
   ]);
+
 
   const runFinalizeFlow = useCallback(
     async (jobToken: string, finalPrompt: string) => {
@@ -1019,10 +1531,38 @@ export default function EditVideoTool() {
                     )}
                   </div>
                 ) : (
-                  <textarea
-                    className={styles.prompt}
+                  <MentionTextarea
+                    textareaClassName={styles.prompt}
                     value={prompt}
-                    onChange={(e) => setPrompt(e.target.value)}
+                    onChange={setPrompt}
+                    items={promptMentionItems}
+                    onSelectItem={(it) => {
+                      if (it.kind === "element") {
+                        if (klingElementIds.includes(it.id)) return true;
+                        if (klingElementIds.length >= maxElements) {
+                          setError(
+                            `Máximo ${maxElements} Elements porque ya tienes ${referenceImageIds.length} imágenes de referencia (máx 4 combinado).`
+                          );
+                          return false;
+                        }
+                        setKlingElementIdsLimited((prev) => (prev.includes(it.id) ? prev : [...prev, it.id]));
+                        return true;
+                      }
+
+                      if (it.kind === "ref") {
+                        if (referenceImageIds.includes(it.id)) return true;
+                        if (referenceImageIds.length >= maxRefImages) {
+                          setError(
+                            `Máximo ${maxRefImages} imágenes de referencia porque ya tienes ${klingElementIds.length} Elements (máx 4 combinado).`
+                          );
+                          return false;
+                        }
+                        setReferenceImageIdsLimited((prev) => (prev.includes(it.id) ? prev : [...prev, it.id]));
+                        return true;
+                      }
+
+                      return true;
+                    }}
                     placeholder={
                       model === "kling-o3-ref-to-video-pro"
                         ? "Describe la escena… (personaje, acción, cámara, estilo)."
@@ -1030,7 +1570,6 @@ export default function EditVideoTool() {
                           ? "Describe qué cambiar y qué conservar… (El video base es @Video1. Ej: “cambia el ambiente a nieve, conserva la identidad y el movimiento”)."
                           : "Describe la nueva versión… (El video base es @Video1. Usa @Image1/@Element1 para identidad/estilo)."
                     }
-
                     rows={3}
                   />
                 )}
