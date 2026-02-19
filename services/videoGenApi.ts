@@ -91,7 +91,8 @@ export async function resumeFalFinalize(
 
   await waitFalJob(job.jobToken, {
     signal: opts?.signal,
-    maxWaitMs: opts?.maxWaitMs ?? 15 * 60 * 1000,
+    // Subimos el máximo de espera para Kling V3 (Fal)
+    maxWaitMs: opts?.maxWaitMs ?? 60 * 60 * 1000, // 60 min
     onProgress: opts?.onProgress,
   });
 
@@ -359,7 +360,7 @@ export async function waitFalJob(
     onProgress?: (msg: string) => void;
   }
 ) {
-  const maxWaitMs = opts?.maxWaitMs ?? 15 * 60 * 1000;
+  const maxWaitMs = opts?.maxWaitMs ?? 60 * 60 * 1000; // 60 min
   const t0 = Date.now();
 
   let pollMs = 1500;
@@ -372,7 +373,7 @@ export async function waitFalJob(
 
     let st: any;
     try {
-      st = await apiPostJson<any>(
+     const st = await apiPostJson<any>(
         "/api/ai/video/fal/status",
         { jobToken },
         // subimos a 2 minutos; y si igual falla, NO marcamos failed por timeout
