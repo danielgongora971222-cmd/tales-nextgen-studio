@@ -1,25 +1,10 @@
-# Production container for Tales NextGen Studio
-# - Builds the Vite frontend
-# - Runs the Express API server which can also serve the built frontend (dist/)
-FROM node:20-alpine AS build
-WORKDIR /app
-
-COPY package*.json ./
-RUN npm ci
-
-COPY . .
-RUN npm run build
-
-FROM node:20-alpine
-WORKDIR /app
-ENV NODE_ENV=production
-ENV SERVE_CLIENT=1
-
-COPY package*.json ./
-RUN npm ci --omit=dev
-
-COPY --from=build /app/dist ./dist
-COPY --from=build /app/server ./server
-
-EXPOSE 8080
-CMD ["node", "server/server.js"]
+node_modules
+dist
+.env
+.env.*
+*.log
+.DS_Store
+.git
+.gitignore
+.vscode
+coverage

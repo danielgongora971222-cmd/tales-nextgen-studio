@@ -38,38 +38,89 @@ create trigger on_auth_user_created
   for each row execute procedure public.handle_new_user();
 
 -- =========================
--- Assets (images/videos)
+-- Assets (images/videos)  ✅ ALINEADO con el backend actual
 -- =========================
 create table if not exists public.assets (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null references auth.users(id) on delete cascade,
-  kind text not null check (kind in ('image','video')),
-  tool text not null,
-  title text,
+
+  -- backend usa "type"
+  type text not null check (type in ('image','video')),
+
+  tool text,
+  name text,
   prompt text,
-  model text,
-  storage_key text not null,
-  public_url text not null,
-  bytes bigint,
-  width integer,
-  height integer,
+
+  -- storage (backend usa "storage_path")
+  storage_path text not null unique,
+
+  -- privacidad (backend usa "is_public")
+  is_public boolean not null default false,
+
+  -- opcional: cache de URL (backend la lee como "url", puede ser null)
+  url text,
+
+  -- metadatos libres (backend usa "meta")
+  meta jsonb not null default '{}'::jsonb,
+
   created_at timestamptz not null default now()
 );
 
-create index if not exists assets_owner_id_idx on public.assets(owner_id);
+create index if not exists assets_owner_created_at_idx
+  on public.assets(owner_id, created_at desc);
+
+create index if not exists assets_public_created_at_idx
+  on public.assets(created_at desc)
+  where is_public = true;
 
 alter table public.assets enable row level security;
 
-create policy if not exists "assets_select_own" on public.assets
-  for select using (auth.uid() = owner_id);
+-- Leer: dueño o público
+create policy if not exists "assets_select_owner_or_public" on public.assets
+  for select using (auth.uid() = owner_id OR is_public = true);
 
+-- Insertar: solo dueño
 create policy if not exists "assets_insert_own" on public.assets
   for insert with check (auth.uid() = owner_id);
 
+-- Update/Delete: solo dueño
 create policy if not exists "assets_update_own" on public.assets
   for update using (auth.uid() = owner_id) with check (auth.uid() = owner_id);
 
 create policy if not exists "assets_delete_own" on public.assets
+  for delete using (auth.uid() = owner_id);
+
+-- =========================
+-- Kling Elements (Element Library) ✅ requerido por /api/kling/elements
+-- =========================
+create table if not exists public.kling_elements (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+
+  name text not null,
+  kling_element_id text not null,
+
+  preview_path text,
+  image_paths text[] not null default '{}'::text[],
+
+  created_at timestamptz not null default now()
+);
+
+create index if not exists kling_elements_owner_created_at_idx
+  on public.kling_elements(owner_id, created_at desc);
+
+alter table public.kling_elements enable row level security;
+
+create policy if not exists "kling_elements_select_own" on public.kling_elements
+  for select using (auth.uid() = owner_id);
+
+create policy if not exists "kling_elements_insert_own" on public.kling_elements
+  for insert with check (auth.uid() = owner_id);
+
+create policy if not exists "kling_elements_update_own" on public.kling_elements
+  for update using (auth.uid() = owner_id) with check (auth.uid() = owner_id);
+
+create policy if not exists "kling_elements_delete_own" on public.kling_elements
   for delete using (auth.uid() = owner_id);
 
 -- =========================

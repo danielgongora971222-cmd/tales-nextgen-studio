@@ -124,8 +124,15 @@ app.use(
       // Si no viene "origin" (ej: server-to-server), lo permitimos
       if (!origin) return cb(null, true);
 
-      // Si no configuras ALLOWED_ORIGINS, permitimos (modo simple)
-      if (allowedOrigins.length === 0) return cb(null, true);
+      // Si no configuras ALLOWED_ORIGINS:
+      // - En dev: permitimos (para no estorbar)
+      // - En production: BLOQUEAMOS origins de navegador para evitar abuso directo al Render URL
+      if (allowedOrigins.length === 0) {
+        const env = String(process.env.APP_ENV || process.env.NODE_ENV || "").toLowerCase();
+        const isProd = env === "production";
+        if (isProd) return cb(new Error("CORS blocked"));
+        return cb(null, true);
+      }
 
       // Si está en la lista, ok
       if (allowedOrigins.includes(origin)) return cb(null, true);
@@ -175,12 +182,45 @@ app.use("/api/health", healthLimiter);
 app.use(apiLimiter);
 
 // Rate limit más estricto para IA (protege tu key)
+// IMPORTANTE: NO debe romper el polling async de Fal (/api/ai/video/fal/*)
+
+// 1) Limitador específico para polling Fal (más alto, porque el frontend hace polling cada ~2-3s)
+const falPollLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60, // 60/min por IP (ajústalo si quieres más/menos)
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => ipKeyGenerator(getClientIp(req)),
+  handler: (req, res) => {
+    const retryAfter = Number(res.getHeader("Retry-After")) || null;
+    return res.status(429).json({
+      ok: false,
+      error: {
+        code: "RATE_LIMITED",
+        message: "Demasiadas solicitudes de estado (Fal). Espera un momento y vuelve a intentar.",
+        details: {
+          scope: "fal_poll",
+          retryAfterSeconds: retryAfter,
+        },
+      },
+    });
+  },
+});
+
+// Se aplica SOLO a /api/ai/video/fal/*
+app.use("/api/ai/video/fal", falPollLimiter);
+
+// 2) Limitador de IA “caro” (generaciones). Saltamos /api/ai/video/fal/* para no romper polling.
 const aiLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => ipKeyGenerator(getClientIp(req)),
+  skip: (req) => {
+    const p = String(req.originalUrl || "");
+    return p.startsWith("/api/ai/video/fal/");
+  },
   handler: (req, res) => {
     const retryAfter = Number(res.getHeader("Retry-After")) || null;
     return res.status(429).json({
@@ -197,10 +237,12 @@ const aiLimiter = rateLimit({
   },
 });
 
-// Aplica este limitador a TODAS las rutas /api/ai/*
+// Aplica este limitador a /api/ai/* (excepto Fal polling, por el skip)
 app.use("/api/ai", aiLimiter);
-app.use(express.json({ limit: "512mb" }));
-app.use(express.urlencoded({ extended: true, limit: "512mb" }));
+
+// Body limits (evita DoS y picos de memoria)
+app.use(express.json({ limit: "25mb" }));
+app.use(express.urlencoded({ extended: true, limit: "25mb" }));
 
 app.use("/api", createHealthRouter());
 
