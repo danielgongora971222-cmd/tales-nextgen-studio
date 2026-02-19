@@ -52,13 +52,13 @@ const MODEL_OPTIONS: Array<{
   uiDesc: string;
   uiHint: string;
 }> = [
-    {
+  {
     id: "kling-o3-ref-to-video-pro",
-    uiName: "Imagen/Referencias → Video (Pro)",
+    uiName: "Ingredientes → Video (Pro)",
     uiDesc:
-      "Crea un video nuevo desde una imagen START (y opcionalmente una END), más referencias visuales para consistencia.",
+      "Crea un video nuevo desde cero usando ingredientes visuales (Elements + referencias subidas). No usa START/END.",
     uiHint:
-      "Ideal para crear escenas desde cero. START fija el primer frame (identidad/escena) y END puede fijar el último. En el prompt puedes referenciar: @Image1.. (refs) y @Element1.. (Elements).",
+      "Usa entre 1 y 7 ingredientes combinados. En el prompt puedes referenciar: @Image1..@Image7 y @Element1..@Element7 (según tu selección).",
   },
   {
     id: "kling-o3-edit-video-pro",
@@ -81,6 +81,16 @@ const MODEL_OPTIONS: Array<{
 function getMetaTool(a: Asset): string | null {
   const meta: any = (a as any)?.meta || {};
   return meta?.tool ?? null;
+}
+
+function getMetaSource(a: Asset): string | null {
+  const meta: any = (a as any)?.meta || {};
+  return meta?.source ?? null;
+}
+
+function getMetaCategory(a: Asset): string | null {
+  const meta: any = (a as any)?.meta || {};
+  return meta?.category ?? null;
 }
 
 function getAssetUrl(a: Asset): string | null {
@@ -227,8 +237,9 @@ export default function EditVideoTool() {
   );
 
   const combinedRefsCount = referenceImageIds.length + klingElementIds.length;
-  const maxRefImages = Math.max(0, 4 - klingElementIds.length);
-  const maxElements = Math.max(0, 4 - referenceImageIds.length);
+  const maxCombinedRefs = model === "kling-o3-ref-to-video-pro" ? 7 : 4;
+  const maxRefImages = Math.max(0, maxCombinedRefs - klingElementIds.length);
+  const maxElements = Math.max(0, maxCombinedRefs - referenceImageIds.length);
 
   // ===============================
   // Mentions (@) para referencias + Elements (Kling O3)
@@ -249,16 +260,24 @@ export default function EditVideoTool() {
   }, [startImage?.id, endImage?.id]);
 
   const mentionableRefImages = useMemo(() => {
-    return (imageAssets || [])
-      .filter((a) => !!getAssetUrl(a))
-      .filter((a) => !excludeIdsFromMentions.has(a.id))
-      .filter((a) => getMetaTool(a) !== FRAME_UPLOAD_TOOL)
-      .sort((a: any, b: any) => {
-        const ta = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const tb = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
-        return tb - ta;
-      });
-  }, [imageAssets, excludeIdsFromMentions]);
+  return (imageAssets || [])
+    .filter((a) => !!getAssetUrl(a))
+    .filter((a) => !excludeIdsFromMentions.has(a.id))
+    .filter((a) => getMetaTool(a) !== FRAME_UPLOAD_TOOL)
+
+    // ✅ Solo referencias subidas por el usuario (NO imágenes generadas)
+    .filter((a) => getMetaSource(a) === "upload")
+
+    // ✅ Excluye elementos de Image Gen (element-library)
+    .filter((a) => getMetaTool(a) !== "element-library")
+    .filter((a) => getMetaCategory(a) !== "element")
+
+    .sort((a: any, b: any) => {
+      const ta = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const tb = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return tb - ta;
+    });
+}, [imageAssets, excludeIdsFromMentions]);
 
   const refImageTokenById = useMemo(() => {
     const reserved = new Set<string>([
@@ -267,12 +286,18 @@ export default function EditVideoTool() {
       "@image2",
       "@image3",
       "@image4",
+      "@image5",
+      "@image6",
+      "@image7",
       "@element1",
       "@element2",
       "@element3",
       "@element4",
       "@element5",
+      "@element6",
+      "@element7",
     ]);
+
 
     const used = new Set<string>(reserved);
     const map = new Map<string, string>(); // assetId -> token
@@ -691,7 +716,7 @@ export default function EditVideoTool() {
         const value = typeof next === "function" ? (next as any)(prev) : next;
         if (value.length > maxElements) {
           setError(
-            `Máximo ${maxElements} Elements porque ya tienes ${referenceImageIds.length} imágenes de referencia (máx 4 combinado).`
+            `Máximo ${maxElements} Elements porque ya tienes ${referenceImageIds.length} imágenes de referencia (máx ${maxCombinedRefs} combinado).`
           );
           return prev;
         }
@@ -707,7 +732,7 @@ export default function EditVideoTool() {
         const value = typeof next === "function" ? (next as any)(prev) : next;
         if (value.length > maxRefImages) {
           setError(
-            `Máximo ${maxRefImages} imágenes de referencia porque ya tienes ${klingElementIds.length} Elements (máx 4 combinado).`
+            `Máximo ${maxRefImages} imágenes de referencia porque ya tienes ${klingElementIds.length} Elements (máx ${maxCombinedRefs} combinado).`
           );
           return prev;
         }
@@ -858,11 +883,17 @@ export default function EditVideoTool() {
         if (lower === "@video1") return "@Video1";
 
         // Normaliza @imageN/@elementN escritos por el usuario
-        const mImg = lower.match(/^@image([1-4])$/);
-        if (mImg) return `@Image${mImg[1]}`;
+        const mImg = lower.match(/^@image(\d+)$/);
+        if (mImg) {
+          const n = Number(mImg[1]);
+          if (n >= 1 && n <= maxCombinedRefs) return `@Image${n}`;
+        }
 
-        const mEl = lower.match(/^@element([1-5])$/);
-        if (mEl) return `@Element${mEl[1]}`;
+        const mEl = lower.match(/^@element(\d+)$/);
+        if (mEl) {
+          const n = Number(mEl[1]);
+          if (n >= 1 && n <= maxCombinedRefs) return `@Element${n}`;
+        }
 
         // Slug tokens -> numeric tokens
         const imgId = imageTokenToId.get(lower);
@@ -886,17 +917,19 @@ export default function EditVideoTool() {
       const tokens = extractMentionTokens(p);
       const lowerTokens = tokens.map((t) => t.toLowerCase());
 
-      const numericImageIndices = lowerTokens
+    const numericImageIndices = lowerTokens
         .map((t) => {
-          const m = t.match(/^@image([1-4])$/);
-          return m ? Number(m[1]) : 0;
+          const m = t.match(/^@image(\d+)$/);
+          const n = m ? Number(m[1]) : 0;
+          return n >= 1 && n <= maxCombinedRefs ? n : 0;
         })
         .filter((n) => n > 0);
 
       const numericElementIndices = lowerTokens
         .map((t) => {
-          const m = t.match(/^@element([1-5])$/);
-          return m ? Number(m[1]) : 0;
+          const m = t.match(/^@element(\d+)$/);
+          const n = m ? Number(m[1]) : 0;
+          return n >= 1 && n <= maxCombinedRefs ? n : 0;
         })
         .filter((n) => n > 0);
 
@@ -932,10 +965,10 @@ export default function EditVideoTool() {
         for (const id of klingElementIds) if (!finalElementIds.includes(id)) finalElementIds.push(id);
       }
 
-      if (finalImageIds.length + finalElementIds.length > 4) {
+      if (finalImageIds.length + finalElementIds.length > maxCombinedRefs) {
         return {
           ok: false as const,
-          error: "Kling permite máximo 4 referencias combinadas (Elements + imágenes).",
+          error: `Kling permite máximo ${maxCombinedRefs} referencias combinadas (Elements + imágenes).`,
         };
       }
 
@@ -973,18 +1006,14 @@ export default function EditVideoTool() {
       };
     };
 
-    if (combinedRefsCount > 4) {
-      return { ok: false as const, error: "Kling permite máximo 4 referencias combinadas (Elements + imágenes)." };
+    if (combinedRefsCount > maxCombinedRefs) {
+      return { ok: false as const, error: `Kling permite máximo ${maxCombinedRefs} referencias combinadas (Elements + imágenes).` };
     }
 
     const ar: AspectRatio = normalizeAspectRatio(aspectRatio);
 
     // ===== Reference → Video =====
     if (model === "kling-o3-ref-to-video-pro") {
-      if (!startImage) {
-        return { ok: false as const, error: "Selecciona una imagen START (obligatoria) para Reference→Video." };
-      }
-
       // Multishot (solo si se habilita el flag)
       if (ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled) {
         const clean = shots.filter((s) => (s.prompt || "").trim().length > 0);
@@ -1007,6 +1036,17 @@ export default function EditVideoTool() {
         const preparedAll = preparePromptAndRefs(allPrompts);
         if (!preparedAll.ok) return preparedAll;
 
+        const totalIngredients =
+          preparedAll.referenceImageAssetIds.length + preparedAll.klingElementIds.length;
+
+        if (totalIngredients < 1) {
+          return {
+            ok: false as const,
+            error: `Agrega entre 1 y ${maxCombinedRefs} ingredientes (Elements + imágenes) para generar el video.`,
+          };
+        }
+
+
         // Convertimos cada shot al formato @ImageN/@ElementN usando el mismo orden final
         const convertedShots: O3Shot[] = clean.map((s) => ({
           ...s,
@@ -1021,8 +1061,6 @@ export default function EditVideoTool() {
           body: {
             model,
             klingMultiPrompt: convertedShots,
-            startImageAssetId: startImage.id,
-            endImageAssetId: endImage?.id || null,
             referenceImageAssetIds: preparedAll.referenceImageAssetIds,
             klingElementIds: preparedAll.klingElementIds,
             durationSeconds: total,
@@ -1042,6 +1080,16 @@ export default function EditVideoTool() {
         return { ok: false as const, error: "Escribe un prompt (obligatorio) para generar el video." };
       }
 
+      const totalIngredients =
+        prepared.referenceImageAssetIds.length + prepared.klingElementIds.length;
+
+      if (totalIngredients < 1) {
+        return {
+          ok: false as const,
+          error: `Agrega entre 1 y ${maxCombinedRefs} ingredientes (Elements + imágenes) para generar el video.`,
+        };
+      }
+
       if (durationSeconds < 3 || durationSeconds > 15) {
         return { ok: false as const, error: "Duración inválida: usa 3–15 segundos." };
       }
@@ -1052,8 +1100,6 @@ export default function EditVideoTool() {
         body: {
           model,
           prompt: prepared.promptForModel,
-          startImageAssetId: startImage.id,
-          endImageAssetId: endImage?.id || null,
           referenceImageAssetIds: prepared.referenceImageAssetIds,
           klingElementIds: prepared.klingElementIds,
           durationSeconds,
@@ -1305,113 +1351,78 @@ export default function EditVideoTool() {
           <div className={styles.promptRow}>
             {/* Inputs */}
             {model === "kling-o3-ref-to-video-pro" ? (
-              <div className={styles.frameStrip}>
-                <div
-                  className={styles.frameCard}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => setPickerOpen("start")}
-                  onKeyDown={(e) => e.key === "Enter" && setPickerOpen("start")}
-                  title="START"
-                >
-                  {startImage ? (
-                    <>
-                      <img className={styles.frameCardImg} src={getAssetUrl(startImage) || ""} alt="START" />
-                      <span className={styles.frameCardBadge}>START</span>
-                      <button
-                        type="button"
-                        className={styles.frameCardRemove}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setStartImage(null);
-                          setEndImage(null);
-                        }}
-                        aria-label="Remove START"
-                      >
-                        ×
-                      </button>
-                    </>
-                  ) : (
-                    <div className={styles.frameCardEmpty}>
-                      <div className={styles.frameCardIcons}>
-                        <Icon name="image" />
-                        <Icon name="upload" />
-                      </div>
-                    </div>
-                  )}
-                </div>
+                          <div className={styles.frameStrip}>
+                            <div
+                              className={styles.frameCard}
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => setRefPickerOpen(true)}
+                              onKeyDown={(e) => e.key === "Enter" && setRefPickerOpen(true)}
+                              title={`Refs (máx ${maxCombinedRefs} combinado)`}
+                            >
+                              <div className={styles.frameCardEmpty}>
+                                <div className={styles.frameCardIcons}>
+                                  <Icon name="image" />
+                                  <Icon name="upload" />
+                                </div>
+                              </div>
+                              <span className={styles.frameCardBadge}>REFS</span>
+                            </div>
 
-                <div
-                  className={`${styles.frameCard} ${!startImage ? styles.frameCardLocked : ""}`}
-                  role="button"
-                  tabIndex={startImage ? 0 : -1}
-                  onClick={() => startImage && setPickerOpen("end")}
-                  onKeyDown={(e) => e.key === "Enter" && startImage && setPickerOpen("end")}
-                  aria-disabled={!startImage}
-                  title={!startImage ? "Primero START" : "END"}
-                >
-                  {endImage ? (
-                    <>
-                      <img className={styles.frameCardImg} src={getAssetUrl(endImage) || ""} alt="END" />
-                      <span className={styles.frameCardBadge}>END</span>
-                      <button
-                        type="button"
-                        className={styles.frameCardRemove}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setEndImage(null);
-                        }}
-                        aria-label="Remove END"
-                      >
-                        ×
-                      </button>
-                    </>
-                  ) : (
-                    <div className={styles.frameCardEmpty}>
-                      <div className={styles.frameCardIcons}>
-                        <Icon name="image" />
-                        <Icon name="upload" />
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div className={styles.frameStrip}>
-                <div
-                  className={styles.frameCard}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => setPickerOpen("video")}
-                  onKeyDown={(e) => e.key === "Enter" && setPickerOpen("video")}
-                  title="VIDEO"
-                >
-                  {inputVideo ? (
-                    <>
-                      <video className={styles.frameCardImg} src={getAssetUrl(inputVideo) || ""} muted playsInline loop />
-                      <span className={styles.frameCardBadge}>VIDEO</span>
-                      <button
-                        type="button"
-                        className={styles.frameCardRemove}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setInputVideo(null);
-                        }}
-                        aria-label="Remove VIDEO"
-                      >
-                        ×
-                      </button>
-                    </>
-                  ) : (
-                    <div className={styles.frameCardEmpty}>
-                      <div className={styles.frameCardIcons}>
-                        <Icon name="upload" />
-                        <Icon name="video" />
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
+                            <div
+                              className={styles.frameCard}
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => setElementsOpen(true)}
+                              onKeyDown={(e) => e.key === "Enter" && setElementsOpen(true)}
+                              title={`Elements (máx ${maxCombinedRefs} combinado)`}
+                            >
+                              <div className={styles.frameCardEmpty}>
+                                <div className={styles.frameCardIcons}>
+                                  <Icon name="elements" />
+                                  <Icon name="upload" />
+                                </div>
+                              </div>
+                              <span className={styles.frameCardBadge}>ELEM</span>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className={styles.frameStrip}>
+                            <div
+                              className={styles.frameCard}
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => setPickerOpen("video")}
+                              onKeyDown={(e) => e.key === "Enter" && setPickerOpen("video")}
+                              title="VIDEO"
+                            >
+                              {inputVideo ? (
+                                <>
+                                  <video className={styles.frameCardImg} src={getAssetUrl(inputVideo) || ""} muted playsInline loop />
+                                  <span className={styles.frameCardBadge}>VIDEO</span>
+                                  <button
+                                    type="button"
+                                    className={styles.frameCardRemove}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setInputVideo(null);
+                                    }}
+                                    aria-label="Remove VIDEO"
+                                  >
+                                    ×
+                                  </button>
+                                </>
+                              ) : (
+                                <div className={styles.frameCardEmpty}>
+                                  <div className={styles.frameCardIcons}>
+                                    <Icon name="upload" />
+                                    <Icon name="video" />
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        
             )}
 
             {/* Prompt */}
@@ -1586,9 +1597,9 @@ export default function EditVideoTool() {
                 disabled={
                   isGenerating ||
                   !user ||
-                  combinedRefsCount > 4 ||
+                  combinedRefsCount > maxCombinedRefs ||
                   (model === "kling-o3-ref-to-video-pro"
-                    ? !startImage || ((ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled) ? !multishotReady : (prompt || "").trim().length === 0)
+                    ? ((ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled) ? !multishotReady : (prompt || "").trim().length === 0)
                     : !inputVideo || (prompt || "").trim().length === 0)
                 }
                 onClick={onGenerate}
@@ -1659,7 +1670,7 @@ export default function EditVideoTool() {
                 type="button"
                 className={styles.controlBtn}
                 onClick={() => setRefPickerOpen(true)}
-                title="Imágenes de referencia (máx 4 combinado)"
+                title={`Imágenes de referencia (máx ${maxCombinedRefs} combinado)`}
               >
                 <span className={styles.controlBtnLeft}>
                   <Icon name="image" />
@@ -1672,7 +1683,7 @@ export default function EditVideoTool() {
                 type="button"
                 className={styles.controlBtn}
                 onClick={() => setElementsOpen(true)}
-                title="Kling Elements (máx 4 combinado)"
+                title={`Kling Elements (máx ${maxCombinedRefs} combinado)`}
               >
                 <span className={styles.controlBtnLeft}>
                   <Icon name="elements" />
@@ -1856,7 +1867,11 @@ export default function EditVideoTool() {
 
                       <div className={styles.note}>
                         <div>
-                          <b>Referencias:</b> Elements + imágenes ≤ 4. 1–2 referencias fuertes suele funcionar mejor que 4 débiles.
+                          <b>Referencias:</b>{" "}
+                          {model === "kling-o3-ref-to-video-pro"
+                            ? `Requiere 1–${maxCombinedRefs} ingredientes (Elements + imágenes). `
+                            : `Máximo ${maxCombinedRefs} referencias combinadas (Elements + imágenes). `}
+                          1–2 referencias fuertes suele funcionar mejor que muchas débiles.
                         </div>
                       </div>
                     </div>
@@ -1933,6 +1948,10 @@ export default function EditVideoTool() {
         imageAssets={imageAssets}
         getAssetUrl={getAssetUrl}
         onRefresh={reloadKlingElements}
+        onAssetUploaded={(asset) =>
+          setImageAssets((prev) => [asset, ...prev.filter((x) => x.id !== asset.id)])
+        }
+        uploadToolName="video-elements"
       />
 
       {ENABLE_EDITVIDEO_MULTISHOT && (

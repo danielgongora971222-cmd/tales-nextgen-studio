@@ -436,58 +436,28 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
               Si en tu rama "Motion Control" ya está dentro del desplegable de Image Gen,
               aquí solo agregamos "Edit Video" para que quede junto a Motion Control.
 
-              Si NO está, agregamos ambos (Motion Control + Edit Video).
-            */}
-            {hasMotionControlInImageMenu ? (
-              <button
-                key="edit-video"
-                onClick={() => onNavigate(AppRoute.TOOL_VIDEO_EDIT)}
-                className={`w-full text-left px-3 py-2 rounded-xl text-xs font-medium transition-all border ${
-                  currentRoute === AppRoute.TOOL_VIDEO_EDIT
-                    ? 'border-[rgba(241,225,148,0.45)] text-white bg-[rgba(241,225,148,0.08)]'
-                    : 'border-transparent text-white/60 hover:text-white hover:bg-white/5'
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <span>Edit Video</span>
-                  <span className="text-[9px] bg-white/10 px-1 rounded text-white/70">SOON</span>
-                </div>
-              </button>
-            ) : (
-              <>
-                <div className="hud-divider my-2 mx-2" />
-
+            
+            {/* ✅ Fix: el hover de Image Gen debe mostrar sus herramientas (no herramientas de Video) */}
+            {TOOLS_REGISTRY.map((tool) => {
+              const isPrimary = tool.id === 'image-generator';
+              return (
                 <button
-                  key="motion-control"
-                  onClick={() => onNavigate(AppRoute.TOOL_MOTION_CONTROL)}
+                  key={tool.id}
+                  onClick={() => onNavigate(tool.route)}
                   className={`w-full text-left px-3 py-2 rounded-xl text-xs font-medium transition-all border ${
-                    currentRoute === AppRoute.TOOL_MOTION_CONTROL
+                    currentRoute === tool.route
                       ? 'border-[rgba(241,225,148,0.45)] text-white bg-[rgba(241,225,148,0.08)]'
-                      : 'border-transparent text-white/60 hover:text-white hover:bg-white/5'
+                      : isPrimary
+                        ? 'border-[rgba(241,225,148,0.35)] text-white bg-[rgba(241,225,148,0.14)] shadow-[0_0_18px_rgba(241,225,148,0.18)]'
+                        : 'border-transparent text-white/60 hover:text-white hover:bg-white/5'
                   }`}
                 >
                   <div className="flex items-center justify-between">
-                    <span>Motion Control</span>
-                    <span className="text-[9px] bg-white/20 px-1 rounded">BETA</span>
+                    <span>{tool.label}</span>
                   </div>
                 </button>
-
-                <button
-                  key="edit-video"
-                  onClick={() => onNavigate(AppRoute.TOOL_VIDEO_EDIT)}
-                  className={`w-full text-left px-3 py-2 rounded-xl text-xs font-medium transition-all border ${
-                    currentRoute === AppRoute.TOOL_VIDEO_EDIT
-                      ? 'border-[rgba(241,225,148,0.45)] text-white bg-[rgba(241,225,148,0.08)]'
-                      : 'border-transparent text-white/60 hover:text-white hover:bg-white/5'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span>Edit Video</span>
-                    <span className="text-[9px] bg-white/10 px-1 rounded text-white/70">SOON</span>
-                  </div>
-                </button>
-              </>
-            )}
+              );
+            })}
           </div>
         )}
 

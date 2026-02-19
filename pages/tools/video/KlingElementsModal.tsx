@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import styles from "../ImageGeneratorTool.module.css";
 import type { Asset } from "../../../types";
+import { uploadUserAsset } from "../../../services/assetsApi";
 import {
   createKlingElement,
   deleteKlingElement,
@@ -32,6 +33,8 @@ export function KlingElementsModal({
   imageAssets,
   getAssetUrl,
   onRefresh,
+  onAssetUploaded,
+  uploadToolName = "video-elements",
 }: {
   open: boolean;
   onClose: () => void;
@@ -44,7 +47,14 @@ export function KlingElementsModal({
   imageAssets: Asset[];
   getAssetUrl: (a: Asset) => string | null;
   onRefresh: () => Promise<void> | void;
+
+  // ✅ Permite que el padre inserte el asset recién subido sin recargar toda la librería
+  onAssetUploaded?: (asset: Asset) => void;
+
+  // ✅ tool/meta para distinguir uploads hechos desde este modal
+  uploadToolName?: string;
 }) {
+
   const [mode, setMode] = useState<Mode>("library");
 
   // Historial de imágenes dentro del creador de Elements
@@ -60,6 +70,8 @@ export function KlingElementsModal({
   const [isLoadingMoreAssets, setIsLoadingMoreAssets] = useState(false);
   const [busy, setBusy] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [uploadingSlotIdx, setUploadingSlotIdx] = useState<number | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
 
   useEffect(() => {
@@ -73,6 +85,46 @@ export function KlingElementsModal({
     setAssetVisibleCount(ASSET_INITIAL_COUNT);
     setIsLoadingMoreAssets(false);
   }, [open, ASSET_INITIAL_COUNT]);
+
+async function handleUploadForSlot(slotIdx: number, file: File) {
+  setLocalError(null);
+  setBusy(true);
+
+  try {
+    if (!file.type.startsWith("image/")) {
+      throw new Error("Solo puedes subir imágenes para crear un Element.");
+    }
+
+    const uploaded = await uploadUserAsset(file, {
+      tool: uploadToolName,
+      category: "image",
+      type: "image",
+      name: file.name,
+    });
+
+    onAssetUploaded?.(uploaded);
+
+    setPickedAssetIds((prev) => {
+      const withoutNew = prev.filter((id) => id !== uploaded.id);
+
+      if (slotIdx >= 0 && slotIdx < withoutNew.length) {
+        const next = [...withoutNew];
+        next[slotIdx] = uploaded.id;
+        return next.slice(0, 4);
+      }
+
+      if (withoutNew.length >= 4) return withoutNew;
+      return [...withoutNew, uploaded.id].slice(0, 4);
+    });
+  } catch (e: any) {
+    console.error(e);
+    setLocalError(e?.message || "No se pudo subir la imagen.");
+  } finally {
+    setBusy(false);
+    setUploadingSlotIdx(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+}
 
 
   const filteredElements = useMemo(() => {
@@ -411,6 +463,19 @@ export function KlingElementsModal({
 
               <div className={styles.elementLabel}>Images (1–4)</div>
 
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  const f = e.currentTarget.files?.[0];
+                  const idx = uploadingSlotIdx;
+                  if (!f || idx == null) return;
+                  handleUploadForSlot(idx, f);
+                }}
+              />
+
               <div className={styles.elementSlots}>
                 {[0, 1, 2, 3].map((idx) => {
                   const assetId = pickedAssetIds[idx] || null;
@@ -443,8 +508,12 @@ export function KlingElementsModal({
                         <button
                           type="button"
                           className={styles.smallBtn}
-                          disabled
-                          title="En Video Elements se eligen imágenes desde tu librería (sin collage)."
+                          disabled={busy}
+                          onClick={() => {
+                            setUploadingSlotIdx(idx);
+                            fileInputRef.current?.click();
+                          }}
+                          title={busy ? "Subiendo…" : "Subir una imagen (se agregará a tu librería)."}
                         >
                           Upload
                         </button>

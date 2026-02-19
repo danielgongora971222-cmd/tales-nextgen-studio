@@ -1634,6 +1634,10 @@ const durationLabel = useMemo(() => {
         imageAssets={imageAssets}
         getAssetUrl={getAssetUrl}
         onRefresh={refreshKlingElements}
+        onAssetUploaded={(asset) =>
+          setImageAssets((prev) => [asset, ...prev.filter((x) => x.id !== asset.id)])
+        }
+        uploadToolName="video-elements"
       />
     </div>
   );

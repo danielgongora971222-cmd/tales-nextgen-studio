@@ -832,6 +832,24 @@ export function createAiVideoRouter(ctx) {
 
       const promptRaw = String(body.prompt || "").trim();
 
+      // ✅ Límite de referencias combinadas por modelo
+      // - reference-to-video (Ingredientes → Video): 1..7
+      // - video-to-video (edit / reference):         0..4
+      const MAX_COMBINED_REFS = kind === "reference-to-video" ? 7 : 4;
+
+      // ✅ Este modelo NO soporta START/END (first/last frame).
+      // Aceptamos null en el schema para evitar 400, pero si llega un UUID, rechazamos.
+      const startLegacy = body.startImageAssetId || null;
+      const endLegacy = body.endImageAssetId || null;
+      if (kind === "reference-to-video" && (startLegacy || endLegacy)) {
+        throw httpError(
+          400,
+          "VIDEO_EDIT_FRAMES_NOT_SUPPORTED",
+          "Este modelo no soporta first/last frame (START/END). Elimina START/END y usa solo ingredientes (imágenes de referencia + Elements).",
+          { startImageAssetId: startLegacy, endImageAssetId: endLegacy }
+        );
+      }
+
       // Multi-shot (solo en reference-to-video)
       const KLING_SHOT_PROMPT_LIMIT = 512;
       const multiRaw =
@@ -874,7 +892,7 @@ export function createAiVideoRouter(ctx) {
 
       // Refs (imágenes)
       const referenceImageAssetIds = Array.isArray(body.referenceImageAssetIds)
-        ? body.referenceImageAssetIds.filter(Boolean).slice(0, 4)
+        ? body.referenceImageAssetIds.filter(Boolean).slice(0, MAX_COMBINED_REFS)
         : [];
 
       const imageUrls = [];
@@ -889,8 +907,19 @@ export function createAiVideoRouter(ctx) {
 
       // Elements (librería Kling)
       const klingElementIds = Array.isArray(body.klingElementIds)
-        ? body.klingElementIds.filter(Boolean).slice(0, 5)
+        ? body.klingElementIds.filter(Boolean).slice(0, MAX_COMBINED_REFS)
         : [];
+
+      // ✅ Para reference-to-video exigimos al menos 1 ingrediente visual (1–7)
+      if (kind === "reference-to-video" && referenceImageAssetIds.length + klingElementIds.length < 1) {
+        throw httpError(
+          400,
+          "VIDEO_EDIT_MISSING_REFS",
+          `Este modelo requiere entre 1 y ${MAX_COMBINED_REFS} referencias (imágenes + Elements).`,
+          { refCount: referenceImageAssetIds.length, elementCount: klingElementIds.length }
+        );
+      }
+
 
       let elements = undefined;
       if (klingElementIds.length) {
@@ -950,11 +979,11 @@ export function createAiVideoRouter(ctx) {
       // Kling: máximo 4 referencias combinadas (Elements + image_urls)
       const elementCount = Array.isArray(elements) ? elements.length : 0;
       const refCount = imageUrls.length;
-      if (refCount + elementCount > 4) {
+      if (refCount + elementCount > MAX_COMBINED_REFS) {
         throw httpError(
           400,
           "VIDEO_EDIT_TOO_MANY_REFS",
-          "Kling permite máximo 4 referencias combinadas (Elements + imágenes). Reduce tu selección.",
+          `Kling permite máximo ${MAX_COMBINED_REFS} referencias combinadas (Elements + imágenes). Reduce tu selección.`,
           { refCount, elementCount }
         );
       }
@@ -1036,20 +1065,6 @@ export function createAiVideoRouter(ctx) {
         falInput.aspect_ratio = ar;
         falInput.generate_audio = body.generateAudio === true;
 
-        if (body.startImageAssetId) {
-          falInput.start_image_url = await assetIdToSignedUrl(
-            body.startImageAssetId,
-            user.id,
-            INPUT_URL_TTL_SECONDS
-          );
-        }
-        if (body.endImageAssetId) {
-          falInput.end_image_url = await assetIdToSignedUrl(
-            body.endImageAssetId,
-            user.id,
-            INPUT_URL_TTL_SECONDS
-          );
-        }
         if (imageUrls.length) falInput.image_urls = imageUrls;
         if (elements) falInput.elements = elements;
       }
@@ -1121,8 +1136,9 @@ export function createAiVideoRouter(ctx) {
         model,
         ar: kind === "video-to-video/edit" ? null : ar,
         totalDur: kind === "video-to-video/edit" ? null : totalDur,
-        firstFrameAssetId: body.startImageAssetId || null,
-        lastFrameAssetId: body.endImageAssetId || null,
+        // ✅ Este endpoint ya no usa first/last frame
+        firstFrameAssetId: null,
+        lastFrameAssetId: null,
         generateAudio:
           kind === "reference-to-video" ? body.generateAudio === true : null,
         editVideo: {
@@ -1133,8 +1149,9 @@ export function createAiVideoRouter(ctx) {
           multiPrompt: multi
             ? multi.map((s) => ({ prompt: s.prompt, duration: s.duration }))
             : null,
-          startImageAssetId: body.startImageAssetId || null,
-          endImageAssetId: body.endImageAssetId || null,
+          // ✅ Este endpoint ya no usa START/END
+          startImageAssetId: null,
+          endImageAssetId: null,
           videoAssetId: body.videoAssetId || null,
           referenceImageAssetIds,
           klingElementIds,

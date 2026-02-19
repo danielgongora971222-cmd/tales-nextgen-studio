@@ -151,16 +151,19 @@ export const VideoEditRequestSchema = z.object({
     .max(10)
     .optional(),
 
-  // Reference-to-video (frames)
-  startImageAssetId: z.string().uuid().optional(),
-  endImageAssetId: z.string().uuid().optional(),
+  // Reference-to-video (legacy frames)
+  // ✅ Aceptamos null para evitar 400 si el cliente manda `null` (se tratará como "no enviado").
+  startImageAssetId: z.string().uuid().nullable().optional(),
+  endImageAssetId: z.string().uuid().nullable().optional(),
 
   // Video-to-video (reference)
   videoAssetId: z.string().uuid().optional(),
 
-  // Refs (máximo recomendado: 4 combinadas con Elements)
-  referenceImageAssetIds: z.array(z.string().uuid()).max(4).optional(),
-  klingElementIds: z.array(z.string().uuid()).max(5).optional(),
+  // Refs (la validación real por modelo se hace en la ruta)
+  // - reference-to-video: 1..7 combinadas (imágenes + Elements)
+  // - video-to-video:     0..4 combinadas (imágenes + Elements)
+  referenceImageAssetIds: z.array(z.string().uuid()).max(7).optional(),
+  klingElementIds: z.array(z.string().uuid()).max(7).optional(),
 
   // Opciones
   generateAudio: z.boolean().optional(), // reference-to-video
