@@ -370,11 +370,35 @@ export async function waitFalJob(
     const elapsed = Math.round((Date.now() - t0) / 1000);
     opts?.onProgress?.(`Procesando (Fal) · ${elapsed}s`);
 
-    const st = await apiPostJson<any>(
-      "/api/ai/video/fal/status",
-      { jobToken },
-      { signal: opts?.signal, timeoutMs: 60_000, retries: 2 }
-    );
+    let st: any;
+    try {
+      st = await apiPostJson<any>(
+        "/api/ai/video/fal/status",
+        { jobToken },
+        // subimos a 2 minutos; y si igual falla, NO marcamos failed por timeout
+        { signal: opts?.signal, timeoutMs: 2 * 60 * 1000, retries: 2 }
+      );
+    } catch (err: any) {
+      const msg = getErrMsg(err);
+      const httpStatus = getStatus(err);
+
+      const transient =
+        msg.startsWith("Timeout:") ||
+        httpStatus === 408 ||
+        httpStatus === 429 ||
+        httpStatus === 502 ||
+        httpStatus === 503 ||
+        httpStatus === 504;
+
+      if (transient) {
+        opts?.onProgress?.("Conexión lenta… reintentando.");
+        await sleep(pollMs, opts?.signal);
+        pollMs = Math.min(4500, pollMs + 500 + Math.floor(Math.random() * 250));
+        continue;
+      }
+
+      throw err;
+    }
 
     const status = st?.status;
 
