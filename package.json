@@ -3,16 +3,19 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "scripts": {
+    "scripts": {
     "dev": "concurrently -k -n CLIENT,API -c auto \"npm run dev:client\" \"npm run dev:api\"",
     "build": "vite build",
     "preview": "vite preview",
     "dev:client": "vite",
     "dev:api": "node server/server.js",
+    "dev:worker": "node server/workers/falFinalizeWorker.js",
     "start": "SERVE_CLIENT=1 node server/server.js",
     "start:api": "cross-env SERVE_CLIENT=0 node server/server.js",
+    "start:worker": "node server/workers/falFinalizeWorker.js",
     "preset:wizard": "node tools/preset-wizard/server.mjs"
   },
+
   "dependencies": {
     "@google/genai": "^1.39.0",
     "@supabase/supabase-js": "^2.93.3",

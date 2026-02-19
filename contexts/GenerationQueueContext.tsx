@@ -2,6 +2,14 @@ import React, { createContext, useContext, useEffect, useMemo, useRef, useState 
 import { useAuth } from "./AuthContext";
 import { KLING_O3_PRO, KLING_V3 } from "../services/videoModels";
 import { apiPostJson, clearPendingFalJob, formatErr, loadPendingFalJobs, savePendingFalJob, waitFalJob } from "../services/videoGenApi";
+import {
+  cancelGenerationJob,
+  ensureGenerationJobRow,
+  fetchMyGenerationJobs,
+  subscribeMyGenerationJobs,
+  type GenerationJobRow,
+} from "../services/generationJobsApi";
+import { invalidateMyAssetsCache } from "../services/assetsApi";
 
 type QueueJobStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
 
@@ -60,7 +68,7 @@ const GenerationQueueContext = createContext<Ctx | undefined>(undefined);
 
 const QUEUE_VERSION = 1;
 const MAX_ACTIVE_JOBS = 5;        // total activos (queued + running)
-const CONCURRENCY = 1;            // cuántos corren en paralelo (sube a 2 si lo quieres)
+const CONCURRENCY = 3;            // submissions en paralelo (jobs Fal no bloquean tras enviar)
 const STORAGE_PREFIX = "tales_generation_queue_v";
 
 function storageKey(userId: string) {
