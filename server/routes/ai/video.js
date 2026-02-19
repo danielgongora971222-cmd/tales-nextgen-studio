@@ -76,6 +76,82 @@ export function createAiVideoRouter(ctx) {
     return storagePath;
   }
 
+
+  // Helper: registra el job async (Fal queue) en la tabla public.jobs
+  async function upsertFalJobRow({
+    ownerId,
+    kind = "video",
+    requestId,
+    jobToken,
+    statusUrl,
+    responseUrl,
+    endpointId,
+    toolName,
+    hint,
+    model,
+    prompt,
+    extra,
+  }) {
+    if (!supabaseAdmin) {
+      throw httpError(
+        500,
+        "SUPABASE_NOT_CONFIGURED",
+        "Supabase admin no está configurado en el backend."
+      );
+    }
+
+    const params = {
+      provider: "fal",
+      requestId: requestId || null,
+      statusUrl: statusUrl || null,
+      responseUrl: responseUrl || null,
+      endpointId: endpointId || null,
+      jobToken: jobToken || null,
+      toolName: toolName || null,
+      hint: hint || null,
+      model: model || null,
+      prompt: prompt || null,
+      ...(extra || {}),
+    };
+
+    const ins = await supabaseAdmin
+      .from("jobs")
+      .insert({
+        owner_id: ownerId,
+        kind,
+        status: "running",
+        params,
+        next_check_at: new Date().toISOString(),
+      })
+      .select("id")
+      .single();
+
+    if (!ins.error && ins.data?.id) return ins.data.id;
+
+    // Si el índice único por requestId dispara, buscamos el existente
+    if (ins.error?.code === "23505" && requestId) {
+      const existing = await supabaseAdmin
+        .from("jobs")
+        .select("id")
+        .eq("owner_id", ownerId)
+        .eq("kind", kind)
+        .filter("params->>requestId", "eq", String(requestId))
+        .maybeSingle();
+
+      if (!existing.error && existing.data?.id) return existing.data.id;
+    }
+
+    throw httpError(500, "JOB_INSERT_FAILED", "No pude crear el job async en la tabla jobs.", {
+      supabase: {
+        message: ins.error?.message,
+        code: ins.error?.code,
+        details: ins.error?.details,
+        hint: ins.error?.hint,
+      },
+    });
+  }
+
+
   /**
    * 👇 PEGAREMOS AQUÍ tu handler /api/ai/video movido desde server.js
    * Cambiando solo: app.post("/api/ai/video"...) -> router.post("/ai/video"...)
@@ -350,7 +426,30 @@ export function createAiVideoRouter(ctx) {
             generateAudio,
           });
 
-          return res.json({ ok: true, mode: "async", jobToken, requestId });
+          const jobId = await upsertFalJobRow({
+            ownerId: user.id,
+            kind: "video",
+            requestId,
+            jobToken,
+            statusUrl,
+            responseUrl,
+            endpointId,
+            toolName,
+            hint,
+            model: selectedModelNorm,
+            prompt,
+            extra: {
+              ar,
+              totalDur,
+              firstFrameAssetId: firstFrameAssetId || null,
+              lastFrameAssetId: lastFrameAssetId || null,
+              generateAudio,
+              negativePrompt: negativePrompt || null,
+              klingCfgScale: klingCfgScale ?? null,
+            },
+          });
+
+          return res.json({ ok: true, mode: "async", jobId, jobToken, requestId });
         }
 
         const falJson = await falQueueRun(endpointId, falInput);
@@ -1166,7 +1265,42 @@ export function createAiVideoRouter(ctx) {
         exp: Date.now() + 1000 * 60 * 60 * 8,
       });
 
-      return res.json({ ok: true, mode: "async", jobToken, requestId });
+      const jobId = await upsertFalJobRow({
+        ownerId: user.id,
+        kind: "video",
+        requestId,
+        jobToken,
+        statusUrl,
+        responseUrl,
+        endpointId,
+        toolName,
+        hint,
+        model,
+        prompt: savedPrompt,
+        extra: {
+          editVideo: {
+            kind,
+            model,
+            prompt: savedPrompt,
+            promptRaw: promptRaw || null,
+            multiPrompt: multi
+              ? multi.map((s) => ({ prompt: s.prompt, duration: s.duration }))
+              : null,
+            videoAssetId: body.videoAssetId || null,
+            referenceImageAssetIds,
+            klingElementIds,
+            keepAudio: kind.startsWith("video-to-video")
+              ? body.keepAudio !== false
+              : null,
+            generateAudio:
+              kind === "reference-to-video" ? body.generateAudio === true : null,
+            durationSeconds: kind === "video-to-video/edit" ? null : totalDur,
+            aspectRatio: kind === "video-to-video/edit" ? null : ar,
+          },
+        },
+      });
+
+      return res.json({ ok: true, mode: "async", jobId, jobToken, requestId });
     } catch (err) {
       next(err);
     }
@@ -1231,7 +1365,29 @@ export function createAiVideoRouter(ctx) {
         exp: Date.now() + 6 * 60 * 60 * 1000,
       });
 
-      return res.json({ ok: true, mode: "async", jobToken, requestId });
+      const jobId = await upsertFalJobRow({
+        ownerId: user.id,
+        kind: "video",
+        requestId,
+        jobToken,
+        statusUrl,
+        responseUrl,
+        endpointId,
+        toolName,
+        hint,
+        model: "kling-2.6-motion-control",
+        prompt: body.prompt ? body.prompt.trim() : null,
+        extra: {
+          motionControl: {
+            imageAssetId: body.imageAssetId,
+            videoAssetId: body.videoAssetId,
+            keepOriginalSound,
+            characterOrientation,
+          },
+        },
+      });
+
+      return res.json({ ok: true, mode: "async", jobId, jobToken, requestId });
     } catch (err) {
       next(err);
     }

@@ -2141,6 +2141,32 @@ app.post("/api/ai/video/fal/finalize", async (req, res, next) => {
     const t = verifyJobToken(jobToken);
     if (t.uid !== user.id) throw httpError(403, "JOB_NOT_YOURS", "Este job no pertenece a tu usuario.");
 
+    // Idempotencia: si el Background Worker ya finalizó este requestId, devolvemos el asset existente.
+    let jobRow = null;
+    if (t.requestId) {
+      const jr = await supabaseAdmin
+        .from("jobs")
+        .select("id,status,result_asset_id")
+        .eq("owner_id", user.id)
+        .eq("kind", "video")
+        .filter("params->>requestId", "eq", String(t.requestId))
+        .maybeSingle();
+
+      if (!jr.error) jobRow = jr.data;
+    }
+
+    if (jobRow?.status === "succeeded" && jobRow.result_asset_id) {
+      const urlExpiresInSeconds = 60 * 60;
+      const url = await assetIdToSignedUrl(jobRow.result_asset_id, user.id, urlExpiresInSeconds);
+      return res.json({
+        ok: true,
+        items: [{ url, assetId: jobRow.result_asset_id }],
+        url,
+        assetId: jobRow.result_asset_id,
+        urlExpiresInSeconds,
+      });
+    }
+
     const st = await falQueueStatus(t.statusUrl);
     const status = st?.status || "UNKNOWN";
 

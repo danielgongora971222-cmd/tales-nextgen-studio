@@ -3,6 +3,10 @@ import type { User as SupabaseUser } from "@supabase/supabase-js";
 import { User as AppUser } from "../types";
 import { supabase } from "../services/supabaseClient";
 
+// ✅ Prefetch para “calentar” caches (assets + elements)
+import { listMyAssets } from "../services/assetsApi";
+import { listKlingElements } from "../services/klingElementsService";
+
 interface AuthContextType {
   user: AppUser | null;
   login: (email: string, password: string) => Promise<void>;
@@ -60,6 +64,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       sub.subscription.unsubscribe();
     };
   }, []);
+
+    // ✅ Prefetch en background tras login: calienta caches para tools/pickers
+  useEffect(() => {
+    if (!user?.id) return;
+
+    let cancelled = false;
+
+    // Pequeño delay para no competir con el primer render post-login
+    const t = setTimeout(() => {
+      if (cancelled) return;
+
+      Promise.allSettled([
+        // Nota: tu backend hoy capea limit a 100, esto igual ayuda a “calentar”
+        listMyAssets({ type: "image", limit: 100 }),
+        listMyAssets({ type: "video", limit: 100 }),
+        listKlingElements(),
+      ]).catch(() => {
+        // silencio: prefetch no debe romper el login
+      });
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [user?.id]);
+
 
   const login = async (email: string, password: string) => {
     setIsLoading(true);

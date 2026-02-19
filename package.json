@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-    "scripts": {
+  "scripts": {
     "dev": "concurrently -k -n CLIENT,API -c auto \"npm run dev:client\" \"npm run dev:api\"",
     "build": "vite build",
     "preview": "vite preview",

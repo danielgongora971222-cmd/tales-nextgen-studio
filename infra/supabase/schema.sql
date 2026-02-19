@@ -134,12 +134,61 @@ create table if not exists public.jobs (
   params jsonb not null default '{}'::jsonb,
   result_asset_id uuid references public.assets(id) on delete set null,
   error text,
+  locked_at timestamptz,
+  locked_by text,
+  next_check_at timestamptz,
+  finished_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
+-- Worker-safe defaults / backfill (no rompe si ya existe)
+alter table public.jobs alter column next_check_at set default now();
+update public.jobs set next_check_at = now() where next_check_at is null;
+
 create index if not exists jobs_owner_id_idx on public.jobs(owner_id);
 create index if not exists jobs_status_idx on public.jobs(status);
+create index if not exists jobs_kind_status_next_check_idx on public.jobs(kind, status, next_check_at);
+
+-- Evita duplicados por requestId (Fal) a nivel DB
+create unique index if not exists jobs_fal_request_unique
+  on public.jobs((params->>'requestId'))
+  where (params->>'provider') = 'fal';
+
+-- Claim atomico para Background Workers (FOR UPDATE SKIP LOCKED)
+create or replace function public.claim_jobs(
+  p_kind text,
+  p_limit int,
+  p_worker_id text,
+  p_lock_minutes int default 15
+)
+returns setof public.jobs
+language sql
+security definer
+set search_path = public
+as $$
+  with cte as (
+    select id
+    from public.jobs
+    where kind = p_kind
+      and status = 'running'
+      and result_asset_id is null
+      and (next_check_at is null or next_check_at <= now())
+      and (locked_at is null or locked_at < now() - (p_lock_minutes || ' minutes')::interval)
+    order by created_at asc
+    limit p_limit
+    for update skip locked
+  )
+  update public.jobs j
+  set locked_at = now(),
+      locked_by = p_worker_id
+  from cte
+  where j.id = cte.id
+  returning j.*;
+$$;
+
+grant execute on function public.claim_jobs(text, int, text, int) to service_role;
+
 
 alter table public.jobs enable row level security;
 
