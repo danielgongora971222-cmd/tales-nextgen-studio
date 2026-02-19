@@ -19,6 +19,7 @@ import VideoGeneratorTool from './pages/tools/VideoGeneratorTool';
 import Background3D from './components/Background3D';
 import { AppRoute } from './types';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { GenerationQueueProvider } from './contexts/GenerationQueueContext';
 
 const AppContent: React.FC = () => {
   const [route, setRoute] = useState<AppRoute>(AppRoute.HOME);
@@ -162,9 +163,11 @@ const AppContent: React.FC = () => {
   }
 
   return (
-    <Layout currentRoute={route} onNavigate={setRoute}>
-      {renderPage()}
-    </Layout>
+    <GenerationQueueProvider>
+      <Layout currentRoute={route} onNavigate={setRoute}>
+        {renderPage()}
+      </Layout>
+    </GenerationQueueProvider>
   );
 };
 

@@ -6,7 +6,8 @@ import { deleteAsset, listMyAssets, publishAsset, unpublishAsset, uploadUserAsse
 import { useAuth } from "../../contexts/AuthContext";
 import type { Asset } from "../../types";
 import { listKlingElements, type KlingElement } from "../../services/klingElementsService";
-import { formatErr, loadPendingFalJob, clearPendingFalJob, resumeFalFinalize, type PendingFalJob } from "../../services/videoGenApi";
+import { formatErr } from "../../services/videoGenApi";
+import { useGenerationQueue } from "../../contexts/GenerationQueueContext";
 import { FramePickerModal } from "./video/FramePickerModal";
 import { MultishotModal } from "./video/multishotmodal";
 import { LimitedTextarea, KLING_V3_SHOT_PROMPT_LIMIT } from "./video/LimitedTextarea";
@@ -184,17 +185,31 @@ const VideoGeneratorTool: React.FC = () => {
   const [historyVisibleCount, setHistoryVisibleCount] = useState(HISTORY_INITIAL_COUNT);
   const [isLoadingMoreHistory, setIsLoadingMoreHistory] = useState(false);
   const [viewer, setViewer] = useState<Asset | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
-  const [progressText, setProgressText] = useState<string | null>(null);
-  const [pendingFalJob, setPendingFalJob] = useState<PendingFalJob | null>(null);
+  const { jobs: queueJobs, enqueueVideoGeneration, cancelJob, activeCount: queueActiveCount, maxActive: queueMaxActive } =
+    useGenerationQueue();
+
+  const videoQueueJobs = useMemo(() => queueJobs.filter((j) => j.type === "video_generate"), [queueJobs]);
+
+  const activeVideoQueueJobs = useMemo(
+    () => videoQueueJobs.filter((j) => j.status === "queued" || j.status === "running"),
+    [videoQueueJobs]
+  );
+
+  const isGenerating = useMemo(() => activeVideoQueueJobs.some((j) => j.status === "running"), [activeVideoQueueJobs]);
+
+  const progressText = useMemo(() => {
+    const running = activeVideoQueueJobs
+      .filter((j) => j.status === "running")
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
+    return running?.progressText || null;
+  }, [activeVideoQueueJobs]);
+
+  const pendingSlots = useMemo(() => activeVideoQueueJobs.flatMap((j) => j.placeholders || []), [activeVideoQueueJobs]);
   const settingsLoadedRef = useRef(false);
   const pendingFrameIdsRef = useRef<{ firstId: string | null; lastId: string | null }>({
     firstId: null,
     lastId: null,
   });
-
-  // placeholders mientras se genera (tiles “GENERATING” como en Image Tool)
-  const [pendingSlots, setPendingSlots] = useState<string[]>([]);
 
   // refs para reproducir preview en hover
   const hoverVideoEls = useRef<Record<string, HTMLVideoElement | null>>({});
@@ -247,9 +262,6 @@ const VideoGeneratorTool: React.FC = () => {
 
   // Duration
   const [durationSeconds, setDurationSeconds] = useState<number>(8);
-
-  // Generation state
-  const [isGenerating, setIsGenerating] = useState(false);
 
   // Assets
   const [imageAssets, setImageAssets] = useState<Asset[]>([]);
@@ -740,11 +752,6 @@ const VideoGeneratorTool: React.FC = () => {
   }, [user?.id]);
 
   useEffect(() => {
-    if (!user?.id) return;
-    setPendingFalJob(loadPendingFalJob());
-  }, [user?.id]);
-
-  useEffect(() => {
     if (!pickerOpen) return;
     reloadImages();
   }, [pickerOpen]);
@@ -978,12 +985,42 @@ const durationLabel = useMemo(() => {
     setPickerVisibleCount((c) => Math.min(c + PICKER_LOAD_MORE_COUNT, filteredPickerAssetsAll.length));
   };
 
+  // ✅ Cuando un job del Queue termina, refrescamos el historial (solo una vez por job)
+  const handledCompletedJobsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const newlyDone = videoQueueJobs.filter(
+      (j) => j.status === "succeeded" && !handledCompletedJobsRef.current.has(j.id)
+    );
+
+    if (newlyDone.length === 0) return;
+
+    newlyDone.forEach((j) => handledCompletedJobsRef.current.add(j.id));
+
+    (async () => {
+      const refreshed = await reloadHistory();
+
+      const newest = [...newlyDone].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
+      const firstId = newest?.result?.assetIds?.[0] || null;
+
+      if (firstId) {
+        const found = refreshed.find((a) => a.id === firstId) || null;
+        if (found) setViewer(found);
+      }
+    })();
+  }, [videoQueueJobs, user?.id]);
+
   const handleGenerate = async () => {
-    setIsGenerating(true);
     setError(null);
-    const ac = new AbortController();
-    abortRef.current = ac;
-    setProgressText("Preparando…");
+
+    if (queueActiveCount >= queueMaxActive) {
+      setError(
+        `Tienes ${queueActiveCount}/${queueMaxActive} generaciones activas. Espera a que termine alguna o cancela.`
+      );
+      return;
+    }
 
     try {
       const handler = getVideoModelHandler(modelNorm);
@@ -1097,89 +1134,30 @@ const durationLabel = useMemo(() => {
         klingVoiceIdsText,
       });
 
-      // crea placeholders en historial
-      const stamp = Date.now();
-      setPendingSlots(Array.from({ length: plan.pendingSlotsCount }, (_, i) => `pending-${stamp}-${i}`));
+      const label = `Video • ${modelLabel}`;
 
-      const res = await handler.submit(plan, {
-        signal: ac.signal,
-        onProgress: (msg) => setProgressText(msg),
+      const enq = enqueueVideoGeneration({
+        label,
+        modelNorm: plan.modelNorm,
+        planBody: plan.body,
+        prompt: plan.effectivePrompt,
+        pendingSlotsCount: plan.pendingSlotsCount,
       });
 
-      if (!("ok" in res) || (res as any).ok !== true) {
-        throw new Error("Respuesta inválida del backend.");
+      if (!enq.ok) {
+        setError(enq.error);
       }
-
-      const items = Array.isArray((res as any).items) ? (res as any).items : [];
-      if (!items.length) throw new Error("No se devolvió ningún video.");
-
-      const firstId = items[0]?.assetId ? String(items[0].assetId) : null;
-
-      const refreshed = await reloadHistory();
-      const justMade = firstId ? refreshed.find((a) => a.id === firstId) : null;
-
-      setViewer(justMade || refreshed[0] || null);
     } catch (e: any) {
-      if (e?.name === "AbortError" || e?.isCanceled || String(e?.message || "").toLowerCase().includes("cancel")) {
-        // Cancelado por el usuario: no mostramos modal de error
-      } else {
-        setError(formatErr(e));
-      }
-    } finally {
-      abortRef.current = null;
-      setProgressText(null);
-      setIsGenerating(false);
-      setPendingSlots([]);
+      setError(formatErr(e));
     }
   };
 
   const handleCancel = () => {
-      abortRef.current?.abort();
-    };
+    const running = [...videoQueueJobs]
+      .filter((j) => j.status === "running")
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
 
-    const handleDiscardPending = () => {
-    clearPendingFalJob();
-    setPendingFalJob(null);
-  };
-
-  const handleResumePending = async () => {
-    if (!pendingFalJob) return;
-
-    setIsGenerating(true);
-    setError(null);
-
-    const ac = new AbortController();
-    abortRef.current = ac;
-    setProgressText("Reanudando…");
-    setPendingSlots(["pending-resume"]);
-
-    try {
-      const res = await resumeFalFinalize(pendingFalJob, {
-        signal: ac.signal,
-        onProgress: (msg) => setProgressText(msg),
-        maxWaitMs: 15 * 60 * 1000,
-      });
-
-      // Si salió bien: limpiar y refrescar historial
-      clearPendingFalJob();
-      setPendingFalJob(null);
-
-      await reloadHistory();
-    } catch (e: any) {
-      if (e?.name === "AbortError" || e?.isCanceled) {
-        // cancelado: no error modal
-      } else {
-        // si falló la reanudación, normalmente el job ya murió → limpiamos para evitar loop
-        clearPendingFalJob();
-        setPendingFalJob(null);
-        setError(formatErr(e));
-      }
-    } finally {
-      abortRef.current = null;
-      setProgressText(null);
-      setIsGenerating(false);
-      setPendingSlots([]);
-    }
+    if (running) cancelJob(running.id);
   };
 
     const viewerRecipeInfo = useMemo(() => {
@@ -1476,7 +1454,7 @@ const durationLabel = useMemo(() => {
               <button
                 type="button"
                 className={styles.generateBtn}
-                disabled={isGenerating || (isKlingV3 && multishotEnabled ? !multishotIsReady : !prompt.trim())}
+                disabled={(queueActiveCount >= queueMaxActive) || (isKlingV3 && multishotEnabled ? !multishotIsReady : !prompt.trim())}
                 onClick={handleGenerate}
                 data-loading={isGenerating ? "true" : "false"}
               >
@@ -1496,22 +1474,6 @@ const durationLabel = useMemo(() => {
             </div>
           </div>
 
-        {!isGenerating && pendingFalJob && (
-          <div className={styles.resumeBanner}>
-            <div className={styles.resumeTitle}>GENERACIÓN PENDIENTE DETECTADA</div>
-            <div className={styles.resumeDesc}>
-              Parece que quedó una generación de Kling V3 en progreso. Puedes reanudarla o descartarla.
-            </div>
-            <div className={styles.resumeActions}>
-              <button type="button" className={styles.resumeBtn} onClick={handleResumePending}>
-                REANUDAR
-              </button>
-              <button type="button" className={styles.discardBtn} onClick={handleDiscardPending}>
-                DESCARTAR
-              </button>
-            </div>
-          </div>
-        )} 
 
         {/* Controls */}
         <div className={styles.controlsArea}>

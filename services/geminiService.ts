@@ -1,6 +1,7 @@
 import { GeminiModel } from "../types";
 import { backend } from "./backendService";
 import { supabase } from "./supabaseClient";
+import { invalidateMyAssetsCache } from "./assetsApi";
 
 type ApiResponse<T> = { ok: true; dataUrl?: string; videoUrl?: string } | { ok: false; error: string };
 
@@ -71,6 +72,16 @@ async function apiPost<T>(path: string, body: any): Promise<T> {
 
     throw new Error(msg);
   }
+
+  // Si esta llamada creó un asset nuevo en el backend, invalida cache para que
+  // cualquier herramienta/picker vea el nuevo resultado sin recargar toda la página.
+  // (ej: /api/ai/image, /api/ai/faceswap/*, /api/ai/upscale)
+  try {
+    const createsAsset =
+      path.startsWith("/api/ai/") &&
+      (Boolean((data as any)?.assetId) || Array.isArray((data as any)?.items));
+    if (createsAsset) invalidateMyAssetsCache();
+  } catch {}
 
   return data as T;
 }

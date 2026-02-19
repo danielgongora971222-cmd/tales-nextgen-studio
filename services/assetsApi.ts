@@ -47,8 +47,61 @@ function isInternalAsset(asset: Asset): boolean {
   return meta?.tool === "faceswap" && meta?.mode === "mannequin" && (step === 1 || step === "1");
 }
 
+// ===============================
+// In-memory cache (session) para evitar recargas repetidas de historial/pickers
+// - Se invalida automáticamente cuando subes/borras/publicas/unpublicas assets.
+// - También podemos invalidarlo desde otras llamadas (ej: generación IA) llamando invalidateMyAssetsCache().
+// ===============================
 
-export async function listMyAssets(opts?: { type?: "image" | "video"; limit?: number }): Promise<Asset[]> {
+type AssetsCacheEntry = {
+  ts: number;
+  fetchedLimit: number | null;
+  items: Asset[];
+  inFlight?: Promise<Asset[]>;
+};
+
+const ASSETS_CACHE_TTL_MS = 2 * 60 * 1000; // 2 min (ajústalo si quieres)
+
+const myAssetsCache = new Map<string, AssetsCacheEntry>();
+const publicAssetsCache = new Map<string, AssetsCacheEntry>();
+
+function cacheKeyFor(type?: "image" | "video") {
+  return type ? `type:${type}` : "type:all";
+}
+
+function isFresh(entry: AssetsCacheEntry) {
+  return Date.now() - entry.ts < ASSETS_CACHE_TTL_MS;
+}
+
+export function invalidateMyAssetsCache(type?: "image" | "video") {
+  if (type) myAssetsCache.delete(cacheKeyFor(type));
+  else myAssetsCache.clear();
+}
+
+export function invalidatePublicAssetsCache(type?: "image" | "video") {
+  if (type) publicAssetsCache.delete(cacheKeyFor(type));
+  else publicAssetsCache.clear();
+}
+
+function sliceByLimit(items: Asset[], limit?: number) {
+  if (!limit || !Number.isFinite(limit) || limit <= 0) return items;
+  return items.slice(0, limit);
+}
+
+function shouldRefetch(entry: AssetsCacheEntry, nextLimit?: number) {
+  // Si está expirado -> refetch
+  if (!isFresh(entry)) return true;
+
+  // Si pedimos más de lo que se había pedido antes -> refetch
+  if (typeof nextLimit === "number" && Number.isFinite(nextLimit) && nextLimit > 0) {
+    const prevLimit = entry.fetchedLimit ?? 0;
+    if (nextLimit > prevLimit) return true;
+  }
+
+  return false;
+}
+
+async function fetchMyAssetsNoCache(opts?: { type?: "image" | "video"; limit?: number }): Promise<Asset[]> {
   // 1) sacar token del login actual
   const { data: sessionData } = await supabase.auth.getSession();
   const token = sessionData.session?.access_token;
@@ -89,7 +142,7 @@ export async function listMyAssets(opts?: { type?: "image" | "video"; limit?: nu
     .filter((a) => !isInternalAsset(a));
 }
 
-export async function listPublicAssets(opts?: { type?: "image" | "video"; limit?: number }): Promise<Asset[]> {
+async function fetchPublicAssetsNoCache(opts?: { type?: "image" | "video"; limit?: number }): Promise<Asset[]> {
   const { data: sessionData } = await supabase.auth.getSession();
   const token = sessionData.session?.access_token;
 
@@ -116,7 +169,6 @@ export async function listPublicAssets(opts?: { type?: "image" | "video"; limit?
     );
   }
 
-
   if (!resp.ok || data?.ok === false) {
     const e = data?.error;
     throw new Error(e?.message || `Request failed: ${resp.status}`);
@@ -127,6 +179,96 @@ export async function listPublicAssets(opts?: { type?: "image" | "video"; limit?
     .filter((a) => a.url)
     .filter((a) => !isInternalAsset(a));
 }
+
+
+
+export async function listMyAssets(opts?: { type?: "image" | "video"; limit?: number; fresh?: boolean }): Promise<Asset[]> {
+  const key = cacheKeyFor(opts?.type);
+  const limit = opts?.limit;
+
+  if (!opts?.fresh) {
+    const existing = myAssetsCache.get(key);
+
+    if (existing && !shouldRefetch(existing, limit)) {
+      return sliceByLimit(existing.items, limit);
+    }
+
+    // Si ya hay un fetch en vuelo, reutilízalo (evita doble fetch)
+    if (existing?.inFlight) {
+      const items = await existing.inFlight;
+      return sliceByLimit(items, limit);
+    }
+  }
+
+  // Fetch real (sin cache), y luego actualiza cache
+  const entry: AssetsCacheEntry = myAssetsCache.get(key) || {
+    ts: 0,
+    fetchedLimit: null,
+    items: [],
+  };
+
+  const inFlight = fetchMyAssetsNoCache({ type: opts?.type, limit: opts?.limit });
+  entry.inFlight = inFlight;
+  myAssetsCache.set(key, entry);
+
+  try {
+    const items = await inFlight;
+    entry.ts = Date.now();
+    entry.fetchedLimit = typeof limit === "number" && Number.isFinite(limit) && limit > 0 ? limit : null;
+    entry.items = items;
+    delete entry.inFlight;
+    myAssetsCache.set(key, entry);
+    return sliceByLimit(items, limit);
+  } catch (e) {
+    delete entry.inFlight;
+    myAssetsCache.set(key, entry);
+    throw e;
+  }
+}
+
+
+export async function listPublicAssets(opts?: { type?: "image" | "video"; limit?: number; fresh?: boolean }): Promise<Asset[]> {
+  const key = cacheKeyFor(opts?.type);
+  const limit = opts?.limit;
+
+  if (!opts?.fresh) {
+    const existing = publicAssetsCache.get(key);
+
+    if (existing && !shouldRefetch(existing, limit)) {
+      return sliceByLimit(existing.items, limit);
+    }
+
+    if (existing?.inFlight) {
+      const items = await existing.inFlight;
+      return sliceByLimit(items, limit);
+    }
+  }
+
+  const entry: AssetsCacheEntry = publicAssetsCache.get(key) || {
+    ts: 0,
+    fetchedLimit: null,
+    items: [],
+  };
+
+  const inFlight = fetchPublicAssetsNoCache({ type: opts?.type, limit: opts?.limit });
+  entry.inFlight = inFlight;
+  publicAssetsCache.set(key, entry);
+
+  try {
+    const items = await inFlight;
+    entry.ts = Date.now();
+    entry.fetchedLimit = typeof limit === "number" && Number.isFinite(limit) && limit > 0 ? limit : null;
+    entry.items = items;
+    delete entry.inFlight;
+    publicAssetsCache.set(key, entry);
+    return sliceByLimit(items, limit);
+  } catch (e) {
+    delete entry.inFlight;
+    publicAssetsCache.set(key, entry);
+    throw e;
+  }
+}
+
 
 async function authHeadersJson() {
   const { data: sessionData } = await supabase.auth.getSession();
@@ -147,6 +289,9 @@ export async function publishAsset(assetId: string) {
   if (!resp.ok || data?.ok === false) {
     throw new Error(data?.error?.message || `Publish failed: ${resp.status}`);
   }
+ 
+  invalidateMyAssetsCache();
+  invalidatePublicAssetsCache();
 
   return { isPublic: !!data.isPublic };
 }
@@ -162,6 +307,9 @@ export async function unpublishAsset(assetId: string) {
     throw new Error(data?.error?.message || `Unpublish failed: ${resp.status}`);
   }
 
+  invalidateMyAssetsCache();
+  invalidatePublicAssetsCache();
+
   return { isPublic: !!data.isPublic };
 }
 
@@ -175,6 +323,9 @@ export async function deleteAsset(assetId: string) {
   if (!resp.ok || data?.ok === false) {
     throw new Error(data?.error?.message || `Delete failed: ${resp.status}`);
   }
+
+  invalidateMyAssetsCache();
+  invalidatePublicAssetsCache();
 
   return { ok: true };
 }
@@ -290,6 +441,7 @@ export async function uploadUserAsset(
   }
 
   const row = data.item;
+  invalidateMyAssetsCache();
   return {
     id: row.id,
     url: row.url,

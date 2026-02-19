@@ -196,12 +196,12 @@ export const klingO3ProHandler: VideoModelHandler = {
         );
 
         // Si terminó bien, limpiamos el job pendiente
-        clearPendingFalJob();
+        clearPendingFalJob(jobToken);
         return out;
       } catch (e: any) {
         // Si el usuario canceló, limpiamos (cancel = no reanudar)
         if (e?.name === "AbortError" || e?.isCanceled) {
-          clearPendingFalJob();
+          clearPendingFalJob(jobToken);
         }
         throw e;
       }

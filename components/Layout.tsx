@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AppRoute } from '../types';
+import GenerationQueueWidget from './GenerationQueueWidget';
 import Background3D from './Background3D';
 import { TOOLS_REGISTRY } from '../config/tools';
 import { VIDEO_TOOLS_REGISTRY } from '../config/videoTools';
@@ -519,8 +520,11 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
       <main className="flex-1 relative z-10 overflow-y-auto overflow-x-hidden">
         <div className="max-w-[1600px] mx-auto p-4 md:p-8">{children}</div>
       </main>
+
+      <GenerationQueueWidget />
     </div>
   );
 };
+
 
 export default Layout;

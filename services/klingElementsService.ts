@@ -17,6 +17,28 @@ export type KlingElement = {
   createdAt: number;
 };
 
+// ===============================
+// Cache en memoria (session) para evitar recargar Elements en cada tool/picker
+// ===============================
+
+type ElementsCacheEntry = {
+  ts: number;
+  items: KlingElement[];
+  inFlight?: Promise<KlingElement[]>;
+};
+
+const ELEMENTS_CACHE_TTL_MS = 2 * 60 * 1000; // 2 min
+
+let elementsCache: ElementsCacheEntry | null = null;
+
+export function invalidateKlingElementsCache() {
+  elementsCache = null;
+}
+
+function elementsCacheFresh() {
+  return elementsCache && Date.now() - elementsCache.ts < ELEMENTS_CACHE_TTL_MS;
+}
+
 async function authHeadersJson() {
   const { data: sessionData } = await supabase.auth.getSession();
   const token = sessionData.session?.access_token;
@@ -47,14 +69,30 @@ function mapRowToKlingElement(row: any): KlingElement {
 }
 
 export async function listKlingElements(): Promise<KlingElement[]> {
-  const headers = await authHeadersJson();
-  const resp = await fetch("/api/kling/elements", { method: "GET", headers });
-  const data = await resp.json();
+  if (elementsCacheFresh()) return elementsCache!.items;
+  if (elementsCache?.inFlight) return elementsCache.inFlight;
 
-  if (!resp.ok || data?.ok === false) {
-    throw new Error(data?.error?.message || "Error listando Elements.");
+  const headers = await authHeadersJson();
+
+  const inFlight = (async () => {
+    const resp = await fetch("/api/kling/elements", { method: "GET", headers });
+    const data = await resp.json();
+
+    if (!resp.ok || data?.ok === false) {
+      throw new Error(data?.error?.message || "Error listando Elements.");
+    }
+
+    const items = (data.items || []).map(mapRowToKlingElement);
+    elementsCache = { ts: Date.now(), items };
+    return items;
+  })();
+
+  elementsCache = { ts: Date.now(), items: elementsCache?.items ?? [], inFlight };
+  try {
+    return await inFlight;
+  } finally {
+    if (elementsCache?.inFlight === inFlight) delete elementsCache.inFlight;
   }
-  return (data.items || []).map(mapRowToKlingElement);
 }
 
 export async function createKlingElement(payload: {
@@ -73,6 +111,7 @@ export async function createKlingElement(payload: {
   if (!resp.ok || data?.ok === false) {
     throw new Error(data?.error?.message || "Error creando Element.");
   }
+  invalidateKlingElementsCache();
   return mapRowToKlingElement(data.item);
 }
 
@@ -87,4 +126,5 @@ export async function deleteKlingElement(id: string): Promise<void> {
   if (!resp.ok || data?.ok === false) {
     throw new Error(data?.error?.message || "Error borrando Element.");
   }
+  invalidateKlingElementsCache();
 }

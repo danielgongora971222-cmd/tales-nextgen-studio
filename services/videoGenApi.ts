@@ -1,40 +1,86 @@
 // services/videoGenApi.ts
 import { supabase } from "./supabaseClient";
+import { invalidateMyAssetsCache } from "./assetsApi";
 
-export const PENDING_FAL_KEY = "tales_pending_fal_job_v1";
+const PENDING_FAL_KEY = "tales_pending_fal_job_v1";
 
 export type PendingFalJob = {
   jobToken: string;
   prompt: string;
   modelNorm: string;
   createdAt: number;
+
+  // Opcional: para vincularlo con nuestro Queue client-side
+  clientJobId?: string;
 };
 
-export function savePendingFalJob(job: PendingFalJob) {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(PENDING_FAL_KEY, JSON.stringify(job));
-  } catch {}
-}
+function readPendingFalStorage(): PendingFalJob[] {
+  if (typeof window === "undefined") return [];
 
-export function loadPendingFalJob(): PendingFalJob | null {
-  if (typeof window === "undefined") return null;
   try {
     const raw = localStorage.getItem(PENDING_FAL_KEY);
-    if (!raw) return null;
+    if (!raw) return [];
+
     const parsed = JSON.parse(raw);
-    if (!parsed?.jobToken || !parsed?.prompt) return null;
-    return parsed as PendingFalJob;
+
+    // compat: antes era un objeto único
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && parsed.jobToken) {
+      return [parsed as PendingFalJob];
+    }
+
+    if (Array.isArray(parsed)) {
+      return parsed.filter((x) => x && x.jobToken && x.prompt) as PendingFalJob[];
+    }
+
+    return [];
   } catch {
-    return null;
+    return [];
   }
 }
 
-export function clearPendingFalJob() {
+function writePendingFalStorage(list: PendingFalJob[]) {
   if (typeof window === "undefined") return;
   try {
-    localStorage.removeItem(PENDING_FAL_KEY);
+    localStorage.setItem(PENDING_FAL_KEY, JSON.stringify(list));
   } catch {}
+}
+
+export function loadPendingFalJobs(): PendingFalJob[] {
+  const list = readPendingFalStorage();
+  // newest first
+  return [...list].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+}
+
+// compat: devuelve el más reciente
+export function loadPendingFalJob(): PendingFalJob | null {
+  const list = loadPendingFalJobs();
+  return list[0] || null;
+}
+
+export function savePendingFalJob(job: PendingFalJob) {
+  const list = readPendingFalStorage();
+
+  const token = String(job.jobToken || "");
+  if (!token) return;
+
+  const next = list.filter((x) => String(x.jobToken || "") !== token);
+  next.unshift(job);
+
+  writePendingFalStorage(next.slice(0, 50)); // cap para no crecer infinito
+}
+
+export function clearPendingFalJob(jobToken?: string) {
+  const list = readPendingFalStorage();
+
+  if (!jobToken) {
+    writePendingFalStorage([]);
+    return;
+  }
+
+  const token = String(jobToken || "");
+  const next = list.filter((x) => String(x.jobToken || "") !== token);
+
+  writePendingFalStorage(next);
 }
 
 export async function resumeFalFinalize(
@@ -266,7 +312,17 @@ export async function apiPostJson<T>(
           );
         }
 
+        // Si esta respuesta creó assets nuevos, invalida cache (historial/pickers)
+        // (ej: /api/ai/video/*, /api/ai/video/fal/finalize)
+        try {
+          const createsAsset =
+            path.startsWith("/api/ai/") &&
+            (Boolean((data as any)?.assetId) || Array.isArray((data as any)?.items));
+          if (createsAsset) invalidateMyAssetsCache();
+        } catch {}
+
         return data as T;
+
       } catch (err: any) {
         // Cancel
         if (err?.name === "AbortError" || err?.isCanceled) {
