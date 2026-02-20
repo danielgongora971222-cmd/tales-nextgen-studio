@@ -101,6 +101,16 @@ app.set("trust proxy", 1);
 // --- Security & logs ---
 app.disable("x-powered-by");
 
+// Environment helpers (compartido por middlewares)
+const appEnv = String(process.env.APP_ENV || process.env.NODE_ENV || "").toLowerCase();
+const isProd = appEnv === "production";
+
+// express-rate-limit key helper (SIEMPRE debe devolver string)
+function ipKeyGenerator(ip) {
+  const v = typeof ip === "string" ? ip.trim() : "";
+  return v || "unknown";
+}
+
 // Request ID (correlación entre logs / Sentry / cliente)
 app.use((req, res, next) => {
   const incoming = req.headers["x-request-id"];
@@ -149,7 +159,7 @@ app.use(
 // - Aun así, dejamos una lista controlable por variable de entorno.
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
   .split(",")
-  .map((s) => s.trim())
+  .map((s) => s.trim().replace(/\/+$/g, ""))
   .filter(Boolean);
 
 app.use(
@@ -158,18 +168,18 @@ app.use(
       // Si no viene "origin" (ej: server-to-server), lo permitimos
       if (!origin) return cb(null, true);
 
+      const normalizedOrigin = origin.replace(/\/+$/g, "");
+
       // Si no configuras ALLOWED_ORIGINS:
       // - En dev: permitimos (para no estorbar)
       // - En production: BLOQUEAMOS origins de navegador para evitar abuso directo al Render URL
       if (allowedOrigins.length === 0) {
-        const env = String(process.env.APP_ENV || process.env.NODE_ENV || "").toLowerCase();
-        const isProd = env === "production";
         if (isProd) return cb(new Error("CORS blocked"));
         return cb(null, true);
       }
 
       // Si está en la lista, ok
-      if (allowedOrigins.includes(origin)) return cb(null, true);
+      if (allowedOrigins.includes(normalizedOrigin)) return cb(null, true);
 
       // Si no, bloquea
       return cb(new Error("CORS blocked"));
@@ -178,6 +188,13 @@ app.use(
     allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
+
+// Endpoint simple para healthchecks de Render/uptime (GET y HEAD)
+app.get("/", (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  return res.status(200).json({ ok: true, service: "tales-nextgen-studio-api" });
+});
+
 // Rate limit SUAVE para health (para que no moleste al refrescar)
 const healthLimiter = rateLimit({
   windowMs: 60 * 1000,
