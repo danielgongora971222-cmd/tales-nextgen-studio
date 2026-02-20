@@ -1,6 +1,7 @@
 import { GeminiModel } from "../types";
 import { backend } from "./backendService";
 import { supabase } from "./supabaseClient";
+import { apiUrl } from "./apiBase";
 import { invalidateMyAssetsCache } from "./assetsApi";
 import { waitJobCompletion, JobRow } from "./jobsApi";
 
@@ -45,7 +46,7 @@ async function waitImageJob(jobId: string, onProgress?: (msg: string) => void): 
 
 
 async function apiPost<T>(path: string, body: any): Promise<T> {
-  const url = path; // SIEMPRE /api/... (Vercel hará el rewrite en prod)
+  const url = apiUrl(path);
 
   const { data: sessionData } = await supabase.auth.getSession();
   const token = sessionData.session?.access_token;

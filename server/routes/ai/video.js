@@ -172,6 +172,14 @@ export function createAiVideoRouter(ctx) {
     //            default => asyncMode true (evita timeouts en Vercel)
     const asyncMode = asyncFlag === true ? true : sync === true ? false : true;
 
+    const envName = String(APP_ENV || NODE_ENV || "").toLowerCase();
+    const isProdEnv = envName === "production";
+    const allowSync = String(process.env.ALLOW_SYNC_REQUESTS || "").trim() === "1";
+
+    if (!asyncMode && isProdEnv && !allowSync) {
+      throw httpError(400, "SYNC_DISABLED", "Modo sync deshabilitado en producción. Usa async=true.");
+    }
+
     // ... resto igual
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });

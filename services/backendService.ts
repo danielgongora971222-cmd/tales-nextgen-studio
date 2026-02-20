@@ -1,4 +1,5 @@
 import { Asset, StylePreset, User, Comment } from '../types';
+import { apiUrl } from "./apiBase";
 
 const ASSETS_KEY = 'tales_db_assets';
 const USERS_KEY = 'tales_db_users';
@@ -154,7 +155,7 @@ export const backend = {
 
   async getPublicFeed(): Promise<Asset[]> {
     try {
-      const resp = await fetch(`/api/community?type=image&limit=50`, { method: "GET" });
+      const resp = await fetch(apiUrl(`/api/community?type=image&limit=50`), { method: "GET" });
       const text = await resp.text();
 
       let data: any;

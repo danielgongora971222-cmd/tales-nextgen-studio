@@ -2515,7 +2515,7 @@ app.use((err, req, res, _next) => {
   const errorId = randomUUID();
   req?.log?.error?.({ err, errorId }, "Unhandled error");
 
-  const isDebug = (process.env.APP_ENV || "").toLowerCase() !== "production";
+  const isDebug = !isProd;
 
   return res.status(500).json({
     ok: false,

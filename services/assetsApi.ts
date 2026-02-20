@@ -116,9 +116,10 @@ async function fetchMyAssetsNoCache(opts?: { type?: "image" | "video"; limit?: n
   const params = new URLSearchParams();
   if (opts?.type) params.set("type", opts.type);
   if (opts?.limit) params.set("limit", String(opts.limit));
-  const url = `/api/assets${params.toString() ? `?${params.toString()}` : ""}`;
 
-  // 3) mandar request con Authorization
+  const path = `/api/assets${params.toString() ? `?${params.toString()}` : ""}`;
+  const url = apiUrl(path);
+
   const headers: Record<string, string> = {};
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
@@ -417,7 +418,7 @@ export async function uploadUserAsset(
         throw new Error(`Proveedor de upload desconocido: ${String(upload.provider)}`);
       }
 
-      const completeResp = await fetch("/api/assets/complete-upload", {
+      const completeResp = await fetch(apiUrl("/api/assets/complete-upload"), {
         method: "POST",
         headers: headersJson,
         body: JSON.stringify({
@@ -481,7 +482,7 @@ export async function uploadUserAsset(
   const headersMultipart: Record<string, string> = {};
   if (token) headersMultipart["Authorization"] = `Bearer ${token}`;
 
-  const resp = await fetch("/api/assets/upload", {
+  const resp = await fetch(apiUrl("/api/assets/upload"), {
     method: "POST",
     headers: headersMultipart,
     body: form,
@@ -513,7 +514,7 @@ export async function uploadUserAsset(
       reader.readAsDataURL(file);
     });
 
-    const resp2 = await fetch("/api/assets/upload", {
+    const resp2 = await fetch(apiUrl("/api/assets/upload"), {
       method: "POST",
       headers: headersJson,
       body: JSON.stringify({ dataUrl, name, tool, category, type }),

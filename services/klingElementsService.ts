@@ -118,7 +118,7 @@ export async function createKlingElement(payload: {
 
 export async function deleteKlingElement(id: string): Promise<void> {
   const headers = await authHeadersJson();
-  const resp = await fetch(`/api/kling/elements/${encodeURIComponent(id)}`, {
+  const resp = await fetch(apiUrl(`/api/kling/elements/${encodeURIComponent(id)}`), {
     method: "DELETE",
     headers,
   });

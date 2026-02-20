@@ -235,6 +235,14 @@ export function createAiImageRouter(ctx) {
     const wantsSync = Boolean(sync) || asyncFlag === false;
     const wantsAsync = !wantsSync;
 
+    const envName = String(APP_ENV || NODE_ENV || "").toLowerCase();
+    const isProdEnv = envName === "production";
+    const allowSync = String(process.env.ALLOW_SYNC_REQUESTS || "").trim() === "1";
+
+    if (wantsSync && isProdEnv && !allowSync) {
+      throw httpError(400, "SYNC_DISABLED", "Modo sync deshabilitado en producción. Usa async=true.");
+    }
+
     if (wantsAsync) {
       const { data: jobRow, error: jobErr } = await supabaseAdmin
         .from("jobs")
@@ -1378,6 +1386,14 @@ router.post("/ai/restyle", async (req, res, next) => {
     const selectedModel = body.model || "imagen-3.0-generate-002";
     const wantsSync = Boolean(body.sync) || body.async === false;
     const wantsAsync = !wantsSync;
+
+    const envName = String(APP_ENV || NODE_ENV || "").toLowerCase();
+    const isProdEnv = envName === "production";
+    const allowSync = String(process.env.ALLOW_SYNC_REQUESTS || "").trim() === "1";
+
+    if (wantsSync && isProdEnv && !allowSync) {
+      throw httpError(400, "SYNC_DISABLED", "Modo sync deshabilitado en producción. Usa async=true.");
+    }
 
     // ✅ ASYNC: devolver jobId rápido (sin riesgo de timeout)
     if (wantsAsync) {

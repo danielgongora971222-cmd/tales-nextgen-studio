@@ -207,13 +207,10 @@ drop policy if exists "jobs_select_own" on public.jobs;
 create policy "jobs_select_own" on public.jobs
   for select using (auth.uid() = owner_id);
 
+-- 🔒 IMPORTANTE: el cliente NO debe poder insertar/editar jobs.
+-- El backend (service_role) ya bypassa RLS y puede insert/update sin policies.
 drop policy if exists "jobs_insert_own" on public.jobs;
-create policy "jobs_insert_own" on public.jobs
-  for insert with check (auth.uid() = owner_id);
-
 drop policy if exists "jobs_update_own" on public.jobs;
-create policy "jobs_update_own" on public.jobs
-  for update using (auth.uid() = owner_id) with check (auth.uid() = owner_id);
 
 -- Convenience: keep updated_at current
 create or replace function public.set_updated_at()
