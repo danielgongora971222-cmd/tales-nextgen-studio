@@ -469,3 +469,20 @@ create policy "comment_reports_insert_own" on public.comment_reports
 drop policy if exists "comment_reports_select_own" on public.comment_reports;
 create policy "comment_reports_select_own" on public.comment_reports
   for select using (auth.uid() = reporter_id);
+
+-- =========================
+-- Worker heartbeats (observabilidad)
+-- =========================
+
+create table if not exists public.worker_heartbeats (
+  worker_id text primary key,
+  kind text not null,
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists worker_heartbeats_kind_updated_idx
+  on public.worker_heartbeats(kind, updated_at desc);
+
+alter table public.worker_heartbeats enable row level security;
+
+-- Sin policies: solo service_role escribe/lee (bypassa RLS)

@@ -1753,6 +1753,27 @@ async function processJob(row) {
   }
 }
 
+let lastHeartbeatAt = 0;
+
+async function heartbeatMaybe() {
+  const now = Date.now();
+  if (now - lastHeartbeatAt < 30_000) return;
+  lastHeartbeatAt = now;
+
+  if (!supabaseAdmin) return;
+
+  try {
+    await supabaseAdmin
+      .from("worker_heartbeats")
+      .upsert(
+        { worker_id: WORKER_ID, kind: JOB_KIND, updated_at: new Date().toISOString() },
+        { onConflict: "worker_id" }
+      );
+  } catch (e) {
+    console.warn("[imageJobsWorker][heartbeat_failed]", String(e?.message || e));
+  }
+}
+
 // =============================
 // Main loop
 // =============================
@@ -1761,9 +1782,11 @@ async function main() {
 
   await supabaseAdmin.from("jobs").select("id").limit(1);
 
-  while (true) {
-    try {
-      const rows = await claimJobsRpc();
+while (true) {
+  try {
+    await heartbeatMaybe();
+
+    const rows = await claimJobsRpc();
 
       if (!rows.length) {
         await sleep(IDLE_SLEEP_MS);

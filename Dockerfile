@@ -22,4 +22,4 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/server ./server
 
 EXPOSE 8080
-CMD ["node", "server/server.js"]
+CMD ["node", "--import", "./server/instrument.mjs", "server/server.js"]

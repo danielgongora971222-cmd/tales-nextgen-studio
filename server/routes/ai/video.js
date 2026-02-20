@@ -7,6 +7,7 @@ import {
   FalFinalizeSchema,
 } from "../../schemas/index.js";
 import { checkUserRateLimit } from "../../lib/userRateLimit.js";
+import { assertJobLimits } from "../../lib/jobLimits.js";
 
 export function createAiVideoRouter(ctx) {
 
@@ -94,6 +95,8 @@ export function createAiVideoRouter(ctx) {
       prompt: prompt || null,
       ...(extra || {}),
     };
+
+    await assertJobLimits({ supabaseAdmin, httpError, ownerId, kind });
 
     const ins = await supabaseAdmin
       .from("jobs")

@@ -346,11 +346,34 @@ async function processJob(row) {
   });
 }
 
+let lastHeartbeatAt = 0;
+
+async function heartbeatMaybe() {
+  const now = Date.now();
+  if (now - lastHeartbeatAt < 30_000) return; // cada 30s
+  lastHeartbeatAt = now;
+
+  if (!supabaseAdmin) return;
+
+  try {
+    await supabaseAdmin
+      .from("worker_heartbeats")
+      .upsert(
+        { worker_id: WORKER_ID, kind: JOB_KIND, updated_at: new Date().toISOString() },
+        { onConflict: "worker_id" }
+      );
+  } catch (e) {
+    console.warn("[jobsWorker][heartbeat_failed]", String(e?.message || e));
+  }
+}
+
 async function main() {
   console.log("[jobsWorker] start", { WORKER_ID, JOB_KIND, CLAIM_LIMIT, LOOP_MS });
 
   while (true) {
     try {
+      await heartbeatMaybe();
+
       const jobs = await claimJobsRpc();
       if (!jobs.length) {
         await sleep(LOOP_MS);

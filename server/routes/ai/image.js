@@ -7,6 +7,7 @@ import {
   UploadAssetSchema,
 } from "../../schemas/index.js";
 import { checkUserRateLimit } from "../../lib/userRateLimit.js";
+import { assertJobLimits } from "../../lib/jobLimits.js";
 
 export function createAiImageRouter(ctx) {
   const router = express.Router();
@@ -244,6 +245,8 @@ export function createAiImageRouter(ctx) {
     }
 
     if (wantsAsync) {
+      await assertJobLimits({ supabaseAdmin, httpError, ownerId: user.id, kind: "image" });
+
       const { data: jobRow, error: jobErr } = await supabaseAdmin
         .from("jobs")
         .insert({
@@ -1395,7 +1398,6 @@ router.post("/ai/restyle", async (req, res, next) => {
       throw httpError(400, "SYNC_DISABLED", "Modo sync deshabilitado en producción. Usa async=true.");
     }
 
-    // ✅ ASYNC: devolver jobId rápido (sin riesgo de timeout)
     if (wantsAsync) {
       if (!body.sourceAssetId) {
         throw httpError(
@@ -1404,6 +1406,8 @@ router.post("/ai/restyle", async (req, res, next) => {
           "Para restyle async, envía sourceAssetId (no imageDataUrl)."
         );
       }
+
+      await assertJobLimits({ supabaseAdmin, httpError, ownerId: user.id, kind: "image" });
 
       const { data: jobRow, error: jobErr } = await supabaseAdmin
         .from("jobs")
