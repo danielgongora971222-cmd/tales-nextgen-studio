@@ -6,6 +6,7 @@ import {
   UpscaleSchema,
   UploadAssetSchema,
 } from "../../schemas/index.js";
+import { checkUserRateLimit } from "../../lib/userRateLimit.js";
 
 export function createAiImageRouter(ctx) {
   const router = express.Router();
@@ -94,6 +95,23 @@ export function createAiImageRouter(ctx) {
 
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
+
+    const rl = checkUserRateLimit({
+      userId: user.id,
+      scope: "ai_image_generate",
+      windowMs: 60 * 1000,
+      max: 8,
+    });
+    if (!rl.ok) {
+      return res.status(429).json({
+        ok: false,
+        error: {
+          code: "RATE_LIMITED",
+          message: "Demasiadas solicitudes de imagen por usuario. Espera un momento.",
+          details: { scope: "ai_image_generate_user", retryAfterSeconds: rl.retryAfterSeconds },
+        },
+      });
+    }
 
     const selectedModel = model || "gemini-2.5-flash-image";
     const maxCount = maxCountForImageModel(selectedModel);
@@ -1339,6 +1357,23 @@ router.post("/ai/restyle", async (req, res, next) => {
 
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
+
+    const rl = checkUserRateLimit({
+      userId: user.id,
+      scope: "ai_restyle",
+      windowMs: 60 * 1000,
+      max: 8,
+    });
+    if (!rl.ok) {
+      return res.status(429).json({
+        ok: false,
+        error: {
+          code: "RATE_LIMITED",
+          message: "Demasiadas solicitudes de restyle por usuario. Espera un momento.",
+          details: { scope: "ai_restyle_user", retryAfterSeconds: rl.retryAfterSeconds },
+        },
+      });
+    }
 
     const selectedModel = body.model || "imagen-3.0-generate-002";
     const wantsSync = Boolean(body.sync) || body.async === false;

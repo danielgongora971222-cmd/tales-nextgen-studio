@@ -6,6 +6,7 @@ import {
   FalJobSchema,
   FalFinalizeSchema,
 } from "../../schemas/index.js";
+import { checkUserRateLimit } from "../../lib/userRateLimit.js";
 
 export function createAiVideoRouter(ctx) {
 
@@ -174,6 +175,23 @@ export function createAiVideoRouter(ctx) {
     // ... resto igual
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
+
+    const rl = checkUserRateLimit({
+      userId: user.id,
+      scope: "ai_video_generate",
+      windowMs: 60 * 1000,
+      max: 4,
+    });
+    if (!rl.ok) {
+      return res.status(429).json({
+        ok: false,
+        error: {
+          code: "RATE_LIMITED",
+          message: "Demasiadas solicitudes de video por usuario. Espera un momento.",
+          details: { scope: "ai_video_generate_user", retryAfterSeconds: rl.retryAfterSeconds },
+        },
+      });
+    }
 
     const toolName = tool || "video-generator";
     const hint = nameHint || "generated-video";
@@ -878,6 +896,23 @@ export function createAiVideoRouter(ctx) {
       const { user, error } = await requireUser(req);
       if (error) return res.status(401).json({ ok: false, error });
 
+      const rl = checkUserRateLimit({
+        userId: user.id,
+        scope: "ai_video_edit",
+        windowMs: 60 * 1000,
+        max: 4,
+      });
+      if (!rl.ok) {
+        return res.status(429).json({
+          ok: false,
+          error: {
+            code: "RATE_LIMITED",
+            message: "Demasiadas ediciones de video por usuario. Espera un momento.",
+            details: { scope: "ai_video_edit_user", retryAfterSeconds: rl.retryAfterSeconds },
+          },
+        });
+      }
+
       const body = VideoEditRequestSchema.parse(req.body);
 
       const toolName = body.toolName || "video-edit";
@@ -1301,6 +1336,23 @@ export function createAiVideoRouter(ctx) {
 
       const { user, error } = await requireUser(req);
       if (error) return res.status(401).json({ ok: false, error });
+
+      const rl = checkUserRateLimit({
+        userId: user.id,
+        scope: "ai_motion_control",
+        windowMs: 60 * 1000,
+        max: 4,
+      });
+      if (!rl.ok) {
+        return res.status(429).json({
+          ok: false,
+          error: {
+            code: "RATE_LIMITED",
+            message: "Demasiadas solicitudes motion-control por usuario. Espera un momento.",
+            details: { scope: "ai_motion_control_user", retryAfterSeconds: rl.retryAfterSeconds },
+          },
+        });
+      }
 
       const body = MotionControlRequestSchema.parse(req.body);
 

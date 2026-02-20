@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AppRoute, Asset, Comment } from '../types';
 import { listPublicAssets } from '../services/assetsApi';
 import { toggleLike, listComments, createComment } from '../services/socialApi';
@@ -18,6 +18,55 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
 
   const [viewerComments, setViewerComments] = useState<Comment[]>([]);
   const [viewerLoadingComments, setViewerLoadingComments] = useState<boolean>(false);
+
+  // ===============================
+  // Anti-spam / Anti-abuso (Frontend)
+  // ===============================
+  const LIKE_COOLDOWN_MS = 650;      // evita spam de like/unlike
+  const COMMENT_COOLDOWN_MS = 2000;  // 1 comment cada 2s por asset (frontend)
+
+  const [likeBusy, setLikeBusy] = useState<Record<string, boolean>>({});
+  const [likeCooldownUntil, setLikeCooldownUntil] = useState<Record<string, number>>({});
+
+  const [commentBusy, setCommentBusy] = useState<Record<string, boolean>>({});
+  const [commentCooldownUntil, setCommentCooldownUntil] = useState<Record<string, number>>({});
+
+  const [socialNotice, setSocialNotice] = useState<string | null>(null);
+  const noticeTimerRef = useRef<number | null>(null);
+
+  const pushNotice = (msg: string) => {
+    setSocialNotice(msg);
+
+    if (noticeTimerRef.current != null) {
+      window.clearTimeout(noticeTimerRef.current);
+      noticeTimerRef.current = null;
+    }
+
+    noticeTimerRef.current = window.setTimeout(() => {
+      setSocialNotice(null);
+      noticeTimerRef.current = null;
+    }, 2500);
+  };
+
+  const validateComment = (raw: string) => {
+    const text = (raw || "").trim();
+
+    if (!text) return { ok: false as const, reason: "El comentario está vacío." };
+    if (text.length > 500) return { ok: false as const, reason: "Máximo 500 caracteres." };
+
+    // Bloqueo básico de links (spam típico)
+    const lower = text.toLowerCase();
+    if (lower.includes("http://") || lower.includes("https://") || lower.includes("www.")) {
+      return { ok: false as const, reason: "Links no permitidos por seguridad (anti-spam)." };
+    }
+
+    // Bloqueo básico de flood (mismo char repetido muchas veces)
+    if (/(\S)\1{10,}/.test(text)) {
+      return { ok: false as const, reason: "Texto inválido (flood detectado)." };
+    }
+
+    return { ok: true as const, text };
+  };
 
   function escapeRegExp(input: string) {
     return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -67,7 +116,23 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
   };
 
   const handleLike = async (assetId: string) => {
-    if (!user) return;
+    if (!user) {
+      pushNotice("Debes iniciar sesión para dar Like.");
+      return;
+    }
+
+    const now = Date.now();
+    const cooldownUntil = likeCooldownUntil[assetId] || 0;
+    if (likeBusy[assetId]) return;
+
+    if (cooldownUntil > now) {
+      pushNotice("Espera un momento antes de volver a dar Like.");
+      return;
+    }
+
+    // Bloqueo inmediato (evita doble click / spam)
+    setLikeBusy((prev) => ({ ...prev, [assetId]: true }));
+    setLikeCooldownUntil((prev) => ({ ...prev, [assetId]: now + LIKE_COOLDOWN_MS }));
 
     try {
       const { liked, likesCount } = await toggleLike(assetId);
@@ -96,18 +161,41 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
           : prev
       );
     } catch {
+      pushNotice("No se pudo dar Like. Intenta de nuevo.");
       return;
+    } finally {
+      setLikeBusy((prev) => ({ ...prev, [assetId]: false }));
     }
   };
 
   const handleComment = async (assetId: string) => {
-    if (!user) return;
+    if (!user) {
+      pushNotice("Debes iniciar sesión para comentar.");
+      return;
+    }
 
-    const text = commentText[assetId];
-    if (!text?.trim()) return;
+    const now = Date.now();
+    const cooldownUntil = commentCooldownUntil[assetId] || 0;
+    if (commentBusy[assetId]) return;
+
+    if (cooldownUntil > now) {
+      pushNotice("Cooldown: espera 2 segundos antes de comentar de nuevo.");
+      return;
+    }
+
+    const raw = commentText[assetId] || "";
+    const validated = validateComment(raw);
+    if (!validated.ok) {
+      pushNotice(validated.reason);
+      return;
+    }
+
+    // Bloqueo inmediato (evita doble click / spam)
+    setCommentBusy((prev) => ({ ...prev, [assetId]: true }));
+    setCommentCooldownUntil((prev) => ({ ...prev, [assetId]: now + COMMENT_COOLDOWN_MS }));
 
     try {
-      const { comment, commentsCount } = await createComment(assetId, text.trim());
+      const { comment, commentsCount } = await createComment(assetId, validated.text);
 
       setCommentText((prev) => ({ ...prev, [assetId]: "" }));
 
@@ -121,7 +209,10 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
         prev && prev.id === assetId ? { ...prev, commentsCount } : prev
       );
     } catch {
+      pushNotice("No se pudo comentar. Intenta de nuevo.");
       return;
+    } finally {
+      setCommentBusy((prev) => ({ ...prev, [assetId]: false }));
     }
   };
 
@@ -228,49 +319,70 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
         </div>
         
         <div className={`${generatorStyles.grid} ${styles.feedGrid}`}>
-          {feed.map((asset) => (
-              <button
-                type="button"
+          {feed.map((asset) => {
+            const likeDisabled =
+              !user ||
+              Boolean(likeBusy[asset.id]) ||
+              (likeCooldownUntil[asset.id] || 0) > Date.now();
+
+            return (
+              <div
+                key={asset.id}
+                role="button"
+                tabIndex={0}
                 onClick={() => openViewer(asset)}
-                className={styles.feedActionButton}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    openViewer(asset);
+                  }
+                }}
+                className={`${generatorStyles.tile} ${styles.feedTile}`}
               >
-              <img
-                src={asset.url}
-                alt={asset.name}
-                className={`${generatorStyles.tileImg} ${styles.feedImage}`}
-                loading="lazy"
-                decoding="async"
-              />
+                <img
+                  src={asset.url}
+                  alt={asset.name}
+                  className={`${generatorStyles.tileImg} ${styles.feedImage}`}
+                  loading="lazy"
+                  decoding="async"
+                />
 
-              <div className={generatorStyles.tileMeta}>
-                <span className={generatorStyles.tileCaption}>
-                  {isUpscalerAsset(asset) ? 'UPSCALE' : (removeStylePresetBlock(asset.prompt || '') || asset.name || '—')}
-                </span>
-                <span className={styles.feedOwner}>by User_{asset.ownerId.slice(0,4)}</span>
-              </div>
-
-              <div className={styles.feedActions} onClick={(event) => event.stopPropagation()}>
-                <button
-                  type="button"
-                  onClick={() => handleLike(asset.id)}
-                  className={styles.feedActionButton}
-                >
-                  <span className={styles.feedActionLabel}>
-                    {asset.likedByMe ? 'Liked' : 'Like'}
+                <div className={generatorStyles.tileMeta}>
+                  <span className={generatorStyles.tileCaption}>
+                    {isUpscalerAsset(asset)
+                      ? "UPSCALE"
+                      : (removeStylePresetBlock(asset.prompt || "") || asset.name || "—")}
                   </span>
-                  <span className={styles.feedActionCount}>{asset.likesCount}</span>
-                </button>
-              <button
-                type="button"
-                onClick={() => openViewer(asset)}
-                className={styles.feedActionButton}
-              >
-                  <span className={styles.feedActionLabel}>Comments</span>
-                  <span className={styles.feedActionCount}>{asset.comments.length}</span>
-                </button>
+                  <span className={styles.feedOwner}>by User_{asset.ownerId.slice(0, 4)}</span>
+                </div>
+
+                <div className={styles.feedActions} onClick={(event) => event.stopPropagation()}>
+                  <button
+                    type="button"
+                    onClick={() => handleLike(asset.id)}
+                    className={styles.feedActionButton}
+                    disabled={likeDisabled}
+                    title={!user ? "Inicia sesión" : (likeDisabled ? "Cooldown anti-spam" : "Like")}
+                  >
+                    <span className={styles.feedActionLabel}>
+                      {asset.likedByMe ? "Liked" : "Like"}
+                    </span>
+                    <span className={styles.feedActionCount}>{asset.likesCount}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => openViewer(asset)}
+                    className={styles.feedActionButton}
+                    title="Ver comentarios"
+                  >
+                    <span className={styles.feedActionLabel}>Comments</span>
+                    <span className={styles.feedActionCount}>{asset.commentsCount}</span>
+                  </button>
+                </div>
               </div>
-            </button>
-          ))}
+            );
+          })}
 
           {feed.length === 0 && (
               <div className="col-span-full py-20 text-center text-gray-500">
@@ -293,7 +405,12 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
                   type="button"
                   className={generatorStyles.iconBtn}
                   onClick={() => handleLike(viewer.id)}
-                  title="Like"
+                  title={!user ? "Inicia sesión" : "Like"}
+                  disabled={
+                    !user ||
+                    Boolean(likeBusy[viewer.id]) ||
+                    (likeCooldownUntil[viewer.id] || 0) > Date.now()
+                  }
                 >
                   ❤
                 </button>
@@ -376,19 +493,34 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
                     <input
                       type="text"
                       value={commentText[viewer.id] || ''}
-                      onChange={(event) => setCommentText(prev => ({ ...prev, [viewer.id]: event.target.value }))}
+                      onChange={(event) =>
+                        setCommentText((prev) => ({
+                          ...prev,
+                          [viewer.id]: event.target.value.slice(0, 500),
+                        }))
+                      }
                       placeholder="Leave a thought..."
                       className={styles.viewerCommentField}
+                      maxLength={500}
                     />
                       <button
                         type="button"
                         onClick={() => handleComment(viewer.id)}
-                        disabled={!commentText[viewer.id]?.trim()}
+                        disabled={
+                          !user ||
+                          Boolean(commentBusy[viewer.id]) ||
+                          (commentCooldownUntil[viewer.id] || 0) > Date.now() ||
+                          !commentText[viewer.id]?.trim()
+                        }
                         className={styles.viewerCommentButton}
+                        title={!user ? "Inicia sesión" : "Anti-spam activado"}
                       >
                         Post
                       </button>
                   </div>
+                  {socialNotice && (
+                    <div className={styles.socialNotice}>{socialNotice}</div>
+                  )}
                 </div>
               </div>
             </div>

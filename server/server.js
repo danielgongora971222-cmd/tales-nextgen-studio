@@ -38,6 +38,7 @@ import { createHealthRouter } from "./routes/health.js";
 import { createAiVideoRouter } from "./routes/ai/video.js";
 import { createAiImageRouter } from "./routes/ai/image.js";
 import { createAssetsRouter } from "./routes/ai/assets.js";
+import { createModerationRouter } from "./routes/moderation.js";
 import { FalFinalizeSchema } from "./schemas/index.js";
 
 
@@ -364,6 +365,14 @@ app.use(
 
     // ⚠️ Si tus endpoints /api/assets usan otras cosas del server.js,
     // agrégalas aquí con el MISMO nombre (sin tocar el handler).
+  })
+);
+
+app.use(
+  "/api",
+  createModerationRouter({
+    supabaseAdmin,
+    ADMIN_TOKEN: process.env.ADMIN_TOKEN,
   })
 );
 

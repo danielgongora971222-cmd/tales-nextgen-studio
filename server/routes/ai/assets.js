@@ -1,6 +1,8 @@
 import express from "express";
 import multer from "multer";
 import { UploadAssetSchema, PresignUploadSchema, CompleteUploadSchema, CreateCommentSchema } from "../../schemas/index.js";
+import { checkUserRateLimit } from "../../lib/userRateLimit.js";
+import { evaluateCommentText, getUserModeration } from "../../lib/moderation.js";
 
 export function createAssetsRouter(ctx) {
   const router = express.Router();
@@ -201,7 +203,7 @@ router.get("/assets", async (req, res) => {
   if (assetIds.length > 0) {
     const { data: previewRows, error: previewErr } = await supabaseAdmin.rpc(
       "get_asset_comments_preview",
-      { asset_ids: assetIds, per_asset: 3 }
+      { asset_ids: assetIds, viewer_id: user.id, per_asset: 3 }
     );
 
     if (!previewErr && Array.isArray(previewRows)) {
@@ -359,12 +361,30 @@ router.get("/assets/:id/comments", async (req, res) => {
   const offsetRaw = typeof req.query.offset === "string" ? parseInt(req.query.offset, 10) : 0;
   const offset = Number.isFinite(offsetRaw) ? Math.max(offsetRaw, 0) : 0;
 
-  const { data: rows, error: cErr, count } = await supabaseAdmin
-    .from("asset_comments")
-    .select("id, user_id, text, created_at", { count: "exact" })
-    .eq("asset_id", assetId)
-    .order("created_at", { ascending: true })
-    .range(offset, offset + limit - 1);
+const rl = checkUserRateLimit({
+  userId: user.id,
+  scope: "comments_list",
+  windowMs: 60 * 1000,
+  max: 240,
+});
+if (!rl.ok) {
+  return res.status(429).json({
+    ok: false,
+    error: {
+      code: "RATE_LIMITED",
+      message: "Demasiadas solicitudes de comentarios. Espera un momento.",
+      details: { scope: "comments_list_user", retryAfterSeconds: rl.retryAfterSeconds },
+    },
+  });
+}
+
+const { data: rows, error: cErr, count } = await supabaseAdmin
+  .from("asset_comments")
+  .select("id, user_id, text, created_at", { count: "exact" })
+  .eq("asset_id", assetId)
+  .or(`is_shadowed.eq.false,user_id.eq.${user.id}`)
+  .order("created_at", { ascending: true })
+  .range(offset, offset + limit - 1);
 
   if (cErr) {
     return res.status(500).json({ ok: false, error: { code: "DB_QUERY_FAILED", message: cErr.message } });
@@ -400,6 +420,74 @@ router.get("/assets/:id/comments", async (req, res) => {
 });
 
 // ===============================
+// Moderación: Reportar comentario
+// POST /api/assets/:assetId/comments/:commentId/report { reason }
+// ===============================
+router.post("/assets/:assetId/comments/:commentId/report", async (req, res) => {
+  const { user, error } = await requireUser(req);
+  if (error) return res.status(401).json({ ok: false, error });
+
+  const rl = checkUserRateLimit({
+    userId: user.id,
+    scope: "comment_report",
+    windowMs: 60 * 1000,
+    max: 10,
+  });
+  if (!rl.ok) {
+    return res.status(429).json({
+      ok: false,
+      error: {
+        code: "RATE_LIMITED",
+        message: "Demasiados reportes. Espera un momento.",
+        details: { scope: "comment_report_user", retryAfterSeconds: rl.retryAfterSeconds },
+      },
+    });
+  }
+
+  const assetId = req.params.assetId;
+  const commentId = req.params.commentId;
+
+  const reason = String(req.body?.reason || "").trim();
+  if (!reason || reason.length > 500) {
+    return res.status(400).json({
+      ok: false,
+      error: { code: "BAD_REQUEST", message: "Reason inválido (1..500 chars)." },
+    });
+  }
+
+  const { row: assetRow, error: assetErr } = await getAssetAccessRow(assetId);
+  if (assetErr) return res.status(assetErr.code === "NOT_FOUND" ? 404 : 500).json({ ok: false, error: assetErr });
+  if (!canAccessAsset(assetRow, user.id)) {
+    return res.status(403).json({ ok: false, error: { code: "FORBIDDEN", message: "No tienes acceso a este asset." } });
+  }
+
+  // Verifica que el comment pertenezca al asset
+  const { data: cRow, error: cErr } = await supabaseAdmin
+    .from("asset_comments")
+    .select("id")
+    .eq("id", commentId)
+    .eq("asset_id", assetId)
+    .maybeSingle();
+
+  if (cErr) {
+    return res.status(500).json({ ok: false, error: { code: "DB_QUERY_FAILED", message: cErr.message } });
+  }
+  if (!cRow) {
+    return res.status(404).json({ ok: false, error: { code: "NOT_FOUND", message: "Comentario no encontrado." } });
+  }
+
+  const { error: rErr } = await supabaseAdmin
+    .from("comment_reports")
+    .insert({ comment_id: commentId, reporter_id: user.id, reason });
+
+  if (rErr) {
+    return res.status(500).json({ ok: false, error: { code: "DB_INSERT_FAILED", message: rErr.message } });
+  }
+
+  return res.json({ ok: true });
+});
+
+// ===============================
 // Social: Create Comment
 // POST /api/assets/:id/comments { text }
 // ===============================
@@ -423,17 +511,69 @@ router.post("/assets/:id/comments", async (req, res) => {
     return res.status(403).json({ ok: false, error: { code: "FORBIDDEN", message: "No tienes acceso a este asset." } });
   }
 
-  const text = parsed.data.text;
+const text = parsed.data.text;
 
-  const { data: inserted, error: insErr } = await supabaseAdmin
-    .from("asset_comments")
-    .insert({ asset_id: assetId, user_id: user.id, text })
-    .select("id, user_id, text, created_at")
-    .single();
+// Rate limit por userId (además del limiter por IP)
+const rl = checkUserRateLimit({
+  userId: user.id,
+  scope: "comment_create",
+  windowMs: 60 * 1000,
+  max: 30,
+});
+if (!rl.ok) {
+  return res.status(429).json({
+    ok: false,
+    error: {
+      code: "RATE_LIMITED",
+      message: "Demasiados comentarios. Espera un momento y vuelve a intentar.",
+      details: { scope: "comment_create_user", retryAfterSeconds: rl.retryAfterSeconds },
+    },
+  });
+}
 
-  if (insErr) {
-    return res.status(500).json({ ok: false, error: { code: "DB_INSERT_FAILED", message: insErr.message } });
+// Cooldown real: 1 comentario cada 2s por usuario (global, no por asset)
+const { data: lastRow, error: lastErr } = await supabaseAdmin
+  .from("asset_comments")
+  .select("created_at")
+  .eq("user_id", user.id)
+  .order("created_at", { ascending: false })
+  .limit(1)
+  .maybeSingle();
+
+if (lastErr) {
+  return res.status(500).json({ ok: false, error: { code: "DB_QUERY_FAILED", message: lastErr.message } });
+}
+
+if (lastRow?.created_at) {
+  const lastMs = new Date(lastRow.created_at).getTime();
+  const delta = Date.now() - lastMs;
+  if (delta < 2000) {
+    const retryAfterSeconds = Math.max(Math.ceil((2000 - delta) / 1000), 1);
+    return res.status(429).json({
+      ok: false,
+      error: {
+        code: "COOLDOWN",
+        message: "Cooldown: espera 2 segundos antes de comentar de nuevo.",
+        details: { scope: "comment_cooldown", retryAfterSeconds },
+      },
+    });
   }
+}
+
+// Shadow ban + auto-moderación (shadow = no visible a otros)
+const moderation = await getUserModeration(supabaseAdmin, user.id);
+const textEval = evaluateCommentText(text);
+const isShadowed = Boolean(moderation.shadowBanned) || Boolean(textEval.shouldShadow);
+
+const { data: inserted, error: insErr } = await supabaseAdmin
+  .from("asset_comments")
+  .insert({ asset_id: assetId, user_id: user.id, text, is_shadowed: isShadowed })
+  .select("id, user_id, text, created_at")
+  .single();
+
+if (insErr) {
+  return res.status(500).json({ ok: false, error: { code: "DB_INSERT_FAILED", message: insErr.message } });
+}
 
   // username propio
   let username = null;

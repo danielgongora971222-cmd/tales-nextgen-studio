@@ -291,8 +291,15 @@ create table if not exists public.asset_comments (
   created_at timestamptz not null default now()
 );
 
+alter table public.asset_comments
+  add column if not exists is_shadowed boolean not null default false;
+
 create index if not exists asset_comments_asset_id_created_at_idx
   on public.asset_comments(asset_id, created_at desc);
+
+create index if not exists asset_comments_visible_asset_id_created_at_idx
+  on public.asset_comments(asset_id, created_at desc)
+  where is_shadowed = false;
 
 create index if not exists asset_comments_user_id_idx
   on public.asset_comments(user_id);
@@ -306,6 +313,7 @@ create policy "asset_comments_select_asset_visible" on public.asset_comments
       select 1 from public.assets a
       where a.id = asset_id and (a.is_public = true or a.owner_id = auth.uid())
     )
+    and (is_shadowed = false or user_id = auth.uid())
   );
 drop policy if exists "asset_comments_insert_own" on public.asset_comments;
 create policy "asset_comments_insert_own" on public.asset_comments
@@ -384,6 +392,7 @@ create trigger trg_assets_comments_dec
 -- 5) Función: preview de comments para varios assets (solo server_role)
 create or replace function public.get_asset_comments_preview(
   asset_ids uuid[],
+  viewer_id uuid default null,
   per_asset int default 3
 )
 returns table (
@@ -410,10 +419,56 @@ as $$
       row_number() over (partition by ac.asset_id order by ac.created_at desc) as rn
     from public.asset_comments ac
     where ac.asset_id = any(asset_ids)
+      and (
+        ac.is_shadowed = false
+        or (viewer_id is not null and ac.user_id = viewer_id)
+      )
   ) c
   left join public.profiles p on p.id = c.user_id
   where c.rn <= greatest(per_asset, 1)
   order by c.asset_id, c.created_at desc;
 $$;
 
-grant execute on function public.get_asset_comments_preview(uuid[], int) to service_role;
+grant execute on function public.get_asset_comments_preview(uuid[], uuid, int) to service_role;
+
+-- =========================
+-- Moderación básica (Shadow ban + Reportes)
+-- =========================
+
+create table if not exists public.user_moderation (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  shadow_banned boolean not null default false,
+  reason text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.user_moderation enable row level security;
+
+drop trigger if exists set_user_moderation_updated_at on public.user_moderation;
+create trigger set_user_moderation_updated_at
+  before update on public.user_moderation
+  for each row execute procedure public.set_updated_at();
+
+
+create table if not exists public.comment_reports (
+  id uuid primary key default gen_random_uuid(),
+  comment_id uuid not null references public.asset_comments(id) on delete cascade,
+  reporter_id uuid not null references auth.users(id) on delete cascade,
+  reason text not null check (char_length(reason) between 1 and 500),
+  created_at timestamptz not null default now(),
+  unique(comment_id, reporter_id)
+);
+
+create index if not exists comment_reports_comment_id_idx on public.comment_reports(comment_id);
+create index if not exists comment_reports_reporter_id_idx on public.comment_reports(reporter_id);
+
+alter table public.comment_reports enable row level security;
+
+drop policy if exists "comment_reports_insert_own" on public.comment_reports;
+create policy "comment_reports_insert_own" on public.comment_reports
+  for insert with check (auth.uid() = reporter_id);
+
+drop policy if exists "comment_reports_select_own" on public.comment_reports;
+create policy "comment_reports_select_own" on public.comment_reports
+  for select using (auth.uid() = reporter_id);
