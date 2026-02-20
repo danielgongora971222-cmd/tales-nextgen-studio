@@ -2251,12 +2251,35 @@ app.post("/api/ai/video/fal/finalize", async (req, res, next) => {
     const urlExpiresInSeconds = 60 * 60;
     const url = await signStoragePath(storagePath, urlExpiresInSeconds);
 
+    // ✅ IMPORTANTÍSIMO:
+    // Si el usuario llegó acá por el flujo "async" (Fal) y el frontend finalizó manualmente,
+    // necesitamos actualizar la fila en public.jobs. Si no, queda eterna en "running".
+    if (t.requestId) {
+      const { error: upErr } = await supabaseAdmin
+        .from("jobs")
+        .update({
+          status: "succeeded",
+          result_asset_id: assetId,
+          finished_at: new Date().toISOString(),
+          error: null,
+          next_check_at: null,
+          locked_at: null,
+          locked_by: null,
+        })
+        .eq("owner_id", user.id)
+        .eq("kind", "video")
+        .filter("params->>requestId", "eq", String(t.requestId));
+
+      // No bloqueamos al usuario si falla este update.
+      if (upErr) console.warn("[FAL_FINALIZE][JOB_UPDATE_FAILED]", upErr);
+    }
+
     return res.json({
       ok: true,
       items: [{ url, assetId }],
       url,
       assetId,
-      urlExpiresInSeconds,
+      createdAt: Date.now(),
     });
   } catch (e) {
     return next(e);

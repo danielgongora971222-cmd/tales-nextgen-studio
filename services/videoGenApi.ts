@@ -6,6 +6,10 @@ const PENDING_FAL_KEY = "tales_pending_fal_job_v1";
 
 export type PendingFalJob = {
   jobToken: string;
+
+  // ID del row en public.jobs (Supabase). Nos permite esperar por updates del worker sin poll a Fal.
+  jobId?: string;
+
   prompt: string;
   modelNorm: string;
   createdAt: number;
@@ -373,10 +377,9 @@ export async function waitFalJob(
 
     let st: any;
     try {
-     const st = await apiPostJson<any>(
+      st = await apiPostJson<any>(
         "/api/ai/video/fal/status",
         { jobToken },
-        // subimos a 2 minutos; y si igual falla, NO marcamos failed por timeout
         { signal: opts?.signal, timeoutMs: 2 * 60 * 1000, retries: 2 }
       );
     } catch (err: any) {

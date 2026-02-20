@@ -9,10 +9,10 @@
     "preview": "vite preview",
     "dev:client": "vite",
     "dev:api": "node server/server.js",
-    "dev:worker": "node server/workers/falFinalizeWorker.js",
+    "dev:worker": "node server/workers/jobsWorker.js",
     "start": "SERVE_CLIENT=1 node server/server.js",
     "start:api": "cross-env SERVE_CLIENT=0 node server/server.js",
-    "start:worker": "node server/workers/falFinalizeWorker.js",
+    "start:worker": "node server/workers/jobsWorker.js",
     "preset:wizard": "node tools/preset-wizard/server.mjs"
   },
 

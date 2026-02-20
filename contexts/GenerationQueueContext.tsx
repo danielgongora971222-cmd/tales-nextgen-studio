@@ -2,13 +2,7 @@ import React, { createContext, useContext, useEffect, useMemo, useRef, useState 
 import { useAuth } from "./AuthContext";
 import { KLING_O3_PRO, KLING_V3 } from "../services/videoModels";
 import { apiPostJson, clearPendingFalJob, formatErr, loadPendingFalJobs, savePendingFalJob, waitFalJob } from "../services/videoGenApi";
-import {
-  cancelGenerationJob,
-  ensureGenerationJobRow,
-  fetchMyGenerationJobs,
-  subscribeMyGenerationJobs,
-  type GenerationJobRow,
-} from "../services/generationJobsApi";
+import { waitJobCompletion } from "../services/jobsApi";
 import { invalidateMyAssetsCache } from "../services/assetsApi";
 
 type QueueJobStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
@@ -22,6 +16,9 @@ export type VideoQueuePayload = {
 
   // Fal async resume
   falJobToken?: string | null;
+
+  // Row id en public.jobs (Supabase). El background worker escribe aquí cuando termina.
+  supabaseJobId?: string | null;
 };
 
 export type QueueJob = {
@@ -140,7 +137,14 @@ export const GenerationQueueProvider: React.FC<{ children: React.ReactNode }> = 
     const normalized = loaded.map((j) => {
       if (j.status !== "running") return j;
       const token = j.payload?.falJobToken;
-      if (token && isFalModel(j.payload?.modelNorm || "")) return j; // resumible
+      if (token && isFalModel(j.payload?.modelNorm || "")) {
+        return {
+          ...j,
+          status: "queued" as const,
+          updatedAt: now(),
+          progressText: "Reanudando job pendiente…",
+        };
+      }
       return {
         ...j,
         status: "failed" as const,
@@ -180,6 +184,7 @@ export const GenerationQueueProvider: React.FC<{ children: React.ReactNode }> = 
           prompt: String(p.prompt || ""),
           pendingSlotsCount: 0,
           falJobToken: token,
+          supabaseJobId: p.jobId ? String(p.jobId) : null,
         },
       });
     }
@@ -228,6 +233,7 @@ export const GenerationQueueProvider: React.FC<{ children: React.ReactNode }> = 
         prompt: args.prompt,
         pendingSlotsCount: args.pendingSlotsCount,
         falJobToken: null,
+        supabaseJobId: null,
       },
     };
 
@@ -357,14 +363,48 @@ async function runVideoJob(
     // 1) Si ya tenemos jobToken → reanudar
     const existingToken = payload?.falJobToken ? String(payload.falJobToken) : "";
     if (existingToken) {
+      const existingJobId = payload?.supabaseJobId ? String(payload.supabaseJobId) : "";
+
+      // ✅ Camino robusto: esperar por el row en public.jobs (background worker)
+      if (existingJobId) {
+        onProgress("Reanudando (background)…");
+        const row = await waitJobCompletion(existingJobId, { signal, onProgress, pollMs: 15_000 });
+
+        if (row.status === "failed") {
+          clearPendingFalJob(existingToken);
+          throw new Error(row.error || "Falló el job en background.");
+        }
+
+        if (row.status === "succeeded" && row.result_asset_id) {
+          invalidateMyAssetsCache("video");
+          clearPendingFalJob(existingToken);
+          return { ok: true, items: [{ assetId: row.result_asset_id }] };
+        }
+
+        // Fallback raro: el job terminó pero no dejó assetId
+        onProgress("Finalizando (Fal)…");
+        const out = await apiPostJson<any>(
+          "/api/ai/video/fal/finalize",
+          { jobToken: existingToken, prompt },
+          { signal, timeoutMs: 2 * 60 * 1000, retries: 2 }
+        );
+
+        invalidateMyAssetsCache("video");
+        clearPendingFalJob(existingToken);
+        return out;
+      }
+
+      // ✅ Fallback (compat): sin jobId, volvemos al polling clásico a Fal.
       onProgress("Reanudando (Fal)…");
-      await waitFalJob(existingToken, { signal, maxWaitMs: 15 * 60 * 1000, onProgress });
+      await waitFalJob(existingToken, { signal, maxWaitMs: 6 * 60 * 60 * 1000, onProgress });
       onProgress("Finalizando (Fal)…");
       const out = await apiPostJson<any>(
         "/api/ai/video/fal/finalize",
         { jobToken: existingToken, prompt },
         { signal, timeoutMs: 2 * 60 * 1000, retries: 2 }
       );
+
+      invalidateMyAssetsCache("video");
       clearPendingFalJob(existingToken);
       return out;
     }
@@ -383,20 +423,52 @@ async function runVideoJob(
     if (!(submit?.mode === "async" && submit?.jobToken)) return submit;
 
     const jobToken = String(submit.jobToken);
+    const supabaseJobId = submit?.jobId ? String(submit.jobId) : "";
 
-    onPayloadPatch({ falJobToken: jobToken });
+    onPayloadPatch({ falJobToken: jobToken, supabaseJobId: supabaseJobId || null });
 
     // Guardamos para poder reanudar si recarga
     savePendingFalJob({
       jobToken,
+      jobId: supabaseJobId || undefined,
       prompt,
       modelNorm,
       createdAt: now(),
       clientJobId: job.id,
     });
 
+    // ✅ Camino robusto: esperar al worker (public.jobs)
+    if (supabaseJobId) {
+      onProgress("Procesando (background)…");
+      const row = await waitJobCompletion(supabaseJobId, { signal, onProgress, pollMs: 15_000 });
+
+      if (row.status === "failed") {
+        clearPendingFalJob(jobToken);
+        throw new Error(row.error || "Falló el job en background.");
+      }
+
+      if (row.status === "succeeded" && row.result_asset_id) {
+        invalidateMyAssetsCache("video");
+        clearPendingFalJob(jobToken);
+        return { ok: true, items: [{ assetId: row.result_asset_id }] };
+      }
+
+      // Fallback raro: el job terminó pero no dejó assetId
+      onProgress("Finalizando (Fal)…");
+      const out = await apiPostJson<any>(
+        "/api/ai/video/fal/finalize",
+        { jobToken, prompt },
+        { signal, timeoutMs: 2 * 60 * 1000, retries: 2 }
+      );
+
+      invalidateMyAssetsCache("video");
+      clearPendingFalJob(jobToken);
+      return out;
+    }
+
+    // Fallback compat: backend no devolvió jobId
     onProgress("Procesando (Fal)…");
-    await waitFalJob(jobToken, { signal, maxWaitMs: 15 * 60 * 1000, onProgress });
+    await waitFalJob(jobToken, { signal, maxWaitMs: 6 * 60 * 60 * 1000, onProgress });
     onProgress("Finalizando (Fal)…");
 
     const out = await apiPostJson<any>(
@@ -405,6 +477,7 @@ async function runVideoJob(
       { signal, timeoutMs: 2 * 60 * 1000, retries: 2 }
     );
 
+    invalidateMyAssetsCache("video");
     clearPendingFalJob(jobToken);
     return out;
   }
