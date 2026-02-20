@@ -1736,6 +1736,34 @@ app.post("/api/ai/faceswap/mannequin", async (req, res, next) => {
     const body = FaceSwapMannequinSchema.parse(req.body);
     const { targetAssetId, swapType, quality } = body;
 
+    const wantsSync = Boolean(body.sync) || body.async === false;
+    const wantsAsync = !wantsSync;
+
+    if (wantsAsync) {
+      const { data: jobRow, error: jobErr } = await supabaseAdmin
+        .from("jobs")
+        .insert({
+          owner_id: user.id,
+          kind: "image",
+          status: "running",
+          next_check_at: new Date().toISOString(),
+          params: {
+            task: "faceswap_mannequin",
+            targetAssetId,
+            swapType,
+            quality,
+          },
+        })
+        .select("id")
+        .single();
+
+      if (jobErr) {
+        throw httpError(500, "JOB_INSERT_FAILED", "No se pudo crear el job de faceswap.", { jobErr });
+      }
+
+      return res.json({ ok: true, jobId: jobRow.id });
+    }
+
     const aiClient = await ensureAI();
 
     const qHint = faceswapQualityHint(quality);
@@ -1833,6 +1861,35 @@ app.post("/api/ai/faceswap/insert", async (req, res, next) => {
   const body = FaceSwapInsertSchema.parse(req.body);
   const { baseAssetId, donorElementId } = body;
   let { swapType, quality } = body;
+
+  const wantsSync = Boolean(body.sync) || body.async === false;
+  const wantsAsync = !wantsSync;
+
+  if (wantsAsync) {
+    const { data: jobRow, error: jobErr } = await supabaseAdmin
+      .from("jobs")
+      .insert({
+        owner_id: user.id,
+        kind: "image",
+        status: "running",
+        next_check_at: new Date().toISOString(),
+        params: {
+          task: "faceswap_insert",
+          baseAssetId,
+          donorElementId,
+          swapType,
+          quality,
+        },
+      })
+      .select("id")
+      .single();
+
+    if (jobErr) {
+      throw httpError(500, "JOB_INSERT_FAILED", "No se pudo crear el job de faceswap insert.", { jobErr });
+    }
+
+    return res.json({ ok: true, jobId: jobRow.id });
+  }
 
   // -----------------------------
   // 🔒 BLOQUEO (Paso 2 hereda SIEMPRE swapType + quality del Paso 1)
@@ -2042,7 +2099,6 @@ app.post("/api/ai/faceswap", async (req, res, next) => {
 
 app.post("/api/ai/upscale", async (req, res, next) => {
   try {
-    const aiClient = await ensureAI();
     const body = UpscaleSchema.parse(req.body);
 
     const { user, error } = await requireUser(req);
@@ -2051,7 +2107,55 @@ app.post("/api/ai/upscale", async (req, res, next) => {
     const selectedModel = body.model || "imagen-3.0-generate-002";
     const scale = body.scale || 2;
 
-    const { mimeType, base64 } = parseDataUrl(body.imageDataUrl);
+    const wantsSync = Boolean(body.sync) || body.async === false;
+    const wantsAsync = !wantsSync;
+
+    // ✅ ASYNC: devolver jobId rápido (sin riesgo de timeout)
+    if (wantsAsync) {
+      if (!body.imageAssetId) {
+        throw httpError(
+          400,
+          "IMAGE_ASSET_REQUIRED",
+          "Para upscale async, envía imageAssetId (no imageDataUrl)."
+        );
+      }
+
+      const { data: jobRow, error: jobErr } = await supabaseAdmin
+        .from("jobs")
+        .insert({
+          owner_id: user.id,
+          kind: "image",
+          status: "running",
+          next_check_at: new Date().toISOString(),
+          params: {
+            task: "upscale",
+            imageAssetId: body.imageAssetId,
+            scale,
+            model: selectedModel,
+          },
+        })
+        .select("id")
+        .single();
+
+      if (jobErr) {
+        throw httpError(500, "JOB_INSERT_FAILED", "No se pudo crear el job de upscale.", { jobErr });
+      }
+
+      return res.json({ ok: true, jobId: jobRow.id });
+    }
+
+    // ✅ SYNC (legacy): ejecuta en request (puede tardar)
+    const aiClient = await ensureAI();
+
+    const inlinePart = body.imageAssetId
+      ? await assetIdToInlinePart(body.imageAssetId, user.id, 10 * 60)
+      : (() => {
+          if (!body.imageDataUrl) {
+            throw httpError(400, "IMAGE_REQUIRED", "Missing imageDataUrl or imageAssetId.");
+          }
+          const { mimeType, base64 } = parseDataUrl(body.imageDataUrl);
+          return { inlineData: { mimeType, data: base64 } };
+        })();
 
     const prompt = `Upscale this image by ${scale}x. Preserve detail, avoid artifacts, keep it photorealistic.`;
 
@@ -2060,10 +2164,7 @@ app.post("/api/ai/upscale", async (req, res, next) => {
       contents: [
         {
           role: "user",
-          parts: [
-            { text: prompt },
-            { inlineData: { mimeType, data: base64 } },
-          ],
+          parts: [{ text: prompt }, inlinePart],
         },
       ],
     });
@@ -2085,7 +2186,7 @@ app.post("/api/ai/upscale", async (req, res, next) => {
       prompt,
       storagePath,
       isPublic: false,
-      meta: { toolVersion: 1, scale },
+      meta: { toolVersion: 2, scale },
     });
 
     const urlExpiresInSeconds = 60 * 60;

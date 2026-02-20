@@ -1,5 +1,6 @@
 import { Asset } from "../types";
 import { supabase } from "./supabaseClient";
+import { apiUrl } from "./apiBase";
 
 type ApiOk = { ok: true; items: any[] };
 type ApiFail = { ok: false; error: any };
@@ -151,7 +152,7 @@ async function fetchPublicAssetsNoCache(opts?: { type?: "image" | "video"; limit
   if (opts?.type) params.set("type", opts.type);
   if (opts?.limit) params.set("limit", String(opts.limit));
 
-  const url = `/api/assets?${params.toString()}`;
+  const url = apiUrl(`/api/assets?${params.toString()}`);
 
   const headers: Record<string, string> = {};
   if (token) headers["Authorization"] = `Bearer ${token}`;
@@ -281,7 +282,7 @@ async function authHeadersJson() {
 
 export async function publishAsset(assetId: string) {
   const headers = await authHeadersJson();
-  const resp = await fetch(`/api/assets/${assetId}/publish`, { method: "POST", headers });
+  const resp = await fetch(apiUrl(`/api/assets/${assetId}/publish`), { method: "POST", headers });
 
   const text = await resp.text();
   const data = JSON.parse(text);
@@ -298,7 +299,7 @@ export async function publishAsset(assetId: string) {
 
 export async function unpublishAsset(assetId: string) {
   const headers = await authHeadersJson();
-  const resp = await fetch(`/api/assets/${assetId}/unpublish`, { method: "POST", headers });
+  const resp = await fetch(apiUrl(`/api/assets/${assetId}/unpublish`), { method: "POST", headers });
 
   const text = await resp.text();
   const data = JSON.parse(text);
@@ -315,7 +316,7 @@ export async function unpublishAsset(assetId: string) {
 
 export async function deleteAsset(assetId: string) {
   const headers = await authHeadersJson();
-  const resp = await fetch(`/api/assets/${assetId}`, { method: "DELETE", headers });
+  const resp = await fetch(apiUrl(`/api/assets/${assetId}`), { method: "DELETE", headers });
 
   const text = await resp.text();
   const data = JSON.parse(text);
@@ -354,7 +355,7 @@ export async function uploadUserAsset(
 
   // ---------- 0) INTENTO PRINCIPAL: presign + upload directo ----------
   try {
-    const presignResp = await fetch("/api/assets/presign-upload", {
+    const presignResp = await fetch(apiUrl("/api/assets/presign-upload"), {
       method: "POST",
       headers: headersJson,
       body: JSON.stringify({

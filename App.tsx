@@ -20,24 +20,32 @@ import Background3D from './components/Background3D';
 import { AppRoute } from './types';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { GenerationQueueProvider } from './contexts/GenerationQueueContext';
+import { apiUrl } from "./services/apiBase";
 
 const AppContent: React.FC = () => {
   const [route, setRoute] = useState<AppRoute>(AppRoute.HOME);
-  const [hasKey, setHasKey] = useState<boolean>(false);
+  const [backendOk, setBackendOk] = useState<boolean>(false);
+  const [capabilities, setCapabilities] = useState<any>(null);
   const [checking, setChecking] = useState<boolean>(true);
   
   const { user, isLoading: authLoading } = useAuth();
   
-  const healthUrl = "/api/health";
+  const healthUrl = apiUrl("/api/health");
 
   useEffect(() => {
     async function checkBackend() {
       try {
         const resp = await fetch(healthUrl);
         const data = await resp.json();
-        setHasKey(Boolean(data?.hasKey));
-      } catch (e) {
-        setHasKey(false);
+
+        setCapabilities(data?.capabilities || null);
+
+        // Backend “OK” si responde y tiene Supabase server-side configurado (imprescindible)
+        const ok = Boolean(resp.ok && data?.ok && data?.capabilities?.supabase);
+        setBackendOk(ok);
+      } catch {
+        setCapabilities(null);
+        setBackendOk(false);
       } finally {
         setChecking(false);
       }
@@ -46,15 +54,18 @@ const AppContent: React.FC = () => {
   }, []);
 
   const handleConnect = async () => {
-    // In production we keep the API key ONLY on the backend.
-    // This simply re-checks the backend configuration after you update env vars.
     setChecking(true);
     try {
       const resp = await fetch(healthUrl);
       const data = await resp.json();
-      setHasKey(Boolean(data?.hasKey));
-    } catch (e) {
-      setHasKey(false);
+
+      setCapabilities(data?.capabilities || null);
+
+      const ok = Boolean(resp.ok && data?.ok && data?.capabilities?.supabase);
+      setBackendOk(ok);
+    } catch {
+      setCapabilities(null);
+      setBackendOk(false);
     } finally {
       setChecking(false);
     }
@@ -119,39 +130,37 @@ const AppContent: React.FC = () => {
     );
   }
 
-  // API Key Check Barrier
-  if (!hasKey) {
+  // Backend Check Barrier (no bloquea por Gemini si hay otros providers; pero sí exige Supabase server-side)
+  if (!backendOk) {
     return (
       <div className="relative w-full h-screen bg-black text-white overflow-hidden flex items-center justify-center font-sans">
         <div className="absolute inset-0 z-0"><Background3D /></div>
         <div className="absolute inset-0 z-0 bg-gradient-to-b from-transparent via-black/50 to-black pointer-events-none" />
-        
+
         <div className="relative z-10 p-8 max-w-md w-full glass-panel rounded-3xl border border-white/10 text-center shadow-2xl">
-           <h1 className="text-4xl font-bold mb-2 tracking-tighter">ACCESS REQUIRED</h1>
-           <div className="w-16 h-1 bg-white mx-auto mb-6 rounded-full"></div>
-           
-           <p className="text-gray-400 mb-8 leading-relaxed">
-             To generate images, TALES AI needs the backend API to be running and configured with a valid GEMINI_API_KEY (kept server-side).
-           </p>
-           
-           <button 
-             onClick={handleConnect} 
-             className="w-full py-4 bg-white text-black font-bold rounded-xl hover:scale-105 transition-transform mb-6 shadow-[0_0_20px_rgba(255,255,255,0.3)]"
-           >
-             RETRY CONNECTION
-           </button>
-           
-           <div className="text-xs text-gray-500">
-             <p className="mb-2">Set GEMINI_API_KEY on the server and restart the API service.</p>
-             <a 
-               href="https://ai.google.dev/gemini-api/docs/billing" 
-               target="_blank" 
-               rel="noreferrer" 
-               className="text-white/60 hover:text-white underline transition-colors"
-             >
-               Read Billing Documentation
-             </a>
-           </div>
+          <h1 className="text-4xl font-bold mb-2 tracking-tighter">BACKEND OFFLINE</h1>
+          <div className="w-16 h-1 bg-white mx-auto mb-6 rounded-full"></div>
+
+          <p className="text-gray-400 mb-6 leading-relaxed">
+            El frontend no puede conectarse al backend, o el backend no tiene Supabase server-side configurado
+            (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY).
+          </p>
+
+          <div className="text-left text-xs text-gray-400 mb-6 bg-white/5 border border-white/10 rounded-xl p-4">
+            <div className="font-semibold text-white/80 mb-2">capabilities detectadas:</div>
+            <pre className="whitespace-pre-wrap break-words">{JSON.stringify(capabilities, null, 2)}</pre>
+          </div>
+
+          <button
+            onClick={handleConnect}
+            className="w-full py-4 bg-white text-black font-bold rounded-xl hover:scale-105 transition-transform shadow-[0_0_20px_rgba(255,255,255,0.3)]"
+          >
+            RETRY CONNECTION
+          </button>
+
+          <div className="text-xs text-gray-500 mt-6">
+            <p>Revisa variables de entorno en Render y que CORS permita tu dominio de Vercel.</p>
+          </div>
         </div>
       </div>
     );

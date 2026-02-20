@@ -1,6 +1,7 @@
 // services/videoGenApi.ts
 import { supabase } from "./supabaseClient";
 import { invalidateMyAssetsCache } from "./assetsApi";
+import { apiUrl } from "./apiBase";
 
 const PENDING_FAL_KEY = "tales_pending_fal_job_v1";
 
@@ -214,7 +215,7 @@ export async function apiPostJson<T>(
       }
 
       try {
-        const resp = await fetch(path, {
+        const resp = await fetch(apiUrl(path), {
           method: "POST",
           headers,
           body: JSON.stringify(body),

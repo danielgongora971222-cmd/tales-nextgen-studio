@@ -87,6 +87,8 @@ export function createAiImageRouter(ctx) {
         verticalAngle,
         zoom,
         loraScale,
+        sync,
+        async: asyncFlag,
       } = ImageRequestSchema.parse(req.body);
 
 
@@ -208,6 +210,50 @@ export function createAiImageRouter(ctx) {
       const mapping = refs.map((r, i) => `image ${i + 1} = ${r.label}`).join(", ");
       return `${String(text || "").trim()}\n\nReference mapping: ${mapping}`.trim();
     };
+
+    // =============================
+    // ASYNC JOB (protege de timeouts)
+    // =============================
+    const wantsSync = Boolean(sync) || asyncFlag === false;
+    const wantsAsync = !wantsSync;
+
+    if (wantsAsync) {
+      const { data: jobRow, error: jobErr } = await supabaseAdmin
+        .from("jobs")
+        .insert({
+          owner_id: user.id,
+          kind: "image",
+          status: "running",
+          next_check_at: new Date().toISOString(),
+          params: {
+            task: "image_generate",
+            prompt,
+            model: selectedModel,
+            aspectRatio,
+            count,
+            quality,
+            tool,
+            nameHint,
+            klingElementIds,
+            characterAssetIds,
+            styleAssetId,
+            backgroundAssetId,
+            promptReferences,
+            horizontalAngle,
+            verticalAngle,
+            zoom,
+            loraScale,
+          },
+        })
+        .select("id")
+        .single();
+
+      if (jobErr) {
+        throw httpError(500, "JOB_INSERT_FAILED", "No se pudo crear el job de imagen.", { jobErr });
+      }
+
+      return res.json({ ok: true, jobId: jobRow.id });
+    }
 
     // =============================
     // OPENAI GPT IMAGE
@@ -1289,26 +1335,69 @@ export function createAiImageRouter(ctx) {
 
 router.post("/ai/restyle", async (req, res, next) => {
   try {
-    const aiClient = await ensureAI();
     const body = RestyleSchema.parse(req.body);
 
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
 
     const selectedModel = body.model || "imagen-3.0-generate-002";
+    const wantsSync = Boolean(body.sync) || body.async === false;
+    const wantsAsync = !wantsSync;
 
-    const { mimeType, base64 } = parseDataUrl(body.imageDataUrl);
+    // ✅ ASYNC: devolver jobId rápido (sin riesgo de timeout)
+    if (wantsAsync) {
+      if (!body.sourceAssetId) {
+        throw httpError(
+          400,
+          "SOURCE_ASSET_REQUIRED",
+          "Para restyle async, envía sourceAssetId (no imageDataUrl)."
+        );
+      }
+
+      const { data: jobRow, error: jobErr } = await supabaseAdmin
+        .from("jobs")
+        .insert({
+          owner_id: user.id,
+          kind: "image",
+          status: "running",
+          next_check_at: new Date().toISOString(),
+          params: {
+            task: "restyle",
+            sourceAssetId: body.sourceAssetId,
+            prompt: body.prompt,
+            model: selectedModel,
+          },
+        })
+        .select("id")
+        .single();
+
+      if (jobErr) {
+        throw httpError(500, "JOB_INSERT_FAILED", "No se pudo crear el job de restyle.", { jobErr });
+      }
+
+      return res.json({ ok: true, jobId: jobRow.id });
+    }
+
+    // ✅ SYNC (legacy): ejecuta en request (puede tardar)
+    const aiClient = await ensureAI();
     const prompt = body.prompt || "Restyle this image with high quality.";
+
+    const inlinePart = body.sourceAssetId
+      ? await assetIdToInlinePart(body.sourceAssetId, user.id, 10 * 60)
+      : (() => {
+          if (!body.imageDataUrl) {
+            throw httpError(400, "IMAGE_REQUIRED", "Missing imageDataUrl or sourceAssetId.");
+          }
+          const { mimeType, base64 } = parseDataUrl(body.imageDataUrl);
+          return { inlineData: { mimeType, data: base64 } };
+        })();
 
     const response = await aiClient.models.generateContent({
       model: selectedModel,
       contents: [
         {
           role: "user",
-          parts: [
-            { text: prompt },
-            { inlineData: { mimeType, data: base64 } },
-          ],
+          parts: [{ text: prompt }, inlinePart],
         },
       ],
     });
@@ -1331,7 +1420,7 @@ router.post("/ai/restyle", async (req, res, next) => {
       storagePath,
       isPublic: false,
       meta: {
-        toolVersion: 1,
+        toolVersion: 2,
       },
     });
 

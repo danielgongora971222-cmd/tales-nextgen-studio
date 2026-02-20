@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AppRoute, Asset } from '../types';
-import { backend } from '../services/backendService';
+import { listPublicAssets } from '../services/assetsApi';
 import { useAuth } from '../contexts/AuthContext';
 import styles from './Home.module.css';
 import generatorStyles from './tools/ImageGeneratorTool.module.css';
@@ -53,24 +53,33 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
     loadFeed();
   }, []);
 
-  const loadFeed = () => {
-      backend.getPublicFeed().then(setFeed);
+  const loadFeed = async () => {
+    try {
+      // Public feed real desde tu backend (Supabase + URLs firmadas)
+      const items = await listPublicAssets({ type: "image", limit: 60, fresh: true });
+
+      // Nota: likes/comments todavía no están implementados en DB.
+      // Para evitar bugs de UX, los dejamos como 0 hasta tener tablas/endpoints reales.
+      const normalized = items.map((a) => ({
+        ...a,
+        likes: Array.isArray(a.likes) ? a.likes : [],
+        comments: Array.isArray(a.comments) ? a.comments : [],
+      }));
+
+      setFeed(normalized);
+    } catch {
+      setFeed([]);
+    }
   };
 
-  const handleLike = async (assetId: string) => {
-      if (!user) return;
-      await backend.social.toggleLike(assetId, user.id);
-      loadFeed(); // Refresh to show new count
+  const handleLike = async (_assetId: string) => {
+    // Desactivado hasta implementar likes reales en DB (evita inconsistencias).
+    return;
   };
 
-  const handleComment = async (assetId: string) => {
-      if (!user) return;
-      const text = commentText[assetId];
-      if (!text?.trim()) return;
-
-      await backend.social.addComment(assetId, user, text);
-      setCommentText(prev => ({ ...prev, [assetId]: '' }));
-      loadFeed();
+  const handleComment = async (_assetId: string) => {
+    // Desactivado hasta implementar comments reales en DB (evita inconsistencias).
+    return;
   };
 
   const viewerRecipeInfo = useMemo(() => {
@@ -179,6 +188,8 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
                   type="button"
                   onClick={() => handleLike(asset.id)}
                   className={styles.feedActionButton}
+                  disabled
+                  title="Likes próximamente"
                 >
                   <span className={styles.feedActionLabel}>
                     {user && asset.likes.includes(user.id) ? 'Liked' : 'Like'}
@@ -218,7 +229,8 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
                   type="button"
                   className={generatorStyles.iconBtn}
                   onClick={() => handleLike(viewer.id)}
-                  title="Like"
+                  title="Likes próximamente"
+                  disabled
                 >
                   ❤
                 </button>
@@ -295,14 +307,16 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
                       type="text"
                       value={commentText[viewer.id] || ''}
                       onChange={(event) => setCommentText(prev => ({ ...prev, [viewer.id]: event.target.value }))}
-                      placeholder="Leave a thought..."
+                      placeholder="Comments próximamente…"
                       className={styles.viewerCommentField}
+                      disabled
                     />
                     <button
                       type="button"
                       onClick={() => handleComment(viewer.id)}
-                      disabled={!commentText[viewer.id]}
+                      disabled
                       className={styles.viewerCommentButton}
+                      title="Comments próximamente"
                     >
                       Post
                     </button>

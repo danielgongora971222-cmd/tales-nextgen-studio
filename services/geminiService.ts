@@ -2,8 +2,47 @@ import { GeminiModel } from "../types";
 import { backend } from "./backendService";
 import { supabase } from "./supabaseClient";
 import { invalidateMyAssetsCache } from "./assetsApi";
+import { waitJobCompletion, JobRow } from "./jobsApi";
 
 type ApiResponse<T> = { ok: true; dataUrl?: string; videoUrl?: string } | { ok: false; error: string };
+
+function formatJobFailure(row: JobRow): string {
+  const p: any = (row as any)?.params || {};
+  const code = p?.errorCode ? `${p.errorCode}: ` : "";
+  const details =
+    p?.errorDetails ? `\n\nDetalles:\n${JSON.stringify(p.errorDetails, null, 2)}` : "";
+  return `${code}${row.error || "Job failed."}${details}`;
+}
+
+function jobRowToItems(row: JobRow): ImageGenItem[] {
+  const p: any = (row as any)?.params || {};
+  const urls: string[] = Array.isArray(p.resultUrls)
+    ? p.resultUrls
+    : p.resultUrl
+      ? [p.resultUrl]
+      : [];
+  const ids: string[] = Array.isArray(p.resultAssetIds)
+    ? p.resultAssetIds
+    : row.result_asset_id
+      ? [row.result_asset_id]
+      : [];
+
+  const items: ImageGenItem[] = [];
+  for (let i = 0; i < urls.length; i++) {
+    items.push({
+      url: urls[i],
+      assetId: ids[i] || ids[0] || row.result_asset_id || "unknown",
+    });
+  }
+  return items;
+}
+
+async function waitImageJob(jobId: string, onProgress?: (msg: string) => void): Promise<JobRow> {
+  const row = await waitJobCompletion(jobId, { onProgress });
+  if (row.status === "failed") throw new Error(formatJobFailure(row));
+  return row;
+}
+
 
 async function apiPost<T>(path: string, body: any): Promise<T> {
   const url = path; // SIEMPRE /api/... (Vercel hará el rewrite en prod)
@@ -96,10 +135,24 @@ export const generateImage = async (
     model,
     aspectRatio: options?.aspectRatio,
   });
+
+  // ✅ Async (background job)
+  if (res?.jobId) {
+    const row = await waitImageJob(String(res.jobId));
+    invalidateMyAssetsCache();
+
+    const items = jobRowToItems(row);
+    const out = items[0]?.url || (row as any)?.params?.resultUrl;
+    if (!out) throw new Error("No image returned from job.");
+    return out;
+  }
+
+  // ✅ Sync (compat)
   const out = res.url || res.dataUrl;
   if (!out) throw new Error("No image returned from API.");
   return out;
 };
+
 
 export type ImageGenQuality = "1K" | "2K" | "4K";
 export type ImageGenItem = { url: string; assetId: string };
@@ -148,30 +201,47 @@ export const generateImageBatch = async (
   options?: GenerateImageBatchOptions
 ): Promise<GenerateImageBatchResult> => {
   const res: any = await apiPost("/api/ai/image", {
-  prompt,
-  model,
-  aspectRatio: options?.aspectRatio,
-  count: options?.count,
-  quality: options?.quality,
-  tool: options?.tool,
-  nameHint: options?.nameHint,
-  characterAssetIds: options?.characterAssetIds,
-  styleAssetId: options?.styleAssetId,
-  backgroundAssetId: options?.backgroundAssetId,
+    prompt,
+    model,
+    aspectRatio: options?.aspectRatio,
+    count: options?.count,
+    quality: options?.quality,
+    tool: options?.tool,
+    nameHint: options?.nameHint,
+    characterAssetIds: options?.characterAssetIds,
+    styleAssetId: options?.styleAssetId,
+    backgroundAssetId: options?.backgroundAssetId,
 
-  // ✅ @mentions bindings
-  promptReferences: options?.promptReferences,
+    // ✅ @mentions bindings
+    promptReferences: options?.promptReferences,
 
-  // ✅ Camera Angles
-  horizontalAngle: options?.horizontalAngle,
-  verticalAngle: options?.verticalAngle,
-  zoom: options?.zoom,
-  loraScale: options?.loraScale,
+    // ✅ Camera Angles
+    horizontalAngle: options?.horizontalAngle,
+    verticalAngle: options?.verticalAngle,
+    zoom: options?.zoom,
+    loraScale: options?.loraScale,
 
-  // Kling-only
-  klingElementIds: options?.klingElementIds,
-});
+    // Kling-only
+    klingElementIds: options?.klingElementIds,
+  });
 
+  // ✅ Async (background job)
+  if (res?.jobId) {
+    const row = await waitImageJob(String(res.jobId));
+    invalidateMyAssetsCache();
+
+    const items = jobRowToItems(row);
+    if (!items.length) throw new Error("No image returned from job.");
+
+    const urlExpiresInSeconds =
+      (row as any)?.params?.urlExpiresInSeconds ||
+      (row as any)?.params?.expiresInSeconds ||
+      res.urlExpiresInSeconds;
+
+    return { items, urlExpiresInSeconds };
+  }
+
+  // ✅ Sync (compat)
   const items: ImageGenItem[] = Array.isArray(res?.items) ? res.items : [];
 
   // fallback por si el backend devolviera solo una url (compat)
@@ -186,6 +256,7 @@ export const generateImageBatch = async (
 
   return { items, urlExpiresInSeconds: res.urlExpiresInSeconds };
 };
+
 
 export const generateRestyle = async (assetUrl: string, prompt: string): Promise<string> => {
   const imageDataUrl = await backend.getAssetData(assetUrl);
@@ -215,10 +286,33 @@ export const faceswapStep1MakeMannequin = async (params: {
     quality: params.quality,
   });
 
+  // ✅ Async (background job)
+  if (res?.jobId) {
+    const row = await waitImageJob(String(res.jobId));
+    invalidateMyAssetsCache();
+
+    const items = jobRowToItems(row);
+    const first = items[0] || null;
+    const out = first?.url || (row as any)?.params?.resultUrl;
+    if (!out) throw new Error("No image returned from job.");
+
+    return {
+      url: out,
+      assetId: first?.assetId || row.result_asset_id || "unknown",
+      urlExpiresInSeconds: (row as any)?.params?.urlExpiresInSeconds,
+    };
+  }
+
+  // ✅ Sync (compat)
   const out = res.url || res.dataUrl;
   if (!out) throw new Error("No image returned from API.");
-  return { url: out, assetId: res.assetId || "unknown", urlExpiresInSeconds: res.urlExpiresInSeconds };
+  return {
+    url: out,
+    assetId: res.assetId || "unknown",
+    urlExpiresInSeconds: res.urlExpiresInSeconds,
+  };
 };
+
 
 export const faceswapStep2InsertFromElement = async (params: {
   baseAssetId: string;
@@ -233,10 +327,33 @@ export const faceswapStep2InsertFromElement = async (params: {
     quality: params.quality,
   });
 
+  // ✅ Async (background job)
+  if (res?.jobId) {
+    const row = await waitImageJob(String(res.jobId));
+    invalidateMyAssetsCache();
+
+    const items = jobRowToItems(row);
+    const first = items[0] || null;
+    const out = first?.url || (row as any)?.params?.resultUrl;
+    if (!out) throw new Error("No image returned from job.");
+
+    return {
+      url: out,
+      assetId: first?.assetId || row.result_asset_id || "unknown",
+      urlExpiresInSeconds: (row as any)?.params?.urlExpiresInSeconds,
+    };
+  }
+
+  // ✅ Sync (compat)
   const out = res.url || res.dataUrl;
   if (!out) throw new Error("No image returned from API.");
-  return { url: out, assetId: res.assetId || "unknown", urlExpiresInSeconds: res.urlExpiresInSeconds };
+  return {
+    url: out,
+    assetId: res.assetId || "unknown",
+    urlExpiresInSeconds: res.urlExpiresInSeconds,
+  };
 };
+
 
 
 export const generateUpscale = async (assetUrl: string, scale: number): Promise<string> => {

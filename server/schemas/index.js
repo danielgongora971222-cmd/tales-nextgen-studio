@@ -61,6 +61,8 @@ export const ImageRequestSchema = z.object({
   verticalAngle: z.number().min(-30).max(90).optional(),
   zoom: z.number().min(0).max(10).optional(),
   loraScale: z.number().min(0).max(4).optional(),
+  sync: z.boolean().optional(),
+  async: z.boolean().optional(),
 });
 
 export const VideoRequestSchema = z.object({
@@ -177,11 +179,25 @@ export const VideoEditRequestSchema = z.object({
   async: z.boolean().optional(),
 });
 
-export const RestyleSchema = z.object({
-  imageDataUrl: Base64ImageSchema,
-  prompt: z.string().min(1).max(4000),
-  model: z.string().optional(),
-});
+export const RestyleSchema = z
+  .object({
+    // ✅ Preferido (evita mandar base64 gigante al API)
+    sourceAssetId: z.string().uuid().optional(),
+
+    // ⚠️ Legacy (se mantiene para compatibilidad, pero NO recomendado para async)
+    imageDataUrl: Base64ImageSchema.optional(),
+
+    prompt: z.string().min(1).max(4000),
+    model: z.string().optional(),
+
+    // control de timeout: por defecto async
+    sync: z.boolean().optional(),
+    async: z.boolean().optional(),
+  })
+  .refine((v) => Boolean(v.sourceAssetId || v.imageDataUrl), {
+    message: "Provide sourceAssetId or imageDataUrl",
+    path: ["sourceAssetId"],
+  });
 
 export const FaceSwapSchema = z.object({
   sourceDataUrl: Base64ImageSchema,
@@ -193,6 +209,10 @@ export const FaceSwapMannequinSchema = z.object({
   targetAssetId: z.string().uuid(),
   swapType: z.enum(["face", "face_hair", "body", "body_clothes", "clothes_only"]).default("face"),
   quality: z.enum(["1K", "2K", "4K"]).default("2K"),
+
+  // control de timeout: por defecto async
+  sync: z.boolean().optional(),
+  async: z.boolean().optional(),
 });
 
 export const FaceSwapInsertSchema = z.object({
@@ -200,13 +220,31 @@ export const FaceSwapInsertSchema = z.object({
   donorElementId: z.string().uuid(),
   swapType: z.enum(["face", "face_hair", "body", "body_clothes", "clothes_only"]).default("face"),
   quality: z.enum(["1K", "2K", "4K"]).default("2K"),
+
+  // control de timeout: por defecto async
+  sync: z.boolean().optional(),
+  async: z.boolean().optional(),
 });
 
-export const UpscaleSchema = z.object({
-  imageDataUrl: Base64ImageSchema,
-  scale: z.number().int().min(2).max(8).default(2),
-  model: z.string().optional(),
-});
+export const UpscaleSchema = z
+  .object({
+    // ✅ Preferido (evita mandar base64 gigante al API)
+    imageAssetId: z.string().uuid().optional(),
+
+    // ⚠️ Legacy (se mantiene para compatibilidad, pero NO recomendado para async)
+    imageDataUrl: Base64ImageSchema.optional(),
+
+    scale: z.number().int().min(2).max(8).default(2),
+    model: z.string().optional(),
+
+    // control de timeout: por defecto async
+    sync: z.boolean().optional(),
+    async: z.boolean().optional(),
+  })
+  .refine((v) => Boolean(v.imageAssetId || v.imageDataUrl), {
+    message: "Provide imageAssetId or imageDataUrl",
+    path: ["imageAssetId"],
+  });
 
 export const UploadAssetSchema = z.object({
   dataUrl: z.string().optional(),

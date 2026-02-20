@@ -1,4 +1,5 @@
 import { supabase } from "./supabaseClient";
+import { apiUrl } from "./apiBase";
 
 /**
  * Shapes y endpoints reales según server/server.js:
@@ -75,7 +76,7 @@ export async function listKlingElements(): Promise<KlingElement[]> {
   const headers = await authHeadersJson();
 
   const inFlight = (async () => {
-    const resp = await fetch("/api/kling/elements", { method: "GET", headers });
+    const resp = await fetch(apiUrl("/api/kling/elements"), { method: "GET", headers });
     const data = await resp.json();
 
     if (!resp.ok || data?.ok === false) {
@@ -101,7 +102,7 @@ export async function createKlingElement(payload: {
   images: Array<{ assetId: string } | { dataUrl: string }>;
 }): Promise<KlingElement> {
   const headers = await authHeadersJson();
-  const resp = await fetch("/api/kling/elements", {
+  const resp = await fetch(apiUrl("/api/kling/elements"), {
     method: "POST",
     headers,
     body: JSON.stringify(payload),
