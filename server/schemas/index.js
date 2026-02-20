@@ -293,3 +293,7 @@ export const FalFinalizeSchema = z.object({
   jobToken: z.string().min(10),
   prompt: z.string().min(1).max(14000),
 });
+
+export const CreateCommentSchema = z.object({
+  text: z.string().trim().min(1).max(500),
+});

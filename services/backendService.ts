@@ -88,7 +88,7 @@ export const backend = {
 
   // --- ASSETS & STORAGE ---
   async saveGeneratedAsset(fileOrUrl: string, type: 'image' | 'video', userId: string, prompt?: string): Promise<Asset> {
-     const asset: Asset = {
+    const asset: Asset = {
         id: crypto.randomUUID(),
         url: fileOrUrl,
         type,
@@ -97,6 +97,11 @@ export const backend = {
         createdAt: Date.now(),
         ownerId: userId,
         isPublic: false,
+
+        likedByMe: false,
+        likesCount: 0,
+        commentsCount: 0,
+
         likes: [],
         comments: []
      };
@@ -122,6 +127,11 @@ export const backend = {
               createdAt: Date.now(),
               ownerId: userId,
               isPublic: false,
+
+              likedByMe: false,
+              likesCount: 0,
+              commentsCount: 0,
+
               likes: [],
               comments: []
             };

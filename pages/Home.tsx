@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AppRoute, Asset } from '../types';
+import { AppRoute, Asset, Comment } from '../types';
 import { listPublicAssets } from '../services/assetsApi';
+import { toggleLike, listComments, createComment } from '../services/socialApi';
 import { useAuth } from '../contexts/AuthContext';
 import styles from './Home.module.css';
 import generatorStyles from './tools/ImageGeneratorTool.module.css';
@@ -14,6 +15,9 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
   const [feed, setFeed] = useState<Asset[]>([]);
   const [commentText, setCommentText] = useState<{[key:string]: string}>({}); // Map assetId -> text
   const [viewer, setViewer] = useState<Asset | null>(null);
+
+  const [viewerComments, setViewerComments] = useState<Comment[]>([]);
+  const [viewerLoadingComments, setViewerLoadingComments] = useState<boolean>(false);
 
   function escapeRegExp(input: string) {
     return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -55,31 +59,94 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
 
   const loadFeed = async () => {
     try {
-      // Public feed real desde tu backend (Supabase + URLs firmadas)
       const items = await listPublicAssets({ type: "image", limit: 60, fresh: true });
-
-      // Nota: likes/comments todavía no están implementados en DB.
-      // Para evitar bugs de UX, los dejamos como 0 hasta tener tablas/endpoints reales.
-      const normalized = items.map((a) => ({
-        ...a,
-        likes: Array.isArray(a.likes) ? a.likes : [],
-        comments: Array.isArray(a.comments) ? a.comments : [],
-      }));
-
-      setFeed(normalized);
+      setFeed(items);
     } catch {
       setFeed([]);
     }
   };
 
-  const handleLike = async (_assetId: string) => {
-    // Desactivado hasta implementar likes reales en DB (evita inconsistencias).
-    return;
+  const handleLike = async (assetId: string) => {
+    if (!user) return;
+
+    try {
+      const { liked, likesCount } = await toggleLike(assetId);
+
+      setFeed((prev) =>
+        prev.map((a) =>
+          a.id === assetId
+            ? {
+                ...a,
+                likedByMe: liked,
+                likesCount,
+                likes: liked ? [user.id] : [],
+              }
+            : a
+        )
+      );
+
+      setViewer((prev) =>
+        prev && prev.id === assetId
+          ? {
+              ...prev,
+              likedByMe: liked,
+              likesCount,
+              likes: liked ? [user.id] : [],
+            }
+          : prev
+      );
+    } catch {
+      return;
+    }
   };
 
-  const handleComment = async (_assetId: string) => {
-    // Desactivado hasta implementar comments reales en DB (evita inconsistencias).
-    return;
+  const handleComment = async (assetId: string) => {
+    if (!user) return;
+
+    const text = commentText[assetId];
+    if (!text?.trim()) return;
+
+    try {
+      const { comment, commentsCount } = await createComment(assetId, text.trim());
+
+      setCommentText((prev) => ({ ...prev, [assetId]: "" }));
+
+      setViewerComments((prev) => [...prev, comment]);
+
+      setFeed((prev) =>
+        prev.map((a) => (a.id === assetId ? { ...a, commentsCount } : a))
+      );
+
+      setViewer((prev) =>
+        prev && prev.id === assetId ? { ...prev, commentsCount } : prev
+      );
+    } catch {
+      return;
+    }
+  };
+
+    const openViewer = async (asset: Asset) => {
+    setViewer(asset);
+    setViewerComments([]);
+    setViewerLoadingComments(true);
+
+    try {
+      const { comments, commentsCount } = await listComments(asset.id, { limit: 80, offset: 0 });
+
+      setViewerComments(comments);
+
+      setFeed((prev) =>
+        prev.map((a) => (a.id === asset.id ? { ...a, commentsCount } : a))
+      );
+
+      setViewer((prev) =>
+        prev && prev.id === asset.id ? { ...prev, commentsCount } : prev
+      );
+    } catch {
+      setViewerComments([]);
+    } finally {
+      setViewerLoadingComments(false);
+    }
   };
 
   const viewerRecipeInfo = useMemo(() => {
@@ -162,12 +229,11 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
         
         <div className={`${generatorStyles.grid} ${styles.feedGrid}`}>
           {feed.map((asset) => (
-            <button
-              key={asset.id}
-              type="button"
-              className={`${generatorStyles.tile} ${styles.feedTile}`}
-              onClick={() => setViewer(asset)}
-            >
+              <button
+                type="button"
+                onClick={() => openViewer(asset)}
+                className={styles.feedActionButton}
+              >
               <img
                 src={asset.url}
                 alt={asset.name}
@@ -188,19 +254,17 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
                   type="button"
                   onClick={() => handleLike(asset.id)}
                   className={styles.feedActionButton}
-                  disabled
-                  title="Likes próximamente"
                 >
                   <span className={styles.feedActionLabel}>
-                    {user && asset.likes.includes(user.id) ? 'Liked' : 'Like'}
+                    {asset.likedByMe ? 'Liked' : 'Like'}
                   </span>
-                  <span className={styles.feedActionCount}>{asset.likes.length}</span>
+                  <span className={styles.feedActionCount}>{asset.likesCount}</span>
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setViewer(asset)}
-                  className={styles.feedActionButton}
-                >
+              <button
+                type="button"
+                onClick={() => openViewer(asset)}
+                className={styles.feedActionButton}
+              >
                   <span className={styles.feedActionLabel}>Comments</span>
                   <span className={styles.feedActionCount}>{asset.comments.length}</span>
                 </button>
@@ -229,8 +293,7 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
                   type="button"
                   className={generatorStyles.iconBtn}
                   onClick={() => handleLike(viewer.id)}
-                  title="Likes próximamente"
-                  disabled
+                  title="Like"
                 >
                   ❤
                 </button>
@@ -285,21 +348,28 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
                   <div className={styles.viewerSocialHeader}>
                     <div>
                       <div className={styles.viewerSocialLabel}>Likes</div>
-                      <div className={styles.viewerSocialValue}>{viewer.likes.length}</div>
+                      <div className={styles.viewerSocialValue}>{viewer.likesCount}</div>
                     </div>
                     <div>
                       <div className={styles.viewerSocialLabel}>Comments</div>
-                      <div className={styles.viewerSocialValue}>{viewer.comments.length}</div>
+                      <div className={styles.viewerSocialValue}>{viewer.commentsCount}</div>
                     </div>
                   </div>
 
                   <div className={styles.viewerComments}>
-                    {viewer.comments.map((comment) => (
-                      <div key={comment.id} className={styles.viewerComment}>
-                        <span className={styles.viewerCommentAuthor}>{comment.username}</span>
-                        <span className={styles.viewerCommentText}>{comment.text}</span>
+                    {viewerLoadingComments ? (
+                      <div className={styles.viewerComment}>
+                        <span className={styles.viewerCommentAuthor}>Loading…</span>
+                        <span className={styles.viewerCommentText}>Fetching comments</span>
                       </div>
-                    ))}
+                    ) : (
+                      viewerComments.map((comment) => (
+                        <div key={comment.id} className={styles.viewerComment}>
+                          <span className={styles.viewerCommentAuthor}>{comment.username}</span>
+                          <span className={styles.viewerCommentText}>{comment.text}</span>
+                        </div>
+                      ))
+                    )}
                   </div>
 
                   <div className={styles.viewerCommentInput}>
@@ -307,19 +377,17 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
                       type="text"
                       value={commentText[viewer.id] || ''}
                       onChange={(event) => setCommentText(prev => ({ ...prev, [viewer.id]: event.target.value }))}
-                      placeholder="Comments próximamente…"
+                      placeholder="Leave a thought..."
                       className={styles.viewerCommentField}
-                      disabled
                     />
-                    <button
-                      type="button"
-                      onClick={() => handleComment(viewer.id)}
-                      disabled
-                      className={styles.viewerCommentButton}
-                      title="Comments próximamente"
-                    >
-                      Post
-                    </button>
+                      <button
+                        type="button"
+                        onClick={() => handleComment(viewer.id)}
+                        disabled={!commentText[viewer.id]?.trim()}
+                        className={styles.viewerCommentButton}
+                      >
+                        Post
+                      </button>
                   </div>
                 </div>
               </div>

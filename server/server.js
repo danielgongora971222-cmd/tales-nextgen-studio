@@ -599,7 +599,7 @@ app.get("/api/community", async (req, res, next) => {
     // Trae SOLO públicos
     const { data, error } = await supabaseAdmin
       .from("assets")
-      .select("id, url, storage_path, type, name, prompt, created_at, owner_id, is_public, meta")
+      .select("id, url, storage_path, type, name, prompt, created_at, owner_id, is_public, meta, likes_count, comments_count")
       .eq("is_public", true)
       .eq("type", type)
       .order("created_at", { ascending: false })
@@ -621,6 +621,9 @@ app.get("/api/community", async (req, res, next) => {
           url = await signStoragePath(row.storage_path, 60 * 60);
         }
 
+        const likesCount = Number.isFinite(Number(row.likes_count)) ? Number(row.likes_count) : 0;
+        const commentsCount = Number.isFinite(Number(row.comments_count)) ? Number(row.comments_count) : 0;
+
         return {
           id: row.id,
           url,
@@ -630,6 +633,11 @@ app.get("/api/community", async (req, res, next) => {
           createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
           ownerId: row.owner_id,
           isPublic: !!row.is_public,
+
+          likedByMe: false,
+          likesCount,
+          commentsCount,
+
           likes: [],
           comments: [],
         };

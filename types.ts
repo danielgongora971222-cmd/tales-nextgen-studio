@@ -48,11 +48,18 @@ export interface Asset {
   createdAt: number;
 
   meta?: any;
-  
+
   // Social & Privacy
   ownerId: string;
   isPublic: boolean;
-  likes: string[]; // Array of User IDs
+
+  // Social real (rápido para feed)
+  likedByMe: boolean;
+  likesCount: number;
+  commentsCount: number;
+
+  // Compat: NO asumas lista completa (solo hint/preview)
+  likes: string[];
   comments: Comment[];
 }
 

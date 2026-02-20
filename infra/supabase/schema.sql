@@ -12,13 +12,16 @@ create table if not exists public.profiles (
 
 alter table public.profiles enable row level security;
 
-create policy if not exists "profiles_select_own" on public.profiles
+drop policy if exists "profiles_select_own" on public.profiles;
+create policy "profiles_select_own" on public.profiles
   for select using (auth.uid() = id);
 
-create policy if not exists "profiles_insert_own" on public.profiles
+drop policy if exists "profiles_insert_own" on public.profiles;
+create policy "profiles_insert_own" on public.profiles
   for insert with check (auth.uid() = id);
 
-create policy if not exists "profiles_update_own" on public.profiles
+drop policy if exists "profiles_update_own" on public.profiles;
+create policy "profiles_update_own" on public.profiles
   for update using (auth.uid() = id) with check (auth.uid() = id);
 
 -- Auto-create a profile when a new user signs up
@@ -76,18 +79,22 @@ create index if not exists assets_public_created_at_idx
 alter table public.assets enable row level security;
 
 -- Leer: dueño o público
-create policy if not exists "assets_select_owner_or_public" on public.assets
+drop policy if exists "assets_select_owner_or_public" on public.assets;
+create policy "assets_select_owner_or_public" on public.assets
   for select using (auth.uid() = owner_id OR is_public = true);
 
 -- Insertar: solo dueño
-create policy if not exists "assets_insert_own" on public.assets
+drop policy if exists "assets_insert_own" on public.assets;
+create policy "assets_insert_own" on public.assets
   for insert with check (auth.uid() = owner_id);
 
 -- Update/Delete: solo dueño
-create policy if not exists "assets_update_own" on public.assets
+drop policy if exists "assets_update_own" on public.assets;
+create policy "assets_update_own" on public.assets
   for update using (auth.uid() = owner_id) with check (auth.uid() = owner_id);
 
-create policy if not exists "assets_delete_own" on public.assets
+drop policy if exists "assets_delete_own" on public.assets;
+create policy "assets_delete_own" on public.assets
   for delete using (auth.uid() = owner_id);
 
 -- =========================
@@ -111,16 +118,20 @@ create index if not exists kling_elements_owner_created_at_idx
 
 alter table public.kling_elements enable row level security;
 
-create policy if not exists "kling_elements_select_own" on public.kling_elements
+drop policy if exists "kling_elements_select_own" on public.kling_elements;
+create policy "kling_elements_select_own" on public.kling_elements
   for select using (auth.uid() = owner_id);
 
-create policy if not exists "kling_elements_insert_own" on public.kling_elements
+drop policy if exists "kling_elements_insert_own" on public.kling_elements;
+create policy "kling_elements_insert_own" on public.kling_elements
   for insert with check (auth.uid() = owner_id);
 
-create policy if not exists "kling_elements_update_own" on public.kling_elements
+drop policy if exists "kling_elements_update_own" on public.kling_elements;
+create policy "kling_elements_update_own" on public.kling_elements
   for update using (auth.uid() = owner_id) with check (auth.uid() = owner_id);
 
-create policy if not exists "kling_elements_delete_own" on public.kling_elements
+drop policy if exists "kling_elements_delete_own" on public.kling_elements;
+create policy "kling_elements_delete_own" on public.kling_elements
   for delete using (auth.uid() = owner_id);
 
 -- =========================
@@ -192,13 +203,16 @@ grant execute on function public.claim_jobs(text, int, text, int) to service_rol
 
 alter table public.jobs enable row level security;
 
-create policy if not exists "jobs_select_own" on public.jobs
+drop policy if exists "jobs_select_own" on public.jobs;
+create policy "jobs_select_own" on public.jobs
   for select using (auth.uid() = owner_id);
 
-create policy if not exists "jobs_insert_own" on public.jobs
+drop policy if exists "jobs_insert_own" on public.jobs;
+create policy "jobs_insert_own" on public.jobs
   for insert with check (auth.uid() = owner_id);
 
-create policy if not exists "jobs_update_own" on public.jobs
+drop policy if exists "jobs_update_own" on public.jobs;
+create policy "jobs_update_own" on public.jobs
   for update using (auth.uid() = owner_id) with check (auth.uid() = owner_id);
 
 -- Convenience: keep updated_at current
@@ -214,3 +228,192 @@ drop trigger if exists set_jobs_updated_at on public.jobs;
 create trigger set_jobs_updated_at
   before update on public.jobs
   for each row execute procedure public.set_updated_at();
+
+drop trigger if exists set_jobs_updated_at on public.jobs;
+create trigger set_jobs_updated_at
+  before update on public.jobs
+  for each row execute procedure public.set_updated_at();
+
+-- =========================
+-- Social: Likes + Comments ✅ (robusto para launch)
+-- =========================
+
+-- 1) Counters en assets (para feed rápido)
+alter table public.assets
+  add column if not exists likes_count integer not null default 0;
+
+alter table public.assets
+  add column if not exists comments_count integer not null default 0;
+
+-- 2) Likes (unique por usuario+asset)
+create table if not exists public.asset_likes (
+  id uuid primary key default gen_random_uuid(),
+  asset_id uuid not null references public.assets(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  unique(asset_id, user_id)
+);
+
+create index if not exists asset_likes_asset_id_idx on public.asset_likes(asset_id);
+create index if not exists asset_likes_user_id_idx on public.asset_likes(user_id);
+
+alter table public.asset_likes enable row level security;
+
+drop policy if exists "asset_likes_select_asset_visible" on public.asset_likes;
+create policy "asset_likes_select_asset_visible" on public.asset_likes
+  for select using (
+    exists (
+      select 1 from public.assets a
+      where a.id = asset_id and (a.is_public = true or a.owner_id = auth.uid())
+    )
+  );
+
+drop policy if exists "asset_likes_insert_own" on public.asset_likes;
+create policy "asset_likes_insert_own" on public.asset_likes
+  for insert with check (
+    auth.uid() = user_id
+    and exists (
+      select 1 from public.assets a
+      where a.id = asset_id and (a.is_public = true or a.owner_id = auth.uid())
+    )
+  );
+
+drop policy if exists "asset_likes_delete_own" on public.asset_likes;
+create policy "asset_likes_delete_own" on public.asset_likes
+  for delete using (auth.uid() = user_id);
+
+-- 3) Comments (texto limitado, index por asset+fecha)
+create table if not exists public.asset_comments (
+  id uuid primary key default gen_random_uuid(),
+  asset_id uuid not null references public.assets(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  text text not null check (char_length(text) between 1 and 500),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists asset_comments_asset_id_created_at_idx
+  on public.asset_comments(asset_id, created_at desc);
+
+create index if not exists asset_comments_user_id_idx
+  on public.asset_comments(user_id);
+
+alter table public.asset_comments enable row level security;
+
+drop policy if exists "asset_comments_select_asset_visible" on public.asset_comments;
+create policy "asset_comments_select_asset_visible" on public.asset_comments
+  for select using (
+    exists (
+      select 1 from public.assets a
+      where a.id = asset_id and (a.is_public = true or a.owner_id = auth.uid())
+    )
+  );
+drop policy if exists "asset_comments_insert_own" on public.asset_comments;
+create policy "asset_comments_insert_own" on public.asset_comments
+  for insert with check (
+    auth.uid() = user_id
+    and exists (
+      select 1 from public.assets a
+      where a.id = asset_id and (a.is_public = true or a.owner_id = auth.uid())
+    )
+  );
+drop policy if exists "asset_comments_delete_own" on public.asset_comments;
+create policy "asset_comments_delete_own" on public.asset_comments
+  for delete using (auth.uid() = user_id);
+
+-- 4) Triggers: mantener likes_count / comments_count (sin recalcular en cada feed)
+create or replace function public.assets_likes_count_inc()
+returns trigger as $$
+begin
+  update public.assets
+  set likes_count = likes_count + 1
+  where id = new.asset_id;
+  return new;
+end;
+$$ language plpgsql;
+
+create or replace function public.assets_likes_count_dec()
+returns trigger as $$
+begin
+  update public.assets
+  set likes_count = greatest(likes_count - 1, 0)
+  where id = old.asset_id;
+  return old;
+end;
+$$ language plpgsql;
+
+drop trigger if exists trg_assets_likes_inc on public.asset_likes;
+create trigger trg_assets_likes_inc
+  after insert on public.asset_likes
+  for each row execute procedure public.assets_likes_count_inc();
+
+drop trigger if exists trg_assets_likes_dec on public.asset_likes;
+create trigger trg_assets_likes_dec
+  after delete on public.asset_likes
+  for each row execute procedure public.assets_likes_count_dec();
+
+create or replace function public.assets_comments_count_inc()
+returns trigger as $$
+begin
+  update public.assets
+  set comments_count = comments_count + 1
+  where id = new.asset_id;
+  return new;
+end;
+$$ language plpgsql;
+
+create or replace function public.assets_comments_count_dec()
+returns trigger as $$
+begin
+  update public.assets
+  set comments_count = greatest(comments_count - 1, 0)
+  where id = old.asset_id;
+  return old;
+end;
+$$ language plpgsql;
+
+drop trigger if exists trg_assets_comments_inc on public.asset_comments;
+create trigger trg_assets_comments_inc
+  after insert on public.asset_comments
+  for each row execute procedure public.assets_comments_count_inc();
+
+drop trigger if exists trg_assets_comments_dec on public.asset_comments;
+create trigger trg_assets_comments_dec
+  after delete on public.asset_comments
+  for each row execute procedure public.assets_comments_count_dec();
+
+-- 5) Función: preview de comments para varios assets (solo server_role)
+create or replace function public.get_asset_comments_preview(
+  asset_ids uuid[],
+  per_asset int default 3
+)
+returns table (
+  asset_id uuid,
+  id uuid,
+  user_id uuid,
+  username text,
+  text text,
+  created_at timestamptz
+)
+language sql
+stable
+as $$
+  select
+    c.asset_id,
+    c.id,
+    c.user_id,
+    coalesce(p.username, 'User_' || substr(c.user_id::text, 1, 4)) as username,
+    c.text,
+    c.created_at
+  from (
+    select
+      ac.*,
+      row_number() over (partition by ac.asset_id order by ac.created_at desc) as rn
+    from public.asset_comments ac
+    where ac.asset_id = any(asset_ids)
+  ) c
+  left join public.profiles p on p.id = c.user_id
+  where c.rn <= greatest(per_asset, 1)
+  order by c.asset_id, c.created_at desc;
+$$;
+
+grant execute on function public.get_asset_comments_preview(uuid[], int) to service_role;

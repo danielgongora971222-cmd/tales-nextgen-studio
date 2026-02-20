@@ -35,6 +35,11 @@ function mapRowToAsset(row: any): Asset {
     meta: (row as any).meta ?? (row as any).metadata ?? undefined,
     ownerId,
     isPublic,
+
+    likedByMe: Boolean(row.likedByMe ?? row.liked_by_me ?? false),
+    likesCount: Number.isFinite(Number(row.likesCount ?? row.likes_count)) ? Number(row.likesCount ?? row.likes_count) : 0,
+    commentsCount: Number.isFinite(Number(row.commentsCount ?? row.comments_count)) ? Number(row.commentsCount ?? row.comments_count) : 0,
+
     likes: Array.isArray(row.likes) ? row.likes : [],
     comments: Array.isArray(row.comments) ? row.comments : [],
   };
@@ -452,6 +457,11 @@ export async function uploadUserAsset(
         createdAt: row.createdAt ? new Date(row.createdAt).getTime() : Date.now(),
         ownerId: row.ownerId,
         isPublic: !!row.isPublic,
+
+        likedByMe: false,
+        likesCount: 0,
+        commentsCount: 0,
+
         likes: [],
         comments: [],
       };
@@ -538,6 +548,11 @@ export async function uploadUserAsset(
       createdAt: row2.createdAt ? new Date(row2.createdAt).getTime() : Date.now(),
       ownerId: row2.ownerId,
       isPublic: !!row2.isPublic,
+
+      likedByMe: false,
+      likesCount: 0,
+      commentsCount: 0,
+
       likes: [],
       comments: [],
     };
@@ -561,6 +576,11 @@ export async function uploadUserAsset(
     createdAt: row.createdAt ? new Date(row.createdAt).getTime() : Date.now(),
     ownerId: row.ownerId,
     isPublic: !!row.isPublic,
+
+    likedByMe: false,
+    likesCount: 0,
+    commentsCount: 0,
+
     likes: [],
     comments: [],
   };

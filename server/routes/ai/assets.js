@@ -1,6 +1,6 @@
 import express from "express";
 import multer from "multer";
-import { UploadAssetSchema, PresignUploadSchema, CompleteUploadSchema } from "../../schemas/index.js";
+import { UploadAssetSchema, PresignUploadSchema, CompleteUploadSchema, CreateCommentSchema } from "../../schemas/index.js";
 
 export function createAssetsRouter(ctx) {
   const router = express.Router();
@@ -47,6 +47,29 @@ export function createAssetsRouter(ctx) {
    *   router.post("/api/assets...") -> router.post("/assets...")
    *   etc.
    */
+
+  // ===============================
+  // Social helpers (likes/comments)
+  // ===============================
+  async function getAssetAccessRow(assetId) {
+    const { data, error } = await supabaseAdmin
+      .from("assets")
+      .select("id, owner_id, is_public")
+      .eq("id", assetId)
+      .maybeSingle();
+
+    if (error) {
+      return { row: null, error: { code: "DB_QUERY_FAILED", message: error.message } };
+    }
+    if (!data) {
+      return { row: null, error: { code: "NOT_FOUND", message: "Asset no encontrado." } };
+    }
+    return { row: data, error: null };
+  }
+
+  function canAccessAsset(row, userId) {
+    return !!row && (row.is_public === true || row.owner_id === userId);
+  }
 
   // --- PASTE START ---
   // ===============================
@@ -127,14 +150,14 @@ router.get("/assets", async (req, res) => {
   if (error) return res.status(401).json({ ok: false, error });
 
   // 2) leer filtros simples
-    const type = typeof req.query.type === "string" ? req.query.type : null;
-    const limitRaw = typeof req.query.limit === "string" ? parseInt(req.query.limit, 10) : 50;
-    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 500) : 50;
+  const type = typeof req.query.type === "string" ? req.query.type : null;
+  const limitRaw = typeof req.query.limit === "string" ? parseInt(req.query.limit, 10) : 50;
+  const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 500) : 50;
 
-  // 3) pedir assets del usuario a la DB
+  // 3) pedir assets del usuario a la DB (incluye contadores sociales)
   let q = supabaseAdmin
     .from("assets")
-    .select("id, url, storage_path, type, name, prompt, created_at, owner_id, is_public, meta")
+    .select("id, url, storage_path, type, name, prompt, created_at, owner_id, is_public, meta, likes_count, comments_count")
     .order("created_at", { ascending: false })
     .limit(limit);
 
@@ -156,24 +179,64 @@ router.get("/assets", async (req, res) => {
     });
   }
 
-  // 4) convertir a la forma que el frontend espera (Asset de types.ts)
-  //    + generar signed URLs cuando url está null pero hay storage_path
   const rows = data || [];
+  const assetIds = rows.map((r) => r.id).filter(Boolean);
 
+  // 4) likedByMe (consulta en batch)
+  const likedSet = new Set();
+  if (assetIds.length > 0) {
+    const { data: likedRows, error: likedErr } = await supabaseAdmin
+      .from("asset_likes")
+      .select("asset_id")
+      .in("asset_id", assetIds)
+      .eq("user_id", user.id);
+
+    if (!likedErr && Array.isArray(likedRows)) {
+      for (const r of likedRows) likedSet.add(r.asset_id);
+    }
+  }
+
+  // 5) preview de comments (últimos 3 por asset) via RPC
+  const previewByAsset = new Map();
+  if (assetIds.length > 0) {
+    const { data: previewRows, error: previewErr } = await supabaseAdmin.rpc(
+      "get_asset_comments_preview",
+      { asset_ids: assetIds, per_asset: 3 }
+    );
+
+    if (!previewErr && Array.isArray(previewRows)) {
+      for (const r of previewRows) {
+        const arr = previewByAsset.get(r.asset_id) || [];
+        arr.push({
+          id: r.id,
+          userId: r.user_id,
+          username: r.username,
+          text: r.text,
+          timestamp: new Date(r.created_at).getTime(),
+        });
+        previewByAsset.set(r.asset_id, arr);
+      }
+    }
+  }
+
+  // 6) construir items y firmar URLs
   const items = await Promise.all(
     rows.map(async (row) => {
       let url = row.url || null;
 
-      // Si no hay url guardada, la generamos firmada desde storage_path
       if (!url && row.storage_path) {
         url = await signStoragePath(row.storage_path, 60 * 60 * 6); // 6 horas
       }
 
-      // createdAt: soporta string timestamp o number (ms)
       const createdAt =
         typeof row.created_at === "string"
           ? new Date(row.created_at).getTime()
           : row.created_at || Date.now();
+
+      const likedByMe = likedSet.has(row.id);
+      const likesCount = Number.isFinite(Number(row.likes_count)) ? Number(row.likes_count) : 0;
+      const commentsCount = Number.isFinite(Number(row.comments_count)) ? Number(row.comments_count) : 0;
+      const comments = previewByAsset.get(row.id) || [];
 
       return {
         id: row.id,
@@ -185,14 +248,227 @@ router.get("/assets", async (req, res) => {
         createdAt,
         ownerId: row.owner_id,
         isPublic: !!row.is_public,
-        likes: [],
-        comments: [],
+
+        likedByMe,
+        likesCount,
+        commentsCount,
+
+        // Compat: NO es lista completa (solo “hint”/preview)
+        likes: likedByMe ? [user.id] : [],
+        comments,
       };
     })
   );
 
-    return res.json({ ok: true, items });
+  return res.json({ ok: true, items });
 });
+
+// ===============================
+// Social: Toggle Like
+// POST /api/assets/:id/like
+// ===============================
+router.post("/assets/:id/like", async (req, res) => {
+  const { user, error } = await requireUser(req);
+  if (error) return res.status(401).json({ ok: false, error });
+
+  const assetId = req.params.id;
+
+  const { row: assetRow, error: assetErr } = await getAssetAccessRow(assetId);
+  if (assetErr) return res.status(assetErr.code === "NOT_FOUND" ? 404 : 500).json({ ok: false, error: assetErr });
+  if (!canAccessAsset(assetRow, user.id)) {
+    return res.status(403).json({ ok: false, error: { code: "FORBIDDEN", message: "No tienes acceso a este asset." } });
+  }
+
+  // ¿Ya existe like?
+  const { data: existing, error: exErr } = await supabaseAdmin
+    .from("asset_likes")
+    .select("id")
+    .eq("asset_id", assetId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (exErr) {
+    return res.status(500).json({ ok: false, error: { code: "DB_QUERY_FAILED", message: exErr.message } });
+  }
+
+  let liked = false;
+
+  if (existing?.id) {
+    // Unlike
+    const { error: delErr } = await supabaseAdmin
+      .from("asset_likes")
+      .delete()
+      .eq("id", existing.id);
+
+    if (delErr) {
+      return res.status(500).json({ ok: false, error: { code: "DB_DELETE_FAILED", message: delErr.message } });
+    }
+    liked = false;
+  } else {
+    // Like
+    const { error: insErr } = await supabaseAdmin
+      .from("asset_likes")
+      .insert({ asset_id: assetId, user_id: user.id });
+
+    if (insErr) {
+      // Si llega duplicado por race condition, lo tratamos como liked=true
+      if (String(insErr.code) === "23505") {
+        liked = true;
+      } else {
+        return res.status(500).json({ ok: false, error: { code: "DB_INSERT_FAILED", message: insErr.message } });
+      }
+    } else {
+      liked = true;
+    }
+  }
+
+  // Leer contador actualizado
+  const { data: countRow, error: cntErr } = await supabaseAdmin
+    .from("assets")
+    .select("likes_count")
+    .eq("id", assetId)
+    .maybeSingle();
+
+  if (cntErr) {
+    return res.status(500).json({ ok: false, error: { code: "DB_QUERY_FAILED", message: cntErr.message } });
+  }
+
+  const likesCount = Number.isFinite(Number(countRow?.likes_count)) ? Number(countRow.likes_count) : 0;
+  return res.json({ ok: true, liked, likesCount });
+});
+
+// ===============================
+// Social: List Comments (paginado simple)
+// GET /api/assets/:id/comments?limit=50&offset=0
+// ===============================
+router.get("/assets/:id/comments", async (req, res) => {
+  const { user, error } = await requireUser(req);
+  if (error) return res.status(401).json({ ok: false, error });
+
+  const assetId = req.params.id;
+
+  const { row: assetRow, error: assetErr } = await getAssetAccessRow(assetId);
+  if (assetErr) return res.status(assetErr.code === "NOT_FOUND" ? 404 : 500).json({ ok: false, error: assetErr });
+  if (!canAccessAsset(assetRow, user.id)) {
+    return res.status(403).json({ ok: false, error: { code: "FORBIDDEN", message: "No tienes acceso a este asset." } });
+  }
+
+  const limitRaw = typeof req.query.limit === "string" ? parseInt(req.query.limit, 10) : 50;
+  const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : 50;
+
+  const offsetRaw = typeof req.query.offset === "string" ? parseInt(req.query.offset, 10) : 0;
+  const offset = Number.isFinite(offsetRaw) ? Math.max(offsetRaw, 0) : 0;
+
+  const { data: rows, error: cErr, count } = await supabaseAdmin
+    .from("asset_comments")
+    .select("id, user_id, text, created_at", { count: "exact" })
+    .eq("asset_id", assetId)
+    .order("created_at", { ascending: true })
+    .range(offset, offset + limit - 1);
+
+  if (cErr) {
+    return res.status(500).json({ ok: false, error: { code: "DB_QUERY_FAILED", message: cErr.message } });
+  }
+
+  const commentRows = rows || [];
+  const userIds = Array.from(new Set(commentRows.map((r) => r.user_id).filter(Boolean)));
+
+  const usernameById = new Map();
+  if (userIds.length > 0) {
+    const { data: profileRows, error: pErr } = await supabaseAdmin
+      .from("profiles")
+      .select("id, username")
+      .in("id", userIds);
+
+    if (!pErr && Array.isArray(profileRows)) {
+      for (const p of profileRows) {
+        usernameById.set(p.id, p.username);
+      }
+    }
+  }
+
+  const comments = commentRows.map((r) => ({
+    id: r.id,
+    userId: r.user_id,
+    username: usernameById.get(r.user_id) || `User_${String(r.user_id).slice(0, 4)}`,
+    text: r.text,
+    timestamp: new Date(r.created_at).getTime(),
+  }));
+
+  const commentsCount = Number.isFinite(Number(count)) ? Number(count) : comments.length;
+  return res.json({ ok: true, comments, commentsCount });
+});
+
+// ===============================
+// Social: Create Comment
+// POST /api/assets/:id/comments { text }
+// ===============================
+router.post("/assets/:id/comments", async (req, res) => {
+  const { user, error } = await requireUser(req);
+  if (error) return res.status(401).json({ ok: false, error });
+
+  const assetId = req.params.id;
+
+  const parsed = CreateCommentSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      ok: false,
+      error: { code: "BAD_REQUEST", message: "Texto inválido (1..500 chars).", details: parsed.error.format() },
+    });
+  }
+
+  const { row: assetRow, error: assetErr } = await getAssetAccessRow(assetId);
+  if (assetErr) return res.status(assetErr.code === "NOT_FOUND" ? 404 : 500).json({ ok: false, error: assetErr });
+  if (!canAccessAsset(assetRow, user.id)) {
+    return res.status(403).json({ ok: false, error: { code: "FORBIDDEN", message: "No tienes acceso a este asset." } });
+  }
+
+  const text = parsed.data.text;
+
+  const { data: inserted, error: insErr } = await supabaseAdmin
+    .from("asset_comments")
+    .insert({ asset_id: assetId, user_id: user.id, text })
+    .select("id, user_id, text, created_at")
+    .single();
+
+  if (insErr) {
+    return res.status(500).json({ ok: false, error: { code: "DB_INSERT_FAILED", message: insErr.message } });
+  }
+
+  // username propio
+  let username = null;
+  const { data: profileRow, error: pErr } = await supabaseAdmin
+    .from("profiles")
+    .select("username")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (!pErr) username = profileRow?.username || null;
+
+  // contador actualizado
+  const { data: cntRow, error: cntErr } = await supabaseAdmin
+    .from("assets")
+    .select("comments_count")
+    .eq("id", assetId)
+    .maybeSingle();
+
+  if (cntErr) {
+    return res.status(500).json({ ok: false, error: { code: "DB_QUERY_FAILED", message: cntErr.message } });
+  }
+
+  const commentsCount = Number.isFinite(Number(cntRow?.comments_count)) ? Number(cntRow.comments_count) : 0;
+
+  const comment = {
+    id: inserted.id,
+    userId: inserted.user_id,
+    username: username || `User_${String(inserted.user_id).slice(0, 4)}`,
+    text: inserted.text,
+    timestamp: new Date(inserted.created_at).getTime(),
+  };
+
+  return res.json({ ok: true, comment, commentsCount });
+});
+
 
 router.post("/assets/:id/unpublish", async (req, res) => {
   const { user, error } = await requireUser(req);
