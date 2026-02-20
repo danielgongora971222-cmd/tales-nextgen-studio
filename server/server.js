@@ -1,9 +1,10 @@
+import "dotenv/config";
+import * as Sentry from "@sentry/node";
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
-import rateLimit, { ipKeyGenerator } from "express-rate-limit";
+import rateLimit from "express-rate-limit";
 import pinoHttp from "pino-http";
-import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
 import { createClient } from "@supabase/supabase-js";
 import { createHmac, randomUUID } from "crypto";
@@ -40,9 +41,7 @@ import { createAiImageRouter } from "./routes/ai/image.js";
 import { createAssetsRouter } from "./routes/ai/assets.js";
 import { createModerationRouter } from "./routes/moderation.js";
 import { FalFinalizeSchema } from "./schemas/index.js";
-
-
-dotenv.config();
+import { assertJobLimits } from "./lib/jobLimits.js";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
@@ -66,7 +65,19 @@ const supabaseAdmin =
       })
     : null;
 
-const { requireUser } = createAuthHelpers(supabaseAdmin);
+const { requireUser: requireUserBase } = createAuthHelpers(supabaseAdmin);
+
+async function requireUser(req) {
+  const out = await requireUserBase(req);
+  if (process.env.SENTRY_DSN) {
+    if (out?.user) {
+      Sentry.setUser({ id: out.user.id, email: out.user.email || undefined });
+    } else {
+      Sentry.setUser(null);
+    }
+  }
+  return out;
+}
 
 const {
   parseDataUrl,
@@ -90,9 +101,28 @@ app.set("trust proxy", 1);
 // --- Security & logs ---
 app.disable("x-powered-by");
 
+// Request ID (correlación entre logs / Sentry / cliente)
+app.use((req, res, next) => {
+  const incoming = req.headers["x-request-id"];
+  req.id =
+    typeof incoming === "string" && incoming.trim()
+      ? incoming.trim()
+      : randomUUID();
+
+  res.setHeader("x-request-id", req.id);
+
+  if (process.env.SENTRY_DSN) {
+    Sentry.setTag("request_id", req.id);
+  }
+
+  next();
+});
+
 // Logs básicos (muy útil para ver requests en Render)
 app.use(
   pinoHttp({
+    genReqId: (req) => req.id || randomUUID(),
+    customProps: (req) => ({ requestId: req.id }),
     redact: {
       paths: [
         "req.headers.authorization",
@@ -211,6 +241,45 @@ const falPollLimiter = rateLimit({
   },
 });
 
+
+// Endpoint interno para pruebas de carga (NO se habilita si no seteas INTERNAL_LOADTEST_TOKEN)
+app.use("/api/_internal/loadtest", healthLimiter);
+
+app.post("/api/_internal/loadtest/ping", async (req, res, next) => {
+  try {
+    const token = String(process.env.INTERNAL_LOADTEST_TOKEN || "").trim();
+    if (!token) {
+      return res.status(404).json({ ok: false, error: { code: "NOT_ENABLED" } });
+    }
+
+    const provided = String(req.headers["x-internal-token"] || "").trim();
+    if (!provided || provided !== token) {
+      return res.status(401).json({ ok: false, error: { code: "UNAUTHORIZED" } });
+    }
+
+    const t0 = Date.now();
+
+    if (supabaseAdmin) {
+      const ping = await supabaseAdmin.from("jobs").select("id").limit(1);
+      if (ping.error) {
+        return res.status(503).json({
+          ok: false,
+          error: { code: "DB_PING_FAILED", message: String(ping.error.message || ping.error) },
+        });
+      }
+    }
+
+    return res.json({
+      ok: true,
+      requestId: req.id || null,
+      latencyMs: Date.now() - t0,
+      ts: Date.now(),
+    });
+  } catch (e) {
+    return next(e);
+  }
+});
+
 // Se aplica SOLO a /api/ai/video/fal/*
 app.use("/api/ai/video/fal", falPollLimiter);
 
@@ -248,7 +317,7 @@ app.use("/api/ai", aiLimiter);
 app.use(express.json({ limit: "25mb" }));
 app.use(express.urlencoded({ extended: true, limit: "25mb" }));
 
-app.use("/api", createHealthRouter());
+app.use("/api", createHealthRouter({ supabaseAdmin }));
 
 app.use(
   "/api",
@@ -1768,6 +1837,8 @@ app.post("/api/ai/faceswap/mannequin", async (req, res, next) => {
     const wantsAsync = !wantsSync;
 
     if (wantsAsync) {
+      await assertJobLimits({ supabaseAdmin, httpError, ownerId: user.id, kind: "image" });
+
       const { data: jobRow, error: jobErr } = await supabaseAdmin
         .from("jobs")
         .insert({
@@ -1894,6 +1965,8 @@ app.post("/api/ai/faceswap/insert", async (req, res, next) => {
   const wantsAsync = !wantsSync;
 
   if (wantsAsync) {
+    await assertJobLimits({ supabaseAdmin, httpError, ownerId: user.id, kind: "image" });
+
     const { data: jobRow, error: jobErr } = await supabaseAdmin
       .from("jobs")
       .insert({
@@ -2147,6 +2220,8 @@ app.post("/api/ai/upscale", async (req, res, next) => {
           "Para upscale async, envía imageAssetId (no imageDataUrl)."
         );
       }
+
+      await assertJobLimits({ supabaseAdmin, httpError, ownerId: user.id, kind: "image" });
 
       const { data: jobRow, error: jobErr } = await supabaseAdmin
         .from("jobs")
@@ -2431,6 +2506,8 @@ app.use("/api", (req, res) => {
     },
   });
 });
+
+Sentry.setupExpressErrorHandler(app);
 
 // Manejador global de errores (aquí caen TODOS los errores)
 app.use((err, req, res, _next) => {
