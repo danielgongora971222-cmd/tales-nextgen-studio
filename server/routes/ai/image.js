@@ -96,7 +96,7 @@ export function createAiImageRouter(ctx) {
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
 
-    const rl = checkUserRateLimit({
+    const rl = await checkUserRateLimit({
       userId: user.id,
       scope: "ai_image_generate",
       windowMs: 60 * 1000,
@@ -1366,7 +1366,7 @@ router.post("/ai/restyle", async (req, res, next) => {
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
 
-    const rl = checkUserRateLimit({
+    const rl = await checkUserRateLimit({
       userId: user.id,
       scope: "ai_restyle",
       windowMs: 60 * 1000,

@@ -218,6 +218,7 @@ export function createStorageHelpers(arg1, arg2) {
 
   async function uploadBytesToProvider({ provider, key, bytes, contentType }) {
     const ct = contentType || "application/octet-stream";
+    const isStreamLike = !!bytes && typeof bytes.pipe === "function";
 
     if (provider === "r2") {
       const client = ensureR2();
@@ -233,9 +234,13 @@ export function createStorageHelpers(arg1, arg2) {
     }
 
     ensureSupabase();
+
+    // Supabase Storage no es confiable con Node streams: bufferizamos si llega stream
+    const uploadBody = isStreamLike ? await readableToBuffer(bytes) : bytes;
+
     const up = await supabaseAdmin.storage
       .from(supabaseBucket)
-      .upload(key, bytes, { contentType: ct, upsert: false });
+      .upload(key, uploadBody, { contentType: ct, upsert: false });
 
     if (up.error) {
       throw httpError(
@@ -310,6 +315,30 @@ export function createStorageHelpers(arg1, arg2) {
       sizeBytes: buffer.length,
     };
   }
+
+  async function uploadStreamToStorage({ userId, tool, stream, mimeType, nameHint, sizeBytes }) {
+  const provider = providerForNewObjects();
+
+  if (!stream || typeof stream.pipe !== "function") {
+    throw httpError(
+      400,
+      "MISSING_FILE_STREAM",
+      "No llegó el archivo al servidor (stream vacío).",
+      { tool, nameHint }
+    );
+  }
+
+  const ct = mimeType || "application/octet-stream";
+  const key = buildAssetPath({ userId, tool, mimeType: ct, nameHint });
+
+  await uploadBytesToProvider({ provider, key, bytes: stream, contentType: ct });
+
+  return {
+    storagePath: wrapStoragePath(provider, key),
+    mimeType: ct,
+    sizeBytes: Number.isFinite(Number(sizeBytes)) ? Number(sizeBytes) : null,
+  };
+}
 
   async function signStoragePath(storagePath, expiresSeconds = 60 * 60) {
     assertR2Only(storagePath);
@@ -520,16 +549,14 @@ export function createStorageHelpers(arg1, arg2) {
     extFromMime,
     safeSlug,
     buildAssetPath,
-
+    wrapStoragePath,
+    parseStoragePath,
     uploadBase64ToStorage,
     uploadBufferToStorage,
-
+    uploadStreamToStorage,
     signStoragePath,
     deleteStoragePath,
-    downloadStoragePath,
-
     createClientUploadTarget,
-
     insertAssetRow,
   };
 }

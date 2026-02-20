@@ -184,7 +184,7 @@ export function createAiVideoRouter(ctx) {
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
 
-    const rl = checkUserRateLimit({
+    const rl = await checkUserRateLimit({
       userId: user.id,
       scope: "ai_video_generate",
       windowMs: 60 * 1000,
@@ -904,7 +904,7 @@ export function createAiVideoRouter(ctx) {
       const { user, error } = await requireUser(req);
       if (error) return res.status(401).json({ ok: false, error });
 
-      const rl = checkUserRateLimit({
+      const rl = await checkUserRateLimit({
         userId: user.id,
         scope: "ai_video_edit",
         windowMs: 60 * 1000,
@@ -1345,7 +1345,7 @@ export function createAiVideoRouter(ctx) {
       const { user, error } = await requireUser(req);
       if (error) return res.status(401).json({ ok: false, error });
 
-      const rl = checkUserRateLimit({
+      const rl = await checkUserRateLimit({
         userId: user.id,
         scope: "ai_motion_control",
         windowMs: 60 * 1000,

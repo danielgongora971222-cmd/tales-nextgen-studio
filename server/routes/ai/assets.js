@@ -361,12 +361,12 @@ router.get("/assets/:id/comments", async (req, res) => {
   const offsetRaw = typeof req.query.offset === "string" ? parseInt(req.query.offset, 10) : 0;
   const offset = Number.isFinite(offsetRaw) ? Math.max(offsetRaw, 0) : 0;
 
-const rl = checkUserRateLimit({
-  userId: user.id,
-  scope: "comments_list",
-  windowMs: 60 * 1000,
-  max: 240,
-});
+  const rl = await checkUserRateLimit({
+    userId: user.id,
+    scope: "comments_list",
+    windowMs: 60 * 1000,
+    max: 240,
+  });
 if (!rl.ok) {
   return res.status(429).json({
     ok: false,
@@ -427,7 +427,7 @@ router.post("/assets/:assetId/comments/:commentId/report", async (req, res) => {
   const { user, error } = await requireUser(req);
   if (error) return res.status(401).json({ ok: false, error });
 
-  const rl = checkUserRateLimit({
+  const rl = await checkUserRateLimit({
     userId: user.id,
     scope: "comment_report",
     windowMs: 60 * 1000,
@@ -514,12 +514,12 @@ router.post("/assets/:id/comments", async (req, res) => {
 const text = parsed.data.text;
 
 // Rate limit por userId (además del limiter por IP)
-const rl = checkUserRateLimit({
-  userId: user.id,
-  scope: "comment_create",
-  windowMs: 60 * 1000,
-  max: 30,
-});
+  const rl = await checkUserRateLimit({
+    userId: user.id,
+    scope: "comment_create",
+    windowMs: 60 * 1000,
+    max: 30,
+  });
 if (!rl.ok) {
   return res.status(429).json({
     ok: false,
@@ -771,6 +771,18 @@ router.post("/assets/upload", upload.single("file"), async (req, res, next) => {
   try {
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
+
+    const envName = String(APP_ENV || NODE_ENV || "").toLowerCase();
+    const isProdEnv = envName === "production";
+    const allowLegacyUpload = String(process.env.ALLOW_LEGACY_UPLOAD || "").trim() === "1";
+
+    if (isProdEnv && !allowLegacyUpload) {
+      throw httpError(
+        400,
+        "LEGACY_UPLOAD_DISABLED",
+        "Endpoint /assets/upload deshabilitado en producción. Usa /assets/upload/presign y /assets/upload/complete."
+      );
+    }
 
     // Soportamos 2 modos:
     // 1) multipart/form-data con req.file (recomendado)

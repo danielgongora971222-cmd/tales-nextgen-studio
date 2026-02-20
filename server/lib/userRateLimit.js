@@ -1,9 +1,15 @@
+import { Redis } from "@upstash/redis";
+import { Ratelimit } from "@upstash/ratelimit";
+
 const buckets = new Map();
 let lastCleanupAt = 0;
 
-function nowMs() {
-  return Date.now();
-}
+const hasUpstash =
+  Boolean(process.env.UPSTASH_REDIS_REST_URL) &&
+  Boolean(process.env.UPSTASH_REDIS_REST_TOKEN);
+
+const upstashRedis = hasUpstash ? Redis.fromEnv() : null;
+const limiterCache = new Map();
 
 function cleanupExpired(now) {
   // Limpieza ligera cada 5 minutos
@@ -15,14 +21,60 @@ function cleanupExpired(now) {
   }
 }
 
+function getUpstashLimiter({ scope, windowMs, max }) {
+  const windowSeconds = Math.max(1, Math.ceil(windowMs / 1000));
+  const prefixBase = String(process.env.UPSTASH_RATELIMIT_PREFIX || "tales_rl").trim() || "tales_rl";
+  const cacheKey = `${scope}:${max}:${windowSeconds}:${prefixBase}`;
+
+  const existing = limiterCache.get(cacheKey);
+  if (existing) return existing;
+
+  const rl = new Ratelimit({
+    redis: upstashRedis,
+    limiter: Ratelimit.slidingWindow(max, `${windowSeconds} s`),
+    analytics: false,
+    prefix: `${prefixBase}:${scope}`,
+  });
+
+  limiterCache.set(cacheKey, rl);
+  return rl;
+}
+
 /**
- * Rate limit por userId (fixed window).
+ * Rate limit por userId.
+ * - Si hay Upstash: distribuido (ideal al escalar a múltiples instancias)
+ * - Si no: fallback en memoria (dev/local o sin Redis)
+ *
  * Retorna:
  *  - { ok: true, remaining, resetAt }
  *  - { ok: false, retryAfterSeconds, resetAt }
  */
-export function checkUserRateLimit({ userId, scope, windowMs, max }) {
-  const now = nowMs();
+export async function checkUserRateLimit({ userId, scope, windowMs, max }) {
+  const now = Date.now();
+
+  if (hasUpstash) {
+    try {
+      const ratelimit = getUpstashLimiter({ scope, windowMs, max });
+      const identifier = `${scope}:${userId}`;
+
+      const result = await ratelimit.limit(identifier);
+
+      if (!result.success) {
+        const retryAfterSeconds = Math.max(Math.ceil((result.reset - now) / 1000), 1);
+        return { ok: false, retryAfterSeconds, resetAt: result.reset };
+      }
+
+      return {
+        ok: true,
+        remaining: Math.max(Number(result.remaining), 0),
+        resetAt: Number(result.reset),
+      };
+    } catch {
+      // Si Upstash falla por red, NO tumbamos la app: degradamos a memoria
+    }
+  }
+
+  // Fallback en memoria (fixed window)
   cleanupExpired(now);
 
   const key = `${scope}:${userId}`;

@@ -144,10 +144,10 @@ app.use(
       // Si no, bloquea
       return cb(new Error("CORS blocked"));
     },
-    methods: ["GET", "POST", "OPTIONS"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
-)
+);
 // Rate limit SUAVE para health (para que no moleste al refrescar)
 const healthLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -750,10 +750,27 @@ function falDimsFromAspectQuality(aspectRatio, quality) {
 // =============================
 // JobToken (HMAC) - stateless
 // =============================
+const envNameForSecrets = String(process.env.APP_ENV || process.env.NODE_ENV || "").toLowerCase();
+const isProdEnvForSecrets = envNameForSecrets === "production";
+
+// En producción: exige un secreto dedicado (no reusar SERVICE_ROLE)
+if (isProdEnvForSecrets && !process.env.JOB_TOKEN_SECRET) {
+  throw new Error(
+    "Missing JOB_TOKEN_SECRET in production. Set a dedicated secret (do NOT reuse SUPABASE_SERVICE_ROLE_KEY)."
+  );
+}
+
+// En dev/local: permitimos fallback para no bloquearte
 const JOB_TOKEN_SECRET = process.env.JOB_TOKEN_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 function signJobToken(payloadObj) {
-  if (!JOB_TOKEN_SECRET) throw httpError(500, "JOB_TOKEN_SECRET_MISSING", "Missing JOB_TOKEN_SECRET (or SUPABASE_SERVICE_ROLE_KEY)");
+  if (!JOB_TOKEN_SECRET) {
+    throw httpError(
+      500,
+      "JOB_TOKEN_SECRET_MISSING",
+      "Missing JOB_TOKEN_SECRET (or SUPABASE_SERVICE_ROLE_KEY)"
+    );
+  }
   const payloadB64 = base64urlEncode(JSON.stringify(payloadObj));
   const sigB64 = createHmac("sha256", JOB_TOKEN_SECRET).update(payloadB64).digest("base64");
   const sig = sigB64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
@@ -761,7 +778,13 @@ function signJobToken(payloadObj) {
 }
 
 function verifyJobToken(token) {
-  if (!JOB_TOKEN_SECRET) throw httpError(500, "JOB_TOKEN_SECRET_MISSING", "Missing JOB_TOKEN_SECRET (or SUPABASE_SERVICE_ROLE_KEY)");
+  if (!JOB_TOKEN_SECRET) {
+    throw httpError(
+      500,
+      "JOB_TOKEN_SECRET_MISSING",
+      "Missing JOB_TOKEN_SECRET (or SUPABASE_SERVICE_ROLE_KEY)"
+    );
+  }
   const parts = String(token || "").split(".");
   if (parts.length !== 2) throw httpError(400, "BAD_JOB_TOKEN", "Job token inválido.");
   const [payloadB64, sig] = parts;
@@ -777,18 +800,6 @@ function verifyJobToken(token) {
     throw httpError(401, "JOB_TOKEN_EXPIRED", "Job token expiró.");
   }
   return payload;
-  // ---- Fal helpers: formateo de errores para evitar mensajes tipo "[object Object]" ----
-  function falStringify(value, maxLen = 800) {
-    if (value === undefined || value === null) return "";
-    if (typeof value === "string") return value.slice(0, maxLen);
-    try {
-      const s = JSON.stringify(value);
-      return s.length > maxLen ? s.slice(0, maxLen) + "…" : s;
-    } catch {
-      const s = String(value);
-      return s.length > maxLen ? s.slice(0, maxLen) + "…" : s;
-    }
-  }
 }
 
 // ---- Fal helpers: evita "[object Object]" en errores ----

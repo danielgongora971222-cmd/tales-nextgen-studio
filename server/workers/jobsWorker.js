@@ -21,6 +21,7 @@
 import "dotenv/config";
 import { createClient } from "@supabase/supabase-js";
 import crypto from "crypto";
+import { Readable } from "node:stream";
 import { createStorageHelpers } from "../lib/storage.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -47,7 +48,7 @@ const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
 
-const { uploadBufferToStorage, signStoragePath, insertAssetRow } =
+const { uploadBufferToStorage, uploadStreamToStorage, signStoragePath, insertAssetRow } =
   createStorageHelpers({ supabase: supabaseAdmin, bucket: SUPABASE_BUCKET });
 
 function sleep(ms) {
@@ -95,13 +96,21 @@ async function falQueueResult(responseUrl) {
   return data;
 }
 
-async function downloadToBuffer(url) {
+async function downloadToStream(url) {
   const r = await fetch(url, { method: "GET" });
   if (!r.ok) throw new Error(`No se pudo descargar el archivo (${r.status})`);
+
+  const ct = r.headers.get("content-type") || "video/mp4";
+  const lenRaw = r.headers.get("content-length");
+  const sizeBytes = lenRaw ? Number(lenRaw) : null;
+
+  if (r.body) {
+    return { stream: Readable.fromWeb(r.body), contentType: ct, sizeBytes };
+  }
+
   const ab = await r.arrayBuffer();
   const buf = Buffer.from(ab);
-  const ct = r.headers.get("content-type") || "video/mp4";
-  return { buffer: buf, contentType: ct };
+  return { stream: Readable.from(buf), contentType: ct, sizeBytes: buf.length };
 }
 
 function pickVideoUrl(resultJson) {
@@ -268,20 +277,37 @@ async function processJob(row) {
     return;
   }
 
-  const { buffer, contentType } = await downloadToBuffer(videoUrl);
+  const { stream, contentType, sizeBytes } = await downloadToStream(videoUrl);
 
   const toolName = params.toolName || "video";
   const nameHint = params.hint || "video";
   const prompt = params.prompt || null;
 
-  const { storagePath } = await uploadBufferToStorage({
-    userId: ownerId,
-    tool: toolName,
-    buffer,
-    mimeType: contentType,
-    nameHint,
-  });
+  let storagePath;
 
+  if (typeof uploadStreamToStorage === "function") {
+    const up = await uploadStreamToStorage({
+      userId: ownerId,
+      tool: toolName,
+      stream,
+      mimeType: contentType,
+      nameHint,
+      sizeBytes,
+    });
+    storagePath = up.storagePath;
+  } else {
+    // Fallback ultra seguro (si alguien corre un build viejo del storage helper)
+    const ab = await (await fetch(videoUrl, { method: "GET" })).arrayBuffer();
+    const buf = Buffer.from(ab);
+    const up = await uploadBufferToStorage({
+      userId: ownerId,
+      tool: toolName,
+      buffer: buf,
+      mimeType: contentType,
+      nameHint,
+    });
+    storagePath = up.storagePath;
+  }
   const meta = {
     ...(params.meta || {}),
     provider: "fal",
