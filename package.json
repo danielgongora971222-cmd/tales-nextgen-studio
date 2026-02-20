@@ -3,19 +3,19 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "scripts": {
-    "dev": "concurrently -k -n CLIENT,API -c auto \"npm run dev:client\" \"npm run dev:api\"",
-    "build": "vite build",
-    "preview": "vite preview",
-    "dev:client": "vite",
-    "dev:api": "node server/server.js",
-    "dev:worker": "node server/workers/jobsWorker.js",
-    "start": "SERVE_CLIENT=1 node server/server.js",
-    "start:api": "cross-env SERVE_CLIENT=0 node server/server.js",
-    "start:worker": "node server/workers/jobsWorker.js",
-    "preset:wizard": "node tools/preset-wizard/server.mjs"
-  },
-
+"scripts": {
+  "dev": "concurrently -k -n CLIENT,API -c auto \"npm run dev:client\" \"npm run dev:api\"",
+  "build": "vite build",
+  "preview": "vite preview",
+  "dev:client": "vite",
+  "dev:api": "node server/server.js",
+  "dev:worker": "node server/workers/jobsWorker.js",
+  "start": "SERVE_CLIENT=1 node server/server.js",
+  "start:api": "cross-env SERVE_CLIENT=0 node server/server.js",
+  "start:worker": "node server/workers/jobsWorker.js",
+  "migrate:storage:r2": "node tools/migrate-storage-to-r2.mjs",
+  "preset:wizard": "node tools/preset-wizard/server.mjs"
+},
 "dependencies": {
   "@aws-sdk/client-s3": "^3.883.0",
   "@aws-sdk/s3-request-presigner": "^3.883.0",

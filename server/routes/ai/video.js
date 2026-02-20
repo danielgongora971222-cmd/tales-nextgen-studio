@@ -53,28 +53,8 @@ export function createAiVideoRouter(ctx) {
     ...rest
   } = ctx;
 
-  // Helper: sube bytes a una ruta exacta en Supabase Storage (como en server.js)
-  const EFFECTIVE_BUCKET = SUPABASE_BUCKET || "assets";
-
-  async function uploadBytesToStorageAtPath({ storagePath, bytes, mimeType }) {
-    if (!supabaseAdmin) {
-      throw httpError(
-        500,
-        "SUPABASE_NOT_CONFIGURED",
-        "Supabase admin no está configurado en el backend."
-      );
-    }
-
-    const up = await supabaseAdmin.storage
-      .from(EFFECTIVE_BUCKET)
-      .upload(storagePath, bytes, {
-        contentType: mimeType || "application/octet-stream",
-        upsert: false,
-      });
-
-    if (up.error) throw new Error(up.error.message);
-    return storagePath;
-  }
+  // Uploads: SIEMPRE usamos uploadBufferToStorage / uploadBase64ToStorage / createClientUploadTarget,
+  // que soportan Cloudflare R2 (principal) y Supabase Storage (solo legacy, si aún existiera).
 
 
   // Helper: registra el job async (Fal queue) en la tabla public.jobs
@@ -481,14 +461,16 @@ export function createAiVideoRouter(ctx) {
 
         const bytes = Buffer.from(await videoResp.arrayBuffer());
         const mimeType = videoResp.headers.get("content-type") || "video/mp4";
-        const storagePath = buildAssetPath({
+
+        const uploaded = await uploadBufferToStorage({
           userId: user.id,
           tool: toolName,
+          buffer: bytes,
           mimeType,
           nameHint: hint,
         });
 
-        await uploadBytesToStorageAtPath({ storagePath, bytes, mimeType });
+        const storagePath = uploaded.storagePath;
 
         const meta = {
           tool: toolName,
@@ -671,14 +653,15 @@ export function createAiVideoRouter(ctx) {
       const mimeType = videoResp.headers.get("content-type") || "video/mp4";
       const bytes = Buffer.from(await videoResp.arrayBuffer());
 
-      const storagePath = buildAssetPath({
+      const uploaded = await uploadBufferToStorage({
         userId: user.id,
         tool: toolName,
+        buffer: bytes,
         mimeType,
         nameHint: hint,
       });
 
-      await uploadBytesToStorageAtPath({ storagePath, bytes, mimeType });
+      const storagePath = uploaded.storagePath;
 
       const meta = {
         tool: toolName,
@@ -834,14 +817,15 @@ export function createAiVideoRouter(ctx) {
     const mimeType = videoResp.headers.get("content-type") || "video/mp4";
     const bytes = Buffer.from(await videoResp.arrayBuffer());
 
-    const storagePath = buildAssetPath({
+    const uploaded = await uploadBufferToStorage({
       userId: user.id,
       tool: toolName,
+      buffer: bytes,
       mimeType,
       nameHint: hint,
     });
 
-    await uploadBytesToStorageAtPath({ storagePath, bytes, mimeType });
+    const storagePath = uploaded.storagePath;
 
     const meta = {
       tool: toolName,

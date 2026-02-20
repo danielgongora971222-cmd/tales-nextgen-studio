@@ -205,10 +205,16 @@ async function processRunningJob(row) {
 
   const buf = await downloadToBuffer(videoUrl);
   const hint = safeSlug(`${label}-${modelNorm}`) || "video";
-  const filename = `${hint}.mp4`;
-  const storagePath = buildAssetPath(ownerId, "video", filename);
 
-  await uploadBufferToStorage(storagePath, buf, "video/mp4");
+  const uploaded = await uploadBufferToStorage({
+    userId: ownerId,
+    tool: "video",
+    buffer: buf,
+    mimeType: "video/mp4",
+    nameHint: hint,
+  });
+
+  const storagePath = uploaded.storagePath;
 
   const meta = {
     provider: "fal",

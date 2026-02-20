@@ -1170,40 +1170,34 @@ async function assetIdToImageFile(assetId, userId) {
 // KLING - Element Library (per user)
 // ===============================
 
-
-function buildKlingElementStoragePath({ userId, elementUuid, index, mimeType }) {
-  const ext = extFromMime(mimeType || "image/png");
-  return `${userId}/kling-element/${elementUuid}-${index}.${ext}`;
-}
-
-async function uploadBytesToStorageAtPath({ storagePath, bytes, mimeType }) {
-  const up = await supabaseAdmin.storage
-    .from(SUPABASE_BUCKET)
-    .upload(storagePath, bytes, { contentType: mimeType || "image/png", upsert: false });
-
-  if (up.error) {
-    throw httpError(
-      500,
-      "STORAGE_UPLOAD_FAILED",
-      "No pude subir el archivo a Storage.",
-      { storagePath, mimeType, supabase: up.error }
-    );
-  }
-  return storagePath;
-}
-
 async function deleteStoragePaths(paths) {
   const unique = [...new Set((paths || []).filter(Boolean))];
   if (!unique.length) return;
 
-  const { error } = await supabaseAdmin.storage
-    .from(SUPABASE_BUCKET)
-    .remove(unique);
+  const settled = await Promise.allSettled(unique.map((p) => deleteStoragePath(p)));
+  const failures = [];
 
-  if (error) throw new Error(error.message);
+  for (let i = 0; i < settled.length; i++) {
+    const r = settled[i];
+    if (r.status === "rejected") {
+      failures.push({
+        storagePath: unique[i],
+        message: r.reason?.message || String(r.reason),
+      });
+    }
+  }
+
+  if (failures.length) {
+    throw httpError(
+      500,
+      "STORAGE_DELETE_FAILED",
+      "No se pudo eliminar uno o más archivos del Storage.",
+      { failures }
+    );
+  }
 }
 
-  function resolveKlingCreateElementUrl() {
+function resolveKlingCreateElementUrl() {
     const directRaw = (process.env.KLING_ELEMENT_CREATE_URL || "").toString().trim();
 
     // Si te dieron una URL completa, úsala.
@@ -1391,15 +1385,15 @@ app.post("/api/kling/elements", async (req, res, next) => {
         bytes = Buffer.from(parsed.base64, "base64");
       }
 
-      const storagePath = buildKlingElementStoragePath({
+      const uploaded = await uploadBufferToStorage({
         userId: user.id,
-        elementUuid,
-        index: i + 1,
+        tool: "kling-element",
+        buffer: bytes,
         mimeType,
+        nameHint: `${name || "element"}-${elementUuid}-${i + 1}`,
       });
 
-      await uploadBytesToStorageAtPath({ storagePath, bytes, mimeType });
-      imagePaths.push(storagePath);
+      imagePaths.push(uploaded.storagePath);
     }
 
     // 2) Firmar URLs (para que Kling pueda descargar)
@@ -2202,16 +2196,17 @@ app.post("/api/ai/video/fal/finalize", async (req, res, next) => {
     const bytes = Buffer.from(await videoResp.arrayBuffer());
     const mimeType = videoResp.headers.get("content-type") || "video/mp4";
 
-    const storagePath = buildAssetPath({
+    const uploaded = await uploadBufferToStorage({
       userId: user.id,
       tool: toolName,
+      buffer: bytes,
       mimeType,
       nameHint: hint,
     });
 
-    await uploadBytesToStorageAtPath({ storagePath, bytes, mimeType });
+    const storagePath = uploaded.storagePath;
 
-        const meta = {
+    const meta = {
       tool: toolName,
       provider: "fal",
       model: selectedModelNorm,

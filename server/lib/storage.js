@@ -137,6 +137,37 @@ export function createStorageHelpers(arg1, arg2) {
     return s3;
   }
 
+  const strictR2Raw = cfg.strictR2 ?? process.env.STORAGE_STRICT_R2 ?? "";
+  const strictR2 =
+    String(strictR2Raw).toLowerCase() === "true" ||
+    String(strictR2Raw) === "1" ||
+    String(strictR2Raw).toLowerCase() === "yes";
+
+  if (strictR2 && providerDefault !== "r2") {
+    throw httpError(
+      500,
+      "STORAGE_STRICT_R2_REQUIRES_R2_PROVIDER",
+      "STORAGE_STRICT_R2 está activo pero STORAGE_PROVIDER no es 'r2'.",
+      { providerDefault }
+    );
+  }
+
+  // Fail-fast: si STORAGE_PROVIDER=r2, validamos que R2 esté bien configurado al arrancar.
+  if (providerDefault === "r2") {
+    ensureR2();
+  }
+
+  function assertR2Only(storagePath) {
+    if (strictR2 && !String(storagePath || "").startsWith("r2:")) {
+      throw httpError(
+        500,
+        "STORAGE_STRICT_R2_BLOCKED",
+        "STORAGE_STRICT_R2 está activo: este storage_path no apunta a R2 (falta prefijo r2:). Ejecuta la migración a R2 o corrige el registro.",
+        { storagePath }
+      );
+    }
+  }
+
   function parseDataUrl(dataUrl) {
     const match =
       typeof dataUrl === "string"
@@ -281,6 +312,7 @@ export function createStorageHelpers(arg1, arg2) {
   }
 
   async function signStoragePath(storagePath, expiresSeconds = 60 * 60) {
+    assertR2Only(storagePath);
     const { provider, key } = parseStoragePath(storagePath);
 
     if (provider === "r2") {
@@ -310,6 +342,7 @@ export function createStorageHelpers(arg1, arg2) {
   }
 
   async function deleteStoragePath(storagePath) {
+    assertR2Only(storagePath);
     const { provider, key } = parseStoragePath(storagePath);
 
     if (provider === "r2") {
@@ -334,6 +367,7 @@ export function createStorageHelpers(arg1, arg2) {
   }
 
   async function downloadStoragePath(storagePath) {
+    assertR2Only(storagePath);
     const { provider, key } = parseStoragePath(storagePath);
 
     if (provider === "r2") {

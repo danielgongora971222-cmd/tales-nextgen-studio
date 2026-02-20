@@ -76,9 +76,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       if (cancelled) return;
 
       Promise.allSettled([
-        // Nota: tu backend hoy capea limit a 100, esto igual ayuda a “calentar”
-        listMyAssets({ type: "image", limit: 100 }),
-        listMyAssets({ type: "video", limit: 100 }),
+        // Prefetch alineado con tools/pickers para evitar recargas al navegar
+        listMyAssets({ type: "image", limit: 500 }),
+        listMyAssets({ type: "video", limit: 300 }),
         listKlingElements(),
       ]).catch(() => {
         // silencio: prefetch no debe romper el login
