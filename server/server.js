@@ -75,8 +75,11 @@ const {
   uploadBase64ToStorage,
   uploadBufferToStorage,
   signStoragePath,
+  deleteStoragePath,
+  downloadStoragePath,
+  createClientUploadTarget,
   insertAssetRow,
-} = createStorageHelpers(supabaseAdmin, SUPABASE_BUCKET);
+} = createStorageHelpers({ supabase: supabaseAdmin, bucket: SUPABASE_BUCKET });
 
 
 const app = express();
@@ -276,6 +279,8 @@ app.use(
     uploadBase64ToStorage,
     uploadBufferToStorage,
     signStoragePath,
+    deleteStoragePath,
+    createClientUploadTarget,
     insertAssetRow,
 
     // env/flags/clients
@@ -573,19 +578,10 @@ async function assetIdToInlineDataPart({ assetId, requesterId }) {
     throw e;
   }
 
-  // 2) Descarga desde Storage y convierte a base64
-  const dl = await supabaseAdmin.storage.from(SUPABASE_BUCKET).download(row.storage_path);
-  if (dl.error || !dl.data) {
-    const e = new Error(dl.error?.message || "No se pudo descargar el asset desde Storage.");
-    e.status = 500;
-    e.code = "ASSET_DOWNLOAD_FAILED";
-    throw e;
-  }
-
-  const blob = dl.data;
-  const ab = await blob.arrayBuffer();
-  const base64 = Buffer.from(ab).toString("base64");
-  const mimeType = blob.type || mimeFromPath(row.storage_path);
+  // 2) Descarga desde Storage (compatible: Supabase o R2) y convierte a base64
+  const dl = await downloadStoragePath(row.storage_path);
+  const base64 = dl.buffer.toString("base64");
+  const mimeType = dl.mimeType || mimeFromPath(String(row.storage_path).replace(/^r2:/, ""));
 
   return { inlineData: { mimeType, data: base64 } };
 }

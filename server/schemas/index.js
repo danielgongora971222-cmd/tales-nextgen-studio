@@ -209,11 +209,31 @@ export const UpscaleSchema = z.object({
 });
 
 export const UploadAssetSchema = z.object({
-  dataUrl: Base64MediaSchema,
-  name: z.string().max(200).optional(),
-  tool: z.string().max(50).optional(),
-  category: z.string().max(50).optional(),
-  type: z.enum(["image","video"]).optional(),
+  dataUrl: z.string().optional(),
+  name: z.string().optional(),
+  tool: z.string().optional(),
+  category: z.string().optional(),
+  type: z.enum(["image", "video"]).optional(),
+});
+
+export const PresignUploadSchema = z.object({
+  tool: z.string().optional(),
+  name: z.string().optional(),
+  category: z.string().optional(),
+  type: z.enum(["image", "video"]).optional(),
+  mimeType: z.string().min(1),
+  sizeBytes: z.number().int().positive().optional(),
+  expiresSeconds: z.number().int().positive().max(3600).optional(),
+});
+
+export const CompleteUploadSchema = z.object({
+  storagePath: z.string().min(1),
+  tool: z.string().optional(),
+  name: z.string().optional(),
+  category: z.string().optional(),
+  type: z.enum(["image", "video"]).optional(),
+  mimeType: z.string().optional(),
+  sizeBytes: z.number().int().positive().optional(),
 });
 
 export const KlingElementImageSchema = z.union([

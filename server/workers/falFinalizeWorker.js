@@ -8,7 +8,7 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const JOB_TOKEN_SECRET = process.env.JOB_TOKEN_SECRET;
 
-const STORAGE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || "assets";
+const STORAGE_BUCKET = process.env.SUPABASE_BUCKET || process.env.SUPABASE_STORAGE_BUCKET || "assets";
 
 const WORKER_POLL_MS = Number(process.env.WORKER_POLL_MS || 10_000);
 const WORKER_BATCH_SIZE = Math.max(1, Math.min(200, Number(process.env.WORKER_BATCH_SIZE || 50)));

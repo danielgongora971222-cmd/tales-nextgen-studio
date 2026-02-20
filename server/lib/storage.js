@@ -1,17 +1,143 @@
+import { Readable } from "node:stream";
 import { httpError } from "./errors.js";
 
-export function createStorageHelpers(supabaseAdmin, bucket) {
+import {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+  DeleteObjectCommand,
+} from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+
+/**
+ * Storage helpers (PRO):
+ * - Mantiene Supabase Storage (compatibilidad con assets viejos)
+ * - Agrega Cloudflare R2 (S3 compatible) con:
+ *   - upload server-side (para outputs generados por workers)
+ *   - presigned PUT (para uploads directos desde el navegador)
+ *   - signed GET (para servir URLs temporales)
+ *
+ * Convención importante:
+ * - storage_path en DB:
+ *   - Supabase: "userId/..." (sin prefijo)
+ *   - R2:       "r2:userId/..."
+ */
+
+function isConfigObject(x) {
+  return !!x && typeof x === "object" && (
+    Object.prototype.hasOwnProperty.call(x, "supabase") ||
+    Object.prototype.hasOwnProperty.call(x, "bucket") ||
+    Object.prototype.hasOwnProperty.call(x, "provider") ||
+    Object.prototype.hasOwnProperty.call(x, "r2")
+  );
+}
+
+function mimeFromPath(path) {
+  const p = String(path || "").toLowerCase().replace(/^r2:/, "");
+  if (p.endsWith(".png")) return "image/png";
+  if (p.endsWith(".jpg") || p.endsWith(".jpeg")) return "image/jpeg";
+  if (p.endsWith(".webp")) return "image/webp";
+  if (p.endsWith(".mp4")) return "video/mp4";
+  if (p.endsWith(".webm")) return "video/webm";
+  if (p.endsWith(".mov")) return "video/quicktime";
+  return "application/octet-stream";
+}
+
+async function readableToBuffer(body) {
+  if (!body) return Buffer.alloc(0);
+
+  if (Buffer.isBuffer(body)) return body;
+
+  if (body instanceof Uint8Array) return Buffer.from(body);
+
+  // AWS SDK v3 (Node): Body suele ser Readable
+  if (body instanceof Readable) {
+    const chunks = [];
+    for await (const chunk of body) chunks.push(Buffer.from(chunk));
+    return Buffer.concat(chunks);
+  }
+
+  // fallback muy defensivo
+  try {
+    return Buffer.from(body);
+  } catch {
+    return Buffer.alloc(0);
+  }
+}
+
+function parseStoragePath(storagePath) {
+  const raw = String(storagePath || "");
+  if (raw.startsWith("r2:")) {
+    return { provider: "r2", key: raw.slice(3) };
+  }
+  return { provider: "supabase", key: raw };
+}
+
+function wrapStoragePath(provider, key) {
+  return provider === "r2" ? `r2:${key}` : key;
+}
+
+export function createStorageHelpers(arg1, arg2) {
+  const cfg = isConfigObject(arg1) ? arg1 : { supabase: arg1, bucket: arg2 };
+
+  const supabaseAdmin = cfg.supabase ?? null;
+  const supabaseBucket = cfg.bucket ?? null;
+
+  const providerDefault = String(
+    cfg.provider ?? process.env.STORAGE_PROVIDER ?? "supabase"
+  ).toLowerCase();
+
+  const r2 = {
+    accessKeyId: cfg.r2?.accessKeyId ?? process.env.R2_ACCESS_KEY_ID,
+    secretAccessKey: cfg.r2?.secretAccessKey ?? process.env.R2_SECRET_ACCESS_KEY,
+    endpoint: cfg.r2?.endpoint ?? process.env.R2_ENDPOINT,
+    bucket: cfg.r2?.bucket ?? process.env.R2_BUCKET,
+    region: cfg.r2?.region ?? process.env.R2_REGION ?? "auto",
+    publicBaseUrl: cfg.r2?.publicBaseUrl ?? process.env.R2_PUBLIC_BASE_URL ?? null,
+  };
+
+  let s3 = null;
+
   function ensureSupabase() {
     if (!supabaseAdmin) {
-      throw httpError(500, "SUPABASE_NOT_CONFIGURED", "Supabase no está configurado en el backend.");
+      throw httpError(
+        500,
+        "SUPABASE_NOT_CONFIGURED",
+        "Supabase no está configurado en el backend."
+      );
     }
-    if (!bucket) {
-      throw httpError(500, "SUPABASE_BUCKET_MISSING", "SUPABASE_BUCKET no está configurado.");
+    if (!supabaseBucket) {
+      throw httpError(
+        500,
+        "SUPABASE_BUCKET_MISSING",
+        "SUPABASE_BUCKET no está configurado."
+      );
     }
   }
 
+  function ensureR2() {
+    if (!r2.accessKeyId || !r2.secretAccessKey || !r2.endpoint || !r2.bucket) {
+      throw httpError(
+        500,
+        "R2_NOT_CONFIGURED",
+        "R2 no está configurado. Faltan R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_ENDPOINT / R2_BUCKET."
+      );
+    }
+    if (!s3) {
+      s3 = new S3Client({
+        region: r2.region || "auto",
+        endpoint: r2.endpoint,
+        credentials: {
+          accessKeyId: r2.accessKeyId,
+          secretAccessKey: r2.secretAccessKey,
+        },
+        forcePathStyle: true,
+      });
+    }
+    return s3;
+  }
+
   function parseDataUrl(dataUrl) {
-    // Espera: data:image/png;base64,AAAA...
     const match =
       typeof dataUrl === "string"
         ? dataUrl.match(/^data:([^;]+);base64,(.+)$/)
@@ -23,11 +149,9 @@ export function createStorageHelpers(supabaseAdmin, bucket) {
 
   function extFromMime(mimeType) {
     const t = String(mimeType || "").toLowerCase();
-    // video
     if (t.includes("video/mp4") || t.includes("mp4")) return "mp4";
     if (t.includes("video/webm") || t.includes("webm")) return "webm";
     if (t.includes("quicktime") || t.includes("mov")) return "mov";
-    // images
     if (t.includes("jpeg") || t.includes("jpg")) return "jpg";
     if (t.includes("webp")) return "webp";
     if (t.includes("png")) return "png";
@@ -48,8 +172,8 @@ export function createStorageHelpers(supabaseAdmin, bucket) {
   }
 
   function buildAssetPath({ userId, tool, mimeType, nameHint }) {
-    const ext = extFromMime(mimeType || "image/png");
-    const day = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    const ext = extFromMime(mimeType || "application/octet-stream");
+    const day = new Date().toISOString().slice(0, 10);
     const ts = Date.now();
     const rand = Math.random().toString(16).slice(2, 10);
     const slug = safeSlug(nameHint || tool || "asset");
@@ -57,14 +181,54 @@ export function createStorageHelpers(supabaseAdmin, bucket) {
     return `${userId}/${folder}/${day}/${ts}-${rand}-${slug}.${ext}`;
   }
 
-  async function uploadBase64ToStorage({ userId, tool, dataUrl, nameHint }) {
+  function providerForNewObjects() {
+    return providerDefault === "r2" ? "r2" : "supabase";
+  }
+
+  async function uploadBytesToProvider({ provider, key, bytes, contentType }) {
+    const ct = contentType || "application/octet-stream";
+
+    if (provider === "r2") {
+      const client = ensureR2();
+      await client.send(
+        new PutObjectCommand({
+          Bucket: r2.bucket,
+          Key: key,
+          Body: bytes,
+          ContentType: ct,
+        })
+      );
+      return;
+    }
+
     ensureSupabase();
+    const up = await supabaseAdmin.storage
+      .from(supabaseBucket)
+      .upload(key, bytes, { contentType: ct, upsert: false });
+
+    if (up.error) {
+      throw httpError(
+        500,
+        "STORAGE_UPLOAD_FAILED",
+        "No se pudo subir el archivo a Supabase Storage.",
+        { bucket: supabaseBucket, key, mimeType: ct, supabase: { message: up.error.message, name: up.error.name } }
+      );
+    }
+  }
+
+  async function uploadBase64ToStorage({ userId, tool, dataUrl, nameHint }) {
+    const provider = providerForNewObjects();
 
     let parsed;
     try {
       parsed = parseDataUrl(dataUrl);
-    } catch (e) {
-      throw httpError(400, "INVALID_DATA_URL", "El archivo no es un dataUrl válido.", { tool, nameHint });
+    } catch {
+      throw httpError(
+        400,
+        "INVALID_DATA_URL",
+        "El archivo no es un dataUrl válido.",
+        { tool, nameHint }
+      );
     }
 
     const mimeType = parsed.mimeType || "application/octet-stream";
@@ -72,79 +236,199 @@ export function createStorageHelpers(supabaseAdmin, bucket) {
     let bytes;
     try {
       bytes = Buffer.from(parsed.base64, "base64");
-    } catch (e) {
-      throw httpError(400, "INVALID_BASE64", "El archivo no se pudo decodificar (base64 inválido).", {
-        tool,
-        nameHint,
-        mimeType,
-      });
+    } catch {
+      throw httpError(
+        400,
+        "INVALID_BASE64",
+        "El archivo no se pudo decodificar (base64 inválido).",
+        { tool, nameHint, mimeType }
+      );
     }
 
-    const path = buildAssetPath({ userId, tool, mimeType, nameHint });
+    const key = buildAssetPath({ userId, tool, mimeType, nameHint });
 
-    const up = await supabaseAdmin.storage
-      .from(bucket)
-      .upload(path, bytes, { contentType: mimeType, upsert: false });
+    await uploadBytesToProvider({ provider, key, bytes, contentType: mimeType });
 
-    if (up.error) {
-      throw httpError(500, "STORAGE_UPLOAD_FAILED", "No se pudo subir el archivo a Supabase Storage.", {
-        bucket,
-        path,
-        mimeType,
-        supabase: { message: up.error.message, name: up.error.name },
-      });
-    }
-
-    return { storagePath: path, mimeType, sizeBytes: bytes.length };
+    return {
+      storagePath: wrapStoragePath(provider, key),
+      mimeType,
+      sizeBytes: bytes.length,
+    };
   }
 
-  async function uploadBufferToStorage({
-    userId,
-    tool,
-    buffer,
-    mimeType,
-    nameHint,
-  }) {
-    ensureSupabase();
+  async function uploadBufferToStorage({ userId, tool, buffer, mimeType, nameHint }) {
+    const provider = providerForNewObjects();
 
     if (!buffer || !Buffer.isBuffer(buffer)) {
-      throw httpError(400, "MISSING_FILE_BUFFER", "No llegó el archivo al servidor (buffer vacío).", { tool, nameHint });
+      throw httpError(
+        400,
+        "MISSING_FILE_BUFFER",
+        "No llegó el archivo al servidor (buffer vacío).",
+        { tool, nameHint }
+      );
     }
 
     const ct = mimeType || "application/octet-stream";
-    const path = buildAssetPath({ userId, tool, mimeType: ct, nameHint });
+    const key = buildAssetPath({ userId, tool, mimeType: ct, nameHint });
 
-    const up = await supabaseAdmin.storage
-      .from(bucket)
-      .upload(path, buffer, { contentType: ct, upsert: false });
+    await uploadBytesToProvider({ provider, key, bytes: buffer, contentType: ct });
 
-    if (up.error) {
-      throw httpError(500, "STORAGE_UPLOAD_FAILED", "No se pudo subir el archivo a Supabase Storage.", {
-        bucket,
-        path,
-        mimeType: ct,
-        supabase: { message: up.error.message, name: up.error.name },
-      });
-    }
-
-    return { storagePath: path, mimeType: ct, sizeBytes: buffer.length };
+    return {
+      storagePath: wrapStoragePath(provider, key),
+      mimeType: ct,
+      sizeBytes: buffer.length,
+    };
   }
 
   async function signStoragePath(storagePath, expiresSeconds = 60 * 60) {
+    const { provider, key } = parseStoragePath(storagePath);
+
+    if (provider === "r2") {
+      const client = ensureR2();
+      return await getSignedUrl(
+        client,
+        new GetObjectCommand({ Bucket: r2.bucket, Key: key }),
+        { expiresIn: expiresSeconds }
+      );
+    }
+
     ensureSupabase();
     const { data, error } = await supabaseAdmin.storage
-      .from(bucket)
-      .createSignedUrl(storagePath, expiresSeconds);
+      .from(supabaseBucket)
+      .createSignedUrl(key, expiresSeconds);
 
     if (error) {
       throw httpError(
         500,
         "STORAGE_SIGN_URL_FAILED",
         "No pude firmar la URL del archivo en Storage.",
-        { storagePath, expiresSeconds, supabase: error }
+        { storagePath, expiresSeconds, supabase: { message: error.message, name: error.name } }
       );
     }
+
     return data.signedUrl;
+  }
+
+  async function deleteStoragePath(storagePath) {
+    const { provider, key } = parseStoragePath(storagePath);
+
+    if (provider === "r2") {
+      const client = ensureR2();
+      await client.send(new DeleteObjectCommand({ Bucket: r2.bucket, Key: key }));
+      return;
+    }
+
+    ensureSupabase();
+    const { error } = await supabaseAdmin.storage
+      .from(supabaseBucket)
+      .remove([key]);
+
+    if (error) {
+      throw httpError(
+        500,
+        "STORAGE_DELETE_FAILED",
+        "No se pudo eliminar el archivo del Storage.",
+        { storagePath, supabase: { message: error.message, name: error.name } }
+      );
+    }
+  }
+
+  async function downloadStoragePath(storagePath) {
+    const { provider, key } = parseStoragePath(storagePath);
+
+    if (provider === "r2") {
+      const client = ensureR2();
+      const out = await client.send(new GetObjectCommand({ Bucket: r2.bucket, Key: key }));
+      const buffer = await readableToBuffer(out.Body);
+      return { buffer, mimeType: out.ContentType || mimeFromPath(key) };
+    }
+
+    ensureSupabase();
+    const dl = await supabaseAdmin.storage.from(supabaseBucket).download(key);
+    if (dl.error || !dl.data) {
+      throw httpError(
+        500,
+        "ASSET_DOWNLOAD_FAILED",
+        dl.error?.message || "No se pudo descargar el asset desde Storage.",
+        { storagePath }
+      );
+    }
+
+    const blob = dl.data;
+    const ab = await blob.arrayBuffer();
+    const buffer = Buffer.from(ab);
+    const mimeType = blob.type || mimeFromPath(key);
+
+    return { buffer, mimeType };
+  }
+
+  /**
+   * Presigned upload para el navegador:
+   * - R2: devuelve URL PUT + headers requeridos
+   * - Supabase: devuelve token/path/bucket para uploadToSignedUrl (fallback)
+   */
+  async function createClientUploadTarget({
+    userId,
+    tool,
+    mimeType,
+    nameHint,
+    expiresSeconds = 15 * 60,
+  }) {
+    const provider = providerForNewObjects();
+    const ct = mimeType || "application/octet-stream";
+    const key = buildAssetPath({ userId, tool, mimeType: ct, nameHint });
+
+    if (provider === "r2") {
+      const client = ensureR2();
+      const url = await getSignedUrl(
+        client,
+        new PutObjectCommand({
+          Bucket: r2.bucket,
+          Key: key,
+          ContentType: ct,
+        }),
+        { expiresIn: expiresSeconds }
+      );
+
+      return {
+        provider: "r2",
+        method: "PUT",
+        url,
+        headers: { "Content-Type": ct },
+        storagePath: wrapStoragePath("r2", key),
+        expiresInSeconds: expiresSeconds,
+      };
+    }
+
+    ensureSupabase();
+    const st = supabaseAdmin.storage.from(supabaseBucket);
+    if (typeof st.createSignedUploadUrl !== "function") {
+      throw httpError(
+        500,
+        "SUPABASE_SIGNED_UPLOAD_UNSUPPORTED",
+        "Tu versión de supabase-js no soporta createSignedUploadUrl. Actualiza @supabase/supabase-js."
+      );
+    }
+
+    const { data, error } = await st.createSignedUploadUrl(key);
+    if (error || !data?.token) {
+      throw httpError(
+        500,
+        "SUPABASE_CREATE_SIGNED_UPLOAD_FAILED",
+        "No se pudo crear signed upload URL en Supabase Storage.",
+        { key, supabase: { message: error?.message, name: error?.name } }
+      );
+    }
+
+    return {
+      provider: "supabase",
+      bucket: supabaseBucket,
+      path: data.path || key,
+      token: data.token,
+      signedUrl: data.signedUrl || null,
+      storagePath: key,
+      expiresInSeconds: 2 * 60 * 60,
+    };
   }
 
   async function insertAssetRow({
@@ -177,11 +461,21 @@ export function createStorageHelpers(supabaseAdmin, bucket) {
       .single();
 
     if (error) {
-      throw httpError(500, "DB_INSERT_FAILED", "No se pudo guardar el asset en la base de datos.", {
-        table: "assets",
-        supabase: { message: error.message, code: error.code, details: error.details, hint: error.hint },
-        payloadKeys: Object.keys(payload),
-      });
+      throw httpError(
+        500,
+        "DB_INSERT_FAILED",
+        "No se pudo guardar el asset en la base de datos.",
+        {
+          table: "assets",
+          supabase: {
+            message: error.message,
+            code: error.code,
+            details: error.details,
+            hint: error.hint,
+          },
+          payloadKeys: Object.keys(payload),
+        }
+      );
     }
 
     return data.id;
@@ -192,9 +486,16 @@ export function createStorageHelpers(supabaseAdmin, bucket) {
     extFromMime,
     safeSlug,
     buildAssetPath,
+
     uploadBase64ToStorage,
     uploadBufferToStorage,
+
     signStoragePath,
+    deleteStoragePath,
+    downloadStoragePath,
+
+    createClientUploadTarget,
+
     insertAssetRow,
   };
 }

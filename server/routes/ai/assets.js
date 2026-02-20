@@ -1,6 +1,6 @@
 import express from "express";
 import multer from "multer";
-import { UploadAssetSchema } from "../../schemas/index.js";
+import { UploadAssetSchema, PresignUploadSchema, CompleteUploadSchema } from "../../schemas/index.js";
 
 export function createAssetsRouter(ctx) {
   const router = express.Router();
@@ -27,6 +27,8 @@ export function createAssetsRouter(ctx) {
     uploadBase64ToStorage,
     uploadBufferToStorage,
     signStoragePath,
+    deleteStoragePath,
+    createClientUploadTarget,
     insertAssetRow,
 
     // env/flags
@@ -85,17 +87,14 @@ router.delete("/assets/:id", async (req, res) => {
     });
   }
 
-  // 2) Borrar del storage si existe
+  // 2) Borrar del storage si existe (compatible: Supabase o R2)
   if (row.storage_path) {
-    const { error: rmErr } = await supabaseAdmin.storage
-      .from(SUPABASE_BUCKET)
-      .remove([row.storage_path]);
-
-    // Si falla, reportamos error (para evitar DB sin archivo o viceversa)
-    if (rmErr) {
+    try {
+      await deleteStoragePath(row.storage_path);
+    } catch (e) {
       return res.status(500).json({
         ok: false,
-        error: { code: "STORAGE_DELETE_FAILED", message: rmErr.message },
+        error: { code: "STORAGE_DELETE_FAILED", message: e?.message || "No se pudo borrar el archivo." },
       });
     }
   }
@@ -128,9 +127,9 @@ router.get("/assets", async (req, res) => {
   if (error) return res.status(401).json({ ok: false, error });
 
   // 2) leer filtros simples
-  const type = typeof req.query.type === "string" ? req.query.type : null;
-  const limitRaw = typeof req.query.limit === "string" ? parseInt(req.query.limit, 10) : 50;
-  const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 100) : 50;
+    const type = typeof req.query.type === "string" ? req.query.type : null;
+    const limitRaw = typeof req.query.limit === "string" ? parseInt(req.query.limit, 10) : 50;
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 500) : 50;
 
   // 3) pedir assets del usuario a la DB
   let q = supabaseAdmin
@@ -167,7 +166,7 @@ router.get("/assets", async (req, res) => {
 
       // Si no hay url guardada, la generamos firmada desde storage_path
       if (!url && row.storage_path) {
-        url = await signStoragePath(row.storage_path, 60 * 60); // 1 hora
+        url = await signStoragePath(row.storage_path, 60 * 60 * 6); // 6 horas
       }
 
       // createdAt: soporta string timestamp o number (ms)
@@ -224,6 +223,132 @@ router.post("/assets/:id/unpublish", async (req, res) => {
   }
 
   return res.json({ ok: true, id: data.id, isPublic: !!data.is_public });
+});
+
+// ===============================
+// Assets: presign upload (direct-to-storage)
+// POST /api/assets/presign-upload
+// ===============================
+router.post("/assets/presign-upload", async (req, res) => {
+  const { user, error } = await requireUser(req);
+  if (error) return res.status(401).json({ ok: false, error });
+
+  let input;
+  try {
+    input = PresignUploadSchema.parse(req.body);
+  } catch (e) {
+    return res.status(400).json({
+      ok: false,
+      error: { code: "VALIDATION_ERROR", message: "Payload inválido", details: e?.errors || null },
+    });
+  }
+
+  const maxBytes = Number(process.env.MAX_UPLOAD_BYTES || 524288000); // 500MB default
+  if (input.sizeBytes && input.sizeBytes > maxBytes) {
+    return res.status(413).json({
+      ok: false,
+      error: { code: "FILE_TOO_LARGE", message: `Archivo demasiado grande. Máximo ${maxBytes} bytes.` },
+    });
+  }
+
+  const inferredType = input.type || (String(input.mimeType || "").startsWith("video") ? "video" : "image");
+  const tool = input.tool || "upload";
+  const name = input.name || "upload";
+
+  try {
+    const upload = await createClientUploadTarget({
+      userId: user.id,
+      tool,
+      mimeType: input.mimeType,
+      nameHint: name,
+      expiresSeconds: input.expiresSeconds || 15 * 60,
+    });
+
+    return res.json({
+      ok: true,
+      upload,
+      inferred: { type: inferredType },
+    });
+  } catch (e) {
+    return res.status(500).json({
+      ok: false,
+      error: { code: "PRESIGN_FAILED", message: e?.message || "No se pudo crear presigned upload." },
+    });
+  }
+});
+
+// ===============================
+// Assets: complete upload (register in DB)
+// POST /api/assets/complete-upload
+// ===============================
+router.post("/assets/complete-upload", async (req, res) => {
+  const { user, error } = await requireUser(req);
+  if (error) return res.status(401).json({ ok: false, error });
+
+  let input;
+  try {
+    input = CompleteUploadSchema.parse(req.body);
+  } catch (e) {
+    return res.status(400).json({
+      ok: false,
+      error: { code: "VALIDATION_ERROR", message: "Payload inválido", details: e?.errors || null },
+    });
+  }
+
+  const storagePath = input.storagePath;
+  const keyForCheck = String(storagePath).replace(/^r2:/, "");
+
+  if (!keyForCheck.startsWith(`${user.id}/`)) {
+    return res.status(403).json({
+      ok: false,
+      error: { code: "FORBIDDEN_STORAGE_PATH", message: "storagePath no pertenece al usuario." },
+    });
+  }
+
+  const type = input.type || (String(input.mimeType || "").startsWith("video") ? "video" : "image");
+  const tool = input.tool || "upload";
+  const name = input.name || "upload";
+
+  const meta = {
+    category: input.category || null,
+    mimeType: input.mimeType || null,
+    sizeBytes: input.sizeBytes || null,
+    source: "user_upload_direct",
+  };
+
+  try {
+    const assetId = await insertAssetRow({
+      ownerId: user.id,
+      type,
+      tool,
+      name,
+      prompt: null,
+      storagePath,
+      isPublic: false,
+      meta,
+    });
+
+    const url = await signStoragePath(storagePath, 60 * 60);
+
+    return res.json({
+      ok: true,
+      item: {
+        id: assetId,
+        url,
+        type,
+        name,
+        createdAt: Date.now(),
+        ownerId: user.id,
+        isPublic: false,
+        meta,
+      },
+    });
+  } catch (e) {
+    return res.status(500).json({
+      ok: false,
+      error: { code: "COMPLETE_UPLOAD_FAILED", message: e?.message || "No se pudo completar el upload." },
+    });
+  }
 });
 
 router.post("/assets/upload", upload.single("file"), async (req, res, next) => {

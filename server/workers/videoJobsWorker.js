@@ -23,7 +23,7 @@ const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 
 const WORKER_ID = `video-worker-${randomUUID().slice(0, 8)}`;
 
-const storage = createStorageHelpers(supabaseAdmin, SUPABASE_BUCKET);
+const storage = createStorageHelpers({ supabase: supabaseAdmin, bucket: SUPABASE_BUCKET });
 const { uploadBufferToStorage, signStoragePath, insertAssetRow } = storage;
 
 function falAuthHeader() {

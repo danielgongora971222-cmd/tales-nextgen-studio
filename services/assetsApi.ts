@@ -60,7 +60,7 @@ type AssetsCacheEntry = {
   inFlight?: Promise<Asset[]>;
 };
 
-const ASSETS_CACHE_TTL_MS = 2 * 60 * 1000; // 2 min (ajústalo si quieres)
+const ASSETS_CACHE_TTL_MS = 10 * 60 * 1000; // 10 min (reduce recargas entre tools/pickers)
 
 const myAssetsCache = new Map<string, AssetsCacheEntry>();
 const publicAssetsCache = new Map<string, AssetsCacheEntry>();
@@ -349,7 +349,117 @@ export async function uploadUserAsset(
   const type = opts.type ?? inferredType;
   const category = opts.category;
 
-  // ---------- 1) INTENTO PRINCIPAL: multipart/form-data ----------
+  const headersJson: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headersJson["Authorization"] = `Bearer ${token}`;
+
+  // ---------- 0) INTENTO PRINCIPAL: presign + upload directo ----------
+  try {
+    const presignResp = await fetch("/api/assets/presign-upload", {
+      method: "POST",
+      headers: headersJson,
+      body: JSON.stringify({
+        tool,
+        name,
+        type,
+        category,
+        mimeType: file.type || "application/octet-stream",
+        sizeBytes: file.size,
+      }),
+    });
+
+    const presignText = await presignResp.text();
+    let presignData: any;
+    try {
+      presignData = JSON.parse(presignText);
+    } catch {
+      presignData = null;
+    }
+
+    if (presignResp.ok && presignData?.ok === true && presignData?.upload?.storagePath) {
+      const upload = presignData.upload;
+
+      if (upload.provider === "r2") {
+        const putHeaders: Record<string, string> = upload.headers || {};
+        const putResp = await fetch(upload.url, {
+          method: upload.method || "PUT",
+          headers: putHeaders,
+          body: file,
+        });
+
+        if (!putResp.ok) {
+          const errText = await putResp.text();
+          throw new Error(`R2 upload failed: ${putResp.status} ${errText}`);
+        }
+      } else if (upload.provider === "supabase") {
+        // Fallback: Supabase signed upload (si algún día pones STORAGE_PROVIDER=supabase)
+        if (!upload.bucket || !upload.path || !upload.token) {
+          throw new Error("Supabase signed upload incompleto (bucket/path/token).");
+        }
+
+        const anySb: any = supabase as any;
+        const fn = anySb?.storage?.from?.(upload.bucket)?.uploadToSignedUrl;
+        if (typeof fn !== "function") {
+          throw new Error("supabase-js no soporta uploadToSignedUrl en el cliente.");
+        }
+
+        const { error: upErr } = await supabase.storage
+          .from(upload.bucket)
+          .uploadToSignedUrl(upload.path, upload.token, file, { contentType: file.type || "application/octet-stream" });
+
+        if (upErr) throw new Error(upErr.message);
+      } else {
+        throw new Error(`Proveedor de upload desconocido: ${String(upload.provider)}`);
+      }
+
+      const completeResp = await fetch("/api/assets/complete-upload", {
+        method: "POST",
+        headers: headersJson,
+        body: JSON.stringify({
+          storagePath: upload.storagePath,
+          tool,
+          name,
+          type,
+          category,
+          mimeType: file.type || "application/octet-stream",
+          sizeBytes: file.size,
+        }),
+      });
+
+      const completeText = await completeResp.text();
+      let completeData: any;
+      try {
+        completeData = JSON.parse(completeText);
+      } catch {
+        throw new Error(`Complete upload devolvió texto no JSON. Inicio: ${completeText.slice(0, 80)}`);
+      }
+
+      if (!completeResp.ok || completeData?.ok === false) {
+        const e = completeData?.error;
+        const msg = typeof e === "string" ? e : e?.message;
+        throw new Error(msg || `Complete upload failed: ${completeResp.status}`);
+      }
+
+      const row = completeData.item;
+      invalidateMyAssetsCache();
+
+      return {
+        id: row.id,
+        url: row.url,
+        type: row.type === "video" ? "video" : "image",
+        name: row.name || file.name,
+        prompt: undefined,
+        createdAt: row.createdAt ? new Date(row.createdAt).getTime() : Date.now(),
+        ownerId: row.ownerId,
+        isPublic: !!row.isPublic,
+        likes: [],
+        comments: [],
+      };
+    }
+  } catch {
+    // Silencio: si presign falla, hacemos fallback a los métodos viejos
+  }
+
+  // ---------- 1) FALLBACK: multipart/form-data (legacy) ----------
   const form = new FormData();
   form.append("file", file, name);
   form.append("tool", tool);
@@ -373,11 +483,10 @@ export async function uploadUserAsset(
     data = JSON.parse(text);
   } catch {
     throw new Error(
-      `El backend devolvió HTML/texto en vez de JSON en uploadUserAsset. Inicio: ${text.slice(0, 60)}`
+      `El backend devolvió HTML/texto en vez de JSON en uploadUserAsset. Inicio: ${text.slice(0, 80)}`
     );
   }
 
-  // Si el backend aún no soporta multipart, normalmente devuelve VALIDATION_ERROR por falta de dataUrl.
   const shouldFallbackToJsonBase64 =
     (!resp.ok || data?.ok === false) &&
     data?.error?.code === "VALIDATION_ERROR" &&
@@ -385,10 +494,7 @@ export async function uploadUserAsset(
     data.error.details.some((d: any) => d?.field === "dataUrl");
 
   if (shouldFallbackToJsonBase64) {
-    // ---------- 2) FALLBACK: JSON (base64) ----------
-    const headersJson: Record<string, string> = { "Content-Type": "application/json" };
-    if (token) headersJson["Authorization"] = `Bearer ${token}`;
-
+    // ---------- 2) FALLBACK EXTREMO: JSON (base64) ----------
     const dataUrl = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result as string);
@@ -409,7 +515,7 @@ export async function uploadUserAsset(
       data2 = JSON.parse(text2);
     } catch {
       throw new Error(
-        `El backend devolvió HTML/texto en vez de JSON en uploadUserAsset (fallback). Inicio: ${text2.slice(0, 60)}`
+        `El backend devolvió HTML/texto en vez de JSON en uploadUserAsset (fallback). Inicio: ${text2.slice(0, 80)}`
       );
     }
 
@@ -420,6 +526,8 @@ export async function uploadUserAsset(
     }
 
     const row2 = data2.item;
+    invalidateMyAssetsCache();
+
     return {
       id: row2.id,
       url: row2.url,
@@ -442,6 +550,7 @@ export async function uploadUserAsset(
 
   const row = data.item;
   invalidateMyAssetsCache();
+
   return {
     id: row.id,
     url: row.url,

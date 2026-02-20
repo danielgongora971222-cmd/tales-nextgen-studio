@@ -16,21 +16,23 @@
     "preset:wizard": "node tools/preset-wizard/server.mjs"
   },
 
-  "dependencies": {
-    "@google/genai": "^1.39.0",
-    "@supabase/supabase-js": "^2.93.3",
-    "cors": "^2.8.6",
-    "dotenv": "^16.4.5",
-    "express": "^4.19.2",
-    "express-rate-limit": "^8.2.1",
-    "helmet": "^8.1.0",
-    "multer": "^1.4.5-lts.1",
-    "pino-http": "^11.0.0",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4",
-    "react-router-dom": "^7.13.0",
-    "zod": "^3.24.1"
-  },
+"dependencies": {
+  "@aws-sdk/client-s3": "^3.883.0",
+  "@aws-sdk/s3-request-presigner": "^3.883.0",
+  "@google/genai": "^1.39.0",
+  "@supabase/supabase-js": "^2.93.3",
+  "cors": "^2.8.6",
+  "dotenv": "^16.4.5",
+  "express": "^4.19.2",
+  "express-rate-limit": "^8.2.1",
+  "helmet": "^8.1.0",
+  "multer": "^1.4.5-lts.1",
+  "pino-http": "^11.0.0",
+  "react": "^19.2.4",
+  "react-dom": "^19.2.4",
+  "react-router-dom": "^7.13.0",
+  "zod": "^3.24.1"
+},
   "devDependencies": {
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",

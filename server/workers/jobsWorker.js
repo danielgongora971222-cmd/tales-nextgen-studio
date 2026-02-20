@@ -48,7 +48,7 @@ const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 });
 
 const { uploadBufferToStorage, signStoragePath, insertAssetRow } =
-  createStorageHelpers(supabaseAdmin, SUPABASE_BUCKET);
+  createStorageHelpers({ supabase: supabaseAdmin, bucket: SUPABASE_BUCKET });
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
