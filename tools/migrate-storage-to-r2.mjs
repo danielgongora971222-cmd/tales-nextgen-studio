@@ -32,11 +32,25 @@ function boolFromEnv(name, defaultValue = false) {
 
 const APPLY = process.argv.includes("--apply");
 const DRY_RUN = !APPLY;
+
 const DELETE_SOURCE =
   process.argv.includes("--delete-source") ||
   boolFromEnv("MIGRATE_DELETE_SOURCE", false);
+
 const OVERWRITE =
-  process.argv.includes("--overwrite") || boolFromEnv("MIGRATE_OVERWRITE", false);
+  process.argv.includes("--overwrite") ||
+  boolFromEnv("MIGRATE_OVERWRITE", false);
+
+// Por defecto NO fallamos si el objeto ya existe en R2 (para que el script sea idempotente).
+// Si quieres que falle (modo estricto), usa --fail-on-existing o MIGRATE_FAIL_ON_EXISTING=true
+const FAIL_ON_EXISTING =
+  process.argv.includes("--fail-on-existing") ||
+  boolFromEnv("MIGRATE_FAIL_ON_EXISTING", false);
+
+const SKIP_EXISTING = !FAIL_ON_EXISTING;
+
+// Dedupe dentro de la misma ejecución (evita que preview_path e image_paths repitan el mismo key)
+const SEEN_KEYS = new Set();
 
 const SUPABASE_URL = required("SUPABASE_URL");
 const SUPABASE_SERVICE_ROLE_KEY = required("SUPABASE_SERVICE_ROLE_KEY");
@@ -84,15 +98,6 @@ async function downloadFromSupabase(key) {
 }
 
 async function uploadToR2({ key, buffer, contentType }) {
-  if (!OVERWRITE) {
-    const exists = await r2Exists(key);
-    if (exists) {
-      throw new Error(
-        `R2 object already exists and overwrite is disabled: ${key}`
-      );
-    }
-  }
-
   await s3.send(
     new PutObjectCommand({
       Bucket: R2_BUCKET,
@@ -117,10 +122,29 @@ async function migrateKey({ sourcePath }) {
   const key = fromStoragePathToKey(sourcePath);
   if (!key) return null;
 
+  // Si ya está en R2, no hacemos nada
   if (String(sourcePath).startsWith("r2:")) {
     return { key, targetPath: sourcePath, migrated: false };
   }
 
+  // Dedupe en esta misma ejecución (preview + image_paths, o repeticiones entre rows)
+  if (SEEN_KEYS.has(key)) {
+    return { key, targetPath: `r2:${key}`, migrated: false, deduped: true };
+  }
+  SEEN_KEYS.add(key);
+
+  // Si ya existe en R2, por defecto lo saltamos (idempotente)
+  if (!OVERWRITE) {
+    const exists = await r2Exists(key);
+    if (exists) {
+      if (SKIP_EXISTING) {
+        return { key, targetPath: `r2:${key}`, migrated: false, skippedExisting: true };
+      }
+      throw new Error(`R2 object already exists and overwrite is disabled: ${key}`);
+    }
+  }
+
+  // Solo descargamos de Supabase si realmente necesitamos subir
   const { buffer, contentType } = await downloadFromSupabase(key);
   await uploadToR2({ key, buffer, contentType });
 
@@ -264,6 +288,8 @@ async function main() {
   console.log(`DRY_RUN=${DRY_RUN}`);
   console.log(`DELETE_SOURCE=${DELETE_SOURCE}`);
   console.log(`OVERWRITE=${OVERWRITE}`);
+  console.log(`FAIL_ON_EXISTING=${FAIL_ON_EXISTING}`);
+  console.log(`SKIP_EXISTING=${SKIP_EXISTING}`);
   console.log("");
 
   await migrateAssets();
