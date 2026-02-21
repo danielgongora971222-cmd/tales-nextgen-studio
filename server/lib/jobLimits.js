@@ -1,5 +1,12 @@
 function readInt(name, fallback) {
-  const raw = String(process.env[name] || "").trim();
+  const rawEnv = process.env[name];
+
+  // Si no existe o está vacío, usar fallback (evita Number("") === 0)
+  if (rawEnv === undefined || rawEnv === null) return fallback;
+
+  const raw = String(rawEnv).trim();
+  if (raw === "") return fallback;
+
   const n = Number(raw);
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
 }
