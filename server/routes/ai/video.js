@@ -136,6 +136,77 @@ export function createAiVideoRouter(ctx) {
     });
   }
 
+  // ===============================
+  // ✅ Kling V3 Hardening: límite de tareas paralelas (evita 1303)
+  // Solo se usa cuando selectedModelNorm === "kling-v3"
+  // ===============================
+  async function countRunningKlingJobs({ ownerId }) {
+    const q = supabaseAdmin
+      .from("jobs")
+      .select("id", { count: "exact", head: true })
+      .eq("kind", "video")
+      .eq("status", "running")
+      .filter("params->>provider", "eq", "kling");
+
+    if (ownerId) q.eq("owner_id", ownerId);
+
+    const r = await q;
+
+    if (r.error) {
+      throw httpError(500, "DB_ERROR", "No pude contar jobs Kling activos.", {
+        supabase: {
+          message: r.error?.message,
+          code: r.error?.code,
+          details: r.error?.details,
+          hint: r.error?.hint,
+        },
+      });
+    }
+
+    return Number(r.count || 0);
+  }
+
+  function respondKlingV3Busy(res, { retryAfterSeconds, message, details }) {
+    const ra = Math.max(5, Math.min(180, Number(retryAfterSeconds || 30)));
+
+    // Importante: status 429 + Retry-After => apiPostJson reintenta con esa pausa
+    res
+      .status(429)
+      .set("Retry-After", String(ra))
+      .json({
+        ok: false,
+        error: {
+          code: "KLING_V3_PARALLEL_LIMIT",
+          message: message || "Kling está ocupado (límite de tareas en paralelo). Intenta de nuevo en unos segundos.",
+          details: { ...(details || {}), retryAfterSeconds: ra },
+        },
+      });
+  }
+
+  async function enforceKlingV3ParallelLimit(res, ownerId) {
+    const maxPerUser = Math.max(1, Number(process.env.KLING_V3_MAX_PARALLEL_PER_USER || 1));
+    const maxGlobal = Math.max(1, Number(process.env.KLING_V3_MAX_PARALLEL_GLOBAL || 2));
+    const retryAfterSeconds = Number(process.env.KLING_V3_RETRY_AFTER_SECONDS || 30);
+
+    const [activeUser, activeGlobal] = await Promise.all([
+      countRunningKlingJobs({ ownerId }),
+      countRunningKlingJobs({ ownerId: null }),
+    ]);
+
+    if (activeUser >= maxPerUser || activeGlobal >= maxGlobal) {
+      respondKlingV3Busy(res, {
+        retryAfterSeconds,
+        message:
+          "Kling está al límite de tareas en paralelo. Espera a que terminen las generaciones en curso y reintentamos automáticamente.",
+        details: { activeUser, activeGlobal, maxPerUser, maxGlobal },
+      });
+      return true; // respuesta enviada
+    }
+
+    return false;
+  }
+  
+
     // Helper: registra el job async (Kling Tasks) en la tabla public.jobs
   async function upsertKlingJobRow({
     ownerId,
@@ -759,11 +830,16 @@ export function createAiVideoRouter(ctx) {
           ...(multiPrompt && multiPrompt.length ? { multi_prompt: multiPrompt } : {}),
         };
 
+        // ✅ Evita error 1303 (parallel task limit) antes de llamar a Kling
+        const blocked = await enforceKlingV3ParallelLimit(res, user.id);
+        if (blocked) return;
+
         let taskResponse = null;
         let taskType = "text2video";
 
-        if (hasFirst) {
-          taskType = "image2video";
+        try {
+          if (hasFirst) {
+            taskType = "image2video";
           const firstPart = await assetIdToInlinePart(firstFrameAssetId, user.id);
           const image = firstPart.inlineData.data;
 
@@ -773,8 +849,8 @@ export function createAiVideoRouter(ctx) {
             imageTail = lastPart.inlineData.data;
           }
 
-          taskResponse = await klingPostWithRetry(
-            "/videos/image2video",
+            taskResponse = await klingPostWithRetry(
+              "/videos/image2video",
             {
               model_name: selectedModelNorm,
               prompt,
@@ -785,9 +861,9 @@ export function createAiVideoRouter(ctx) {
             },
             { timeoutMs: 60_000, retries: 3 }
           );
-        } else {
-          taskResponse = await klingPostWithRetry(
-            "/videos/text2video",
+          } else {
+            taskResponse = await klingPostWithRetry(
+              "/videos/text2video",
             {
               model_name: selectedModelNorm,
               prompt,
@@ -797,6 +873,23 @@ export function createAiVideoRouter(ctx) {
             },
             { timeoutMs: 60_000, retries: 3 }
           );
+        }
+      } catch (e) {
+          const status = Number(e?.status || 0);
+          const code = e?.code != null ? Number(e.code) : null;
+
+          // 1303: parallel task over resource pack limit
+          if (status === 429 && code === 1303) {
+            respondKlingV3Busy(res, {
+              retryAfterSeconds: Number(process.env.KLING_V3_RETRY_AFTER_SECONDS || 30),
+              message:
+                "Kling rechazó la solicitud por límite de tareas en paralelo (1303). Vamos a reintentar cuando haya cupo.",
+              details: { klingCode: code, requestId: e?.requestId || null },
+            });
+            return;
+          }
+
+          throw e;
         }
 
         const taskId =

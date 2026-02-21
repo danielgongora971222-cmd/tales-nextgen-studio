@@ -162,6 +162,11 @@ export async function klingGet(path) {
 // ===============================
 function isRetriableKlingError(err) {
   const status = Number(err?.status || 0);
+  const code = err?.code != null ? Number(err.code) : null;
+
+  // 1303 = parallel task over resource pack limit -> NO reintentar rápido
+  if (status === 429 && code === 1303) return false;
+
   return (
     err?.name === "AbortError" ||
     status === 429 ||
