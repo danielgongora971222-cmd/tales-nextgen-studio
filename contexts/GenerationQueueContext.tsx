@@ -108,6 +108,21 @@ function extractResult(res: any) {
   return { assetIds, urls };
 }
 
+function pickUrlFromJobRow(row: any) {
+  const p = row?.params || {};
+  const url =
+    p?.resultUrl ||
+    p?.result_url ||
+    p?.url ||
+    p?.videoUrl ||
+    p?.video_url ||
+    p?.providerVideoUrl ||
+    p?.provider_video_url ||
+    "";
+  const s = String(url || "").trim();
+  return s || null;
+}
+
 export const GenerationQueueProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
   const userId = user?.id || null;
@@ -136,8 +151,13 @@ export const GenerationQueueProvider: React.FC<{ children: React.ReactNode }> = 
     // Si había jobs "running" no-resumibles (no Fal), los marcamos como fallidos al recargar
     const normalized = loaded.map((j) => {
       if (j.status !== "running") return j;
+
+      const modelNorm = String(j.payload?.modelNorm || "");
       const token = j.payload?.falJobToken;
-      if (token && isFalModel(j.payload?.modelNorm || "")) {
+      const supaId = j.payload?.supabaseJobId ? String(j.payload.supabaseJobId) : "";
+
+      // ✅ Reanudable: Fal (token)
+      if (token && isFalModel(modelNorm)) {
         return {
           ...j,
           status: "queued" as const,
@@ -145,6 +165,17 @@ export const GenerationQueueProvider: React.FC<{ children: React.ReactNode }> = 
           progressText: "Reanudando job pendiente…",
         };
       }
+
+      // ✅ Reanudable: Kling V3 (supabaseJobId)
+      if (modelNorm === KLING_V3 && supaId) {
+        return {
+          ...j,
+          status: "queued" as const,
+          updatedAt: now(),
+          progressText: "Reanudando (Kling, background)…",
+        };
+      }
+
       return {
         ...j,
         status: "failed" as const,
@@ -375,10 +406,10 @@ async function runVideoJob(
       }
 
       if (row.status === "succeeded" && row.result_asset_id) {
+        const url = pickUrlFromJobRow(row);
         invalidateMyAssetsCache("video");
-        return { ok: true, items: [{ assetId: row.result_asset_id }] };
+        return { ok: true, items: [{ assetId: row.result_asset_id, ...(url ? { url } : {}) }] };
       }
-
       throw new Error("Job Kling terminó pero no devolvió result_asset_id.");
     }
 
@@ -406,10 +437,10 @@ async function runVideoJob(
     }
 
     if (row.status === "succeeded" && row.result_asset_id) {
+      const url = pickUrlFromJobRow(row);
       invalidateMyAssetsCache("video");
-      return { ok: true, items: [{ assetId: row.result_asset_id }] };
+      return { ok: true, items: [{ assetId: row.result_asset_id, ...(url ? { url } : {}) }] };
     }
-
     throw new Error("Job Kling terminó pero no devolvió result_asset_id.");
   }
 
