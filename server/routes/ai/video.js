@@ -30,6 +30,7 @@ export function createAiVideoRouter(ctx) {
     createImage2VideoTask,
     createText2VideoTask,
     pollTaskUntilDone,
+    klingPostWithRetry,
     falQueueSubmit,
     falQueueRun,
     signJobToken,
@@ -135,6 +136,63 @@ export function createAiVideoRouter(ctx) {
     });
   }
 
+    // Helper: registra el job async (Kling Tasks) en la tabla public.jobs
+  async function upsertKlingJobRow({
+    ownerId,
+    kind = "video",
+    taskId,
+    taskType,
+    toolName,
+    hint,
+    model,
+    prompt,
+    extra,
+  }) {
+    if (!supabaseAdmin) {
+      throw httpError(
+        500,
+        "SUPABASE_NOT_CONFIGURED",
+        "Supabase admin no está configurado en el backend."
+      );
+    }
+
+    const params = {
+      provider: "kling",
+      taskId: taskId || null,
+      taskType: taskType || null,
+      toolName: toolName || null,
+      hint: hint || null,
+      model: model || null,
+      prompt: prompt || null,
+      ...(extra || {}),
+    };
+
+    await assertJobLimits({ supabaseAdmin, httpError, ownerId, kind });
+
+    const ins = await supabaseAdmin
+      .from("jobs")
+      .insert({
+        owner_id: ownerId,
+        kind,
+        status: "running",
+        params,
+        next_check_at: new Date().toISOString(),
+      })
+      .select("id")
+      .single();
+
+    if (!ins.error && ins.data?.id) return ins.data.id;
+
+    throw httpError(500, "JOB_INSERT_FAILED", "No pude crear el job async en la tabla jobs.", {
+      supabase: {
+        message: ins.error?.message,
+        code: ins.error?.code,
+        details: ins.error?.details,
+        hint: ins.error?.hint,
+      },
+    });
+  }
+
 
   /**
    * 👇 PEGAREMOS AQUÍ tu handler /api/ai/video movido desde server.js
@@ -228,8 +286,8 @@ export function createAiVideoRouter(ctx) {
 
     if (isKling) {
       // ✅ KLING V3 PRO via FAL (fal-ai/kling-video/v3/pro/*)
-            if (selectedModelNorm === "kling-v3" || selectedModelNorm === "kling-o3-pro") {
-              const isO3 = selectedModelNorm === "kling-o3-pro";
+            if (selectedModelNorm === "kling-o3-pro") {
+              const isO3 = true;
         const hasElements =
           Array.isArray(klingElementIds) && klingElementIds.length > 0;
 
@@ -542,6 +600,353 @@ export function createAiVideoRouter(ctx) {
           urlExpiresInSeconds,
         });
       }
+
+            // ✅ KLING V3 via API oficial (Tasks) — SIN Fal
+      if (selectedModelNorm === "kling-v3") {
+        const hasElements =
+          Array.isArray(klingElementIds) && klingElementIds.length > 0;
+
+        // Duration global 3..15 (Kling V3)
+        let dur = durationSeconds != null ? Number(durationSeconds) : 5;
+        dur = Math.trunc(dur);
+        if (dur < 3) dur = 3;
+        if (dur > 15) dur = 15;
+
+        // shot_type: customize | intelligence (aceptamos también "intelligent" por compat)
+        const shotTypeRaw = String(klingShotType || "customize").trim().toLowerCase();
+        const shotType =
+          shotTypeRaw === "intelligence" || shotTypeRaw === "intelligent"
+            ? "intelligence"
+            : "customize";
+
+        // Multi-shot real:
+        // - intelligence: multi_shot=true + shot_type=intelligence, SIN multi_prompt :contentReference[oaicite:5]{index=5}
+        // - customize: multi_shot=true + shot_type=customize + multi_prompt[] :contentReference[oaicite:6]{index=6}
+        const KLING_V3_SHOT_PROMPT_LIMIT = 512;
+
+        const multiIn = Array.isArray(klingMultiPrompt) ? klingMultiPrompt : [];
+        let multiPrompt = null;
+
+        if (shotType === "customize" && multiIn.length) {
+          if (multiIn.length > 6) {
+            throw httpError(
+              400,
+              "KLING_V3_MULTISHOT_TOO_MANY_SHOTS",
+              "Kling V3 Multishot: máximo 6 shots."
+            );
+          }
+
+          multiPrompt = multiIn.map((s, idx) => {
+            const p = String(s?.prompt || "").trim();
+            if (!p) {
+              throw httpError(
+                400,
+                "KLING_V3_MULTISHOT_EMPTY_PROMPT",
+                `Kling V3 Multishot: el shot ${idx + 1} tiene prompt vacío.`
+              );
+            }
+            if (p.length > KLING_V3_SHOT_PROMPT_LIMIT) {
+              throw httpError(
+                400,
+                "KLING_V3_MULTISHOT_PROMPT_TOO_LONG",
+                `Kling V3 Multishot: el prompt del shot ${idx + 1} supera ${KLING_V3_SHOT_PROMPT_LIMIT} caracteres (${p.length}).`
+              );
+            }
+
+            let sDur = s?.durationSeconds != null ? Number(s.durationSeconds) : 1;
+            sDur = Math.trunc(sDur);
+            if (sDur < 1) sDur = 1;
+            if (sDur > 15) sDur = 15;
+
+            return { index: idx + 1, prompt: p, duration: String(sDur) };
+          });
+
+          const totalDur = multiPrompt.reduce(
+            (acc, s) => acc + Number(s.duration || 0),
+            0
+          );
+
+          // La guía exige: suma == duration global y min por shot >= 1s :contentReference[oaicite:7]{index=7}
+          if (totalDur !== dur) {
+            throw httpError(
+              400,
+              "KLING_V3_MULTISHOT_DURATION_MISMATCH",
+              `Kling V3 Multishot: la suma de durations (${totalDur}s) debe ser igual a durationSeconds (${dur}s).`
+            );
+          }
+
+          if (totalDur < 3 || totalDur > 15) {
+            throw httpError(
+              400,
+              "KLING_V3_MULTISHOT_DURATION_INVALID",
+              "Kling V3 Multishot: la suma de durations debe ser entre 3 y 15 segundos."
+            );
+          }
+        }
+
+        const multiShotEnabled = shotType === "intelligence" || (multiPrompt && multiPrompt.length);
+
+        // Elements (kling_elements en tu DB) → element_list real (IDs de Kling)
+        let elementList = undefined;
+        if (hasElements) {
+          const maxElems = hasFirst ? 3 : 5;
+          if (klingElementIds.length > maxElems) {
+            throw httpError(
+              400,
+              "KLING_V3_TOO_MANY_ELEMENTS",
+              `Kling V3: máximo ${maxElems} Elements en este modo.`
+            );
+          }
+
+          const { data: rows, error: rowsErr } = await supabaseAdmin
+            .from("kling_elements")
+            .select("id, owner_id, kling_element_id")
+            .in("id", klingElementIds)
+            .eq("owner_id", user.id);
+
+          if (rowsErr) {
+            throw httpError(500, "DB_ERROR", "No pude leer tus Elements.", {
+              rowsErr,
+            });
+          }
+
+          const byId = new Map((rows || []).map((r) => [r.id, r]));
+          const missing = (klingElementIds || []).filter((id) => !byId.has(id));
+          if (missing.length) {
+            throw httpError(
+              400,
+              "KLING_V3_ELEMENT_NOT_FOUND",
+              "Uno o más Elements no existen o no te pertenecen.",
+              { missing }
+            );
+          }
+
+          const out = [];
+          for (const elementUuid of klingElementIds) {
+            const row = byId.get(elementUuid);
+            const raw = row?.kling_element_id;
+
+            if (!raw) {
+              throw httpError(
+                400,
+                "KLING_V3_ELEMENT_MISSING_KLING_ID",
+                "Un Element no tiene kling_element_id guardado (no se puede mandar a Kling).",
+                { elementUuid }
+              );
+            }
+
+            const rawStr = String(raw).trim();
+            const eid = /^\d+$/.test(rawStr) ? Number(rawStr) : rawStr;
+            out.push({ element_id: eid });
+          }
+
+          if (out.length) elementList = out;
+        }
+
+        // Audio: en V3 el default del proveedor suele ser ON; solo enviamos enable_audio si el usuario tocó el toggle
+        const enableAudio =
+          klingSound !== undefined ? Boolean(klingSound) : undefined;
+
+        const klingModeValue = klingMode || "std";
+
+        // ⚠️ Importante: NO enviamos cfg_scale ni voice_ids para V3 (no decorativo) :contentReference[oaicite:8]{index=8}
+        const klingExtras = {
+          mode: klingModeValue,
+          ...(enableAudio !== undefined ? { enable_audio: enableAudio } : {}),
+          ...(negativePrompt ? { negative_prompt: negativePrompt } : {}),
+          ...(elementList ? { element_list: elementList } : {}),
+          ...(multiShotEnabled ? { multi_shot: true, shot_type: shotType } : {}),
+          ...(multiPrompt && multiPrompt.length ? { multi_prompt: multiPrompt } : {}),
+        };
+
+        let taskResponse = null;
+        let taskType = "text2video";
+
+        if (hasFirst) {
+          taskType = "image2video";
+          const firstPart = await assetIdToInlinePart(firstFrameAssetId, user.id);
+          const image = firstPart.inlineData.data;
+
+          let imageTail = undefined;
+          if (hasLast) {
+            const lastPart = await assetIdToInlinePart(lastFrameAssetId, user.id);
+            imageTail = lastPart.inlineData.data;
+          }
+
+          taskResponse = await klingPostWithRetry(
+            "/videos/image2video",
+            {
+              model_name: selectedModelNorm,
+              prompt,
+              duration: dur,
+              image,
+              image_tail: imageTail,
+              ...klingExtras,
+            },
+            { timeoutMs: 60_000, retries: 3 }
+          );
+        } else {
+          taskResponse = await klingPostWithRetry(
+            "/videos/text2video",
+            {
+              model_name: selectedModelNorm,
+              prompt,
+              duration: dur,
+              aspect_ratio: aspectRatio || "16:9",
+              ...klingExtras,
+            },
+            { timeoutMs: 60_000, retries: 3 }
+          );
+        }
+
+        const taskId =
+          taskResponse?.data?.task_id ||
+          taskResponse?.task_id ||
+          taskResponse?.data?.taskId ||
+          taskResponse?.taskId;
+
+        if (!taskId) {
+          throw httpError(502, "KLING_BAD_RESPONSE", "Kling no devolvió task_id.", {
+            response: taskResponse,
+          });
+        }
+
+        // ✅ Async: devolvemos jobId; el worker hace polling y guarda el video
+        if (asyncMode) {
+          const meta = {
+            tool: toolName,
+            provider: "kling",
+            model: selectedModelNorm,
+            aspectRatio: hasFirst ? null : (aspectRatio || "16:9"),
+            durationSeconds: dur,
+            firstFrameAssetId: firstFrameAssetId || null,
+            lastFrameAssetId: lastFrameAssetId || null,
+            klingMode: klingModeValue,
+            klingSound: enableAudio ?? null,
+            negativePrompt: negativePrompt || null,
+            klingTaskId: taskId,
+            klingTaskType: taskType,
+            klingShotType: multiShotEnabled ? shotType : null,
+            klingMultiPrompt: multiPrompt || null,
+            klingElementIds: hasElements ? klingElementIds : null,
+          };
+
+          const jobId = await upsertKlingJobRow({
+            ownerId: user.id,
+            kind: "video",
+            taskId: String(taskId),
+            taskType,
+            toolName,
+            hint,
+            model: selectedModelNorm,
+            prompt,
+            extra: { meta },
+          });
+
+          return res.json({ ok: true, mode: "async", jobId, taskId: String(taskId) });
+        }
+
+        // ✅ Sync (solo dev): polling aquí y guardamos asset
+        let taskData = null;
+        try {
+          taskData = await pollTaskUntilDone({
+            type: taskType,
+            taskId: String(taskId),
+            modelName: selectedModelNorm,
+            maxWaitMs: 10 * 60 * 1000,
+            intervalMs: 2000,
+          });
+        } catch (err) {
+          throw httpError(502, "KLING_TASK_FAILED", err.message || "Kling task failed.", {
+            taskId: String(taskId),
+            requestId: err?.requestId || null,
+          });
+        }
+
+        const taskResult = taskData?.task_result || taskData?.data?.task_result || {};
+        const firstVideo =
+          Array.isArray(taskResult?.videos) && taskResult.videos.length ? taskResult.videos[0] : null;
+
+        const videoUrl =
+          firstVideo?.url_with_audio ||
+          firstVideo?.urlWithAudio ||
+          firstVideo?.url_audio ||
+          firstVideo?.urlAudio ||
+          firstVideo?.url ||
+          taskResult?.video_url ||
+          taskResult?.videoUrl ||
+          taskResult?.video?.url;
+
+        if (!videoUrl) {
+          throw httpError(502, "KLING_NO_VIDEOS", "Kling: tarea completada pero sin videos.", {
+            taskId: String(taskId),
+            response: taskData,
+          });
+        }
+
+        const videoResp = await fetch(videoUrl);
+        if (!videoResp.ok) {
+          throw httpError(
+            502,
+            "KLING_VIDEO_DOWNLOAD_FAILED",
+            `No pude descargar el video de Kling (${videoResp.status}).`
+          );
+        }
+
+        const mimeType = videoResp.headers.get("content-type") || "video/mp4";
+        const bytes = Buffer.from(await videoResp.arrayBuffer());
+
+        const uploaded = await uploadBufferToStorage({
+          userId: user.id,
+          tool: toolName,
+          buffer: bytes,
+          mimeType,
+          nameHint: hint,
+        });
+
+        const storagePath = uploaded.storagePath;
+
+        const meta = {
+          tool: toolName,
+          provider: "kling",
+          model: selectedModelNorm,
+          aspectRatio: hasFirst ? null : (aspectRatio || "16:9"),
+          durationSeconds: dur,
+          firstFrameAssetId: firstFrameAssetId || null,
+          lastFrameAssetId: lastFrameAssetId || null,
+          klingMode: klingModeValue,
+          klingSound: enableAudio ?? null,
+          negativePrompt: negativePrompt || null,
+          klingTaskId: String(taskId),
+          klingTaskType: taskType,
+          klingShotType: multiShotEnabled ? shotType : null,
+          klingMultiPrompt: multiPrompt || null,
+          klingElementIds: hasElements ? klingElementIds : null,
+        };
+
+        const assetId = await insertAssetRow({
+          ownerId: user.id,
+          type: "video",
+          tool: toolName,
+          name: hint,
+          prompt,
+          storagePath,
+          isPublic: false,
+          meta,
+        });
+
+        const urlExpiresInSeconds = 60 * 60;
+        const url = await signStoragePath(storagePath, urlExpiresInSeconds);
+
+        return res.json({
+          ok: true,
+          items: [{ url, assetId }],
+          url,
+          assetId,
+          urlExpiresInSeconds,
+        });
+      }
+
       let klingDuration = durationSeconds != null ? Number(durationSeconds) : 5;
       klingDuration = Math.trunc(klingDuration);
       if (![5, 10].includes(klingDuration)) {

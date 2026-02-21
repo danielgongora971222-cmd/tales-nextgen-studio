@@ -12,6 +12,7 @@ import {
   createImage2VideoTask,
   createText2VideoTask,
   pollTaskUntilDone,
+  klingPostWithRetry,
 } from "./klingVideo.js";
 import os from "os";
 import fs from "fs/promises";
@@ -347,10 +348,11 @@ app.use(
     httpError,
     ensureAI,
 
-  // kling + fal helpers (se usan dentro de routes/ai/video.js)
+    // kling + fal helpers (se usan dentro de routes/ai/video.js)
     createImage2VideoTask,
     createText2VideoTask,
     pollTaskUntilDone,
+    klingPostWithRetry,
     falQueueSubmit,
     falQueueRun,
     signJobToken,

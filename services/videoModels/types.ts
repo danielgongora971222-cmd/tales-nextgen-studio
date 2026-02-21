@@ -2,7 +2,7 @@
 export type AspectRatio = "16:9" | "9:16" | "1:1";
 export type Resolution = "720p" | "1080p" | "4k";
 export type KlingMode = "std" | "pro";
-export type KlingShotType = "customize" | "intelligent";
+export type KlingShotType = "customize" | "intelligence";
 
 export type KlingV3Shot = {
   prompt: string;

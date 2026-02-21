@@ -16,6 +16,7 @@ import { HistorySection } from "./video/HistorySection";
 import { FrameStrip } from "./video/FrameStrip";
 import { ControlsRow } from "./video/ControlsRow";
 import { ControlsPopover } from "./video/ControlsPopover";
+import type { KlingShotType } from "../../services/videoModels/types";
 
 
 import {
@@ -126,8 +127,8 @@ type VideoToolSettingsV1 = {
   selectedKlingElementIds: string[];
 
   multishotEnabled: boolean;
-  klingShotType: "customize" | "intelligent";
-  klingShots: { prompt: string; durationSeconds: number }[];
+  klingShotType: KlingShotType;
+  klingShots: { prompt: string; durationSeconds: number; elementIds?: string[] }[];
 };
 
 function settingsKey(userId: string) {
@@ -155,21 +156,30 @@ function coerceStdPro(v: any): "std" | "pro" {
   return v === "pro" ? "pro" : "std";
 }
 
-function coerceShotType(v: any): "customize" | "intelligent" {
-  return v === "intelligent" ? "intelligent" : "customize";
+function coerceShotType(v: any): KlingShotType {
+  const s = typeof v === "string" ? v.trim().toLowerCase() : "";
+  return s === "intelligence" || s === "intelligent" ? "intelligence" : "customize";
 }
 
 function coerceShots(v: any) {
   const arr = Array.isArray(v) ? v : [];
+
   const cleaned = arr
-    .map((x) => ({
-      prompt: typeof x?.prompt === "string" ? x.prompt : "",
-      durationSeconds: Math.max(3, Math.min(15, Math.trunc(Number(x?.durationSeconds) || 3))),
-    }))
-    .slice(0, 10);
+    .map((x) => {
+      const prompt = typeof x?.prompt === "string" ? x.prompt : "";
+      const durationSeconds = Math.max(1, Math.min(15, Math.trunc(Number(x?.durationSeconds) || 1)));
+
+      const elementIdsRaw = Array.isArray(x?.elementIds) ? x.elementIds : [];
+      const elementIds = elementIdsRaw
+        .map((id: any) => String(id || "").trim())
+        .filter(Boolean);
+
+      return { prompt, durationSeconds, elementIds };
+    })
+    .slice(0, 6);
 
   // mínimo 1 shot para no romper UI
-  if (cleaned.length === 0) return [{ prompt: "", durationSeconds: 3 }];
+  if (cleaned.length === 0) return [{ prompt: "", durationSeconds: 1, elementIds: [] }];
   return cleaned;
 }
 
@@ -250,10 +260,10 @@ const VideoGeneratorTool: React.FC = () => {
   const [multishotEnabled, setMultishotEnabled] = useState(false);
   const [multishotOpen, setMultishotOpen] = useState(false);
   const [klingShots, setKlingShots] = useState<KlingV3Shot[]>([
-    { prompt: "", durationSeconds: 3, elementIds: [] },
-    { prompt: "", durationSeconds: 3, elementIds: [] },
+    { prompt: "", durationSeconds: 4, elementIds: [] },
+    { prompt: "", durationSeconds: 4, elementIds: [] },
   ]);
-  const [klingShotType, setKlingShotType] = useState<"customize" | "intelligent">("customize");
+  const [klingShotType, setKlingShotType] = useState<KlingShotType>("customize");
 
   // V3 extra params
   const [negativePrompt, setNegativePrompt] = useState("");
@@ -1144,9 +1154,10 @@ const durationLabel = useMemo(() => {
         pendingSlotsCount: plan.pendingSlotsCount,
       });
 
-      if (!enq.ok) {
-        setError(enq.error);
-      }
+    if (enq.ok === false) {
+      setError(enq.error);
+      return;
+    }
     } catch (e: any) {
       setError(formatErr(e));
     }
@@ -1294,7 +1305,7 @@ const durationLabel = useMemo(() => {
                     <div className={styles.multishotTop}>
                       <div className={styles.multishotTitle}>
                         <Icon name="multishot" />
-                        Shots ({klingShots.length}/10)
+                        Shots ({klingShots.length}/6)
                       </div>
 
                       <div className={styles.multishotTopActions}>
@@ -1303,7 +1314,7 @@ const durationLabel = useMemo(() => {
                           className={styles.multishotAddBtn}
                           onClick={() =>
                             setKlingShots((prev) =>
-                              prev.length >= 10 ? prev : [...prev, { prompt: "", durationSeconds: 3, elementIds: [] }]
+                              prev.length >= 6 ? prev : [...prev, { prompt: "", durationSeconds: 1, elementIds: [] }]
                             )
                           }
                           title="Agregar un shot"
@@ -1327,9 +1338,9 @@ const durationLabel = useMemo(() => {
                       {isKlingO3 ? "customize (O3 fijo)" : hasFirst ? "customize (bloqueado por FIRST)" : klingShotType}
                     </div>
 
-                    {!isKlingO3 && !hasFirst && klingShotType === "intelligent" && (
+                    {!isKlingO3 && !hasFirst && klingShotType === "intelligence" && (
                       <div className={styles.multishotHint}>
-                        Modo intelligent: escribe prompts más generales por shot; el modelo conecta transiciones automáticamente.
+                        Modo intelligence: escribe prompts más generales por shot; el modelo conecta transiciones automáticamente.
                       </div>
                     )}
 
@@ -1371,7 +1382,7 @@ const durationLabel = useMemo(() => {
                               )
                             }
                             placeholder={
-                              klingShotType === "intelligent"
+                              klingShotType === "intelligence"
                                 ? "Describe este shot… (idea principal; el modelo conecta transiciones automáticamente)"
                                 : "Describe este shot… (acción, cámara, estilo, iluminación)"
                             }
@@ -1579,6 +1590,7 @@ const durationLabel = useMemo(() => {
         shotType={klingShotType}
         setShotType={setKlingShotType}
         totalSeconds={multishotTotalSeconds}
+        durationSeconds={durationSeconds}
       />
 
       <KlingElementsModal
@@ -1599,6 +1611,7 @@ const durationLabel = useMemo(() => {
         onAssetUploaded={(asset) =>
           setImageAssets((prev) => [asset, ...prev.filter((x) => x.id !== asset.id)])
         }
+        maxSelected={modelNorm === KLING_V3 ? 3 : 5}
         uploadToolName="video-elements"
       />
     </div>

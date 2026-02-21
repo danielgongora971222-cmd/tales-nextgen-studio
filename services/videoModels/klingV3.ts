@@ -45,7 +45,7 @@ function normalizeShot(s: KlingV3Shot, idx: number): KlingV3Shot {
 
   assertPromptLimit(basePrompt, KLING_V3_MULTISHOT_PROMPT_LIMIT, `Multishot: prompt del shot ${idx + 1}`);
 
-  const dur = Math.max(3, Math.min(15, Math.trunc(Number(s.durationSeconds) || 3)));
+  const dur = Math.max(1, Math.min(15, Math.trunc(Number(s.durationSeconds) || 1)));
   const elementIds = Array.isArray((s as any).elementIds) ? uniqueStrings((s as any).elementIds) : [];
 
   return { ...s, prompt: basePrompt, durationSeconds: dur, elementIds };
@@ -83,7 +83,7 @@ export const klingV3Handler: VideoModelHandler = {
     // ✅ Multishot: cada shot tiene sus elementIds; el request necesita unión global + refs correctas
     const isMulti = Boolean(args.multishotEnabled);
 
-    const baseShots = isMulti ? validShotsBase(args.klingShots) : [];
+    const baseShots = isMulti ? validShotsBase(args.klingShots).slice(0, 6) : [];
 
     // Unión global (orden estable por primera aparición)
     let globalElementIds: string[] = [];
@@ -153,8 +153,11 @@ export const klingV3Handler: VideoModelHandler = {
       nameHint: args.nameHint,
       count: 1,
       durationSeconds: effectiveDurationSeconds,
-      klingSound: Boolean(args.klingSound), // V3 siempre
     };
+
+    // Solo enviamos klingSound si el usuario tocó el toggle.
+    // Si no, Kling V3 usa su default (normalmente audio ON).
+    if (args.klingSoundTouched) body.klingSound = Boolean(args.klingSound);
 
     if (args.firstFrameAssetId) body.firstFrameAssetId = args.firstFrameAssetId;
     if (args.lastFrameAssetId) body.lastFrameAssetId = args.lastFrameAssetId;
@@ -168,7 +171,7 @@ export const klingV3Handler: VideoModelHandler = {
     // ✅ Multishot: prompts ya vienen con refs correctas
     if (args.multishotEnabled) {
       body.klingMultiPrompt = vShots;
-      if (!hasFirst) body.klingShotType = args.klingShotType;
+      body.klingShotType = args.klingShotType;
     }
 
     // Extras V3

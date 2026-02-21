@@ -94,7 +94,7 @@ function now() {
 }
 
 function isFalModel(modelNorm: string) {
-  return modelNorm === KLING_V3 || modelNorm === KLING_O3_PRO;
+  return modelNorm === KLING_O3_PRO;
 }
 
 function asArray(v: any) {
@@ -358,6 +358,60 @@ async function runVideoJob(
   const payload = job.payload;
   const modelNorm = String(payload?.modelNorm || "");
   const prompt = String(payload?.prompt || "");
+
+    // ===============================
+  // ✅ Kling V3 (API oficial): esperar al worker por public.jobs
+  // ===============================
+  if (modelNorm === KLING_V3) {
+    const existingJobId = payload?.supabaseJobId ? String(payload.supabaseJobId) : "";
+
+    // Reanudar si ya tenemos jobId
+    if (existingJobId) {
+      onProgress("Reanudando (Kling, background)…");
+      const row = await waitJobCompletion(existingJobId, { signal, onProgress, pollMs: 15_000 });
+
+      if (row.status === "failed") {
+        throw new Error(row.error || "Falló el job de Kling en background.");
+      }
+
+      if (row.status === "succeeded" && row.result_asset_id) {
+        invalidateMyAssetsCache("video");
+        return { ok: true, items: [{ assetId: row.result_asset_id }] };
+      }
+
+      throw new Error("Job Kling terminó pero no devolvió result_asset_id.");
+    }
+
+    // Submit async
+    onProgress("Enviando solicitud (Kling)…");
+    const body = payload?.planBody || {};
+
+    const submit = await apiPostJson<any>(
+      "/api/ai/video",
+      { ...body, async: true },
+      { signal, timeoutMs: 60_000, retries: 2 }
+    );
+
+    // fallback si responde sync
+    if (!(submit?.mode === "async" && submit?.jobId)) return submit;
+
+    const supabaseJobId = String(submit.jobId);
+    onPayloadPatch({ supabaseJobId });
+
+    onProgress("Procesando (Kling, background)…");
+    const row = await waitJobCompletion(supabaseJobId, { signal, onProgress, pollMs: 15_000 });
+
+    if (row.status === "failed") {
+      throw new Error(row.error || "Falló el job de Kling en background.");
+    }
+
+    if (row.status === "succeeded" && row.result_asset_id) {
+      invalidateMyAssetsCache("video");
+      return { ok: true, items: [{ assetId: row.result_asset_id }] };
+    }
+
+    throw new Error("Job Kling terminó pero no devolvió result_asset_id.");
+  }
 
   if (isFalModel(modelNorm)) {
     // 1) Si ya tenemos jobToken → reanudar

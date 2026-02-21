@@ -1,6 +1,7 @@
 import React from "react";
 import styles from "../VideoGeneratorTool.module.css";
 import { Icon } from "./icon";
+import type { KlingShotType } from "../../../services/videoModels/types";
 import {
   DEFAULT_VIDEO_MODEL,
   KLING_2_5_TURBO,
@@ -37,7 +38,7 @@ type Props = {
   aspectRatio: string;
   setAspectRatio: (v: any) => void;
 
-  supportedResolutions: string[];
+  supportedResolutions: readonly string[];
   resolution: string;
   setResolution: (v: any) => void;
 
@@ -54,8 +55,8 @@ type Props = {
   setKlingSound: (v: any) => void;
   setKlingSoundTouched: (v: any) => void;
 
-  klingShotType: "customize" | "intelligent";
-  setKlingShotType: (v: any) => void;
+  klingShotType: KlingShotType;
+  setKlingShotType: React.Dispatch<React.SetStateAction<KlingShotType>>;
 
   negativePrompt: string;
   setNegativePrompt: (v: any) => void;
@@ -70,7 +71,7 @@ type Props = {
   multishotTotalSeconds: number;
   setMultishotOpen: (v: any) => void;
 
-  allowedDurations: number[];
+  allowedDurations: readonly number[];
   durationSeconds: number;
   setDurationSeconds: (v: any) => void;
 };
@@ -117,6 +118,7 @@ export function ControlsPopover({
 
   const isKlingV2 = model === KLING_2_5_TURBO || model === KLING_2_6;
   const isKlingO3 = model === KLING_O3_PRO;
+  const isKlingV3Model = model === KLING_V3;
 
   return (
     <div ref={popoverRef} className={styles.popover}>
@@ -367,14 +369,14 @@ export function ControlsPopover({
 
                       <button
                         type="button"
-                        className={`${styles.segmentBtn} ${klingShotType === "intelligent" ? styles.segmentBtnActive : ""} ${
+                        className={`${styles.segmentBtn} ${klingShotType === "intelligence" ? styles.segmentBtnActive : ""} ${
                           isKlingO3 ? styles.segmentBtnDisabled : ""
                         }`}
-                        onClick={() => !isKlingO3 && setKlingShotType("intelligent")}
+                        onClick={() => !isKlingO3 && setKlingShotType("intelligence")}
                         disabled={isKlingO3}
-                        title={isKlingO3 ? "Kling O3 Pro solo soporta shot_type=customize" : "intelligent"}
+                        title={isKlingO3 ? "Kling O3 Pro solo soporta shot_type=customize" : "intelligence"}
                       >
-                        intelligent
+                        intelligence
                       </button>
 
                       {isKlingO3 && <span className={styles.segmentMeta}>O3: solo customize</span>}
@@ -393,29 +395,33 @@ export function ControlsPopover({
                   />
                 </div>
 
-                <div className={styles.formRow}>
-                  <label className={styles.formLabel}>CFG scale</label>
-                  <input
-                    className={styles.input}
-                    type="number"
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={klingCfgScale}
-                    onChange={(e) => setKlingCfgScale(Number(e.target.value))}
-                  />
-                  <div className={styles.noteSmall}>Rango típico 0.0–1.0</div>
-                </div>
+                  {isKlingO3 && (
+                    <>
+                      <div className={styles.formRow}>
+                        <label className={styles.formLabel}>CFG scale</label>
+                        <input
+                          className={styles.input}
+                          type="number"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={klingCfgScale}
+                          onChange={(e) => setKlingCfgScale(Number(e.target.value))}
+                        />
+                        <div className={styles.noteSmall}>Rango típico 0.0–1.0</div>
+                      </div>
 
-                <div className={styles.formRow}>
-                  <label className={styles.formLabel}>Voice IDs (opcional)</label>
-                  <input
-                    className={styles.input}
-                    value={klingVoiceIdsText}
-                    onChange={(e) => setKlingVoiceIdsText(e.target.value)}
-                    placeholder="Ej: voice_1, voice_2"
-                  />
-                </div>
+                      <div className={styles.formRow}>
+                        <label className={styles.formLabel}>Voice IDs (opcional)</label>
+                        <input
+                          className={styles.input}
+                          value={klingVoiceIdsText}
+                          onChange={(e) => setKlingVoiceIdsText(e.target.value)}
+                          placeholder="Ej: voice_1, voice_2"
+                        />
+                      </div>
+                    </>
+                  )}
               </>
             )}
           </>
@@ -424,12 +430,20 @@ export function ControlsPopover({
         {/* DURATION */}
         {panel === "duration" && (
           <>
-            {isKlingV3 && multishotEnabled ? (
+            {isKlingV3Model && multishotEnabled && klingShotType === "customize" && (
               <div className={styles.note}>
-                La duración la controla <b>Multishot</b>.
-                <div className={styles.noteSmall}>
-                  Total actual: {multishotTotalSeconds}s · Debe quedar entre 3s y 15s
+                <div>
+                  Multishot (<b>customize</b>) activo.
                 </div>
+                <div className={styles.noteSmall}>
+                  Total shots: {multishotTotalSeconds}s · Debe igualar la Duration seleccionada (y estar entre 3s y 15s)
+                </div>
+
+                {multishotTotalSeconds !== durationSeconds && (
+                  <div className={styles.noteSmall}>
+                    ⚠ Ajusta shots o Duration: {multishotTotalSeconds}s ≠ {durationSeconds}s
+                  </div>
+                )}
 
                 <div className={styles.formRow}>
                   <button type="button" className={styles.segmentBtn} onClick={() => setMultishotOpen(true)}>
@@ -437,26 +451,24 @@ export function ControlsPopover({
                   </button>
                 </div>
               </div>
-            ) : (
-              <>
-                <div className={styles.durationGrid}>
-                  {allowedDurations.map((d) => (
-                    <button
-                      key={d}
-                      type="button"
-                      className={`${styles.durationOption} ${durationSeconds === d ? styles.durationOptionActive : ""}`}
-                      onClick={() => setDurationSeconds(d)}
-                    >
-                      {d}s
-                    </button>
-                  ))}
-                </div>
-
-                <div className={styles.noteSmall}>
-                  Las opciones dependen del modelo (y en Veo 3.1 también de resolución/frames).
-                </div>
-              </>
             )}
+
+            <div className={styles.durationGrid}>
+              {allowedDurations.map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  className={`${styles.durationOption} ${durationSeconds === d ? styles.durationOptionActive : ""}`}
+                  onClick={() => setDurationSeconds(d)}
+                >
+                  {d}s
+                </button>
+              ))}
+            </div>
+
+            <div className={styles.noteSmall}>
+              Las opciones dependen del modelo (y en Veo 3.1 también de resolución/frames).
+            </div>
           </>
         )}
       </div>

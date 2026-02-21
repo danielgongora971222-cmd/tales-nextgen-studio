@@ -35,6 +35,7 @@ export function KlingElementsModal({
   onRefresh,
   onAssetUploaded,
   uploadToolName = "video-elements",
+  maxSelected = 5,
 }: {
   open: boolean;
   onClose: () => void;
@@ -53,6 +54,7 @@ export function KlingElementsModal({
 
   // ✅ tool/meta para distinguir uploads hechos desde este modal
   uploadToolName?: string;
+  maxSelected?: number;
 }) {
 
   const [mode, setMode] = useState<Mode>("library");
@@ -180,7 +182,7 @@ async function handleUploadForSlot(slotIdx: number, file: File) {
     setSelectedIds((prev) => {
       const has = prev.includes(id);
       if (has) return prev.filter((x) => x !== id);
-      if (prev.length >= 5) return prev; // max 5
+      if (prev.length >= maxSelected) return prev; // max
       return [...prev, id];
     });
   };

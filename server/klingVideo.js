@@ -33,7 +33,8 @@ function makeKlingJwt(accessKey, secretKey, ttlSeconds = 300) {
 }
 
 function resolveKlingBaseUrl() {
-  let baseUrl = (process.env.KLING_BASE_URL || DEFAULT_KLING_BASE_URL)
+  // Preferimos KLING_API_ORIGIN (tu consola Kling), y dejamos KLING_BASE_URL como fallback.
+  let baseUrl = (process.env.KLING_API_ORIGIN || process.env.KLING_BASE_URL || DEFAULT_KLING_BASE_URL)
     .toString()
     .trim()
     .replace(/\/+$/g, "");
@@ -153,6 +154,79 @@ export async function klingPost(path, body) {
 export async function klingGet(path) {
   const { json } = await klingFetch(path, { method: "GET" });
   return json;
+}
+
+export async function klingGet(path) {
+  const { json } = await klingFetch(path, { method: "GET" });
+  return json;
+}
+
+// ===============================
+// ✅ HARDENING (solo si lo usas)
+// Timeouts + retries
+// ===============================
+function isRetriableKlingError(err) {
+  const status = Number(err?.status || 0);
+  return (
+    err?.name === "AbortError" ||
+    status === 429 ||
+    status === 500 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504
+  );
+}
+
+async function klingFetchWithTimeout(path, options = {}, timeoutMs = 20000) {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await klingFetch(path, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+export async function klingGetWithRetry(path, opts = {}) {
+  const timeoutMs = Number(opts.timeoutMs || 20000);
+  const retries = Math.max(0, Math.min(5, Number(opts.retries || 2)));
+
+  let attempt = 0;
+  while (true) {
+    try {
+      const { json } = await klingFetchWithTimeout(path, { method: "GET" }, timeoutMs);
+      return json;
+    } catch (err) {
+      if (!isRetriableKlingError(err) || attempt >= retries) throw err;
+      const backoff = 800 * Math.pow(2, attempt);
+      await new Promise((r) => setTimeout(r, backoff));
+      attempt++;
+    }
+  }
+}
+
+export async function klingPostWithRetry(path, body, opts = {}) {
+  const timeoutMs = Number(opts.timeoutMs || 60000);
+  const retries = Math.max(0, Math.min(5, Number(opts.retries || 2)));
+
+  const payload = body ? JSON.stringify(body) : "{}";
+
+  let attempt = 0;
+  while (true) {
+    try {
+      const { json } = await klingFetchWithTimeout(
+        path,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: payload },
+        timeoutMs
+      );
+      return json;
+    } catch (err) {
+      if (!isRetriableKlingError(err) || attempt >= retries) throw err;
+      const backoff = 800 * Math.pow(2, attempt);
+      await new Promise((r) => setTimeout(r, backoff));
+      attempt++;
+    }
+  }
 }
 
 export async function createText2VideoTask({

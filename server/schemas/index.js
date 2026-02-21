@@ -94,7 +94,7 @@ export const VideoRequestSchema = z.object({
   klingVoiceIds: z.array(z.string()).max(2).optional(),
   klingShotType: z.preprocess(
     (v) => (typeof v === "string" ? v.trim().toLowerCase() : v),
-    z.enum(["customize", "intelligent"]).optional()
+    z.enum(["customize", "intelligent", "intelligence"]).optional()
   ),
   klingMultiPrompt: z
     .array(

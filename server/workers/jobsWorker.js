@@ -23,10 +23,13 @@ import { createClient } from "@supabase/supabase-js";
 import crypto from "crypto";
 import { Readable } from "node:stream";
 import { createStorageHelpers } from "../lib/storage.js";
+import { klingGetWithRetry } from "../klingVideo.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const SUPABASE_BUCKET = process.env.SUPABASE_BUCKET;
+
+// Providers (se validan por-job en processJob)
 const FAL_KEY = process.env.FAL_KEY;
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
@@ -35,8 +38,15 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
 if (!SUPABASE_BUCKET) {
   throw new Error("Falta SUPABASE_BUCKET");
 }
-if (!FAL_KEY) {
-  throw new Error("Falta FAL_KEY");
+
+function falHeaders() {
+  if (!FAL_KEY) {
+    throw new Error("FAL_NOT_CONFIGURED: falta FAL_KEY en el worker.");
+  }
+  return {
+    Authorization: `Key ${FAL_KEY}`,
+    "Content-Type": "application/json",
+  };
 }
 
 const WORKER_ID = process.env.WORKER_ID || `wrk_${crypto.randomUUID()}`;
@@ -55,12 +65,6 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function falHeaders() {
-  return {
-    Authorization: `Key ${FAL_KEY}`,
-    "Content-Type": "application/json",
-  };
-}
 
 async function falQueueStatus(statusUrl) {
   const r = await fetch(statusUrl, { method: "GET", headers: falHeaders() });
@@ -133,6 +137,32 @@ function computeNextCheckMs(providerStatus) {
   return 20_000;
 }
 
+function computeNextCheckMsKling(taskStatus) {
+  const s = String(taskStatus || "").toLowerCase();
+  if (s.includes("submitted")) return 10_000;
+  if (s.includes("processing")) return 7_000;
+  if (s.includes("running")) return 7_000;
+  return 12_000;
+}
+
+function pickKlingVideoUrlFromTaskData(taskData) {
+  const taskResult = taskData?.task_result || taskData?.data?.task_result || {};
+  const firstVideo =
+    Array.isArray(taskResult?.videos) && taskResult.videos.length ? taskResult.videos[0] : null;
+
+  return (
+    firstVideo?.url_with_audio ||
+    firstVideo?.urlWithAudio ||
+    firstVideo?.url_audio ||
+    firstVideo?.urlAudio ||
+    firstVideo?.url ||
+    taskResult?.video_url ||
+    taskResult?.videoUrl ||
+    taskResult?.video?.url ||
+    null
+  );
+}
+
 async function releaseAndReschedule(jobId, patch) {
   const update = { ...patch, locked_at: null, locked_by: null };
   const { error } = await supabaseAdmin.from("jobs").update(update).eq("id", jobId);
@@ -190,11 +220,227 @@ async function processJob(row) {
   const jobId = row.id;
   const ownerId = row.owner_id;
   const params = row.params || {};
+  const provider = String(params.provider || "");
 
-  if (params.provider !== "fal") {
+  // ===============================
+  // ✅ Provider: Kling (Tasks)
+  // ===============================
+  if (provider === "kling") {
+    const taskId = String(params.taskId || params.klingTaskId || "").trim();
+    const taskType = String(params.taskType || params.klingTaskType || "text2video").trim();
+    const modelName = params.model ? String(params.model) : null;
+    const createdAtMs = row.created_at ? Date.parse(row.created_at) : null;
+    const maxJobAgeMs = 25 * 60 * 1000; // 25 min hard cap
+
+    if (createdAtMs && Date.now() - createdAtMs > maxJobAgeMs) {
+      await releaseAndReschedule(jobId, {
+        status: "failed",
+        error: "Kling job timeout: excedió el tiempo máximo de espera (25 min).",
+        finished_at: new Date().toISOString(),
+        next_check_at: null,
+        params: { ...params, providerStatus: "TIMEOUT" },
+      });
+      return;
+    }
+
+    const safeTaskType = String(taskType || "").trim();
+    if (!(safeTaskType === "text2video" || safeTaskType === "image2video")) {
+      await releaseAndReschedule(jobId, {
+        status: "failed",
+        error: `Job Kling inválido: taskType no soportado (${safeTaskType}).`,
+        finished_at: new Date().toISOString(),
+        next_check_at: null,
+        params: { ...params, providerStatus: taskStatus || "PENDING", providerPollCount: pollCount },
+      });
+      return;
+    }
+
+    const pollCount = Math.max(0, Number(params.providerPollCount || 0)) + 1;
+    if (pollCount > 200) {
+      await releaseAndReschedule(jobId, {
+        status: "failed",
+        error: "Kling job aborted: demasiados polls (200).",
+        finished_at: new Date().toISOString(),
+        next_check_at: null,
+        params: { ...params, providerStatus: taskStatus || "PENDING", providerPollCount: pollCount },
+      });
+      return;
+    }
+
+    if (!taskId) {
+      await releaseAndReschedule(jobId, {
+        status: "failed",
+        error: "Job Kling inválido: falta taskId en params.",
+        finished_at: new Date().toISOString(),
+        next_check_at: null,
+      });
+      return;
+    }
+
+    let taskData;
+    try {
+      const modelValue = String(modelName || "").trim();
+      const requiresModelParam =
+        modelValue === "kling-v2-6" || modelValue.startsWith("kling-video-");
+
+      const endpoint = requiresModelParam
+        ? `/videos/${taskType}/${taskId}?kling_model=${encodeURIComponent(modelValue)}`
+        : `/videos/${taskType}/${taskId}`;
+
+      const json = await klingGetWithRetry(endpoint, { timeoutMs: 20_000, retries: 3 });
+      taskData = json?.data || json;
+    } catch (e) {
+      const next = new Date(Date.now() + 20_000).toISOString();
+      await releaseAndReschedule(jobId, {
+        status: "running",
+        next_check_at: next,
+        params: {...params,
+          providerStatus: "STATUS_ERROR",
+          providerStatusDetail: String(e?.message || e),
+        },
+      });
+      return;
+    }
+
+    const taskStatus = String(taskData?.task_status || "").toLowerCase();
+
+    if (taskStatus === "failed") {
+      const errMsg = taskData?.task_status_msg || "Kling task failed.";
+      await releaseAndReschedule(jobId, {
+        status: "failed",
+        error: String(errMsg),
+        finished_at: new Date().toISOString(),
+        next_check_at: null,
+        params: { ...params, providerStatus: taskStatus || "PENDING", providerPollCount: pollCount },
+      });
+      return;
+    }
+
+    if (!(taskStatus === "succeed" || taskStatus === "success")) {
+      const nextMs = computeNextCheckMsKling(taskStatus);
+      const next = new Date(Date.now() + nextMs).toISOString();
+      await releaseAndReschedule(jobId, {
+        status: "running",
+        next_check_at: next,
+        params: { ...params, providerStatus: taskStatus || "PENDING", providerPollCount: pollCount },
+      });
+      return;
+    }
+
+    const videoUrl = pickKlingVideoUrlFromTaskData(taskData);
+    if (!videoUrl) {
+      await releaseAndReschedule(jobId, {
+        status: "failed",
+        error: "Kling succeed pero no encontré URL de video en task_result.videos[0].",
+        finished_at: new Date().toISOString(),
+        next_check_at: null,
+        params: { ...params, providerStatus: taskStatus || "PENDING", providerPollCount: pollCount },
+      });
+      return;
+    }
+
+    const { stream, contentType, sizeBytes } = await downloadToStream(videoUrl);
+
+    const maxBytes = Number(process.env.KLING_V3_MAX_VIDEO_BYTES || 250 * 1024 * 1024);
+    if (sizeBytes != null && sizeBytes > maxBytes) {
+      await releaseAndReschedule(jobId, {
+        status: "failed",
+        error: `Kling video demasiado grande (${sizeBytes} bytes).`,
+        finished_at: new Date().toISOString(),
+        next_check_at: null,
+        params: { ...params, providerStatus: "VIDEO_TOO_LARGE", providerPollCount: pollCount },
+      });
+      return;
+    }
+
+    const ct = String(contentType || "").toLowerCase();
+    if (!(ct.startsWith("video/") || ct === "application/octet-stream")) {
+      await releaseAndReschedule(jobId, {
+        status: "failed",
+        error: `Kling devolvió content-type inesperado (${contentType}).`,
+        finished_at: new Date().toISOString(),
+        next_check_at: null,
+        params: { ...params, providerStatus: "BAD_CONTENT_TYPE", providerPollCount: pollCount },
+      });
+      return;
+    }
+
+    const toolName = params.toolName || "video";
+    const nameHint = params.hint || "video";
+    const prompt = params.prompt || null;
+
+    let storagePath;
+
+    if (typeof uploadStreamToStorage === "function") {
+      const up = await uploadStreamToStorage({
+        userId: ownerId,
+        tool: toolName,
+        stream,
+        mimeType: contentType,
+        nameHint,
+        sizeBytes,
+      });
+      storagePath = up.storagePath;
+    } else {
+      const ab = await (await fetch(videoUrl, { method: "GET" })).arrayBuffer();
+      const buf = Buffer.from(ab);
+      const up = await uploadBufferToStorage({
+        userId: ownerId,
+        tool: toolName,
+        buffer: buf,
+        mimeType: contentType,
+        nameHint,
+      });
+      storagePath = up.storagePath;
+    }
+
+    const meta = {
+      ...(params.meta || {}),
+      provider: "kling",
+      model: params.model || null,
+      klingTaskId: taskId,
+      klingTaskType: taskType,
+      providerStatus: "SUCCEED",
+      providerVideoUrl: videoUrl,
+    };
+
+    const assetId = await insertAssetRow({
+      ownerId,
+      type: "video",
+      tool: toolName,
+      name: nameHint,
+      prompt,
+      storagePath,
+      isPublic: false,
+      meta,
+    });
+
+    let signedUrl = null;
+    try {
+      signedUrl = await signStoragePath(storagePath, 60 * 30);
+    } catch {
+      signedUrl = null;
+    }
+
+    await releaseAndReschedule(jobId, {
+      status: "succeeded",
+      result_asset_id: assetId,
+      finished_at: new Date().toISOString(),
+      error: null,
+      next_check_at: null,
+      params: { ...params, providerStatus: taskStatus || "PENDING", providerPollCount: pollCount },
+    });
+
+    return;
+  }
+
+  // ===============================
+  // Provider: Fal (igual que antes)
+  // ===============================
+  if (provider !== "fal") {
     await releaseAndReschedule(jobId, {
       status: "failed",
-      error: `Provider no soportado: ${String(params.provider || "(null)")}`,
+      error: `Provider no soportado: ${String(provider || "(null)")}`,
       finished_at: new Date().toISOString(),
       next_check_at: null,
     });
