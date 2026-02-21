@@ -153,11 +153,12 @@ export const klingV3Handler: VideoModelHandler = {
       nameHint: args.nameHint,
       count: 1,
       durationSeconds: effectiveDurationSeconds,
+      klingMode: args.klingMode,
     };
 
-    // Solo enviamos klingSound si el usuario tocó el toggle.
-    // Si no, Kling V3 usa su default (normalmente audio ON).
-    if (args.klingSoundTouched) body.klingSound = Boolean(args.klingSound);
+    // Kling V3: mandamos SIEMPRE el flag para que la UI y el backend coincidan.
+    // OFF por defecto (menos carga/cola); el usuario puede poner ON si quiere audio.
+    body.klingSound = Boolean(args.klingSound);
 
     if (args.firstFrameAssetId) body.firstFrameAssetId = args.firstFrameAssetId;
     if (args.lastFrameAssetId) body.lastFrameAssetId = args.lastFrameAssetId;

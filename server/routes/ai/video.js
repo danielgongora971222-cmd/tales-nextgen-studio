@@ -820,6 +820,10 @@ export function createAiVideoRouter(ctx) {
 
         const klingModeValue = klingMode || "std";
 
+        // Normalizamos el nombre de modelo para Kling API (hardening).
+        // Muchas integraciones listan V3 como "kling-v3-0".
+        const klingApiModelName = selectedModelNorm === "kling-v3" ? "kling-v3-0" : selectedModelNorm;
+
         // ⚠️ Importante: NO enviamos cfg_scale ni voice_ids para V3 (no decorativo) :contentReference[oaicite:8]{index=8}
         const klingExtras = {
           mode: klingModeValue,
@@ -852,7 +856,7 @@ export function createAiVideoRouter(ctx) {
             taskResponse = await klingPostWithRetry(
               "/videos/image2video",
             {
-              model_name: selectedModelNorm,
+              model_name: klingApiModelName,
               prompt,
               duration: dur,
               image,
@@ -865,14 +869,14 @@ export function createAiVideoRouter(ctx) {
             taskResponse = await klingPostWithRetry(
               "/videos/text2video",
             {
-              model_name: selectedModelNorm,
+              model_name: klingApiModelName,
               prompt,
               duration: dur,
               aspect_ratio: aspectRatio || "16:9",
               ...klingExtras,
             },
             { timeoutMs: 60_000, retries: 3 }
-          );
+            );
         }
       } catch (e) {
           const status = Number(e?.status || 0);

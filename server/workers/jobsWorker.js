@@ -243,6 +243,8 @@ async function processJob(row) {
       return;
     }
 
+    const pollCount = Math.max(0, Number(params.providerPollCount || 0)) + 1;
+
     const safeTaskType = String(taskType || "").trim();
     if (!(safeTaskType === "text2video" || safeTaskType === "image2video")) {
       await releaseAndReschedule(jobId, {
@@ -250,19 +252,18 @@ async function processJob(row) {
         error: `Job Kling inválido: taskType no soportado (${safeTaskType}).`,
         finished_at: new Date().toISOString(),
         next_check_at: null,
-        params: { ...params, providerStatus: taskStatus || "PENDING", providerPollCount: pollCount },
+        params: { ...params, providerStatus: "INVALID_TASK_TYPE", providerPollCount: pollCount },
       });
       return;
     }
 
-    const pollCount = Math.max(0, Number(params.providerPollCount || 0)) + 1;
     if (pollCount > 200) {
       await releaseAndReschedule(jobId, {
         status: "failed",
         error: "Kling job aborted: demasiados polls (200).",
         finished_at: new Date().toISOString(),
         next_check_at: null,
-        params: { ...params, providerStatus: taskStatus || "PENDING", providerPollCount: pollCount },
+        params: { ...params, providerStatus: "TOO_MANY_POLLS", providerPollCount: pollCount },
       });
       return;
     }
@@ -283,9 +284,9 @@ async function processJob(row) {
       const requiresModelParam =
         modelValue === "kling-v2-6" || modelValue.startsWith("kling-video-");
 
-      const endpoint = requiresModelParam
-        ? `/videos/${taskType}/${taskId}?kling_model=${encodeURIComponent(modelValue)}`
-        : `/videos/${taskType}/${taskId}`;
+    const endpoint = requiresModelParam
+      ? `/videos/${safeTaskType}/${taskId}?kling_model=${encodeURIComponent(modelValue)}`
+      : `/videos/${safeTaskType}/${taskId}`;
 
       const json = await klingGetWithRetry(endpoint, { timeoutMs: 20_000, retries: 3 });
       taskData = json?.data || json;
@@ -311,7 +312,12 @@ async function processJob(row) {
         error: String(errMsg),
         finished_at: new Date().toISOString(),
         next_check_at: null,
-        params: { ...params, providerStatus: taskStatus || "PENDING", providerPollCount: pollCount },
+        params: {
+        ...params,
+        providerStatus: taskStatus || "PENDING",
+        providerPollCount: pollCount,
+        providerStatusMsg: taskData?.task_status_msg || null,
+      },
       });
       return;
     }
@@ -322,7 +328,12 @@ async function processJob(row) {
       await releaseAndReschedule(jobId, {
         status: "running",
         next_check_at: next,
-        params: { ...params, providerStatus: taskStatus || "PENDING", providerPollCount: pollCount },
+        params: {
+          ...params,
+          providerStatus: taskStatus || "PENDING",
+          providerPollCount: pollCount,
+          providerStatusMsg: taskData?.task_status_msg || null,
+        },
       });
       return;
     }
@@ -334,7 +345,12 @@ async function processJob(row) {
         error: "Kling succeed pero no encontré URL de video en task_result.videos[0].",
         finished_at: new Date().toISOString(),
         next_check_at: null,
-        params: { ...params, providerStatus: taskStatus || "PENDING", providerPollCount: pollCount },
+        params: {
+          ...params,
+          providerStatus: taskStatus || "PENDING",
+          providerPollCount: pollCount,
+          providerStatusMsg: taskData?.task_status_msg || null,
+        },
       });
       return;
     }
@@ -428,7 +444,12 @@ async function processJob(row) {
       finished_at: new Date().toISOString(),
       error: null,
       next_check_at: null,
-      params: { ...params, providerStatus: taskStatus || "PENDING", providerPollCount: pollCount },
+      params: {
+        ...params,
+        providerStatus: taskStatus || "PENDING",
+        providerPollCount: pollCount,
+        providerStatusMsg: taskData?.task_status_msg || null,
+      },
     });
 
     return;

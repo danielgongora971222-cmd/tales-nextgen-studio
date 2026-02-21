@@ -292,7 +292,7 @@ export function ControlsPopover({
               </div>
             </div>
 
-            {isKlingV2 && (
+            {(isKlingV2 || isKlingV3Model) && (
               <div className={styles.formRow}>
                 <label className={styles.formLabel}>Kling mode</label>
                 <div className={styles.segment}>
@@ -311,7 +311,11 @@ export function ControlsPopover({
                     PRO
                   </button>
                   <span className={styles.segmentMeta}>
-                    {model === KLING_2_6 ? "2.6: audio solo PRO" : "STD/PRO"}
+                    {model === KLING_2_6
+                      ? "2.6: audio solo PRO"
+                      : model === KLING_V3
+                        ? "V3: STD/PRO (según tu plan/cola)"
+                        : "STD/PRO"}
                   </span>
                 </div>
               </div>
