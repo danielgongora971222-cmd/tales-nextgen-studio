@@ -253,22 +253,26 @@ export function ControlsPopover({
             <div className={styles.formRow}>
               <label className={styles.formLabel}>Resolution</label>
 
-              {capability.supportsResolution ? (
-                <div className={styles.segment}>
-                  {supportedResolutions.map((r) => (
-                    <button
-                      key={r}
-                      type="button"
-                      className={`${styles.segmentBtn} ${resolution === r ? styles.segmentBtnActive : ""}`}
-                      onClick={() => setResolution(r)}
-                    >
-                      {r}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <div className={styles.noteSmall}>Auto / Fixed (según el modelo)</div>
-              )}
+                {capability.supportsResolution ? (
+                  isKling ? (
+                    <div className={styles.noteSmall}>Kling: usa “Kling resolution” (STD=720p / PRO=1080p).</div>
+                  ) : (
+                    <div className={styles.segment}>
+                      {supportedResolutions.map((r) => (
+                        <button
+                          key={r}
+                          type="button"
+                          className={`${styles.segmentBtn} ${resolution === r ? styles.segmentBtnActive : ""}`}
+                          onClick={() => setResolution(r)}
+                        >
+                          {r}
+                        </button>
+                      ))}
+                    </div>
+                  )
+                ) : (
+                  <div className={styles.noteSmall}>Auto / Fixed (según el modelo)</div>
+                )}
             </div>
 
             <div className={styles.formRow}>

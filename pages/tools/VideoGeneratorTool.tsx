@@ -674,13 +674,7 @@ useEffect(() => {
   }
 }, [capability.supportsResolution, supportedResolutions, resolution]);
 
-// ✅ Kling (API oficial): Resolution 720/1080 ⇄ mode std/pro (se mantienen en sync)
-useEffect(() => {
-  if (!isKlingApi) return;
-  const nextMode = resolution === "1080p" ? "pro" : "std";
-  if (klingMode !== nextMode) setKlingMode(nextMode);
-}, [isKlingApi, resolution, klingMode]);
-
+// ✅ Kling (API oficial): Kling mode (std/pro) define la resolución (720p/1080p).
 useEffect(() => {
   if (!isKlingApi) return;
   const nextRes = klingMode === "pro" ? "1080p" : "720p";
@@ -1360,16 +1354,123 @@ const durationLabel = useMemo(() => {
                   </div>
                 )}
 
-                  {isMultishotCustomize ? (
-                    <div className={styles.multishotInline}>
-                      ...
-                      {!multishotIsReady && (
-                        <div className={styles.multishotWarn}>
-                          Para generar: mínimo 2 shots, suma total entre 3s y 15s, cada shot ≤ 512 caracteres, y la suma debe igualar Duration.
+                    {isMultishotCustomize ? (
+                      <div className={styles.multishotInline}>
+                        <div className={styles.multishotTop}>
+                          <div>
+                            <div className={styles.multishotTitle}>
+                              <Icon name="multishot" />
+                              <span>Multishot • customize</span>
+                            </div>
+
+                            <div className={styles.multishotMeta}>
+                              Total: <b>{multishotTotalSeconds || 0}s</b> · Duration: <b>{durationSeconds}s</b> · Max shots: 6
+                            </div>
+
+                            <div className={styles.multishotHint}>
+                              Escribe el prompt de cada shot. Usa <b>@</b> para insertar Elements (o abre “Elements” por shot).
+                            </div>
+                          </div>
+
+                          <div className={styles.multishotTopActions}>
+                            <button
+                              type="button"
+                              className={styles.multishotAddBtn}
+                              onClick={() =>
+                                setKlingShots((prev) =>
+                                  prev.length >= 6 ? prev : [...prev, { prompt: "", durationSeconds: 1, elementIds: [] }]
+                                )
+                              }
+                            >
+                              + Shot
+                            </button>
+
+                            <button
+                              type="button"
+                              className={styles.multishotExpandBtn}
+                              onClick={() => setMultishotOpen(true)}
+                              title="Abrir editor completo"
+                            >
+                              ⤢
+                            </button>
+                          </div>
                         </div>
-                      )}
-                    </div>
-                  ) : (
+
+                        <div className={styles.multishotShots}>
+                          {klingShots.map((s, i) => (
+                            <div key={i} className={styles.multishotShotRow}>
+                              <div className={styles.multishotShotHeader}>
+                                <div className={styles.multishotShotName}>Shot {i + 1}</div>
+
+                                <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                                  <button
+                                    type="button"
+                                    className={styles.multishotElementsBtn}
+                                    onClick={() => openElementsForShot(i)}
+                                    title="Seleccionar Elements para este shot"
+                                  >
+                                    <Icon name="elements" />{" "}
+                                    {(Array.isArray(s.elementIds) && s.elementIds.length) ? `Elements (${s.elementIds.length})` : "Elements"}
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    className={styles.multishotRemoveBtn}
+                                    onClick={() => setKlingShots((prev) => prev.filter((_, idx) => idx !== i))}
+                                    disabled={klingShots.length <= 2}
+                                    title={klingShots.length <= 2 ? "Mínimo 2 shots" : "Eliminar shot"}
+                                  >
+                                    <Icon name="close" />
+                                  </button>
+                                </div>
+                              </div>
+
+                              <MentionTextarea
+                                value={s.prompt || ""}
+                                onChange={(next) => {
+                                  const clipped = next.length > KLING_V3_SHOT_PROMPT_LIMIT ? next.slice(0, KLING_V3_SHOT_PROMPT_LIMIT) : next;
+                                  setKlingShots((prev) => prev.map((x, idx) => (idx === i ? { ...x, prompt: clipped } : x)));
+                                }}
+                                placeholder="Prompt del shot…"
+                                rows={2}
+                                textareaClassName={styles.multishotTextarea}
+                                items={isKlingV3 ? elementMentionItems : []}
+                              />
+
+                              <div className={styles.multishotCharRow}>
+                                <span>{(s.prompt || "").length}/{KLING_V3_SHOT_PROMPT_LIMIT}</span>
+                              </div>
+
+                              <div className={styles.multishotDurationRow}>
+                                <div className={styles.multishotDurationLabel}>
+                                  <Icon name="clock" /> Duration
+                                </div>
+
+                                <input
+                                  className={styles.multishotDurationInput}
+                                  type="number"
+                                  min={1}
+                                  max={15}
+                                  value={s.durationSeconds}
+                                  onChange={(e) => {
+                                    const v = clampInt(e.target.value, 1, 15, 1);
+                                    setKlingShots((prev) => prev.map((x, idx) => (idx === i ? { ...x, durationSeconds: v } : x)));
+                                  }}
+                                />
+
+                                <span className={styles.multishotDurationUnit}>s</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        {!multishotIsReady && (
+                          <div className={styles.multishotWarn}>
+                            Para generar: mínimo 2 shots con prompt, suma total entre 3s y 15s, cada shot 1–15s (≤ 512 caracteres), y la suma debe igualar Duration.
+                          </div>
+                        )}
+                      </div>
+                    ) : (
                     <>
                       <MentionTextarea
                         value={prompt}
