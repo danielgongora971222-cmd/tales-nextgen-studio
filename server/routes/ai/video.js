@@ -202,7 +202,7 @@ export function createAiVideoRouter(ctx) {
     ]);
 
     if (activeUser >= maxPerUser || activeGlobal >= maxGlobal) {
-      respondKlingV3Busy(res, {
+      respondKlingBusy(res, {
         retryAfterSeconds,
         message:
           "Kling está al límite de tareas en paralelo. Espera a que terminen las generaciones en curso y reintentamos automáticamente.",
@@ -213,7 +213,6 @@ export function createAiVideoRouter(ctx) {
 
     return false;
   }
-  
 
     // Helper: registra el job async (Kling Tasks) en la tabla public.jobs
   async function upsertKlingJobRow({
@@ -324,18 +323,6 @@ export function createAiVideoRouter(ctx) {
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
 
-
-    if (!rl.ok) {
-      return res.status(429).json({
-        ok: false,
-        error: {
-          code: "RATE_LIMITED",
-          message: "Demasiadas solicitudes de video por usuario. Espera un momento.",
-          details: { scope: "ai_video_generate_user", retryAfterSeconds: rl.retryAfterSeconds },
-        },
-      });
-    }
-
     const toolName = tool || "video-generator";
     const hint = nameHint || "generated-video";
 
@@ -369,8 +356,20 @@ export function createAiVideoRouter(ctx) {
       userId: user.id,
       scope: "ai_video_generate",
       windowMs: 60 * 1000,
-      max: 4,
+      max: isKling ? 10 : 4,
     });
+
+    if (!rl.ok) {
+      const ra = Math.max(1, Number(rl.retryAfterSeconds || 30));
+      return res.status(429).set("Retry-After", String(ra)).json({
+        ok: false,
+        error: {
+          code: "RATE_LIMITED",
+          message: "Demasiadas solicitudes de video por usuario. Espera un momento.",
+          details: { scope: "ai_video_generate", retryAfterSeconds: ra },
+        },
+      });
+    }
 
     if (isKling) {
       // ✅ KLING V3 PRO via FAL (fal-ai/kling-video/v3/pro/*)
@@ -849,7 +848,7 @@ export function createAiVideoRouter(ctx) {
         const klingApiModelName = selectedModelNorm === "kling-v3" ? "kling-v3-0" : selectedModelNorm;
 
         // ✅ Evita error 1303 (parallel task limit) antes de llamar a Kling
-        const blocked = await enforceKlingV3ParallelLimit(res, user.id);
+        const blocked = await enforceKlingParallelLimit(res, user.id);
         if (blocked) return;
 
         let taskResponse = null;
@@ -912,7 +911,7 @@ export function createAiVideoRouter(ctx) {
 
           } else {
             const basePayload = {
-              model_name: selectedModelNorm,
+              model_name: klingApiModelName,
               duration: String(dur),
               aspect_ratio: aspectRatio || "16:9",
               ...klingExtras,
