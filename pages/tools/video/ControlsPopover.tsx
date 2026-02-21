@@ -294,33 +294,32 @@ export function ControlsPopover({
 
             {(isKlingV2 || isKlingV3Model) && (
               <div className={styles.formRow}>
-                <label className={styles.formLabel}>Kling mode</label>
+                <label className={styles.formLabel}>Kling resolution</label>
                 <div className={styles.segment}>
                   <button
                     type="button"
                     className={`${styles.segmentBtn} ${klingMode === "std" ? styles.segmentBtnActive : ""}`}
                     onClick={() => setKlingMode("std")}
                   >
-                    STD
+                    720p
                   </button>
                   <button
                     type="button"
                     className={`${styles.segmentBtn} ${klingMode === "pro" ? styles.segmentBtnActive : ""}`}
                     onClick={() => setKlingMode("pro")}
                   >
-                    PRO
+                    1080p
                   </button>
                   <span className={styles.segmentMeta}>
                     {model === KLING_2_6
-                      ? "2.6: audio solo PRO"
+                      ? "2.6: 1080p requerido para audio"
                       : model === KLING_V3
-                        ? "V3: STD/PRO (según tu plan/cola)"
-                        : "STD/PRO"}
+                        ? "V3: 720p/1080p (mode std/pro)"
+                        : "720p/1080p"}
                   </span>
                 </div>
               </div>
             )}
-
             {capability.supportsSound && (
               <div className={styles.formRow}>
                 <label className={styles.formLabel}>Sound</label>
@@ -357,10 +356,6 @@ export function ControlsPopover({
 
                   {!multishotEnabled ? (
                     <div className={styles.noteSmall}>Activa <b>Multishot</b> para habilitar shot_type.</div>
-                  ) : hasFirst ? (
-                    <div className={styles.noteSmall}>
-                      Bloqueado por <b>FIRST</b> frame (Fal solo aplica shot_type en Text-to-Video Multishot).
-                    </div>
                   ) : (
                     <div className={styles.segment}>
                       <button

@@ -539,6 +539,9 @@ const VideoGeneratorTool: React.FC = () => {
   // ✅ Kling O3 se comporta como “V3 family” en UI (Elements + Multishot)
   const isKlingO3 = modelNorm === KLING_O3_PRO;
   const isKlingV3 = modelNorm === KLING_V3 || isKlingO3;
+
+  // ✅ Solo Kling API oficial (mode std/pro => 720/1080). Excluye O3 (Fal).
+const isKlingApi = isKling && !isKlingO3;
     // ===============================
   // Mentions (@) para Elements (Kling V3 / O3)
   // - El usuario escribe tags tipo @mi_elemento (slug del nombre).
@@ -570,7 +573,8 @@ const VideoGeneratorTool: React.FC = () => {
 
   useEffect(() => {
     if (!isKlingV3) return;
-    if (multishotEnabled) return;
+    // ✅ Solo bloqueamos el sync cuando es storyboard (customize).
+    if (multishotEnabled && klingShotType === "customize") return;
 
     const tokens = extractMentionTokens(prompt).map((t) => t.toLowerCase());
     const current = new Set<string>();
@@ -617,7 +621,7 @@ const VideoGeneratorTool: React.FC = () => {
     if (current.size > 5) {
       setError("No puedes usar más de 5 Elements a la vez. Elimina alguno del prompt.");
     }
-  }, [prompt, elementTokenToId, isKlingV3, multishotEnabled]);
+  }, [prompt, elementTokenToId, isKlingV3, multishotEnabled, klingShotType]);
 
 
   const isVeoFamily = modelNorm.startsWith("veo-");
@@ -660,6 +664,28 @@ const VideoGeneratorTool: React.FC = () => {
     const next = coerceResolutionForModel(modelNorm, capability, resolution);
     if (next !== resolution) setResolution(next);
   }, [modelNorm, capability, resolution]);
+
+  // ✅ Hardening: si el modelo cambió y tu resolution actual no existe en supportedResolutions, la corregimos.
+useEffect(() => {
+  if (!capability.supportsResolution) return;
+  if (!supportedResolutions.includes(resolution as any)) {
+    const first = (supportedResolutions[0] as any) || "720p";
+    setResolution(first);
+  }
+}, [capability.supportsResolution, supportedResolutions, resolution]);
+
+// ✅ Kling (API oficial): Resolution 720/1080 ⇄ mode std/pro (se mantienen en sync)
+useEffect(() => {
+  if (!isKlingApi) return;
+  const nextMode = resolution === "1080p" ? "pro" : "std";
+  if (klingMode !== nextMode) setKlingMode(nextMode);
+}, [isKlingApi, resolution, klingMode]);
+
+useEffect(() => {
+  if (!isKlingApi) return;
+  const nextRes = klingMode === "pro" ? "1080p" : "720p";
+  if (resolution !== nextRes) setResolution(nextRes);
+}, [isKlingApi, klingMode, resolution]);
 
   useEffect(() => {
     const next = coerceAspectRatioForModel(modelNorm, capability, hasFirst, resolution, aspectRatio);
@@ -874,39 +900,71 @@ const VideoGeneratorTool: React.FC = () => {
 
   
 
-  const multishotValidShots = useMemo(() => {
-  if (!isKlingV3 || !multishotEnabled) return [];
+const isMultishotCustomize = isKlingV3 && multishotEnabled && klingShotType === "customize";
+const isMultishotIntelligence = isKlingV3 && multishotEnabled && klingShotType === "intelligence";
+
+const multishotValidShots = useMemo(() => {
+  if (!isMultishotCustomize) return [];
   return klingShots
     .map((s) => ({
       prompt: (s.prompt || "").trim(),
       durationSeconds: clampInt(s.durationSeconds, 3, 15, 3),
     }))
     .filter((s) => s.prompt.length > 0);
-}, [isKlingV3, multishotEnabled, klingShots]);
+}, [isMultishotCustomize, klingShots]);
 
 const multishotTotalSeconds = useMemo(() => {
-  if (!isKlingV3 || !multishotEnabled) return 0;
+  if (!isMultishotCustomize) return 0;
   return multishotValidShots.reduce((acc, s) => acc + s.durationSeconds, 0);
-}, [isKlingV3, multishotEnabled, multishotValidShots]);
+}, [isMultishotCustomize, multishotValidShots]);
 
 const multishotHasOverLimitPrompt = useMemo(() => {
-  if (!isKlingV3 || !multishotEnabled) return false;
+  if (!isMultishotCustomize) return false;
   return klingShots.some((s) => (s.prompt || "").length > KLING_V3_SHOT_PROMPT_LIMIT);
-}, [isKlingV3, multishotEnabled, klingShots]);
+}, [isMultishotCustomize, klingShots]);
 
 const multishotIsReady = useMemo(() => {
   if (!isKlingV3 || !multishotEnabled) return true;
+
+  // ✅ Intelligence: prompt único (NO storyboard)
+  if (isMultishotIntelligence) {
+    return prompt.trim().length > 0;
+  }
+
+  // ✅ Customize: storyboard + hardening (sum durations == Duration)
   if (multishotValidShots.length < 2) return false;
   if (multishotHasOverLimitPrompt) return false;
-  return multishotTotalSeconds >= 3 && multishotTotalSeconds <= 15;
-}, [isKlingV3, multishotEnabled, multishotValidShots.length, multishotTotalSeconds, multishotHasOverLimitPrompt]);
+  if (multishotTotalSeconds < 3 || multishotTotalSeconds > 15) return false;
+  return multishotTotalSeconds === durationSeconds;
+}, [
+  isKlingV3,
+  multishotEnabled,
+  isMultishotIntelligence,
+  prompt,
+  multishotValidShots.length,
+  multishotHasOverLimitPrompt,
+  multishotTotalSeconds,
+  durationSeconds,
+]);
+
+const multishotBadgeLabel = useMemo(() => {
+  if (!isKlingV3 || !multishotEnabled) return "";
+  if (isMultishotIntelligence) return "Multishot: intelligence";
+  return `Multishot: ${multishotTotalSeconds || 0}s`;
+}, [isKlingV3, multishotEnabled, isMultishotIntelligence, multishotTotalSeconds]);
+
+const multishotMetaLabel = useMemo(() => {
+  if (!multishotEnabled) return "Off";
+  if (isMultishotIntelligence) return "Intelligence";
+  return `${multishotTotalSeconds || 0}s`;
+}, [multishotEnabled, isMultishotIntelligence, multishotTotalSeconds]);
 
 const durationLabel = useMemo(() => {
-  if (isKlingV3 && multishotEnabled) {
+  if (isMultishotCustomize) {
     return `${multishotTotalSeconds || 0}s (multishot)`;
   }
   return `${durationSeconds}s`;
-}, [durationSeconds, isKlingV3, multishotEnabled, multishotTotalSeconds]);
+}, [durationSeconds, isMultishotCustomize, multishotTotalSeconds]);
 
 
   const openPicker = (slot: FrameSlotKey) => {
@@ -1044,7 +1102,7 @@ const durationLabel = useMemo(() => {
       if (isKlingV3) {
         const tokenRe = /@[a-z0-9_]+/gi;
 
-        if (!multishotEnabled) {
+        if (!multishotEnabled || klingShotType === "intelligence") {
           const mentionedIds: string[] = [];
           for (const tok of extractMentionTokens(prompt)) {
             const id = elementTokenToId.get(tok.toLowerCase());
@@ -1200,14 +1258,16 @@ const durationLabel = useMemo(() => {
     };
   }, [viewer, imageAssets])
 
-  const effectiveElementsShotIndex = multishotEnabled ? (elementsShotIndex ?? 0) : null;
+  const effectiveElementsShotIndex =
+    multishotEnabled && klingShotType === "customize" ? (elementsShotIndex ?? 0) : null;
 
-  const modalSelectedIds = multishotEnabled
-    ? (klingShots[effectiveElementsShotIndex ?? 0]?.elementIds ?? [])
-    : selectedKlingElementIds;
+  const modalSelectedIds =
+    multishotEnabled && klingShotType === "customize"
+      ? (klingShots[effectiveElementsShotIndex ?? 0]?.elementIds ?? [])
+      : selectedKlingElementIds;
 
   const setModalSelectedIds: React.Dispatch<React.SetStateAction<string[]>> = (next) => {
-    if (multishotEnabled) {
+    if (multishotEnabled && klingShotType === "customize") {
       const idx = effectiveElementsShotIndex ?? 0;
       setKlingShots((prev) =>
         prev.map((s, i) => {
@@ -1223,7 +1283,7 @@ const durationLabel = useMemo(() => {
   };
 
   const clearModalSelectedIds = () => {
-    if (multishotEnabled) {
+    if (multishotEnabled && klingShotType === "customize") {
       const idx = effectiveElementsShotIndex ?? 0;
       setKlingShots((prev) => prev.map((s, i) => (i === idx ? { ...s, elementIds: [] } : s)));
     } else {
@@ -1293,171 +1353,58 @@ const durationLabel = useMemo(() => {
                         onClick={() => setMultishotEnabled(false)}
                         title="Click para apagar Multishot"
                       >
-                        Multishot: {multishotTotalSeconds}s
+                        {multishotBadgeLabel}
                         <span className={styles.promptTagRemove}>×</span>
                       </button>
                     )}
                   </div>
                 )}
 
-                {isKlingV3 && multishotEnabled ? (
-                  <div className={styles.multishotInline}>
-                    <div className={styles.multishotTop}>
-                      <div className={styles.multishotTitle}>
-                        <Icon name="multishot" />
-                        Shots ({klingShots.length}/6)
-                      </div>
-
-                      <div className={styles.multishotTopActions}>
-                        <button
-                          type="button"
-                          className={styles.multishotAddBtn}
-                          onClick={() =>
-                            setKlingShots((prev) =>
-                              prev.length >= 6 ? prev : [...prev, { prompt: "", durationSeconds: 1, elementIds: [] }]
-                            )
-                          }
-                          title="Agregar un shot"
-                        >
-                          + Shot
-                        </button>
-
-                        <button
-                          type="button"
-                          className={styles.multishotExpandBtn}
-                          onClick={() => setMultishotOpen(true)}
-                          title="Abrir editor en pantalla completa"
-                        >
-                          <Icon name="sliders" />
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className={styles.multishotMeta}>
-                      Total: {multishotTotalSeconds}s · mínimo 2 shots · suma entre 3s y 15s · Shot type:{" "}
-                      {isKlingO3 ? "customize (O3 fijo)" : hasFirst ? "customize (bloqueado por FIRST)" : klingShotType}
-                    </div>
-
-                    {!isKlingO3 && !hasFirst && klingShotType === "intelligence" && (
-                      <div className={styles.multishotHint}>
-                        Modo intelligence: escribe prompts más generales por shot; el modelo conecta transiciones automáticamente.
-                      </div>
-                    )}
-
-                    <div className={styles.multishotShots}>
-                      {klingShots.map((s, i) => (
-                        <div key={i} className={styles.multishotShotRow}>
-                          <div className={styles.multishotShotHeader}>
-                            <div className={styles.multishotShotName}>Shot {i + 1}</div>
-
-                            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                              <button
-                                type="button"
-                                className={styles.multishotElementsBtn}
-                                onClick={() => openElementsForShot(i)}
-                                title="Seleccionar Elements para este shot"
-                              >
-                                Elements {Array.isArray(s.elementIds) && s.elementIds.length ? `(${s.elementIds.length})` : ""}
-                              </button>
-
-                              <button
-                                type="button"
-                                className={styles.multishotRemoveBtn}
-                                onClick={() => setKlingShots((prev) => prev.filter((_, idx) => idx !== i))}
-                                disabled={klingShots.length <= 1}
-                                title={klingShots.length <= 1 ? "Debe existir al menos 1 shot" : "Eliminar shot"}
-                              >
-                                <Icon name="trash" />
-                              </button>
-                            </div>
-                          </div>
-
-                          <LimitedTextarea
-                            surfaceClassName={styles.multishotTextarea}
-                            rows={2}
-                            value={s.prompt}
-                            onChange={(next) =>
-                              setKlingShots((prev) =>
-                                prev.map((x, idx) => (idx === i ? { ...x, prompt: next } : x))
-                              )
-                            }
-                            placeholder={
-                              klingShotType === "intelligence"
-                                ? "Describe este shot… (idea principal; el modelo conecta transiciones automáticamente)"
-                                : "Describe este shot… (acción, cámara, estilo, iluminación)"
-                            }
-                            limit={KLING_V3_SHOT_PROMPT_LIMIT}
-                            inputResize="none"
-                          />
-
-                          <div className={styles.multishotCharRow}>
-                            <span className={s.prompt.length > KLING_V3_SHOT_PROMPT_LIMIT ? styles.multishotCharOver : undefined}>
-                              {s.prompt.length}/{KLING_V3_SHOT_PROMPT_LIMIT}
-                              {s.prompt.length > KLING_V3_SHOT_PROMPT_LIMIT
-                                ? ` (+${s.prompt.length - KLING_V3_SHOT_PROMPT_LIMIT})`
-                                : ""}
-                            </span>
-                          </div>
-
-                          <div className={styles.multishotDurationRow}>
-                            <span className={styles.multishotDurationLabel}>
-                              <Icon name="clock" />
-                              Duration
-                            </span>
-                            <input
-                              className={styles.multishotDurationInput}
-                              type="number"
-                              min={3}
-                              max={15}
-                              value={s.durationSeconds}
-                              onChange={(e) =>
-                                setKlingShots((prev) =>
-                                  prev.map((x, idx) =>
-                                    idx === i ? { ...x, durationSeconds: Number(e.target.value) } : x
-                                  )
-                                )
-                              }
-                            />
-                            <span className={styles.multishotDurationUnit}>s</span>
-                          </div>
+                  {isMultishotCustomize ? (
+                    <div className={styles.multishotInline}>
+                      ...
+                      {!multishotIsReady && (
+                        <div className={styles.multishotWarn}>
+                          Para generar: mínimo 2 shots, suma total entre 3s y 15s, cada shot ≤ 512 caracteres, y la suma debe igualar Duration.
                         </div>
-                      ))}
+                      )}
                     </div>
+                  ) : (
+                    <>
+                      <MentionTextarea
+                        value={prompt}
+                        onChange={setPrompt}
+                        placeholder="Describe el video… (ej: cinematic neon city, rain, slow dolly in, high detail)"
+                        rows={2}
+                        textareaClassName={styles.prompt}
+                        items={isKlingV3 ? elementMentionItems : []}
+                        onSelectItem={(it) => {
+                          if (it.kind !== "element") return true;
 
-                    {!multishotIsReady && (
-                      <div className={styles.multishotWarn}>
-                        Para generar: mínimo 2 shots, suma total entre 3s y 15s, y cada shot ≤ 512 caracteres (el exceso se ve en rojo).
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <MentionTextarea
-                    value={prompt}
-                    onChange={setPrompt}
-                    placeholder="Describe el video… (ej: cinematic neon city, rain, slow dolly in, high detail)"
-                    rows={2}
-                    textareaClassName={styles.prompt}
-                    items={isKlingV3 ? elementMentionItems : []}
-                    onSelectItem={(it) => {
-                      if (it.kind !== "element") return true;
+                          let allowed = true;
+                          setSelectedKlingElementIds((prev) => {
+                            if (prev.includes(it.id)) return prev;
+                            if (prev.length >= 5) {
+                              allowed = false;
+                              return prev;
+                            }
+                            return [...prev, it.id];
+                          });
 
-                      let allowed = true;
-                      setSelectedKlingElementIds((prev) => {
-                        if (prev.includes(it.id)) return prev;
-                        if (prev.length >= 5) {
-                          allowed = false;
-                          return prev;
-                        }
-                        return [...prev, it.id];
-                      });
+                          if (!allowed) {
+                            setError("No puedes usar más de 5 Elements a la vez. Elimina alguno del prompt.");
+                          }
+                          return allowed;
+                        }}
+                      />
 
-                      if (!allowed) {
-                        setError("No puedes usar más de 5 Elements a la vez. Elimina alguno del prompt.");
-                      }
-                      return allowed;
-                    }}
-                  />
-                )}
+                      {isMultishotIntelligence && (
+                        <div className={styles.multishotHint}>
+                          Multishot <b>intelligence</b>: escribe un único prompt aquí. Kling dividirá en varios planos automáticamente.
+                        </div>
+                      )}
+                    </>
+                  )}
               </div>
             </div>
 
@@ -1497,7 +1444,7 @@ const durationLabel = useMemo(() => {
             isVeoFamily={isVeoFamily}
             veoSpeedLabel={veoSpeedLabel}
             toggleVeoSpeed={toggleVeoSpeed}
-            isKlingV2={isKlingV2}
+            isKlingApi={isKlingApi}
             klingMode={klingMode}
             toggleKlingMode={toggleKlingMode}
             supportsSound={capability.supportsSound}
@@ -1505,10 +1452,10 @@ const durationLabel = useMemo(() => {
             toggleSound={toggleSound}
             isKlingV3={isKlingV3}
             selectedKlingElementCount={selectedKlingElementIds.length}
-            openElements={() => openElementsForShot(multishotEnabled ? 0 : null)}
+            openElements={() => openElementsForShot(multishotEnabled && klingShotType === "customize" ? 0 : null)}
             multishotEnabled={multishotEnabled}
             setMultishotEnabled={setMultishotEnabled}
-            multishotTotalSeconds={multishotTotalSeconds}
+            multishotMetaLabel={multishotMetaLabel}
           />
 
           <ControlsPopover

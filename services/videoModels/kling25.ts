@@ -8,7 +8,7 @@ export const kling25Handler: VideoModelHandler = {
   matches: (m) => m === KLING_2_5_TURBO,
 
   getCapability: ({ hasFirst }) => ({
-    supportsResolution: false,
+    supportsResolution: true,
     supportsAspectRatio: !hasFirst,
     supportsAspectRatio1x1: !hasFirst,
     durations: [5, 10],
@@ -16,7 +16,7 @@ export const kling25Handler: VideoModelHandler = {
     supportsLastFrame: true,
   }),
 
-  getSupportedResolutions: () => ["720p"],
+  getSupportedResolutions: () => ["720p", "1080p"],
 
   buildPlan: (args: BuildPlanArgs): BuildPlanResult => {
     const modelNorm = normalizeModelId(args.model);

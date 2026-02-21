@@ -16,7 +16,8 @@ type Props = {
   veoSpeedLabel: string;
   toggleVeoSpeed: () => void;
 
-  isKlingV2: boolean;
+  // Kling API (v2.* + v3) — NO incluye O3 (Fal)
+  isKlingApi: boolean;
   klingMode: "std" | "pro";
   toggleKlingMode: () => void;
 
@@ -30,7 +31,7 @@ type Props = {
 
   multishotEnabled: boolean;
   setMultishotEnabled: React.Dispatch<React.SetStateAction<boolean>>;
-  multishotTotalSeconds: number;
+  multishotMetaLabel: string; // ej: "12s" o "Intelligence"
 };
 
 export function ControlsRow({
@@ -42,7 +43,7 @@ export function ControlsRow({
   isVeoFamily,
   veoSpeedLabel,
   toggleVeoSpeed,
-  isKlingV2,
+  isKlingApi,
   klingMode,
   toggleKlingMode,
   supportsSound,
@@ -53,7 +54,7 @@ export function ControlsRow({
   openElements,
   multishotEnabled,
   setMultishotEnabled,
-  multishotTotalSeconds,
+  multishotMetaLabel,
 }: Props) {
   return (
     <div className={styles.controlsRow}>
@@ -111,7 +112,7 @@ export function ControlsRow({
         </button>
       )}
 
-      {isKlingV2 && (
+      {isKlingApi && (
         <button
           type="button"
           className={styles.controlBtn}
@@ -119,13 +120,13 @@ export function ControlsRow({
             setPanel(null);
             toggleKlingMode();
           }}
-          title="Cambiar entre Standard y Pro"
+          title="Cambiar resolución Kling (STD=720p / PRO=1080p)"
         >
           <span className={styles.controlBtnLeft}>
             <Icon name="mode" />
             <span>Kling</span>
           </span>
-          <span className={styles.controlBtnMeta}>{klingMode === "std" ? "Standard" : "Pro"}</span>
+          <span className={styles.controlBtnMeta}>{klingMode === "std" ? "720p" : "1080p"}</span>
         </button>
       )}
 
@@ -181,7 +182,7 @@ export function ControlsRow({
               <span>Multishot</span>
             </span>
             <span className={styles.controlBtnMeta}>
-              {multishotEnabled ? `${multishotTotalSeconds}s` : "Off"}
+              {multishotEnabled ? multishotMetaLabel : "Off"}
             </span>
           </button>
         </>

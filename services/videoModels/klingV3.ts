@@ -66,7 +66,7 @@ export const klingV3Handler: VideoModelHandler = {
   matches: (m) => m === KLING_V3,
 
   getCapability: ({ hasFirst }) => ({
-    supportsResolution: false,
+    supportsResolution: true,
     supportsAspectRatio: !hasFirst,
     supportsAspectRatio1x1: !hasFirst,
     durations: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
@@ -74,21 +74,30 @@ export const klingV3Handler: VideoModelHandler = {
     supportsLastFrame: true,
   }),
 
-  getSupportedResolutions: () => ["720p"],
+  getSupportedResolutions: () => ["720p", "1080p"],
 
   buildPlan: (args: BuildPlanArgs): BuildPlanResult => {
     const modelNorm = normalizeModelId(args.model);
     const hasFirst = Boolean(args.firstFrameAssetId);
 
-    // ✅ Multishot: cada shot tiene sus elementIds; el request necesita unión global + refs correctas
-    const isMulti = Boolean(args.multishotEnabled);
+    const wantsMultishot = Boolean(args.multishotEnabled);
+    const shotType = args.klingShotType; // "customize" | "intelligence"
 
-    const baseShots = isMulti ? validShotsBase(args.klingShots).slice(0, 6) : [];
+    const isCustomize = wantsMultishot && shotType === "customize";
+    const isIntelligence = wantsMultishot && shotType === "intelligence";
 
     // Unión global (orden estable por primera aparición)
     let globalElementIds: string[] = [];
+    let vShots: { prompt: string; durationSeconds: number }[] = [];
 
-    if (isMulti) {
+    if (isCustomize) {
+      const baseShots = validShotsBase(args.klingShots).slice(0, 6);
+
+      if (baseShots.length === 0) {
+        throw new Error("Multishot (customize): agrega al menos 2 shots con prompt.");
+      }
+
+      // Unión global de Elements (máx 5)
       for (const s of baseShots) {
         const ids = Array.isArray((s as any).elementIds) ? (s as any).elementIds : [];
         for (const id of ids) {
@@ -100,46 +109,45 @@ export const klingV3Handler: VideoModelHandler = {
           }
         }
       }
+
+      const elementIndexById = new Map<string, number>(globalElementIds.map((id, idx) => [id, idx + 1]));
+
+      // Prompts finales por shot con refs inyectadas solo si ese shot usa Elements
+      vShots = baseShots.map((s, i) => {
+        const ids = Array.isArray((s as any).elementIds) ? (s as any).elementIds : [];
+        const indexes = uniqueNumbers(
+          ids
+            .map((id: string) => elementIndexById.get(id))
+            .filter((x: any) => typeof x === "number")
+        );
+
+        const injected = injectRefsIfMissing(s.prompt, indexes);
+
+        assertPromptLimit(
+          injected,
+          KLING_V3_MULTISHOT_PROMPT_LIMIT,
+          `Multishot: prompt del shot ${i + 1} (con Elements)`
+        );
+
+        return { prompt: injected, durationSeconds: s.durationSeconds };
+      });
     } else {
-      // modo normal: selección global (máx 5)
+      // Normal (sin multishot) o Multishot intelligence: Elements global (máx 5)
       globalElementIds = args.selectedKlingElementIds.slice(0, 5);
     }
 
-    const elementIndexById = new Map<string, number>(
-      globalElementIds.map((id, idx) => [id, idx + 1])
-    );
-
-    // Prompts finales (por shot) con refs inyectadas solo si ese shot usa Elements
-    const vShots = isMulti
-      ? baseShots.map((s, i) => {
-          const ids = Array.isArray((s as any).elementIds) ? (s as any).elementIds : [];
-          const indexes = uniqueNumbers(
-            ids
-              .map((id: string) => elementIndexById.get(id))
-              .filter((x: any) => typeof x === "number")
-          );
-
-          const injected = injectRefsIfMissing(s.prompt, indexes);
-          assertPromptLimit(
-            injected,
-            KLING_V3_MULTISHOT_PROMPT_LIMIT,
-            `Multishot: prompt del shot ${i + 1} (con Elements)`
-          );
-
-          return { prompt: injected, durationSeconds: s.durationSeconds };
-        })
-      : [];
-
     // Prompt efectivo (solo para UI/registro)
-    const effectivePrompt = isMulti
+    const effectivePrompt = isCustomize
       ? (vShots[0]?.prompt || "multishot")
       : injectRefsIfMissing(args.prompt, globalElementIds.map((_, idx) => idx + 1));
 
-    // Duración
-    const multiTotalSeconds = isMulti ? totalSeconds(vShots) : 0;
+    if (!effectivePrompt.trim()) {
+      throw new Error("Escribe un prompt.");
+    }
 
-    const effectiveDurationSeconds = isMulti
-      ? (multiTotalSeconds > 0 ? multiTotalSeconds : 5)
+    // Duración
+    const effectiveDurationSeconds = isCustomize
+      ? (totalSeconds(vShots) > 0 ? totalSeconds(vShots) : 5)
       : coerceAllowedNumber(
           args.durationSeconds,
           [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
@@ -147,7 +155,7 @@ export const klingV3Handler: VideoModelHandler = {
         );
 
     const body: any = {
-      prompt: effectivePrompt,
+      prompt: effectivePrompt, // requerido por schema, aunque en customize Kling use multi_prompt
       model: modelNorm,
       tool: args.tool,
       nameHint: args.nameHint,
@@ -157,22 +165,24 @@ export const klingV3Handler: VideoModelHandler = {
     };
 
     // Kling V3: mandamos SIEMPRE el flag para que la UI y el backend coincidan.
-    // OFF por defecto (menos carga/cola); el usuario puede poner ON si quiere audio.
     body.klingSound = Boolean(args.klingSound);
 
     if (args.firstFrameAssetId) body.firstFrameAssetId = args.firstFrameAssetId;
     if (args.lastFrameAssetId) body.lastFrameAssetId = args.lastFrameAssetId;
 
-    // si NO hay first frame, se permite escoger aspect ratio
     if (!hasFirst) body.aspectRatio = args.aspectRatio;
 
-    // ✅ Elements: SIEMPRE global (unión en multishot / global en normal)
     if (globalElementIds.length > 0) body.klingElementIds = globalElementIds;
 
-    // ✅ Multishot: prompts ya vienen con refs correctas
-    if (args.multishotEnabled) {
-      body.klingMultiPrompt = vShots;
-      body.klingShotType = args.klingShotType;
+    // ✅ Multishot:
+    // - customize => enviamos storyboard (klingMultiPrompt)
+    // - intelligence => NO enviamos storyboard; solo prompt + klingShotType
+    if (wantsMultishot) {
+      body.klingShotType = shotType;
+
+      if (isCustomize) {
+        body.klingMultiPrompt = vShots;
+      }
     }
 
     // Extras V3
