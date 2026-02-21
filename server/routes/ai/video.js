@@ -164,9 +164,40 @@ export function createAiVideoRouter(ctx) {
     }
 
     return Number(r.count || 0);
+}
+
+// ✅ Idempotencia: si el cliente reintenta (reload / red / timeout), podemos devolver el job existente
+// evitando mostrar "Failed 429" cuando en realidad el job original sigue corriendo.
+async function findKlingJobByClientJobId({ ownerId, clientJobId }) {
+  if (!clientJobId) return null;
+
+  const r = await supabaseAdmin
+    .from("jobs")
+    .select("id, status, params, result_asset_id")
+    .eq("kind", "video")
+    .eq("owner_id", ownerId)
+    .filter("params->>provider", "eq", "kling")
+    .filter("params->>clientJobId", "eq", String(clientJobId))
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  // PGRST116 = 0 rows con maybeSingle()
+  if (r.error && r.error.code !== "PGRST116") {
+    throw httpError(500, "DB_ERROR", "No pude buscar job Kling por clientJobId.", {
+      supabase: {
+        message: r.error?.message,
+        code: r.error?.code,
+        details: r.error?.details,
+        hint: r.error?.hint,
+      },
+    });
   }
 
-  function respondKlingBusy(res, { retryAfterSeconds, message, details }) {
+  return r.data || null;
+}
+
+function respondKlingBusy(res, { retryAfterSeconds, message, details }) {
     const ra = Math.max(5, Math.min(180, Number(retryAfterSeconds || 30)));
 
     // Importante: status 429 + Retry-After => apiPostJson reintenta con esa pausa
@@ -281,7 +312,7 @@ export function createAiVideoRouter(ctx) {
   router.post("/ai/video", async (req, res, next) => {
   try {
     const parsed = VideoRequestSchema.parse(req.body);
-    const {
+  const {
       prompt,
       model,
       async: asyncFlag,
@@ -292,6 +323,7 @@ export function createAiVideoRouter(ctx) {
       count,
       tool,
       nameHint,
+      clientJobId,
       firstFrameAssetId,
       lastFrameAssetId,
       klingMode,
@@ -345,12 +377,32 @@ if (/^kling-v2\.6$/i.test(selectedModelNorm)) {
 
 const isKling = selectedModelNorm.startsWith("kling-");
 
+    const clientJobIdNorm = clientJobId ? String(clientJobId || "").trim() : "";
+
     if (hasLast && !hasFirst) {
       throw httpError(
         400,
         "MISSING_FIRST_FRAME",
         "lastFrameAssetId requiere firstFrameAssetId."
       );
+    }
+
+    // ✅ Idempotencia: si el frontend reintenta el mismo job (clientJobId),
+    // devolvemos el job existente en vez de responder 429.
+    if (isKling && asyncMode && selectedModelNorm !== "kling-o3-pro" && clientJobIdNorm) {
+      const existing = await findKlingJobByClientJobId({
+        ownerId: user.id,
+        clientJobId: clientJobIdNorm,
+      });
+
+      if (existing?.id) {
+        return res.json({
+          ok: true,
+          mode: "async",
+          jobId: existing.id,
+          deduped: true,
+        });
+      }
     }
 
     // ✅ Kling (API oficial): si está al límite (global/per-user), devolvemos 429 con Retry-After
@@ -1019,7 +1071,7 @@ const isKling = selectedModelNorm.startsWith("kling-");
             hint,
             model: selectedModelNorm,
             prompt,
-            extra: { meta },
+            extra: { meta, clientJobId: clientJobIdNorm || null },
           });
 
           return res.json({ ok: true, mode: "async", jobId, taskId: String(taskId) });
@@ -1235,7 +1287,7 @@ const isKling = selectedModelNorm.startsWith("kling-");
           hint,
           model: selectedModelNorm,
           prompt,
-          extra: { meta },
+          extra: { meta, clientJobId: clientJobIdNorm || null },
         });
 
         return res.json({ ok: true, mode: "async", jobId, taskId: String(taskId) });

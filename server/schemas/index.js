@@ -82,6 +82,9 @@ export const VideoRequestSchema = z.object({
   tool: z.string().optional(),
   nameHint: z.string().optional(),
 
+  // Idempotencia (Queue): permite reintentos sin crear jobs duplicados
+  clientJobId: z.string().max(120).optional(),
+
   // Frame assets (opcionales)
   firstFrameAssetId: z.string().uuid().nullable().optional(),
   lastFrameAssetId: z.string().uuid().nullable().optional(),

@@ -94,6 +94,38 @@ function now() {
   return Date.now();
 }
 
+function sleepAbortable(ms: number, signal?: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      const err: any = new Error("Cancelado.");
+      err.name = "AbortError";
+      err.isCanceled = true;
+      reject(err);
+      return;
+    }
+
+    const t = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, ms);
+
+    const onAbort = () => {
+      cleanup();
+      const err: any = new Error("Cancelado.");
+      err.name = "AbortError";
+      err.isCanceled = true;
+      reject(err);
+    };
+
+    const cleanup = () => {
+      clearTimeout(t);
+      if (signal) signal.removeEventListener("abort", onAbort as any);
+    };
+
+    if (signal) signal.addEventListener("abort", onAbort as any, { once: true });
+  });
+}
+
 function isFalModel(modelNorm: string) {
   return modelNorm === KLING_O3_PRO;
 }
@@ -417,55 +449,93 @@ async function runVideoJob(
 // Submit async
 onProgress("Enviando solicitud (Kling)…");
 const body = payload?.planBody || {};
+const clientJobId = job.id;
+
+// Si Kling responde 429 (límite paralelo), NO marcamos el job como Failed:
+// - Puede ser un reintento (reload/red) del mismo job.
+// - O puede ser que haya otro job corriendo y necesitamos esperar cupo.
+const BUSY_WAIT_MAX_MS = 20 * 60 * 1000;
+const busyStartedAt = Date.now();
+
+const getErrStatus = (e: any) => Number(e?.status || 0);
+const getErrCode = (e: any) =>
+  String(e?.response?.data?.code || e?.response?.data?.error?.code || "");
 
 let submit: any;
-try {
-  submit = await apiPostJson<any>(
-    "/api/ai/video",
-    { ...body, async: true },
-    { signal, timeoutMs: SUBMIT_TIMEOUT_MS, retries: SUBMIT_RETRIES }
-  );
-} catch (e: any) {
-  const msg = String(e?.message || "");
-  const recoverable =
-    msg.includes("Timeout:") ||
-    msg.includes("Failed to fetch") ||
-    msg.toLowerCase().includes("networkerror") ||
-    msg.toLowerCase().includes("load failed");
 
-  if (recoverable) {
-    onProgress("Reconectando (Kling)…");
+while (true) {
+  try {
+    submit = await apiPostJson<any>(
+      "/api/ai/video",
+      { ...body, async: true, clientJobId },
+      { signal, timeoutMs: SUBMIT_TIMEOUT_MS, retries: SUBMIT_RETRIES }
+    );
+    break;
+  } catch (e: any) {
+    const msg = String(e?.message || "");
+    const status = getErrStatus(e);
+    const code = getErrCode(e);
 
-    // Si el backend alcanzó a crear un job en Supabase pero la respuesta se cortó,
-    // lo recuperamos por (model + prompt) en una ventana corta.
-    const recovered = await findRecentRunningKlingJob({
-      model: modelNorm,
-      prompt,
-      windowMs: 2 * 60 * 1000,
-    });
+    const isBusy = status === 429 && code === "KLING_V3_PARALLEL_LIMIT";
 
-    if (recovered?.id) {
-      const supabaseJobId = String(recovered.id);
-      onPayloadPatch({ supabaseJobId });
+    const recoverableNetwork =
+      msg.includes("Timeout:") ||
+      msg.includes("Failed to fetch") ||
+      msg.toLowerCase().includes("networkerror") ||
+      msg.toLowerCase().includes("load failed");
 
-      onProgress("Procesando (Kling, background)…");
-      const row = await waitJobCompletion(supabaseJobId, { signal, onProgress, pollMs: 15_000 });
+    if (recoverableNetwork || isBusy) {
+      if (isBusy) onProgress("Kling al límite… verificando si ya existe el job…");
+      else onProgress("Reconectando (Kling)…");
 
-      if (row.status === "failed") {
-        throw new Error(row.error || "Falló el job de Kling en background.");
+      // Si el backend alcanzó a crear un job en Supabase pero la respuesta se cortó,
+      // lo recuperamos por (model + prompt) en una ventana amplia (pero segura).
+      const recovered = await findRecentRunningKlingJob({
+        model: modelNorm,
+        prompt,
+        windowMs: 15 * 60 * 1000,
+      });
+
+      if (recovered?.id) {
+        const supabaseJobId = String(recovered.id);
+        onPayloadPatch({ supabaseJobId });
+
+        onProgress("Procesando (Kling, background)…");
+        const row = await waitJobCompletion(supabaseJobId, { signal, onProgress, pollMs: 15_000 });
+
+        if (row.status === "failed") {
+          throw new Error(row.error || "Falló el job de Kling en background.");
+        }
+
+        if (row.status === "succeeded" && row.result_asset_id) {
+          const url = pickUrlFromJobRow(row);
+          invalidateMyAssetsCache("video");
+          return { ok: true, items: [{ assetId: row.result_asset_id, ...(url ? { url } : {}) }] };
+        }
+
+        throw new Error("Job Kling terminó pero no devolvió result_asset_id.");
       }
 
-      if (row.status === "succeeded" && row.result_asset_id) {
-        const url = pickUrlFromJobRow(row);
-        invalidateMyAssetsCache("video");
-        return { ok: true, items: [{ assetId: row.result_asset_id, ...(url ? { url } : {}) }] };
-      }
+      // Si fue busy 429 y NO encontramos job, esperamos y reintentamos el submit.
+      if (isBusy) {
+        const raSec = Number(e?.response?.data?.details?.retryAfterSeconds || 30);
+        const elapsed = Date.now() - busyStartedAt;
 
-      throw new Error("Job Kling terminó pero no devolvió result_asset_id.");
+        if (elapsed > BUSY_WAIT_MAX_MS) {
+          throw e;
+        }
+
+        const waitMs =
+          Math.max(5_000, Math.min(120_000, raSec * 1000)) + Math.floor(Math.random() * 350);
+
+        onProgress(`Kling al límite… reintentando en ${Math.round(waitMs / 1000)}s…`);
+        await sleepAbortable(waitMs, signal);
+        continue;
+      }
     }
-  }
 
-  throw e;
+    throw e;
+  }
 }
 
 // fallback si responde sync
