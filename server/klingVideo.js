@@ -20,6 +20,36 @@ function normalizeKlingSound(sound) {
   return undefined;
 }
 
+function normalizeKlingTaskStatus(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  return s.toLowerCase();
+}
+
+function isKlingSuccessStatus(status) {
+  const s = normalizeKlingTaskStatus(status);
+  return (
+    s === "succeed" ||
+    s === "succeeded" ||
+    s === "success" ||
+    s === "completed" ||
+    s === "done" ||
+    s === "finished"
+  );
+}
+
+function isKlingFailureStatus(status) {
+  const s = normalizeKlingTaskStatus(status);
+  return (
+    s === "failed" ||
+    s === "fail" ||
+    s === "error" ||
+    s === "canceled" ||
+    s === "cancelled" ||
+    s === "timeout"
+  );
+}
+
 function base64urlEncode(input) {
   const buf = Buffer.isBuffer(input) ? input : Buffer.from(String(input));
   return buf
@@ -315,11 +345,15 @@ export async function pollTaskUntilDone({
   while (Date.now() < deadline) {
     const json = await klingGet(endpoint);
     const data = json?.data || json;
-    const status = data?.task_status;
 
-    if (status === "succeed" || status === "success") return data;
+    const statusRaw =
+      data?.task_status || data?.taskStatus || data?.status || json?.data?.task_status || json?.task_status;
 
-    if (status === "failed") {
+    const status = normalizeKlingTaskStatus(statusRaw);
+
+    if (isKlingSuccessStatus(status)) return data;
+
+    if (isKlingFailureStatus(status)) {
       const reason = data?.task_status_msg || "Kling task failed.";
       const err = new Error(`Kling task failed: ${reason}`);
       err.taskId = taskId;

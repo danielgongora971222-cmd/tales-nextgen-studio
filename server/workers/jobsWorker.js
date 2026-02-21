@@ -137,16 +137,83 @@ function computeNextCheckMs(providerStatus) {
   return 20_000;
 }
 
+function normalizeKlingTaskStatus(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  return s.toLowerCase();
+}
+
+function isKlingSuccessStatus(status) {
+  const s = normalizeKlingTaskStatus(status);
+  return (
+    s === "succeed" ||
+    s === "succeeded" ||
+    s === "success" ||
+    s === "completed" ||
+    s === "done" ||
+    s === "finished"
+  );
+}
+
+function isKlingFailureStatus(status) {
+  const s = normalizeKlingTaskStatus(status);
+  return (
+    s === "failed" ||
+    s === "fail" ||
+    s === "error" ||
+    s === "canceled" ||
+    s === "cancelled" ||
+    s === "timeout"
+  );
+}
+
 function computeNextCheckMsKling(taskStatus) {
-  const s = String(taskStatus || "").toLowerCase();
+  const s = normalizeKlingTaskStatus(taskStatus);
   if (s.includes("submitted")) return 10_000;
   if (s.includes("processing")) return 7_000;
   if (s.includes("running")) return 7_000;
+  if (s.includes("queued")) return 12_000;
   return 12_000;
 }
 
-function pickKlingVideoUrlFromTaskData(taskData) {
-  const taskResult = taskData?.task_result || taskData?.data?.task_result || {};
+function extractKlingTaskStatus(taskData, rawJson) {
+  const candidates = [
+    taskData?.task_status,
+    taskData?.taskStatus,
+    taskData?.status,
+    rawJson?.data?.task_status,
+    rawJson?.task_status,
+    rawJson?.data?.taskStatus,
+    rawJson?.data?.status,
+    rawJson?.data?.data?.task_status,
+    rawJson?.data?.data?.status,
+  ];
+
+  for (const c of candidates) {
+    if (typeof c === "string" && c.trim()) return c.trim();
+  }
+  return null;
+}
+
+function extractKlingTaskStatusMsg(taskData, rawJson) {
+  return (
+    taskData?.task_status_msg ||
+    rawJson?.data?.task_status_msg ||
+    rawJson?.task_status_msg ||
+    rawJson?.data?.data?.task_status_msg ||
+    null
+  );
+}
+
+function pickKlingVideoUrlFromTaskData(taskData, rawJson) {
+  const taskResult =
+    taskData?.task_result ||
+    taskData?.data?.task_result ||
+    rawJson?.data?.task_result ||
+    rawJson?.data?.data?.task_result ||
+    rawJson?.data?.data?.data?.task_result ||
+    {};
+
   const firstVideo =
     Array.isArray(taskResult?.videos) && taskResult.videos.length ? taskResult.videos[0] : null;
 
@@ -269,57 +336,63 @@ async function processJob(row) {
       return;
     }
 
-    let taskData;
-    try {
-      const endpoint = `/videos/${taskType}/${taskId}`;
-
-      const json = await klingGetWithRetry(endpoint, { timeoutMs: 20_000, retries: 3 });
-      taskData = json?.data || json;
-    } catch (e) {
-
-    if (!taskId) {
+if (!taskId) {
       await releaseAndReschedule(jobId, {
         status: "failed",
         error: "Job Kling inválido: falta taskId en params.",
         finished_at: new Date().toISOString(),
         next_check_at: null,
+        params: { ...params, providerStatus: "MISSING_TASK_ID", providerPollCount: pollCount },
       });
       return;
     }
 
+    let taskData;
+    let rawJson = null;
 
+    try {
+      const endpoint = `/videos/${safeTaskType}/${taskId}`;
+
+      rawJson = await klingGetWithRetry(endpoint, { timeoutMs: 20_000, retries: 3 });
+      taskData = rawJson?.data || rawJson;
+    } catch (e) {
       const next = new Date(Date.now() + 20_000).toISOString();
       await releaseAndReschedule(jobId, {
         status: "running",
         next_check_at: next,
-        params: {...params,
+        params: {
+          ...params,
           providerStatus: "STATUS_ERROR",
           providerStatusDetail: String(e?.message || e),
+          providerPollCount: pollCount,
         },
       });
       return;
     }
 
-    const taskStatus = String(taskData?.task_status || "").toLowerCase();
+const taskStatusRaw = extractKlingTaskStatus(taskData, rawJson);
+    const taskStatus = normalizeKlingTaskStatus(taskStatusRaw);
+    const taskStatusMsg = extractKlingTaskStatusMsg(taskData, rawJson);
 
-    if (taskStatus === "failed") {
-      const errMsg = taskData?.task_status_msg || "Kling task failed.";
+    if (isKlingFailureStatus(taskStatus)) {
+      const errMsg = taskStatusMsg || "Kling task failed.";
       await releaseAndReschedule(jobId, {
         status: "failed",
         error: String(errMsg),
         finished_at: new Date().toISOString(),
         next_check_at: null,
         params: {
-        ...params,
-        providerStatus: taskStatus || "PENDING",
-        providerPollCount: pollCount,
-        providerStatusMsg: taskData?.task_status_msg || null,
-      },
+          ...params,
+          providerStatus: taskStatusRaw || taskStatus || "FAILED",
+          providerStatusNormalized: taskStatus || null,
+          providerPollCount: pollCount,
+          providerStatusMsg: taskStatusMsg,
+        },
       });
       return;
     }
 
-    if (!(taskStatus === "succeed" || taskStatus === "success")) {
+    if (!isKlingSuccessStatus(taskStatus)) {
       const nextMs = computeNextCheckMsKling(taskStatus);
       const next = new Date(Date.now() + nextMs).toISOString();
       await releaseAndReschedule(jobId, {
@@ -327,15 +400,16 @@ async function processJob(row) {
         next_check_at: next,
         params: {
           ...params,
-          providerStatus: taskStatus || "PENDING",
+          providerStatus: taskStatusRaw || taskStatus || "PENDING",
+          providerStatusNormalized: taskStatus || null,
           providerPollCount: pollCount,
-          providerStatusMsg: taskData?.task_status_msg || null,
+          providerStatusMsg: taskStatusMsg,
         },
       });
       return;
     }
 
-    const videoUrl = pickKlingVideoUrlFromTaskData(taskData);
+    const videoUrl = pickKlingVideoUrlFromTaskData(taskData, rawJson);
     if (!videoUrl) {
       await releaseAndReschedule(jobId, {
         status: "failed",
