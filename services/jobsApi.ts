@@ -32,6 +32,38 @@ export async function fetchJobById(jobId: string): Promise<JobRow | null> {
   return (data || null) as any;
 }
 
+export async function findRecentRunningKlingJob({
+  model,
+  prompt,
+  windowMs = 2 * 60 * 1000,
+}: {
+  model: string;
+  prompt: string;
+  windowMs?: number;
+}): Promise<JobRow | null> {
+  const sinceIso = new Date(Date.now() - windowMs).toISOString();
+
+  const { data, error } = await supabase
+    .from("jobs")
+    .select(
+      "id, owner_id, kind, status, params, result_asset_id, error, created_at, updated_at, finished_at, next_check_at, locked_at, locked_by"
+    )
+    .eq("kind", "video")
+    .eq("status", "running")
+    .filter("params->>provider", "eq", "kling")
+    .filter("params->>model", "eq", model)
+    .filter("params->>prompt", "eq", prompt)
+    .gte("created_at", sinceIso)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  // PGRST116 = 0 rows con maybeSingle()
+  if (error && (error as any).code !== "PGRST116") throw error;
+
+  return (data || null) as any;
+}
+
 export function subscribeJobById({
   jobId,
   onUpsert,

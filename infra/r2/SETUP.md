@@ -31,3 +31,26 @@ Set these on your backend (Render) as environment variables:
 - Then your API stores the file metadata and public URL in the database.
 
 This prevents your API from becoming slow/expensive and keeps scaling easy.
+
+## 5) IMPORTANT: CORS for browser direct uploads (R2)
+If your frontend uploads **directly** to R2 using a presigned PUT URL, your bucket MUST allow CORS.
+
+In Cloudflare Dashboard:
+1. R2 → your bucket → **Settings**
+2. **CORS policy** → Add policy/rule
+3. Use something like:
+
+```json
+[
+  {
+    "AllowedOrigins": [
+      "https://<TU-DOMINIO-PROD>",
+      "https://<TU-DOMINIO-STAGING>",
+      "http://localhost:5173"
+    ],
+    "AllowedMethods": ["GET", "PUT", "HEAD"],
+    "AllowedHeaders": ["*"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 3000
+  }
+]

@@ -359,9 +359,10 @@ export async function uploadUserAsset(
   const headersJson: Record<string, string> = { "Content-Type": "application/json" };
   if (token) headersJson["Authorization"] = `Bearer ${token}`;
 
-  // ---------- 0) INTENTO PRINCIPAL: presign + upload directo ----------
-  try {
-    const presignResp = await fetch(apiUrl("/api/assets/presign-upload"), {
+    // ---------- 0) INTENTO PRINCIPAL: presign + upload directo ----------
+    let presignErr: any = null;
+    try {
+      const presignResp = await fetch(apiUrl("/api/assets/presign-upload"), {
       method: "POST",
       headers: headersJson,
       body: JSON.stringify({
@@ -467,8 +468,9 @@ export async function uploadUserAsset(
         comments: [],
       };
     }
-  } catch {
-    // Silencio: si presign falla, hacemos fallback a los métodos viejos
+  } catch (e: any) {
+    // Guardamos el error para dar un diagnóstico claro si el fallback también falla.
+    presignErr = e;
   }
 
   // ---------- 1) FALLBACK: multipart/form-data (legacy) ----------
@@ -482,11 +484,36 @@ export async function uploadUserAsset(
   const headersMultipart: Record<string, string> = {};
   if (token) headersMultipart["Authorization"] = `Bearer ${token}`;
 
-  const resp = await fetch(apiUrl("/api/assets/upload"), {
-    method: "POST",
-    headers: headersMultipart,
-    body: form,
-  });
+  let resp: Response;
+  try {
+    resp = await fetch(apiUrl("/api/assets/upload"), {
+      method: "POST",
+      headers: headersMultipart,
+      body: form,
+    });
+  } catch (e: any) {
+    const msg = String(e?.message || "");
+    const presignMsg = presignErr ? String(presignErr?.message || presignErr) : "";
+
+    // Error típico cuando el navegador bloquea un cross-origin PUT (R2 CORS) o hay un bloqueo de red.
+    if (msg.includes("Failed to fetch") || msg.toLowerCase().includes("networkerror")) {
+      throw new Error(
+        [
+          "No se pudo subir el archivo (Failed to fetch).",
+          "",
+          "Causas típicas:",
+          "1) CORS del bucket R2 no permite PUT desde tu dominio de Vercel.",
+          "2) El backend /api no está accesible desde el navegador (rewrites/CORS/caído).",
+          "",
+          presignMsg ? `Detalle presign/R2: ${presignMsg}` : null,
+        ]
+          .filter(Boolean)
+          .join("\n")
+      );
+    }
+
+    throw e;
+  }
 
   const text = await resp.text();
   let data: any;

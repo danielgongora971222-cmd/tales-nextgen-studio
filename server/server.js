@@ -163,6 +163,11 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
   .map((s) => s.trim().replace(/\/+$/g, ""))
   .filter(Boolean);
 
+const allowedOriginSuffixes = (process.env.ALLOWED_ORIGIN_SUFFIXES || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 app.use(
   cors({
     origin: function (origin, cb) {
@@ -175,12 +180,24 @@ app.use(
       // - En dev: permitimos (para no estorbar)
       // - En production: BLOQUEAMOS origins de navegador para evitar abuso directo al Render URL
       if (allowedOrigins.length === 0) {
+        // Si configuras ALLOWED_ORIGIN_SUFFIXES, permitimos esos sufijos incluso en producción.
+        if (allowedOriginSuffixes.length) {
+          if (allowedOriginSuffixes.some((suf) => normalizedOrigin.endsWith(suf))) return cb(null, true);
+          return cb(new Error("CORS blocked"));
+        }
+
         if (isProd) return cb(new Error("CORS blocked"));
         return cb(null, true);
       }
 
       // Si está en la lista, ok
       if (allowedOrigins.includes(normalizedOrigin)) return cb(null, true);
+
+      // ✅ Soporte opcional: permitir por sufijo (útil para Vercel previews)
+      // Ej: ALLOWED_ORIGIN_SUFFIXES=".vercel.app,https://tu-dominio.com"
+      if (allowedOriginSuffixes.length) {
+        if (allowedOriginSuffixes.some((suf) => normalizedOrigin.endsWith(suf))) return cb(null, true);
+      }
 
       // Si no, bloquea
       return cb(new Error("CORS blocked"));

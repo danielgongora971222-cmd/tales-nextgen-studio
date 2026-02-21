@@ -166,7 +166,7 @@ export function createAiVideoRouter(ctx) {
     return Number(r.count || 0);
   }
 
-  function respondKlingV3Busy(res, { retryAfterSeconds, message, details }) {
+  function respondKlingBusy(res, { retryAfterSeconds, message, details }) {
     const ra = Math.max(5, Math.min(180, Number(retryAfterSeconds || 30)));
 
     // Importante: status 429 + Retry-After => apiPostJson reintenta con esa pausa
@@ -183,10 +183,18 @@ export function createAiVideoRouter(ctx) {
       });
   }
 
-  async function enforceKlingV3ParallelLimit(res, ownerId) {
-    const maxPerUser = Math.max(1, Number(process.env.KLING_V3_MAX_PARALLEL_PER_USER || 1));
-    const maxGlobal = Math.max(1, Number(process.env.KLING_V3_MAX_PARALLEL_GLOBAL || 2));
-    const retryAfterSeconds = Number(process.env.KLING_V3_RETRY_AFTER_SECONDS || 30);
+  async function enforceKlingParallelLimit(res, ownerId) {
+    const maxPerUser = Math.max(
+      1,
+      Number(process.env.KLING_MAX_PARALLEL_PER_USER || process.env.KLING_V3_MAX_PARALLEL_PER_USER || 1)
+    );
+    const maxGlobal = Math.max(
+      1,
+      Number(process.env.KLING_MAX_PARALLEL_GLOBAL || process.env.KLING_V3_MAX_PARALLEL_GLOBAL || 1)
+    );
+    const retryAfterSeconds = Number(
+      process.env.KLING_RETRY_AFTER_SECONDS || process.env.KLING_V3_RETRY_AFTER_SECONDS || 30
+    );
 
     const [activeUser, activeGlobal] = await Promise.all([
       countRunningKlingJobs({ ownerId }),
@@ -316,12 +324,7 @@ export function createAiVideoRouter(ctx) {
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
 
-    const rl = await checkUserRateLimit({
-      userId: user.id,
-      scope: "ai_video_generate",
-      windowMs: 60 * 1000,
-      max: 4,
-    });
+
     if (!rl.ok) {
       return res.status(429).json({
         ok: false,
@@ -354,6 +357,20 @@ export function createAiVideoRouter(ctx) {
         "lastFrameAssetId requiere firstFrameAssetId."
       );
     }
+
+    // ✅ Kling (API oficial): si está al límite (global/per-user), devolvemos 429 con Retry-After
+    // ANTES de consumir el rate-limit por usuario.
+    if (isKling && asyncMode && selectedModelNorm !== "kling-o3-pro") {
+      const blocked = await enforceKlingParallelLimit(res, user.id);
+      if (blocked) return;
+    }
+
+    const rl = await checkUserRateLimit({
+      userId: user.id,
+      scope: "ai_video_generate",
+      windowMs: 60 * 1000,
+      max: 4,
+    });
 
     if (isKling) {
       // ✅ KLING V3 PRO via FAL (fal-ai/kling-video/v3/pro/*)
@@ -851,7 +868,7 @@ export function createAiVideoRouter(ctx) {
           }
 
             const basePayload = {
-              model_name: selectedModelNorm,
+              model_name: klingApiModelName,
               duration: String(dur),
               image,
               image_tail: imageTail,
@@ -942,8 +959,8 @@ export function createAiVideoRouter(ctx) {
 
           // 1303: parallel task over resource pack limit
           if (status === 429 && code === 1303) {
-            respondKlingV3Busy(res, {
-              retryAfterSeconds: Number(process.env.KLING_V3_RETRY_AFTER_SECONDS || 30),
+            respondKlingBusy(res, {
+              retryAfterSeconds: Number(process.env.KLING_RETRY_AFTER_SECONDS || process.env.KLING_V3_RETRY_AFTER_SECONDS || 30),
               message:
                 "Kling rechazó la solicitud por límite de tareas en paralelo (1303). Vamos a reintentar cuando haya cupo.",
               details: { klingCode: code, requestId: e?.requestId || null },

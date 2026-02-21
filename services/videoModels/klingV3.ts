@@ -201,7 +201,7 @@ export const klingV3Handler: VideoModelHandler = {
     const submit = await apiPostJson<any>(
       "/api/ai/video",
       { ...plan.body, async: true },
-      { signal: opts?.signal, timeoutMs: 60_000, retries: 2 }
+      { signal: opts?.signal, timeoutMs: 3 * 60 * 1000, retries: 4 }
     );
 
     if (submit?.mode === "async" && submit?.jobToken) {

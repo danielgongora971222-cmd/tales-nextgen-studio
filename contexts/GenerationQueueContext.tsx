@@ -2,9 +2,8 @@ import React, { createContext, useContext, useEffect, useMemo, useRef, useState 
 import { useAuth } from "./AuthContext";
 import { KLING_2_6, KLING_O3_PRO, KLING_V3 } from "../services/videoModels";
 import { apiPostJson, clearPendingFalJob, formatErr, loadPendingFalJobs, savePendingFalJob, waitFalJob } from "../services/videoGenApi";
-import { waitJobCompletion } from "../services/jobsApi";
+import { waitJobCompletion, findRecentRunningKlingJob } from "../services/jobsApi";
 import { invalidateMyAssetsCache } from "../services/assetsApi";
-
 type QueueJobStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
 
 export type VideoQueuePayload = {
@@ -65,7 +64,9 @@ const GenerationQueueContext = createContext<Ctx | undefined>(undefined);
 
 const QUEUE_VERSION = 1;
 const MAX_ACTIVE_JOBS = 5;        // total activos (queued + running)
-const CONCURRENCY = 3;            // submissions en paralelo (jobs Fal no bloquean tras enviar)
+const CONCURRENCY = 1;            // 1 a la vez (evita 429/Kling parallel limits)
+const SUBMIT_TIMEOUT_MS = 3 * 60 * 1000; // 3 min (cubre retries con Retry-After)
+const SUBMIT_RETRIES = 4;              // reintentos (429 con Retry-After)
 const STORAGE_PREFIX = "tales_generation_queue_v";
 
 function storageKey(userId: string) {
@@ -413,24 +414,68 @@ async function runVideoJob(
       throw new Error("Job Kling terminó pero no devolvió result_asset_id.");
     }
 
-    // Submit async
-    onProgress("Enviando solicitud (Kling)…");
-    const body = payload?.planBody || {};
+// Submit async
+onProgress("Enviando solicitud (Kling)…");
+const body = payload?.planBody || {};
 
-    const submit = await apiPostJson<any>(
-      "/api/ai/video",
-      { ...body, async: true },
-      { signal, timeoutMs: 60_000, retries: 2 }
-    );
+let submit: any;
+try {
+  submit = await apiPostJson<any>(
+    "/api/ai/video",
+    { ...body, async: true },
+    { signal, timeoutMs: SUBMIT_TIMEOUT_MS, retries: SUBMIT_RETRIES }
+  );
+} catch (e: any) {
+  const msg = String(e?.message || "");
+  const recoverable =
+    msg.includes("Timeout:") ||
+    msg.includes("Failed to fetch") ||
+    msg.toLowerCase().includes("networkerror") ||
+    msg.toLowerCase().includes("load failed");
 
-    // fallback si responde sync
-    if (!(submit?.mode === "async" && submit?.jobId)) return submit;
+  if (recoverable) {
+    onProgress("Reconectando (Kling)…");
 
-    const supabaseJobId = String(submit.jobId);
-    onPayloadPatch({ supabaseJobId });
+    // Si el backend alcanzó a crear un job en Supabase pero la respuesta se cortó,
+    // lo recuperamos por (model + prompt) en una ventana corta.
+    const recovered = await findRecentRunningKlingJob({
+      model: modelNorm,
+      prompt,
+      windowMs: 2 * 60 * 1000,
+    });
 
-    onProgress("Procesando (Kling, background)…");
-    const row = await waitJobCompletion(supabaseJobId, { signal, onProgress, pollMs: 15_000 });
+    if (recovered?.id) {
+      const supabaseJobId = String(recovered.id);
+      onPayloadPatch({ supabaseJobId });
+
+      onProgress("Procesando (Kling, background)…");
+      const row = await waitJobCompletion(supabaseJobId, { signal, onProgress, pollMs: 15_000 });
+
+      if (row.status === "failed") {
+        throw new Error(row.error || "Falló el job de Kling en background.");
+      }
+
+      if (row.status === "succeeded" && row.result_asset_id) {
+        const url = pickUrlFromJobRow(row);
+        invalidateMyAssetsCache("video");
+        return { ok: true, items: [{ assetId: row.result_asset_id, ...(url ? { url } : {}) }] };
+      }
+
+      throw new Error("Job Kling terminó pero no devolvió result_asset_id.");
+    }
+  }
+
+  throw e;
+}
+
+// fallback si responde sync
+if (!(submit?.mode === "async" && submit?.jobId)) return submit;
+
+const supabaseJobId = String(submit.jobId);
+onPayloadPatch({ supabaseJobId });
+
+onProgress("Procesando (Kling, background)…");
+const row = await waitJobCompletion(supabaseJobId, { signal, onProgress, pollMs: 15_000 });
 
     if (row.status === "failed") {
       throw new Error(row.error || "Falló el job de Kling en background.");
@@ -501,7 +546,7 @@ async function runVideoJob(
     const submit = await apiPostJson<any>(
       "/api/ai/video",
       { ...body, async: true },
-      { signal, timeoutMs: 60_000, retries: 2 }
+      { signal, timeoutMs: SUBMIT_TIMEOUT_MS, retries: SUBMIT_RETRIES }
     );
 
     // fallback si responde sync
