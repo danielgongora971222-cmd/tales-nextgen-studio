@@ -814,25 +814,22 @@ export function createAiVideoRouter(ctx) {
           if (out.length) elementList = out;
         }
 
-        // Audio: en V3 el default del proveedor suele ser ON; solo enviamos enable_audio si el usuario tocó el toggle
-        const enableAudio =
-          klingSound !== undefined ? Boolean(klingSound) : undefined;
-
         const klingModeValue = klingMode || "std";
+
+        // Audio (V2.6+): Kling usa `sound: "on" | "off"`
+        const soundValue =
+          klingSound === undefined ? undefined : (Boolean(klingSound) ? "on" : "off");
+
+        const klingExtras = {
+          mode: klingModeValue,
+          ...(soundValue !== undefined ? { sound: soundValue } : {}),
+          ...(negativePrompt ? { negative_prompt: negativePrompt } : {}),
+          ...(elementList ? { element_list: elementList } : {}),
+        };
 
         // Normalizamos el nombre de modelo para Kling API (hardening).
         // Muchas integraciones listan V3 como "kling-v3-0".
         const klingApiModelName = selectedModelNorm === "kling-v3" ? "kling-v3-0" : selectedModelNorm;
-
-        // ⚠️ Importante: NO enviamos cfg_scale ni voice_ids para V3 (no decorativo) :contentReference[oaicite:8]{index=8}
-        const klingExtras = {
-          mode: klingModeValue,
-          ...(enableAudio !== undefined ? { enable_audio: enableAudio } : {}),
-          ...(negativePrompt ? { negative_prompt: negativePrompt } : {}),
-          ...(elementList ? { element_list: elementList } : {}),
-          ...(multiShotEnabled ? { multi_shot: true, shot_type: shotType } : {}),
-          ...(multiPrompt && multiPrompt.length ? { multi_prompt: multiPrompt } : {}),
-        };
 
         // ✅ Evita error 1303 (parallel task limit) antes de llamar a Kling
         const blocked = await enforceKlingV3ParallelLimit(res, user.id);
@@ -853,29 +850,90 @@ export function createAiVideoRouter(ctx) {
             imageTail = lastPart.inlineData.data;
           }
 
-            taskResponse = await klingPostWithRetry(
-              "/videos/image2video",
-            {
-              model_name: klingApiModelName,
-              prompt,
-              duration: dur,
+            const basePayload = {
+              model_name: selectedModelNorm,
+              duration: String(dur),
               image,
               image_tail: imageTail,
               ...klingExtras,
-            },
-            { timeoutMs: 60_000, retries: 3 }
-          );
-          } else {
+            };
+
+            if (multiShotEnabled) {
+              basePayload.multi_shot = true;
+              basePayload.shot_type = shotType;
+
+              if (shotType === "customize") {
+                basePayload.multi_prompt = multiPrompt;
+              } else {
+                const p = String(prompt || "").trim();
+                if (!p) {
+                  throw httpError(
+                    400,
+                    "KLING_V3_PROMPT_REQUIRED",
+                    "Kling: prompt es obligatorio cuando shot_type=intelligence."
+                  );
+                }
+                basePayload.prompt = p;
+              }
+            } else {
+              const p = String(prompt || "").trim();
+              if (!p) {
+                throw httpError(
+                  400,
+                  "KLING_V3_PROMPT_REQUIRED",
+                  "Kling: prompt es obligatorio cuando no usas multi_shot."
+                );
+              }
+              basePayload.prompt = p;
+            }
+
             taskResponse = await klingPostWithRetry(
-              "/videos/text2video",
-            {
-              model_name: klingApiModelName,
-              prompt,
-              duration: dur,
+              "/videos/image2video",
+              basePayload,
+              { timeoutMs: 60_000, retries: 3 }
+            );
+
+          } else {
+            const basePayload = {
+              model_name: selectedModelNorm,
+              duration: String(dur),
               aspect_ratio: aspectRatio || "16:9",
               ...klingExtras,
-            },
-            { timeoutMs: 60_000, retries: 3 }
+            };
+
+            if (multiShotEnabled) {
+              basePayload.multi_shot = true;
+              basePayload.shot_type = shotType;
+
+              if (shotType === "customize") {
+                basePayload.multi_prompt = multiPrompt;
+              } else {
+                const p = String(prompt || "").trim();
+                if (!p) {
+                  throw httpError(
+                    400,
+                    "KLING_V3_PROMPT_REQUIRED",
+                    "Kling: prompt es obligatorio cuando shot_type=intelligence."
+                  );
+                }
+                basePayload.prompt = p;
+              }
+            } else {
+              const p = String(prompt || "").trim();
+              if (!p) {
+                throw httpError(
+                  400,
+                  "KLING_V3_PROMPT_REQUIRED",
+                  "Kling: prompt es obligatorio cuando no usas multi_shot."
+                );
+              }
+              basePayload.prompt = p;
+            }
+
+            taskResponse = await klingPostWithRetry(
+              "/videos/text2video",
+              basePayload,
+              { timeoutMs: 60_000, retries: 3 }
             );
         }
       } catch (e) {
@@ -1046,29 +1104,27 @@ export function createAiVideoRouter(ctx) {
 
       let klingDuration = durationSeconds != null ? Number(durationSeconds) : 5;
       klingDuration = Math.trunc(klingDuration);
-      if (![5, 10].includes(klingDuration)) {
+
+      if (klingDuration < 3 || klingDuration > 15) {
         throw httpError(
           400,
           "KLING_DURATION_NOT_SUPPORTED",
-          "Kling solo acepta durationSeconds de 5 o 10."
+          "Kling solo acepta durationSeconds entre 3 y 15."
         );
       }
 
-      // Kling v2.6 Native Audio
-      // ✅ Kling API espera `enable_audio: boolean` (no `sound: "on"|"off"`).
-      // ✅ Además: cuando enable_audio=true, la mayoría de gateways requieren `mode: "pro"`.
       let klingModeValue = klingMode || "std";
-      const supportsNativeAudio = selectedModelNorm === "kling-v2-6";
-      const enableAudio =
-        supportsNativeAudio && klingSound !== undefined ? Boolean(klingSound) : undefined;
 
-      if (supportsNativeAudio && enableAudio === true && klingModeValue !== "pro") {
-        klingModeValue = "pro";
-      }
+      // Audio (solo V2.6+): `sound: "on" | "off"`
+      const supportsSound = selectedModelNorm === "kling-v2-6";
+      const soundValue =
+        supportsSound && klingSound !== undefined
+          ? (Boolean(klingSound) ? "on" : "off")
+          : undefined;
 
       const klingExtras = {
         mode: klingModeValue,
-        ...(enableAudio !== undefined ? { enable_audio: enableAudio } : {}),
+        ...(soundValue !== undefined ? { sound: soundValue } : {}),
         ...(negativePrompt ? { negative_prompt: negativePrompt } : {}),
       };
 

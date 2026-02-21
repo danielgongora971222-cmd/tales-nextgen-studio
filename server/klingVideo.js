@@ -6,6 +6,20 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function normalizeKlingSound(sound) {
+  if (sound === undefined || sound === null) return undefined;
+
+  if (typeof sound === "string") {
+    const s = sound.trim().toLowerCase();
+    if (s === "on" || s === "off") return s;
+    if (s === "true") return "on";
+    if (s === "false") return "off";
+  }
+
+  if (typeof sound === "boolean") return sound ? "on" : "off";
+  return undefined;
+}
+
 function base64urlEncode(input) {
   const buf = Buffer.isBuffer(input) ? input : Buffer.from(String(input));
   return buf
@@ -237,12 +251,14 @@ export async function createText2VideoTask({
   sound,
   ...rest
 }) {
+  const soundValue = normalizeKlingSound(sound);
+
   const payload = {
     model_name: model,
     prompt,
-    duration: duration !== undefined ? Number(duration) : undefined,
+    duration: duration !== undefined ? String(duration) : undefined,
     aspect_ratio: aspectRatio,
-    ...(sound !== undefined ? { sound } : {}),
+    ...(soundValue !== undefined ? { sound: soundValue } : {}),
     ...rest,
   };
 
@@ -260,13 +276,15 @@ export async function createImage2VideoTask({
   sound,
   ...rest
 }) {
+  const soundValue = normalizeKlingSound(sound);
+
   const payload = {
     model_name: model,
     prompt,
-    duration: duration !== undefined ? Number(duration) : undefined,
+    duration: duration !== undefined ? String(duration) : undefined,
     image,
     image_tail: imageTail,
-    ...(sound !== undefined ? { sound } : {}),
+    ...(soundValue !== undefined ? { sound: soundValue } : {}),
     ...rest,
   };
 
@@ -283,12 +301,7 @@ export async function pollTaskUntilDone({
   intervalMs = 2000,
 }) {
   const deadline = Date.now() + maxWaitMs;
-  const modelValue = String(modelName || "").trim();
-  const requiresModelParam =
-    modelValue === "kling-v2-6" || modelValue.startsWith("kling-video-");
-  const endpoint = requiresModelParam
-    ? `/videos/${type}/${taskId}?kling_model=${encodeURIComponent(modelValue)}`
-    : `/videos/${type}/${taskId}`;
+  const endpoint = `/videos/${type}/${taskId}`;
 
   while (Date.now() < deadline) {
     const json = await klingGet(endpoint);

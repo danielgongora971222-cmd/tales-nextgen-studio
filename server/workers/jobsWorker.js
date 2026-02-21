@@ -243,9 +243,10 @@ async function processJob(row) {
       return;
     }
 
-    const pollCount = Math.max(0, Number(params.providerPollCount || 0)) + 1;
 
     const safeTaskType = String(taskType || "").trim();
+    const pollCount = Math.max(0, Number(params.providerPollCount || 0)) + 1;
+
     if (!(safeTaskType === "text2video" || safeTaskType === "image2video")) {
       await releaseAndReschedule(jobId, {
         status: "failed",
@@ -268,6 +269,14 @@ async function processJob(row) {
       return;
     }
 
+    let taskData;
+    try {
+      const endpoint = `/videos/${taskType}/${taskId}`;
+
+      const json = await klingGetWithRetry(endpoint, { timeoutMs: 20_000, retries: 3 });
+      taskData = json?.data || json;
+    } catch (e) {
+
     if (!taskId) {
       await releaseAndReschedule(jobId, {
         status: "failed",
@@ -278,19 +287,7 @@ async function processJob(row) {
       return;
     }
 
-    let taskData;
-    try {
-      const modelValue = String(modelName || "").trim();
-      const requiresModelParam =
-        modelValue === "kling-v2-6" || modelValue.startsWith("kling-video-");
 
-    const endpoint = requiresModelParam
-      ? `/videos/${safeTaskType}/${taskId}?kling_model=${encodeURIComponent(modelValue)}`
-      : `/videos/${safeTaskType}/${taskId}`;
-
-      const json = await klingGetWithRetry(endpoint, { timeoutMs: 20_000, retries: 3 });
-      taskData = json?.data || json;
-    } catch (e) {
       const next = new Date(Date.now() + 20_000).toISOString();
       await releaseAndReschedule(jobId, {
         status: "running",
