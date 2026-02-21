@@ -977,7 +977,7 @@ export function createAiVideoRouter(ctx) {
             firstFrameAssetId: firstFrameAssetId || null,
             lastFrameAssetId: lastFrameAssetId || null,
             klingMode: klingModeValue,
-            klingSound: enableAudio ?? null,
+            klingSound: klingSound === undefined ? null : Boolean(klingSound),
             negativePrompt: negativePrompt || null,
             klingTaskId: taskId,
             klingTaskType: taskType,
@@ -1102,25 +1102,38 @@ export function createAiVideoRouter(ctx) {
         });
       }
 
+      // ===============================
+      // ✅ Kling v2.6 (API oficial Tasks)
+      // - En producción: SIEMPRE async (evita timeouts/rewrite 502 en Vercel)
+      // - En dev: puedes forzar sync con { sync: true } y ALLOW_SYNC_REQUESTS=1
+      // ===============================
+
       let klingDuration = durationSeconds != null ? Number(durationSeconds) : 5;
       klingDuration = Math.trunc(klingDuration);
 
-      if (klingDuration < 3 || klingDuration > 15) {
+      // Kling 2.6 (en esta UI) solo expone 5s o 10s
+      if (![5, 10].includes(klingDuration)) {
         throw httpError(
           400,
           "KLING_DURATION_NOT_SUPPORTED",
-          "Kling solo acepta durationSeconds entre 3 y 15."
+          "Kling 2.6 solo acepta durationSeconds de 5 o 10."
         );
       }
 
       let klingModeValue = klingMode || "std";
 
-      // Audio (solo V2.6+): `sound: "on" | "off"`
+      // Audio (v2.6+): `sound: "on" | "off"`
+      // Si el usuario pide audio, forzamos mode="pro" (varios gateways lo requieren).
       const supportsSound = selectedModelNorm === "kling-v2-6";
+      const enableAudio =
+        supportsSound && klingSound !== undefined ? Boolean(klingSound) : undefined;
+
+      if (supportsSound && enableAudio === true && klingModeValue !== "pro") {
+        klingModeValue = "pro";
+      }
+
       const soundValue =
-        supportsSound && klingSound !== undefined
-          ? (Boolean(klingSound) ? "on" : "off")
-          : undefined;
+        enableAudio === undefined ? undefined : enableAudio ? "on" : "off";
 
       const klingExtras = {
         mode: klingModeValue,
@@ -1172,18 +1185,51 @@ export function createAiVideoRouter(ctx) {
         });
       }
 
+      // ✅ Async: devolvemos jobId; el worker (public.jobs) hace polling y guarda el video
+      if (asyncMode) {
+        const meta = {
+          tool: toolName,
+          provider: "kling",
+          model: selectedModelNorm,
+          aspectRatio: hasFirst ? null : (aspectRatio || "16:9"),
+          durationSeconds: klingDuration,
+          firstFrameAssetId: firstFrameAssetId || null,
+          lastFrameAssetId: lastFrameAssetId || null,
+          klingMode: klingModeValue,
+          klingSound: enableAudio ?? null,
+          negativePrompt: negativePrompt || null,
+          klingTaskId: String(taskId),
+          klingTaskType: taskType,
+        };
+
+        const jobId = await upsertKlingJobRow({
+          ownerId: user.id,
+          kind: "video",
+          taskId: String(taskId),
+          taskType,
+          toolName,
+          hint,
+          model: selectedModelNorm,
+          prompt,
+          extra: { meta },
+        });
+
+        return res.json({ ok: true, mode: "async", jobId, taskId: String(taskId) });
+      }
+
+      // ✅ Sync (solo dev): polling aquí y guardamos asset
       let taskData = null;
       try {
         taskData = await pollTaskUntilDone({
           type: taskType,
-          taskId,
+          taskId: String(taskId),
           modelName: selectedModelNorm,
-          maxWaitMs: 6 * 60 * 1000,
+          maxWaitMs: 10 * 60 * 1000,
           intervalMs: 2000,
         });
       } catch (err) {
         throw httpError(502, "KLING_TASK_FAILED", err.message || "Kling task failed.", {
-          taskId,
+          taskId: String(taskId),
           requestId: err?.requestId || null,
         });
       }
@@ -1213,7 +1259,7 @@ export function createAiVideoRouter(ctx) {
 
       if (enableAudio) {
         console.log("[Kling v2.6 audio] enableAudio=true", {
-          taskId,
+          taskId: String(taskId),
           hasVideoUrl: Boolean(videoUrl),
           hasAudioUrl: Boolean(audioUrl),
           videoKeys: firstVideo ? Object.keys(firstVideo) : null,
@@ -1223,7 +1269,7 @@ export function createAiVideoRouter(ctx) {
 
       if (!videoUrl) {
         throw httpError(502, "KLING_NO_VIDEOS", "Kling: tarea completada pero sin videos.", {
-          taskId,
+          taskId: String(taskId),
           response: taskData,
         });
       }
@@ -1254,15 +1300,15 @@ export function createAiVideoRouter(ctx) {
         tool: toolName,
         provider: "kling",
         model: selectedModelNorm,
-
         aspectRatio: hasFirst ? null : (aspectRatio || "16:9"),
         durationSeconds: klingDuration,
         firstFrameAssetId: firstFrameAssetId || null,
         lastFrameAssetId: lastFrameAssetId || null,
         klingMode: klingModeValue,
-        klingSound: supportsNativeAudio ? (enableAudio ?? null) : null,
+        klingSound: enableAudio ?? null,
         negativePrompt: negativePrompt || null,
-        klingTaskId: taskId,
+        klingTaskId: String(taskId),
+        klingTaskType: taskType,
       };
 
       const assetId = await insertAssetRow({

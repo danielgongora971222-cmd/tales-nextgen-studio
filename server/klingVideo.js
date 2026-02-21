@@ -63,9 +63,18 @@ function resolveKlingUrl(path) {
 
   let pathValue = trimmed || "/";
   if (!pathValue.startsWith("/")) pathValue = `/${pathValue}`;
-  if (pathValue.startsWith("/v1/")) pathValue = pathValue.slice(3);
 
-  return `${resolveKlingBaseUrl()}${pathValue}`.replace(/\/+$/g, "");
+  // Kling API es /v1/...
+  // - Si el baseUrl YA termina en /v1, no duplicamos.
+  // - Si el baseUrl NO tiene /v1, lo agregamos al path.
+  const base = resolveKlingBaseUrl();
+  const baseHasV1 = /\/v1$/i.test(base);
+  const pathHasV1 = pathValue.startsWith("/v1/");
+
+  if (baseHasV1 && pathHasV1) pathValue = pathValue.slice(3);
+  if (!baseHasV1 && !pathHasV1) pathValue = `/v1${pathValue}`;
+
+  return `${base}${pathValue}`.replace(/\/+$/g, "");
 }
 
 function getKlingAuthToken() {

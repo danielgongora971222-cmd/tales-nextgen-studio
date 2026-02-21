@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "./AuthContext";
-import { KLING_O3_PRO, KLING_V3 } from "../services/videoModels";
+import { KLING_2_6, KLING_O3_PRO, KLING_V3 } from "../services/videoModels";
 import { apiPostJson, clearPendingFalJob, formatErr, loadPendingFalJobs, savePendingFalJob, waitFalJob } from "../services/videoGenApi";
 import { waitJobCompletion } from "../services/jobsApi";
 import { invalidateMyAssetsCache } from "../services/assetsApi";
@@ -166,8 +166,8 @@ export const GenerationQueueProvider: React.FC<{ children: React.ReactNode }> = 
         };
       }
 
-      // ✅ Reanudable: Kling V3 (supabaseJobId)
-      if (modelNorm === KLING_V3 && supaId) {
+      // ✅ Reanudable: Kling (Tasks) (supabaseJobId)
+      if ((modelNorm === KLING_V3 || modelNorm === KLING_2_6) && supaId) {
         return {
           ...j,
           status: "queued" as const,
@@ -393,7 +393,7 @@ async function runVideoJob(
     // ===============================
   // ✅ Kling V3 (API oficial): esperar al worker por public.jobs
   // ===============================
-  if (modelNorm === KLING_V3) {
+  if (modelNorm === KLING_V3 || modelNorm === KLING_2_6) {
     const existingJobId = payload?.supabaseJobId ? String(payload.supabaseJobId) : "";
 
     // Reanudar si ya tenemos jobId
