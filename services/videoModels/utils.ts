@@ -1,6 +1,12 @@
 // services/videoModels/utils.ts
 export function normalizeModelId(raw: string): string {
-  return String(raw || "").trim().replace(/^models\//i, "");
+  const v = String(raw || "").trim().replace(/^models\//i, "");
+
+  // ✅ HARDENING: aliases comunes (Fal/legacy)
+  if (v === "kling-v3-0" || v === "kling-v3.0") return "kling-v3";
+  if (v === "kling-v2.6") return "kling-v2-6";
+
+  return v;
 }
 
 export function clampInt(n: any, min: number, max: number, fallback: number) {

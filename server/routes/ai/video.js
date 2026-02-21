@@ -328,14 +328,22 @@ export function createAiVideoRouter(ctx) {
 
     const hasFirst = Boolean(firstFrameAssetId);
     const hasLast = Boolean(lastFrameAssetId);
-    const selectedModelRaw = model || "veo-3.1-generate-preview";
-    const selectedModelStr = String(selectedModelRaw || "").trim();
+const selectedModelRaw = model || "veo-3.1-generate-preview";
+const selectedModelStr = String(selectedModelRaw || "").trim();
 
-    // En Gemini a veces aparece con prefijo "models/".
-    // Si llega "models/kling-...", sin esto cae al branch de Veo por error.
-    const selectedModelNorm = selectedModelStr.replace(/^models\//i, "");
+// En Gemini a veces aparece con prefijo "models/".
+// Si llega "models/kling-...", sin esto cae al branch de Veo por error.
+let selectedModelNorm = selectedModelStr.replace(/^models\//i, "");
 
-    const isKling = selectedModelNorm.startsWith("kling-");
+// ✅ HARDENING: aceptar aliases comunes (Fal/otros) y normalizar a lo que Kling API realmente soporta
+if (/^kling-v3-0$/i.test(selectedModelNorm) || /^kling-v3\.0$/i.test(selectedModelNorm)) {
+  selectedModelNorm = "kling-v3";
+}
+if (/^kling-v2\.6$/i.test(selectedModelNorm)) {
+  selectedModelNorm = "kling-v2-6";
+}
+
+const isKling = selectedModelNorm.startsWith("kling-");
 
     if (hasLast && !hasFirst) {
       throw httpError(
@@ -844,8 +852,8 @@ export function createAiVideoRouter(ctx) {
         };
 
         // Normalizamos el nombre de modelo para Kling API (hardening).
-        // Muchas integraciones listan V3 como "kling-v3-0".
-        const klingApiModelName = selectedModelNorm === "kling-v3" ? "kling-v3-0" : selectedModelNorm;
+        // ✅ Kling API oficial usa "kling-v3" (NO "kling-v3-0").
+        const klingApiModelName = selectedModelNorm;
 
         // ✅ Evita error 1303 (parallel task limit) antes de llamar a Kling
         const blocked = await enforceKlingParallelLimit(res, user.id);
@@ -1086,7 +1094,7 @@ export function createAiVideoRouter(ctx) {
           firstFrameAssetId: firstFrameAssetId || null,
           lastFrameAssetId: lastFrameAssetId || null,
           klingMode: klingModeValue,
-          klingSound: enableAudio ?? null,
+          klingSound: klingSound === undefined ? null : Boolean(klingSound),
           negativePrompt: negativePrompt || null,
           klingTaskId: String(taskId),
           klingTaskType: taskType,
