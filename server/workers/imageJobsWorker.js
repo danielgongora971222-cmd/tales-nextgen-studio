@@ -1469,7 +1469,11 @@ async function runImageGenerateTask({ userId, params }) {
   // =============================
   // Gemini Imagen (generateImages)
   // =============================
-  if (isImageGenModel(selectedModel)) {
+  // ⚠️ IMPORTANTE:
+  // - Imagen models (ej: "imagen-*") usan generateImages() (internamente es :predict).
+  // - Nano Banana / Nano Banana Pro (gemini-2.5-flash-image, gemini-3-pro-image-preview)
+  //   usan generateContent() (NO :predict). Si entran aquí, Google responde 404 "not supported for predict".
+  if (typeof selectedModel === "string" && selectedModel.includes("imagen")) {
     const ai = await ensureAI();
 
     const nRequested = Math.max(1, Math.min(Number(count || 1), maxCount));
@@ -1539,11 +1543,29 @@ async function runImageGenerateTask({ userId, params }) {
       ? appendImageNumberMapping(replaceMentionsWithImageNumbers(prompt, tokenRefs4), tokenRefs4)
       : prompt;
 
+    // Pedimos explícitamente salida de IMAGEN + aplicamos aspectRatio/quality cuando aplique.
+    // (Mantener alineado con /api/ai/image sync)
+    const genConfig = {
+      responseModalities: ["Image"],
+      imageConfig: {},
+    };
+
+    // Aspect ratio (ignoramos "auto")
+    if (aspectRatio && aspectRatio !== "auto") {
+      genConfig.imageConfig.aspectRatio = aspectRatio;
+    }
+
+    // imageSize SOLO en NanoBanana Pro
+    if (selectedModel === "gemini-3-pro-image-preview" && quality) {
+      genConfig.imageConfig.imageSize = String(quality).toUpperCase(); // "1K" | "2K" | "4K"
+    }
+
     const items = [];
     for (let i = 0; i < nRequested; i++) {
       const resp = await ai.models.generateContent({
         model: selectedModel,
         contents: [{ role: "user", parts: [{ text: String(promptAdapted || "") }, ...refParts] }],
+        config: genConfig,
       });
 
       const dataUrl = await extractImageDataUrl(resp);
