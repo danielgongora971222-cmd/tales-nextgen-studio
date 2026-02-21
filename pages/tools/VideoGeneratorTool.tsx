@@ -94,6 +94,70 @@ function extractMentionTokens(text: string) {
   return (text || "").match(/@[a-z0-9_]+/gi) ?? [];
 }
 
+function appendTokensAtEnd(args: { text: string; tokens: string[]; limit?: number }) {
+  const base = String(args.text || "").trim();
+  const suffix = (args.tokens || []).filter(Boolean).join(" ").trim();
+  if (!suffix) return { ok: true, text: base };
+
+  const next = base ? `${base}\n\n${suffix}` : suffix;
+
+  if (typeof args.limit === "number" && next.length > args.limit) {
+    return { ok: false, text: base };
+  }
+  return { ok: true, text: next };
+}
+
+function syncElementTokensInText(args: {
+  text: string;
+  selectedIds: string[];
+  elementTokenById: Map<string, string>;
+  elementTokenToId: Map<string, string>;
+  appendMissing: boolean;
+  limit?: number;
+}) {
+  const selectedTokenSet = new Set(
+    (args.selectedIds || [])
+      .map((id) => (args.elementTokenById.get(id) || "").toLowerCase())
+      .filter(Boolean)
+  );
+
+  const tokenRe = /@[a-z0-9_]+/gi;
+
+  // 1) Remover tokens de Elements que ya no están seleccionados
+  let out = String(args.text || "").replace(tokenRe, (m) => {
+    const tok = m.toLowerCase();
+    if (!args.elementTokenToId.has(tok)) return m; // no es Element conocido
+    return selectedTokenSet.has(tok) ? m : "";
+  });
+
+  out = out
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  // 2) Agregar tokens faltantes (solo si se pidió)
+  if (args.appendMissing && selectedTokenSet.size) {
+    const existing = new Set(extractMentionTokens(out).map((t) => t.toLowerCase()));
+    const missing = [...selectedTokenSet].filter((t) => !existing.has(t));
+
+    if (missing.length) {
+      const appended = appendTokensAtEnd({ text: out, tokens: missing, limit: args.limit });
+      return { text: appended.text, overflowed: !appended.ok };
+    }
+  }
+
+  return { text: out, overflowed: false };
+}
+
+function moveItem<T>(arr: T[], from: number, to: number) {
+  const out = [...(arr || [])];
+  if (from < 0 || from >= out.length) return out;
+  if (to < 0 || to >= out.length) return out;
+  const [item] = out.splice(from, 1);
+  out.splice(to, 0, item);
+  return out;
+}
+
 
 const TOOL_ID = "video-generator";
 const FRAME_UPLOAD_TOOL = "video-gen-frame";
@@ -540,8 +604,10 @@ const VideoGeneratorTool: React.FC = () => {
   const isKlingO3 = modelNorm === KLING_O3_PRO;
   const isKlingV3 = modelNorm === KLING_V3 || isKlingO3;
 
+  const maxKlingElements = isKlingV3 ? (hasFirst ? 3 : 5) : 0;
+
   // ✅ Solo Kling API oficial (mode std/pro => 720/1080). Excluye O3 (Fal).
-const isKlingApi = isKling && !isKlingO3;
+  const isKlingApi = isKling && !isKlingO3;
     // ===============================
   // Mentions (@) para Elements (Kling V3 / O3)
   // - El usuario escribe tags tipo @mi_elemento (slug del nombre).
@@ -622,6 +688,39 @@ const isKlingApi = isKling && !isKlingO3;
       setError("No puedes usar más de 5 Elements a la vez. Elimina alguno del prompt.");
     }
   }, [prompt, elementTokenToId, isKlingV3, multishotEnabled, klingShotType]);
+
+
+  // Sync global Elements en multishot customize:
+  // - Unión de elementIds entre todos los shots (máx por modo/frames)
+  // - Mantiene el orden actual (reordenado por el usuario) y solo agrega/quita según uso real
+  useEffect(() => {
+    if (!isKlingV3) return;
+    if (!(multishotEnabled && klingShotType === "customize")) return;
+
+    const used: string[] = [];
+    for (const s of klingShots) {
+      const ids = Array.isArray((s as any).elementIds) ? (s as any).elementIds : [];
+      for (const id of ids) {
+        if (!id) continue;
+        if (!used.includes(id)) used.push(id);
+      }
+    }
+
+    if (used.length > maxKlingElements) {
+      setError(`No puedes usar más de ${maxKlingElements} Elements a la vez (sumando todos los shots). Elimina alguno del prompt.`);
+      return;
+    }
+
+    setSelectedKlingElementIds((prevIds) => {
+      const prev = Array.isArray(prevIds) ? prevIds : [];
+      const base = prev.filter((id) => used.includes(id));
+      const next = [...base];
+      for (const id of used) if (!next.includes(id)) next.push(id);
+
+      const same = next.length === prev.length && next.every((id, i) => id === prev[i]);
+      return same ? prev : next;
+    });
+  }, [isKlingV3, multishotEnabled, klingShotType, klingShots, maxKlingElements]);
 
 
   const isVeoFamily = modelNorm.startsWith("veo-");
@@ -1096,75 +1195,88 @@ const durationLabel = useMemo(() => {
       if (isKlingV3) {
         const tokenRe = /@[a-z0-9_]+/gi;
 
-        if (!multishotEnabled || klingShotType === "intelligence") {
-          const mentionedIds: string[] = [];
-          for (const tok of extractMentionTokens(prompt)) {
+        const idsMentionedInText = (text: string) => {
+          const out: string[] = [];
+          for (const tok of extractMentionTokens(text)) {
             const id = elementTokenToId.get(tok.toLowerCase());
             if (!id) continue;
-            if (!mentionedIds.includes(id)) mentionedIds.push(id);
+            if (!out.includes(id)) out.push(id);
           }
+          return out;
+        };
 
-          const orderedIds = [...mentionedIds];
-          for (const id of selectedKlingElementIds) if (!orderedIds.includes(id)) orderedIds.push(id);
-
-          if (orderedIds.length > 5) {
-            setError("No puedes usar más de 5 Elements a la vez. Elimina alguno del prompt.");
-            return;
+        const mergeInOrder = (baseOrder: string[], extraIds: string[]) => {
+          const out = [...(Array.isArray(baseOrder) ? baseOrder : [])];
+          for (const id of extraIds) {
+            if (!id) continue;
+            if (!out.includes(id)) out.push(id);
           }
+          return out;
+        };
 
-          const indexById = new Map<string, number>();
-          orderedIds.forEach((id, i) => indexById.set(id, i + 1));
-
-          promptForModel = prompt.replace(tokenRe, (m) => {
+        const replaceTokensWithElementRefs = (text: string, indexById: Map<string, number>) => {
+          return String(text || "").replace(tokenRe, (m) => {
             const id = elementTokenToId.get(m.toLowerCase());
             if (!id) return m;
             const n = indexById.get(id);
             if (!n) return m;
             return `@Element${n}`;
           });
+        };
 
-          selectedKlingElementIdsForModel = orderedIds;
-        } else {
-          const shotsOrdered = (klingShots as any[]).map((s) => {
-            const baseIds = Array.isArray((s as any).elementIds) ? (s as any).elementIds : [];
-            const mentionedIds: string[] = [];
+        if (!multishotEnabled || klingShotType === "intelligence") {
+          // Orden global estable: se controla con el panel “Elements mapping”.
+          // (Mover un token dentro del prompt NO cambia qué es Element1/2/3…)
+          const mentionedIds = idsMentionedInText(prompt);
+          const finalGlobalIds = mergeInOrder(selectedKlingElementIds, mentionedIds);
 
-            for (const tok of extractMentionTokens(String((s as any).prompt || ""))) {
-              const id = elementTokenToId.get(tok.toLowerCase());
-              if (!id) continue;
-              if (!mentionedIds.includes(id)) mentionedIds.push(id);
-            }
-
-            const orderedInShot = [...mentionedIds];
-            for (const id of baseIds) if (!orderedInShot.includes(id)) orderedInShot.push(id);
-
-            return { ...s, elementIds: orderedInShot };
-          });
-
-          const globalIds: string[] = [];
-          for (const s of shotsOrdered) {
-            const ids = Array.isArray((s as any).elementIds) ? (s as any).elementIds : [];
-            for (const id of ids) if (!globalIds.includes(id)) globalIds.push(id);
-          }
-
-          if (globalIds.length > 5) {
-            setError("No puedes usar más de 5 Elements a la vez (sumando todos los shots). Elimina alguno del prompt.");
+          if (finalGlobalIds.length > maxKlingElements) {
+            setError(`No puedes usar más de ${maxKlingElements} Elements a la vez. Elimina alguno del prompt.`);
             return;
           }
 
           const indexById = new Map<string, number>();
-          globalIds.forEach((id, i) => indexById.set(id, i + 1));
+          finalGlobalIds.forEach((id, i) => indexById.set(id, i + 1));
 
-          klingShotsForModel = shotsOrdered.map((s) => ({
-            ...s,
-            prompt: String((s as any).prompt || "").replace(tokenRe, (m) => {
-              const id = elementTokenToId.get(m.toLowerCase());
-              if (!id) return m;
-              const n = indexById.get(id);
-              if (!n) return m;
-              return `@Element${n}`;
-            }),
-          }));
+          promptForModel = replaceTokensWithElementRefs(prompt, indexById);
+          selectedKlingElementIdsForModel = finalGlobalIds;
+        } else {
+          // Multishot customize: orden global estable (panel), pero la unión se valida contra los shots.
+          const shotUsedUnion: string[] = [];
+
+          const shotsWithIds = (klingShots as any[]).map((s) => {
+            const baseIds = Array.isArray((s as any).elementIds) ? (s as any).elementIds : [];
+            const mentionedIds = idsMentionedInText(String((s as any).prompt || ""));
+            const ids = mergeInOrder(baseIds, mentionedIds);
+
+            for (const id of ids) if (!shotUsedUnion.includes(id)) shotUsedUnion.push(id);
+
+            return { ...s, elementIds: ids };
+          });
+
+          const baseOrder = selectedKlingElementIds.filter((id) => shotUsedUnion.includes(id));
+          const finalGlobalIds = mergeInOrder(baseOrder, shotUsedUnion);
+
+          if (finalGlobalIds.length > maxKlingElements) {
+            setError(
+              `No puedes usar más de ${maxKlingElements} Elements a la vez (sumando todos los shots). Elimina alguno del prompt.`
+            );
+            return;
+          }
+
+          const indexById = new Map<string, number>();
+          finalGlobalIds.forEach((id, i) => indexById.set(id, i + 1));
+
+          klingShotsForModel = shotsWithIds.map((s) => {
+            const ids = Array.isArray((s as any).elementIds) ? (s as any).elementIds : [];
+            return {
+              ...s,
+              elementIds: finalGlobalIds.filter((id) => ids.includes(id)),
+              prompt: replaceTokensWithElementRefs(String((s as any).prompt || ""), indexById),
+            };
+          });
+
+          selectedKlingElementIdsForModel = finalGlobalIds;
         }
       }
 
@@ -1260,27 +1372,111 @@ const durationLabel = useMemo(() => {
       ? (klingShots[effectiveElementsShotIndex ?? 0]?.elementIds ?? [])
       : selectedKlingElementIds;
 
-  const setModalSelectedIds: React.Dispatch<React.SetStateAction<string[]>> = (next) => {
+const setModalSelectedIds: React.Dispatch<React.SetStateAction<string[]>> = (next) => {
     if (multishotEnabled && klingShotType === "customize") {
       const idx = effectiveElementsShotIndex ?? 0;
+
+      let promptOverflow = false;
+      let tooMany = false;
+
       setKlingShots((prev) =>
         prev.map((s, i) => {
           if (i !== idx) return s;
+
           const current = s.elementIds ?? [];
-          const value = typeof next === "function" ? (next as any)(current) : next;
-          return { ...s, elementIds: value };
+          let value: string[] = typeof next === "function" ? (next as any)(current) : next;
+
+          if (isKlingV3 && value.length > maxKlingElements) {
+            tooMany = true;
+            value = value.slice(0, maxKlingElements);
+          }
+
+          // Sync selección ⇄ tokens en el prompt del shot (fuente de verdad)
+          const synced = syncElementTokensInText({
+            text: String(s.prompt || ""),
+            selectedIds: value,
+            elementTokenById,
+            elementTokenToId,
+            appendMissing: true,
+            limit: KLING_V3_SHOT_PROMPT_LIMIT,
+          });
+
+          if (synced.overflowed) promptOverflow = true;
+
+          return {
+            ...s,
+            elementIds: value,
+            prompt: synced.text,
+          };
         })
       );
+
+      if (tooMany) {
+        setError(`No puedes usar más de ${maxKlingElements} Elements a la vez en este modo (por frames).`);
+      }
+
+      if (promptOverflow) {
+        setError("El prompt del shot es demasiado largo para insertar los tokens de Elements (límite 512).");
+      }
     } else {
-      setSelectedKlingElementIds(next);
+      const current = selectedKlingElementIds;
+      let value: string[] = typeof next === "function" ? (next as any)(current) : next;
+
+      if (isKlingV3 && value.length > maxKlingElements) {
+        value = value.slice(0, maxKlingElements);
+        setError(`No puedes usar más de ${maxKlingElements} Elements a la vez en este modo (por frames).`);
+      }
+
+      // Sync selección ⇄ tokens en el prompt principal
+      if (isKlingV3) {
+        const synced = syncElementTokensInText({
+          text: String(prompt || ""),
+          selectedIds: value,
+          elementTokenById,
+          elementTokenToId,
+          appendMissing: true,
+        });
+
+        if (synced.text !== prompt) setPrompt(synced.text);
+      }
+
+      setSelectedKlingElementIds(value);
     }
   };
 
-  const clearModalSelectedIds = () => {
+const clearModalSelectedIds = () => {
     if (multishotEnabled && klingShotType === "customize") {
       const idx = effectiveElementsShotIndex ?? 0;
-      setKlingShots((prev) => prev.map((s, i) => (i === idx ? { ...s, elementIds: [] } : s)));
+
+      setKlingShots((prev) =>
+        prev.map((s, i) => {
+          if (i !== idx) return s;
+
+          const synced = syncElementTokensInText({
+            text: String(s.prompt || ""),
+            selectedIds: [],
+            elementTokenById,
+            elementTokenToId,
+            appendMissing: false,
+            limit: KLING_V3_SHOT_PROMPT_LIMIT,
+          });
+
+          return { ...s, elementIds: [], prompt: synced.text };
+        })
+      );
     } else {
+      if (isKlingV3) {
+        const synced = syncElementTokensInText({
+          text: String(prompt || ""),
+          selectedIds: [],
+          elementTokenById,
+          elementTokenToId,
+          appendMissing: false,
+        });
+
+        if (synced.text !== prompt) setPrompt(synced.text);
+      }
+
       setSelectedKlingElementIds([]);
     }
   };
@@ -1396,6 +1592,57 @@ const durationLabel = useMemo(() => {
                           </div>
                         </div>
 
+                        {isKlingV3 && selectedKlingElementIds.length > 0 && (
+                          <div className={styles.elementsMap}>
+                            <div className={styles.elementsMapTitle}>Elements mapping (Kling V3)</div>
+                            <div className={styles.elementsMapHelp}>
+                              En el prompt usa <b>@token</b>. Antes de enviar a Kling se convierte en <b>@ElementN</b>. Reordena para decidir qué Element es 1, 2, 3…
+                              {hasFirst ? " (Con First Frame: máx 3)" : " (Sin First Frame: máx 5)"}
+                            </div>
+
+                            <div className={styles.elementsMapList}>
+                              {selectedKlingElementIds.map((id, index) => {
+                                const el = klingElements.find((x) => x.id === id);
+                                if (!el) return null;
+
+                                const tok = elementTokenById.get(id) || makeElementTag(el.name || "element");
+
+                                return (
+                                  <div key={id} className={styles.elementsMapRow}>
+                                    <div className={styles.elementsMapLeft}>
+                                      <div className={styles.elementsMapIndex}>@Element{index + 1}</div>
+                                      <div className={styles.elementsMapName}>{el.name || "Element"}</div>
+                                      <div className={styles.elementsMapToken}>{tok}</div>
+                                    </div>
+
+                                    <div className={styles.elementsMapActions}>
+                                      <button
+                                        type="button"
+                                        className={styles.elementsMapBtn}
+                                        disabled={index === 0}
+                                        onClick={() => setSelectedKlingElementIds((prev) => moveItem(prev, index, index - 1))}
+                                        title="Subir"
+                                      >
+                                        ↑
+                                      </button>
+
+                                      <button
+                                        type="button"
+                                        className={styles.elementsMapBtn}
+                                        disabled={index === selectedKlingElementIds.length - 1}
+                                        onClick={() => setSelectedKlingElementIds((prev) => moveItem(prev, index, index + 1))}
+                                        title="Bajar"
+                                      >
+                                        ↓
+                                      </button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
                         <div className={styles.multishotShots}>
                           {klingShots.map((s, i) => (
                             <div key={i} className={styles.multishotShotRow}>
@@ -1429,7 +1676,24 @@ const durationLabel = useMemo(() => {
                                 value={s.prompt || ""}
                                 onChange={(next) => {
                                   const clipped = next.length > KLING_V3_SHOT_PROMPT_LIMIT ? next.slice(0, KLING_V3_SHOT_PROMPT_LIMIT) : next;
-                                  setKlingShots((prev) => prev.map((x, idx) => (idx === i ? { ...x, prompt: clipped } : x)));
+
+                                  // Para Kling V3: el prompt del shot es la fuente de verdad de sus Elements (tokens @...)
+                                  const mentionedIds: string[] = [];
+                                  if (isKlingV3) {
+                                    for (const tok of extractMentionTokens(clipped)) {
+                                      const id = elementTokenToId.get(tok.toLowerCase());
+                                      if (!id) continue;
+                                      if (!mentionedIds.includes(id)) mentionedIds.push(id);
+                                    }
+                                  }
+
+                                  setKlingShots((prev) =>
+                                    prev.map((x, idx) =>
+                                      idx === i
+                                        ? { ...x, prompt: clipped, ...(isKlingV3 ? { elementIds: mentionedIds } : {}) }
+                                        : x
+                                    )
+                                  );
                                 }}
                                 placeholder="Prompt del shot…"
                                 rows={2}

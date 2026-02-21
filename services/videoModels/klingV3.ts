@@ -29,8 +29,13 @@ function injectRefsIfMissing(prompt: string, indexes: number[]) {
   // Si el usuario ya escribió @ElementN manualmente, no tocamos el prompt
   if (/@Element\s*\d+/i.test(p)) return p;
 
-  const refs = refsFromIndexes(indexes);
-  return `${p}\n\nUse ${refs}.`.trim();
+  const refs = refsFromIndexes(indexes).trim();
+  if (!refs) return p;
+
+  if (!p) return refs;
+
+  // Profesional: no añadimos texto extra, solo las refs
+  return `${p}\n\n${refs}`.trim();
 }
 
 function assertPromptLimit(prompt: string, limit: number, label: string) {
@@ -80,6 +85,8 @@ export const klingV3Handler: VideoModelHandler = {
     const modelNorm = normalizeModelId(args.model);
     const hasFirst = Boolean(args.firstFrameAssetId);
 
+    const maxElems = hasFirst ? 3 : 5;
+
     const wantsMultishot = Boolean(args.multishotEnabled);
     const shotType = args.klingShotType; // "customize" | "intelligence"
 
@@ -97,18 +104,29 @@ export const klingV3Handler: VideoModelHandler = {
         throw new Error("Multishot (customize): agrega al menos 2 shots con prompt.");
       }
 
-      // Unión global de Elements (máx 5)
+      // Unión global de Elements usados por los shots (máx por modo/frames)
+      const usedUnion: string[] = [];
       for (const s of baseShots) {
         const ids = Array.isArray((s as any).elementIds) ? (s as any).elementIds : [];
         for (const id of ids) {
-          if (!globalElementIds.includes(id)) globalElementIds.push(id);
-          if (globalElementIds.length > 5) {
+          if (!id) continue;
+          if (!usedUnion.includes(id)) usedUnion.push(id);
+          if (usedUnion.length > maxElems) {
             throw new Error(
-              "Kling V3: Máximo 5 Elements en total (unión global entre todos los shots). Reduce selección."
+              `Kling V3: Máximo ${maxElems} Elements en total (según modo/frames). Reduce selección.`
             );
           }
         }
       }
+
+      // Orden global estable (controlado por la UI):
+      // - Respetamos args.selectedKlingElementIds como orden preferido
+      // - y agregamos cualquier faltante según aparición en usedUnion
+      const usedSet = new Set(usedUnion);
+      const preferred = Array.isArray(args.selectedKlingElementIds) ? args.selectedKlingElementIds : [];
+
+      globalElementIds = preferred.filter((id) => usedSet.has(id));
+      for (const id of usedUnion) if (!globalElementIds.includes(id)) globalElementIds.push(id);
 
       const elementIndexById = new Map<string, number>(globalElementIds.map((id, idx) => [id, idx + 1]));
 
@@ -133,7 +151,7 @@ export const klingV3Handler: VideoModelHandler = {
       });
     } else {
       // Normal (sin multishot) o Multishot intelligence: Elements global (máx 5)
-      globalElementIds = args.selectedKlingElementIds.slice(0, 5);
+      globalElementIds = args.selectedKlingElementIds.slice(0, maxElems);
     }
 
     // Prompt efectivo (solo para UI/registro)
