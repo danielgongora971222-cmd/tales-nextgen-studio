@@ -556,6 +556,7 @@ export function createStorageHelpers(arg1, arg2) {
     uploadStreamToStorage,
     signStoragePath,
     deleteStoragePath,
+    downloadStoragePath,
     createClientUploadTarget,
     insertAssetRow,
   };
