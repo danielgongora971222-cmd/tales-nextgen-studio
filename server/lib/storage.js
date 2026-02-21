@@ -216,20 +216,45 @@ export function createStorageHelpers(arg1, arg2) {
     return providerDefault === "r2" ? "r2" : "supabase";
   }
 
-  async function uploadBytesToProvider({ provider, key, bytes, contentType }) {
+async function uploadBytesToProvider({ provider, key, bytes, contentType, sizeBytes }) {
     const ct = contentType || "application/octet-stream";
     const isStreamLike = !!bytes && typeof bytes.pipe === "function";
 
     if (provider === "r2") {
       const client = ensureR2();
-      await client.send(
-        new PutObjectCommand({
-          Bucket: r2.bucket,
-          Key: key,
-          Body: bytes,
-          ContentType: ct,
-        })
-      );
+
+      let body = bytes;
+      let contentLength = Number(sizeBytes);
+
+      // Si no tenemos sizeBytes, intentamos derivarlo sin romper:
+      if (!Number.isFinite(contentLength) || contentLength <= 0) {
+        if (Buffer.isBuffer(bytes)) {
+          contentLength = bytes.length;
+        } else if (bytes instanceof Uint8Array) {
+          contentLength = bytes.byteLength;
+        } else if (bytes instanceof Readable || isStreamLike) {
+          // 🔒 Fallback robusto: bufferizamos stream para evitar header "undefined"
+          const buf = await readableToBuffer(bytes);
+          body = buf;
+          contentLength = buf.length;
+        } else {
+          contentLength = NaN;
+        }
+      }
+
+      const cmdInput = {
+        Bucket: r2.bucket,
+        Key: key,
+        Body: body,
+        ContentType: ct,
+      };
+
+      // ✅ Para streams (y para evitar x-amz-decoded-content-length undefined)
+      if (Number.isFinite(contentLength) && contentLength > 0) {
+        cmdInput.ContentLength = contentLength;
+      }
+
+      await client.send(new PutObjectCommand(cmdInput));
       return;
     }
 
@@ -283,7 +308,7 @@ export function createStorageHelpers(arg1, arg2) {
 
     const key = buildAssetPath({ userId, tool, mimeType, nameHint });
 
-    await uploadBytesToProvider({ provider, key, bytes, contentType: mimeType });
+    await uploadBytesToProvider({ provider, key, bytes, contentType: mimeType, sizeBytes: bytes.length });
 
     return {
       storagePath: wrapStoragePath(provider, key),
@@ -307,7 +332,7 @@ export function createStorageHelpers(arg1, arg2) {
     const ct = mimeType || "application/octet-stream";
     const key = buildAssetPath({ userId, tool, mimeType: ct, nameHint });
 
-    await uploadBytesToProvider({ provider, key, bytes: buffer, contentType: ct });
+    await uploadBytesToProvider({ provider, key, bytes: buffer, contentType: ct, sizeBytes: buffer.length });
 
     return {
       storagePath: wrapStoragePath(provider, key),
@@ -331,7 +356,7 @@ export function createStorageHelpers(arg1, arg2) {
   const ct = mimeType || "application/octet-stream";
   const key = buildAssetPath({ userId, tool, mimeType: ct, nameHint });
 
-  await uploadBytesToProvider({ provider, key, bytes: stream, contentType: ct });
+  await uploadBytesToProvider({ provider, key, bytes: stream, contentType: ct, sizeBytes });
 
   return {
     storagePath: wrapStoragePath(provider, key),
