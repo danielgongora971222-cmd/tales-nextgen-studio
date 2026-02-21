@@ -156,11 +156,6 @@ export async function klingGet(path) {
   return json;
 }
 
-export async function klingGet(path) {
-  const { json } = await klingFetch(path, { method: "GET" });
-  return json;
-}
-
 // ===============================
 // ✅ HARDENING (solo si lo usas)
 // Timeouts + retries
