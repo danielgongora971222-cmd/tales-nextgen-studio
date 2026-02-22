@@ -105,12 +105,22 @@ create table if not exists public.kling_elements (
   owner_id uuid not null references auth.users(id) on delete cascade,
 
   name text not null,
-  kling_element_id text not null,
+
+  -- ✅ ahora puede ser null mientras Kling procesa el task
+  kling_element_id text,
+
+  -- ✅ tasks/polling + versionado
+  status text not null default 'ready' check (status in ('creating','ready','failed')),
+  status_detail text,
+  api_version text not null default 'legacy',
+  kling_task_id text,
+  kling_raw jsonb,
 
   preview_path text,
   image_paths text[] not null default '{}'::text[],
 
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 
 create index if not exists kling_elements_owner_created_at_idx

@@ -13,6 +13,7 @@ import {
   createText2VideoTask,
   pollTaskUntilDone,
   klingPostWithRetry,
+  klingGetWithRetry,
 } from "./klingVideo.js";
 import os from "os";
 import fs from "fs/promises";
@@ -1367,29 +1368,189 @@ function resolveKlingCreateElementUrl() {
     return `${baseUrl}${pathRaw}`.replace(/\/+$/g, "");
   }
 
+function resolveKlingCreateElementPath() {
+  const url = resolveKlingCreateElementUrl();
+
+  // Si tenemos URL completa, extraemos el pathname
+  if (/^https?:\/\//i.test(url)) {
+    const u = new URL(url);
+    let p = (u.pathname || "").trim();
+    if (!p.startsWith("/")) p = "/" + p;
+    if (p.startsWith("/v1/")) p = p.slice(3); // "/v1" => ""
+    return p.replace(/\/+$/g, "") || "/general/custom-elements";
+  }
+
+  // Si nos llega un PATH
+  let p = String(url || "").trim();
+  if (!p.startsWith("/")) p = "/" + p;
+  if (p.startsWith("/v1/")) p = p.slice(3);
+  return p.replace(/\/+$/g, "") || "/general/custom-elements";
+}
+
+function normalizeKlingTaskStatus(raw) {
+  const s = String(raw || "").trim().toLowerCase();
+  return s;
+}
+
+function isKlingSuccessStatus(status) {
+  const s = normalizeKlingTaskStatus(status);
+  return (
+    s === "succeed" ||
+    s === "succeeded" ||
+    s === "success" ||
+    s === "completed" ||
+    s === "done" ||
+    s === "finished"
+  );
+}
+
+function isKlingFailureStatus(status) {
+  const s = normalizeKlingTaskStatus(status);
+  return (
+    s === "failed" ||
+    s === "fail" ||
+    s === "error" ||
+    s === "canceled" ||
+    s === "cancelled" ||
+    s === "timeout"
+  );
+}
+
+function resolveKlingElementTaskStatusPaths({ createPath, taskId }) {
+  const paths = [];
+
+  // Override opcional (PATH), soporta "{taskId}"
+  const override = String(process.env.KLING_ELEMENT_TASK_STATUS_PATH || "").trim();
+  if (override) {
+    const tpl = override.includes("{taskId}")
+      ? override
+      : `${override.replace(/\/+$/g, "")}/{taskId}`;
+    const out = tpl.replace("{taskId}", encodeURIComponent(String(taskId)));
+    paths.push(out.startsWith("/") ? out : "/" + out);
+  }
+
+  const base = String(createPath || "/general/custom-elements")
+    .split("?")[0]
+    .replace(/\/+$/g, "");
+  const safeTask = encodeURIComponent(String(taskId));
+
+  // Candidatos más probables
+  paths.push(`${base}/tasks/${safeTask}`);
+  paths.push(`${base}/${safeTask}`);
+
+  // Fallbacks
+  paths.push(`/general/custom-elements/tasks/${safeTask}`);
+  paths.push(`/general/custom-elements/${safeTask}`);
+  paths.push(`/general/advanced-custom-elements/tasks/${safeTask}`);
+  paths.push(`/general/advanced-custom-elements/${safeTask}`);
+
+  return [
+    ...new Set(
+      paths
+        .map((p) => (p.startsWith("/v1/") ? p.slice(3) : p))
+        .map((p) => p.replace(/\/+$/g, ""))
+    ),
+  ];
+}
+
+function extractElementIdFromAny(obj) {
+  if (!obj) return null;
+  const d = obj?.data || obj;
+  const elementId =
+    d?.element_id ||
+    d?.elementId ||
+    d?.id ||
+    d?.element?.id ||
+    d?.element?.element_id ||
+    d?.result?.element_id ||
+    d?.result?.elementId ||
+    d?.result?.id;
+  return elementId ? String(elementId) : null;
+}
+
+function extractTaskStatusFromAny(obj) {
+  const d = obj?.data || obj;
+  return (
+    d?.task_status ||
+    d?.taskStatus ||
+    d?.status ||
+    d?.task?.status ||
+    d?.result?.status ||
+    d?.state ||
+    ""
+  );
+}
+
+function extractTaskStatusMsgFromAny(obj) {
+  const d = obj?.data || obj;
+  return (
+    d?.task_status_msg ||
+    d?.taskStatusMsg ||
+    d?.message ||
+    d?.msg ||
+    d?.error?.message ||
+    ""
+  );
+}
+
+async function klingGetElementTaskStatusOnce({ createPath, taskId }) {
+  const paths = resolveKlingElementTaskStatusPaths({ createPath, taskId });
+
+  let lastErr = null;
+
+  for (const p of paths) {
+    try {
+      const raw = await klingGetWithRetry(p, { timeoutMs: 20_000, retries: 2 });
+      const status = extractTaskStatusFromAny(raw);
+      const msg = extractTaskStatusMsgFromAny(raw);
+      const elementId = extractElementIdFromAny(raw);
+
+      return { ok: true, pathUsed: p, raw, status, msg, elementId };
+    } catch (e) {
+      lastErr = e;
+      continue;
+    }
+  }
+
+  return {
+    ok: false,
+    error: lastErr ? String(lastErr?.message || lastErr) : "unknown",
+    pathsTried: paths,
+  };
+}
+
 
 async function klingCreateElement({ name, tag, imageUrls }) {
   const accessKey = process.env.KLING_ACCESS_KEY;
   const secretKey = process.env.KLING_SECRET_KEY;
   if (!accessKey || !secretKey) {
-    throw httpError(500, "KLING_NOT_CONFIGURED", "Faltan KLING_ACCESS_KEY / KLING_SECRET_KEY en el backend.");
+    throw httpError(
+      500,
+      "KLING_NOT_CONFIGURED",
+      "Faltan KLING_ACCESS_KEY / KLING_SECRET_KEY en el backend."
+    );
   }
 
-  const url = resolveKlingCreateElementUrl();
+  const createPath = resolveKlingCreateElementPath();
 
-  // Kling Custom Element API requiere:
-  // element_name, element_description, element_frontal_image, element_refer_list (1..3)
+  // Legacy payload (compat): element_name, element_description, element_frontal_image, element_refer_list (1..3)
   const frontal = imageUrls?.[0];
   if (!frontal) {
     throw httpError(400, "KLING_ELEMENT_NO_IMAGES", "No hay imágenes para crear el Element.");
   }
 
   const refer = (imageUrls || []).slice(1, 4);
-  const referList = refer.length ? refer : [frontal]; // Kling exige mínimo 1 referencia
+  const referList = refer.length ? refer : [frontal];
 
   const t = String(tag || "").trim().toLowerCase();
   const tagId =
-    t === "scene" ? "o_106" : t === "object" || t === "item" ? "o_104" : t === "character" ? "o_102" : "o_102";
+    t === "scene"
+      ? "o_106"
+      : t === "object" || t === "item"
+        ? "o_104"
+        : t === "character"
+          ? "o_102"
+          : "o_102";
 
   const elementDescription = (() => {
     const base = t ? `${t} element` : "custom element";
@@ -1405,53 +1566,49 @@ async function klingCreateElement({ name, tag, imageUrls }) {
     ...(tagId ? { tag_list: [{ tag_id: tagId }] } : {}),
   };
 
+  const apiVersion = /advanced-custom-elements/i.test(createPath) ? "advanced" : "legacy";
+
+  let json;
   try {
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        Authorization: `Bearer ${makeKlingJwt(accessKey, secretKey, 300)}`,
-      },
-      body: JSON.stringify(payload),
-    });
-
-    const text = await resp.text();
-    let json = null;
-    try {
-      json = text ? JSON.parse(text) : null;
-    } catch {}
-
-    if (resp.ok && json && (json.code === 0 || json.code === undefined || json.success === true)) {
-      const data = json.data || json;
-      const elementId =
-        data.element_id ||
-        data.elementId ||
-        data.id ||
-        data.element?.id ||
-        data.element?.element_id;
-
-      if (elementId) return { elementId, raw: json };
-    }
-
-    const msgFromJson = json?.message || json?.msg || json?.error?.message || json?.error || null;
-    const statusLine = `HTTP ${resp.status}${resp.statusText ? ` ${resp.statusText}` : ""}`;
-    const snippet = (text || "").slice(0, 280);
-    const lastErr = new Error(`${msgFromJson || statusLine}${snippet ? ` | body: ${snippet}` : ""}`);
-
-    throw httpError(
-      502,
-      "KLING_CREATE_ELEMENT_FAILED",
-      `Kling no aceptó el payload para crear el Element. URL usada: ${url}. Detalles: ${lastErr?.message || "unknown"}`
-    );
+    json = await klingPostWithRetry(createPath, payload, { timeoutMs: 60_000, retries: 3 });
   } catch (e) {
-    if (e?.statusCode) throw e;
     throw httpError(
       502,
       "KLING_CREATE_ELEMENT_FAILED",
-      `Kling no aceptó el payload para crear el Element. URL usada: ${url}. Detalles: ${e?.message || "unknown"}`
+      `Kling no aceptó el payload para crear el Element. Path usado: ${createPath}. Detalles: ${e?.message || "unknown"}`
     );
   }
+
+  const data = json?.data || json;
+
+  const elementId =
+    data?.element_id ||
+    data?.elementId ||
+    data?.id ||
+    data?.element?.id ||
+    data?.element?.element_id;
+
+  if (elementId) {
+    return { mode: "ready", apiVersion, elementId: String(elementId), taskId: null, raw: json };
+  }
+
+  const taskId =
+    data?.task_id ||
+    data?.taskId ||
+    data?.data?.task_id ||
+    json?.task_id ||
+    json?.taskId;
+
+  if (taskId) {
+    return { mode: "creating", apiVersion: `${apiVersion}-task`, elementId: null, taskId: String(taskId), raw: json };
+  }
+
+  throw httpError(
+    502,
+    "KLING_BAD_RESPONSE",
+    "Kling no devolvió element_id ni task_id al crear el Element.",
+    { response: json }
+  );
 }
 
 // GET /api/kling/elements  -> lista elementos del usuario
@@ -1461,7 +1618,7 @@ app.get("/api/kling/elements", async (req, res) => {
 
   const { data, error: dbErr } = await supabaseAdmin
     .from("kling_elements")
-    .select("id, name, kling_element_id, preview_path, image_paths, created_at")
+    .select("id, name, kling_element_id, status, status_detail, api_version, kling_task_id, preview_path, image_paths, created_at, updated_at")
     .eq("owner_id", user.id)
     .order("created_at", { ascending: false });
 
@@ -1480,6 +1637,13 @@ app.get("/api/kling/elements", async (req, res) => {
         id: row.id,
         name: row.name,
         klingElementId: row.kling_element_id || null,
+
+        status: row.status || "ready",
+        statusDetail: row.status_detail || null,
+        apiVersion: row.api_version || null,
+        taskId: row.kling_task_id || null,
+        updatedAt: row.updated_at || null,
+
         createdAt: row.created_at,
         previewUrl,
         imageUrls,
@@ -1533,7 +1697,7 @@ app.post("/api/kling/elements", async (req, res, next) => {
     const signedImageUrls = await Promise.all(imagePaths.map((p) => signStoragePath(p, 60 * 30)));
 
     // 3) Crear Element en Kling (endpoint configurable via env)
-    const { elementId } = await klingCreateElement({
+    const created = await klingCreateElement({
       name,
       tag: tag || "character",
       imageUrls: signedImageUrls,
@@ -1542,16 +1706,26 @@ app.post("/api/kling/elements", async (req, res, next) => {
     // 4) Guardar en DB (paths, no URLs firmadas)
     const previewPath = imagePaths[0];
 
+    const insertPayload = {
+      owner_id: user.id,
+      name,
+
+      kling_element_id: created.elementId ? String(created.elementId) : null,
+
+      status: created.mode === "creating" ? "creating" : "ready",
+      status_detail: null,
+      api_version: created.apiVersion || "legacy",
+      kling_task_id: created.taskId ? String(created.taskId) : null,
+      kling_raw: created.raw || null,
+
+      image_paths: imagePaths,
+      preview_path: previewPath,
+    };
+
     const { data: row, error: insErr } = await supabaseAdmin
       .from("kling_elements")
-      .insert({
-        owner_id: user.id,
-        name,
-        kling_element_id: String(elementId),
-        image_paths: imagePaths,
-        preview_path: previewPath,
-      })
-      .select("id, name, kling_element_id, preview_path, image_paths, created_at")
+      .insert(insertPayload)
+      .select("id, name, kling_element_id, status, status_detail, api_version, kling_task_id, preview_path, image_paths, created_at, updated_at")
       .single();
 
     if (insErr) {
@@ -1565,12 +1739,20 @@ app.post("/api/kling/elements", async (req, res, next) => {
     const previewUrl = await signStoragePath(row.preview_path, 60 * 60);
     const imageUrls = await Promise.all((row.image_paths || []).map((p) => signStoragePath(p, 60 * 60)));
 
-    return res.status(201).json({
+    return res.status(row.status === "creating" ? 202 : 201).json({
       ok: true,
+      pending: row.status === "creating",
       item: {
         id: row.id,
         name: row.name,
-        klingElementId: row.kling_element_id,
+        klingElementId: row.kling_element_id || null,
+
+        status: row.status || "ready",
+        statusDetail: row.status_detail || null,
+        apiVersion: row.api_version || null,
+        taskId: row.kling_task_id || null,
+        updatedAt: row.updated_at || null,
+
         createdAt: row.created_at,
         previewUrl,
         imageUrls,
@@ -1579,6 +1761,124 @@ app.post("/api/kling/elements", async (req, res, next) => {
   } catch (err) {
     return next(err);
   }
+});
+
+// GET /api/kling/elements/:id -> devuelve 1 Element y (si está creating) hace 1 poll a Kling para refrescar status
+app.get("/api/kling/elements/:id", async (req, res) => {
+  const { user, error } = await requireUser(req);
+  if (error) return res.status(401).json({ ok: false, error });
+
+  const id = req.params.id;
+
+  const { data: row, error: getErr } = await supabaseAdmin
+    .from("kling_elements")
+    .select("id, owner_id, name, kling_element_id, status, status_detail, api_version, kling_task_id, kling_raw, preview_path, image_paths, created_at, updated_at")
+    .eq("id", id)
+    .single();
+
+  if (getErr || !row) {
+    return res.status(404).json({ ok: false, error: { code: "NOT_FOUND", message: "Element no encontrado." } });
+  }
+  if (row.owner_id !== user.id) {
+    return res.status(403).json({ ok: false, error: { code: "FORBIDDEN", message: "No tienes permiso." } });
+  }
+
+  // Si está creando, hacemos 1 poll por request
+  if (row.status === "creating" && row.kling_task_id) {
+    const createPath = resolveKlingCreateElementPath();
+
+    const polled = await klingGetElementTaskStatusOnce({
+      createPath,
+      taskId: row.kling_task_id,
+    });
+
+    if (polled.ok) {
+      const statusNorm = normalizeKlingTaskStatus(polled.status);
+
+      // Success (si ya hay element_id)
+      if (isKlingSuccessStatus(statusNorm) && polled.elementId) {
+        const upd = await supabaseAdmin
+          .from("kling_elements")
+          .update({
+            status: "ready",
+            status_detail: null,
+            kling_element_id: String(polled.elementId),
+            kling_raw: polled.raw || null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", row.id)
+          .select("id, owner_id, name, kling_element_id, status, status_detail, api_version, kling_task_id, preview_path, image_paths, created_at, updated_at")
+          .single();
+
+        if (!upd.error && upd.data) {
+          row.status = upd.data.status;
+          row.status_detail = upd.data.status_detail;
+          row.kling_element_id = upd.data.kling_element_id;
+          row.updated_at = upd.data.updated_at;
+        }
+      } else if (isKlingFailureStatus(statusNorm)) {
+        await supabaseAdmin
+          .from("kling_elements")
+          .update({
+            status: "failed",
+            status_detail: polled.msg || `Task failed (${statusNorm})`,
+            kling_raw: polled.raw || null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", row.id);
+
+        row.status = "failed";
+        row.status_detail = polled.msg || `Task failed (${statusNorm})`;
+      } else {
+        // Sigue corriendo
+        await supabaseAdmin
+          .from("kling_elements")
+          .update({
+            status_detail: polled.msg || statusNorm || "running",
+            kling_raw: polled.raw || null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", row.id);
+
+        row.status_detail = polled.msg || statusNorm || "running";
+      }
+    } else {
+      // Poll falló (no matamos el row), solo dejamos detalle
+      await supabaseAdmin
+        .from("kling_elements")
+        .update({
+          status_detail: `poll_error: ${polled.error || "unknown"}`,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", row.id);
+
+      row.status_detail = `poll_error: ${polled.error || "unknown"}`;
+    }
+  }
+
+  const previewUrl = row.preview_path ? await signStoragePath(row.preview_path, 60 * 60) : null;
+  const imageUrls = Array.isArray(row.image_paths)
+    ? await Promise.all(row.image_paths.map((p) => signStoragePath(p, 60 * 60)))
+    : [];
+
+  return res.json({
+    ok: true,
+    item: {
+      id: row.id,
+      name: row.name,
+      klingElementId: row.kling_element_id || null,
+
+      status: row.status || "ready",
+      statusDetail: row.status_detail || null,
+      apiVersion: row.api_version || null,
+      taskId: row.kling_task_id || null,
+      updatedAt: row.updated_at || null,
+
+      createdAt: row.created_at,
+      previewUrl,
+      imageUrls,
+    },
+  });
 });
 
 // DELETE /api/kling/elements/:id -> borra fila (solo owner) + borra archivos (recomendado)

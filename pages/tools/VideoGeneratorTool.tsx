@@ -289,6 +289,7 @@ const VideoGeneratorTool: React.FC = () => {
   const hoverVideoEls = useRef<Record<string, HTMLVideoElement | null>>({});
 
   const [error, setError] = useState<string | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   // Core
   const [prompt, setPrompt] = useState("");
@@ -1173,6 +1174,97 @@ const durationLabel = useMemo(() => {
     })();
   }, [videoQueueJobs, user?.id]);
 
+  const computeFinalInputsForModel = () => {
+  let promptForModel = prompt;
+  let selectedKlingElementIdsForModel = selectedKlingElementIds;
+  let klingShotsForModel = klingShots;
+
+  if (isKlingV3) {
+    const tokenRe = /@[a-z0-9_]+/gi;
+
+    const idsMentionedInText = (text: string) => {
+      const out: string[] = [];
+      for (const tok of extractMentionTokens(text)) {
+        const id = elementTokenToId.get(tok.toLowerCase());
+        if (!id) continue;
+        if (!out.includes(id)) out.push(id);
+      }
+      return out;
+    };
+
+    const mergeInOrder = (baseOrder: string[], extraIds: string[]) => {
+      const out = [...(Array.isArray(baseOrder) ? baseOrder : [])];
+      for (const id of extraIds) {
+        if (!id) continue;
+        if (!out.includes(id)) out.push(id);
+      }
+      return out;
+    };
+
+    const replaceTokensWithElementRefs = (text: string, indexById: Map<string, number>) => {
+      return String(text || "").replace(tokenRe, (m) => {
+        const id = elementTokenToId.get(m.toLowerCase());
+        if (!id) return m;
+        const n = indexById.get(id);
+        if (!n) return m;
+        return `@Element${n}`;
+      });
+    };
+
+    if (!multishotEnabled || klingShotType === "intelligence") {
+      const mentionedIds = idsMentionedInText(prompt);
+      const finalGlobalIds = mergeInOrder(selectedKlingElementIds, mentionedIds);
+
+      if (finalGlobalIds.length > maxKlingElements) {
+        throw new Error(`No puedes usar más de ${maxKlingElements} Elements a la vez. Elimina alguno del prompt.`);
+      }
+
+      const indexById = new Map<string, number>();
+      finalGlobalIds.forEach((id, i) => indexById.set(id, i + 1));
+
+      promptForModel = replaceTokensWithElementRefs(prompt, indexById);
+      selectedKlingElementIdsForModel = finalGlobalIds;
+    } else {
+      const shotUsedUnion: string[] = [];
+
+      const shotsWithIds = (klingShots as any[]).map((s) => {
+        const baseIds = Array.isArray((s as any).elementIds) ? (s as any).elementIds : [];
+        const mentionedIds = idsMentionedInText(String((s as any).prompt || ""));
+        const ids = mergeInOrder(baseIds, mentionedIds);
+
+        for (const id of ids) if (!shotUsedUnion.includes(id)) shotUsedUnion.push(id);
+
+        return { ...s, elementIds: ids };
+      });
+
+      const baseOrder = selectedKlingElementIds.filter((id) => shotUsedUnion.includes(id));
+      const finalGlobalIds = mergeInOrder(baseOrder, shotUsedUnion);
+
+      if (finalGlobalIds.length > maxKlingElements) {
+        throw new Error(
+          `No puedes usar más de ${maxKlingElements} Elements a la vez (sumando todos los shots). Elimina alguno del prompt.`
+        );
+      }
+
+      const indexById = new Map<string, number>();
+      finalGlobalIds.forEach((id, i) => indexById.set(id, i + 1));
+
+      klingShotsForModel = shotsWithIds.map((s) => {
+        const ids = Array.isArray((s as any).elementIds) ? (s as any).elementIds : [];
+        return {
+          ...s,
+          elementIds: finalGlobalIds.filter((id) => ids.includes(id)),
+          prompt: replaceTokensWithElementRefs(String((s as any).prompt || ""), indexById),
+        };
+      });
+
+      selectedKlingElementIdsForModel = finalGlobalIds;
+    }
+  }
+
+  return { promptForModel, selectedKlingElementIdsForModel, klingShotsForModel };
+};
+
   const handleGenerate = async () => {
     setError(null);
 
@@ -1186,99 +1278,13 @@ const durationLabel = useMemo(() => {
     try {
       const handler = getVideoModelHandler(modelNorm);
 
-      // Preparar prompts con @Elements:
-      // El usuario escribe @mi_elemento (slug). Aquí lo convertimos a @Element1..N para el modelo.
-      let promptForModel = prompt;
-      let selectedKlingElementIdsForModel = selectedKlingElementIds;
-      let klingShotsForModel: any = klingShots;
-
-      if (isKlingV3) {
-        const tokenRe = /@[a-z0-9_]+/gi;
-
-        const idsMentionedInText = (text: string) => {
-          const out: string[] = [];
-          for (const tok of extractMentionTokens(text)) {
-            const id = elementTokenToId.get(tok.toLowerCase());
-            if (!id) continue;
-            if (!out.includes(id)) out.push(id);
-          }
-          return out;
-        };
-
-        const mergeInOrder = (baseOrder: string[], extraIds: string[]) => {
-          const out = [...(Array.isArray(baseOrder) ? baseOrder : [])];
-          for (const id of extraIds) {
-            if (!id) continue;
-            if (!out.includes(id)) out.push(id);
-          }
-          return out;
-        };
-
-        const replaceTokensWithElementRefs = (text: string, indexById: Map<string, number>) => {
-          return String(text || "").replace(tokenRe, (m) => {
-            const id = elementTokenToId.get(m.toLowerCase());
-            if (!id) return m;
-            const n = indexById.get(id);
-            if (!n) return m;
-            return `@Element${n}`;
-          });
-        };
-
-        if (!multishotEnabled || klingShotType === "intelligence") {
-          // Orden global estable: se controla con el panel “Elements mapping”.
-          // (Mover un token dentro del prompt NO cambia qué es Element1/2/3…)
-          const mentionedIds = idsMentionedInText(prompt);
-          const finalGlobalIds = mergeInOrder(selectedKlingElementIds, mentionedIds);
-
-          if (finalGlobalIds.length > maxKlingElements) {
-            setError(`No puedes usar más de ${maxKlingElements} Elements a la vez. Elimina alguno del prompt.`);
-            return;
-          }
-
-          const indexById = new Map<string, number>();
-          finalGlobalIds.forEach((id, i) => indexById.set(id, i + 1));
-
-          promptForModel = replaceTokensWithElementRefs(prompt, indexById);
-          selectedKlingElementIdsForModel = finalGlobalIds;
-        } else {
-          // Multishot customize: orden global estable (panel), pero la unión se valida contra los shots.
-          const shotUsedUnion: string[] = [];
-
-          const shotsWithIds = (klingShots as any[]).map((s) => {
-            const baseIds = Array.isArray((s as any).elementIds) ? (s as any).elementIds : [];
-            const mentionedIds = idsMentionedInText(String((s as any).prompt || ""));
-            const ids = mergeInOrder(baseIds, mentionedIds);
-
-            for (const id of ids) if (!shotUsedUnion.includes(id)) shotUsedUnion.push(id);
-
-            return { ...s, elementIds: ids };
-          });
-
-          const baseOrder = selectedKlingElementIds.filter((id) => shotUsedUnion.includes(id));
-          const finalGlobalIds = mergeInOrder(baseOrder, shotUsedUnion);
-
-          if (finalGlobalIds.length > maxKlingElements) {
-            setError(
-              `No puedes usar más de ${maxKlingElements} Elements a la vez (sumando todos los shots). Elimina alguno del prompt.`
-            );
-            return;
-          }
-
-          const indexById = new Map<string, number>();
-          finalGlobalIds.forEach((id, i) => indexById.set(id, i + 1));
-
-          klingShotsForModel = shotsWithIds.map((s) => {
-            const ids = Array.isArray((s as any).elementIds) ? (s as any).elementIds : [];
-            return {
-              ...s,
-              elementIds: finalGlobalIds.filter((id) => ids.includes(id)),
-              prompt: replaceTokensWithElementRefs(String((s as any).prompt || ""), indexById),
-            };
-          });
-
-          selectedKlingElementIdsForModel = finalGlobalIds;
-        }
-      }
+// Preparar prompts con @Elements:
+// El usuario escribe @mi_elemento (slug). Aquí lo convertimos a @Element1..N para el modelo.
+      const {
+        promptForModel,
+        selectedKlingElementIdsForModel,
+        klingShotsForModel,
+      } = computeFinalInputsForModel();
 
       const plan = handler.buildPlan({
         model: modelNorm,
@@ -1774,27 +1780,103 @@ const clearModalSelectedIds = () => {
             </div>
 
             <div className={styles.generateCol}>
-              <button
-                type="button"
-                className={styles.generateBtn}
-                disabled={(queueActiveCount >= queueMaxActive) || (isKlingV3 && multishotEnabled ? !multishotIsReady : !prompt.trim())}
-                onClick={handleGenerate}
-                data-loading={isGenerating ? "true" : "false"}
-              >
-                <span className={styles.generateLabel}>{isGenerating ? "GENERATING" : "GENERATE"}</span>
-                {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
-              </button>
+                          <button
+                            type="button"
+                            className={styles.generateBtn}
+                            disabled={(queueActiveCount >= queueMaxActive) || (isKlingV3 && multishotEnabled ? !multishotIsReady : !prompt.trim())}
+                            onClick={handleGenerate}
+                            data-loading={isGenerating ? "true" : "false"}
+                          >
+                            <span className={styles.generateLabel}>{isGenerating ? "GENERATING" : "GENERATE"}</span>
+                            {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
+                          </button>
 
-              {isGenerating && (
-                <button type="button" className={styles.cancelBtn} onClick={handleCancel}>
-                  CANCEL
-                </button>
-              )}
+                          <button
+                            type="button"
+                            className={styles.previewBtn}
+                            onClick={() => setPreviewOpen((v) => !v)}
+                          >
+                            {previewOpen ? "HIDE PREVIEW" : "PREVIEW"}
+                          </button>
 
-              {isGenerating && progressText && (
-                <div className={styles.progressText}>{progressText}</div>
-              )}
-            </div>
+                          {previewOpen && (() => {
+                            try {
+                              const finals = computeFinalInputsForModel();
+
+                              const plan = handler.buildPlan({
+                                model: modelNorm,
+                                prompt: finals.promptForModel,
+                                tool: TOOL_ID,
+                                nameHint: "video",
+
+                                count,
+                                durationSeconds,
+                                aspectRatio,
+                                resolution,
+
+                                firstFrameAssetId: firstFrame?.id || null,
+                                lastFrameAssetId: lastFrame?.id || null,
+
+                                klingMode,
+                                klingSound,
+                                klingSoundTouched,
+
+                                selectedKlingElementIds: finals.selectedKlingElementIdsForModel,
+                                multishotEnabled,
+                                klingShots: finals.klingShotsForModel,
+                                klingShotType,
+
+                                negativePrompt,
+                                klingCfgScale,
+                                klingVoiceIdsText,
+                              });
+
+                              const elementList = finals.selectedKlingElementIdsForModel
+                                .map((id) => klingElements.find((e) => e.id === id)?.klingElementId)
+                                .filter(Boolean);
+
+                              return (
+                                <div className={styles.previewPanel}>
+                                  <div className={styles.previewTitle}>Prompt real (lo que se envía)</div>
+
+                                  <textarea
+                                    className={styles.previewTextarea}
+                                    readOnly
+                                    value={plan.effectivePrompt}
+                                  />
+
+                                  <div className={styles.previewTitle}>element_list (IDs reales de Kling, en orden @ElementN)</div>
+
+                                  <pre className={styles.previewPre}>
+            {JSON.stringify(elementList, null, 2)}
+                                  </pre>
+
+                                  <div className={styles.previewTitle}>Payload exacto enviado al backend (/api/ai/video)</div>
+
+                                  <pre className={styles.previewPre}>
+            {JSON.stringify(plan.body, null, 2)}
+                                  </pre>
+                                </div>
+                              );
+                            } catch (e: any) {
+                              return (
+                                <div className={styles.previewPanel}>
+                                  <div className={styles.previewError}>{formatErr(e)}</div>
+                                </div>
+                              );
+                            }
+                          })()}
+
+                          {isGenerating && (
+                            <button type="button" className={styles.cancelBtn} onClick={handleCancel}>
+                              CANCEL
+                            </button>
+                          )}
+
+                          {isGenerating && progressText && (
+                            <div className={styles.progressText}>{progressText}</div>
+                          )}
+                        </div>
           </div>
 
 
