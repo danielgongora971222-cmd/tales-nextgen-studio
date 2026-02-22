@@ -126,6 +126,16 @@ create table if not exists public.kling_elements (
 create index if not exists kling_elements_owner_created_at_idx
   on public.kling_elements(owner_id, created_at desc);
 
+-- ✅ Worker fields (claim + scheduling + backoff)
+alter table public.kling_elements
+  add column if not exists locked_at timestamptz,
+  add column if not exists locked_by text,
+  add column if not exists next_check_at timestamptz default now(),
+  add column if not exists poll_failures int not null default 0;
+
+create index if not exists kling_elements_status_next_check_idx
+  on public.kling_elements(status, next_check_at);
+
 alter table public.kling_elements enable row level security;
 
 drop policy if exists "kling_elements_select_own" on public.kling_elements;
@@ -210,6 +220,38 @@ $$;
 
 grant execute on function public.claim_jobs(text, int, text, int) to service_role;
 
+-- Claim atómico para Kling Elements (FOR UPDATE SKIP LOCKED)
+create or replace function public.claim_kling_elements(
+  p_limit int,
+  p_worker_id text,
+  p_lock_minutes int default 10
+)
+returns setof public.kling_elements
+language sql
+security definer
+set search_path = public
+as $$
+  with cte as (
+    select id
+    from public.kling_elements
+    where status = 'creating'
+      and kling_task_id is not null
+      and (next_check_at is null or next_check_at <= now())
+      and (locked_at is null or locked_at < now() - (p_lock_minutes || ' minutes')::interval)
+    order by created_at asc
+    limit p_limit
+    for update skip locked
+  )
+  update public.kling_elements e
+  set locked_at = now(),
+      locked_by = p_worker_id
+  from cte
+  where e.id = cte.id
+  returning e.*;
+$$;
+
+grant execute on function public.claim_kling_elements(int, text, int) to service_role;
+
 
 alter table public.jobs enable row level security;
 
@@ -239,6 +281,11 @@ create trigger set_jobs_updated_at
 drop trigger if exists set_jobs_updated_at on public.jobs;
 create trigger set_jobs_updated_at
   before update on public.jobs
+  for each row execute procedure public.set_updated_at();
+
+drop trigger if exists set_kling_elements_updated_at on public.kling_elements;
+create trigger set_kling_elements_updated_at
+  before update on public.kling_elements
   for each row execute procedure public.set_updated_at();
 
 -- =========================

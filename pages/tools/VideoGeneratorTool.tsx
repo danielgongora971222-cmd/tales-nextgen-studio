@@ -5,7 +5,7 @@ import { MentionTextarea, type MentionItem } from "../../components/MentionTexta
 import { deleteAsset, listMyAssets, publishAsset, unpublishAsset, uploadUserAsset } from "../../services/assetsApi";
 import { useAuth } from "../../contexts/AuthContext";
 import type { Asset } from "../../types";
-import { listKlingElements, type KlingElement } from "../../services/klingElementsService";
+import { refreshKlingElementsStatus, type KlingElement } from "../../services/klingElementsService";
 import { formatErr } from "../../services/videoGenApi";
 import { useGenerationQueue } from "../../contexts/GenerationQueueContext";
 import { FramePickerModal } from "./video/FramePickerModal";
@@ -626,11 +626,13 @@ const VideoGeneratorTool: React.FC = () => {
 
   const elementMentionItems = useMemo<MentionItem[]>(() => {
     if (!isKlingV3) return [];
-    return klingElements.map((el) => {
-      const token = elementTokenById.get(el.id) || makeElementTag(el.name || "element");
-      const previewUrl = el.previewUrl || el.imageUrls?.[0] || null;
-      return { id: el.id, token, label: el.name || "Element", kind: "element", previewUrl };
-    });
+    return klingElements
+      .filter((el) => (el.status ?? "ready") === "ready" && Boolean(el.klingElementId))
+      .map((el) => {
+        const token = elementTokenById.get(el.id) || makeElementTag(el.name || "element");
+        const previewUrl = el.previewUrl || el.imageUrls?.[0] || null;
+        return { id: el.id, token, label: el.name || "Element", kind: "element", previewUrl };
+      });
   }, [isKlingV3, klingElements, elementTokenById]);
 
   // Sync Elements con el prompt:
@@ -964,7 +966,7 @@ useEffect(() => {
 
   const refreshKlingElements = useCallback(async () => {
     try {
-      const items = await listKlingElements();
+      const items = await refreshKlingElementsStatus({ maxPoll: 10 });
       setKlingElements(items || []);
     } catch (e: any) {
       setError(e?.message || "No pude cargar tus Elements.");
@@ -1262,8 +1264,24 @@ const durationLabel = useMemo(() => {
     }
   }
 
+  // ✅ Quality Gate: no permitir Elements no listos (creating/failed o sin klingElementId)
+  if (isKlingV3) {
+    const byId = new Map(klingElements.map((e) => [e.id, e]));
+
+    const bad = (selectedKlingElementIdsForModel || [])
+      .map((id) => byId.get(id))
+      .filter((e) => !e || (e.status ?? "ready") !== "ready" || !e.klingElementId);
+
+    if (bad.length) {
+      const names = bad.map((e: any) => (e?.name ? `"${e.name}"` : "(unknown)")).join(", ");
+      throw new Error(
+        `Estos Elements no están listos (creating/failed): ${names}. Usa "Refresh status" o espera.`
+      );
+    }
+  }
+
   return { promptForModel, selectedKlingElementIdsForModel, klingShotsForModel };
-};
+  };
 
   const handleGenerate = async () => {
     setError(null);

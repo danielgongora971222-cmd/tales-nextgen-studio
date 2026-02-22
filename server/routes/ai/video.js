@@ -509,11 +509,11 @@ const isKling = selectedModelNorm.startsWith("kling-");
         let elements = undefined;
         if (hasElements) {
 
-          const { data: rows, error: rowsErr } = await supabaseAdmin
-            .from("kling_elements")
-            .select("id, owner_id, image_paths")
-            .in("id", klingElementIds)
-            .eq("owner_id", user.id);
+        const { data: rows, error: rowsErr } = await supabaseAdmin
+          .from("kling_elements")
+          .select("id, owner_id, status, status_detail, kling_element_id")
+          .in("id", klingElementIds)
+          .eq("owner_id", user.id);
 
           if (rowsErr) {
             throw httpError(500, "DB_ERROR", "No pude leer tus Elements.", {
@@ -870,17 +870,28 @@ const isKling = selectedModelNorm.startsWith("kling-");
 
           const out = [];
           for (const elementUuid of klingElementIds) {
-            const row = byId.get(elementUuid);
-            const raw = row?.kling_element_id;
+          const row = byId.get(elementUuid);
 
-            if (!raw) {
-              throw httpError(
-                400,
-                "KLING_V3_ELEMENT_MISSING_KLING_ID",
-                "Un Element no tiene kling_element_id guardado (no se puede mandar a Kling).",
-                { elementUuid }
-              );
-            }
+          const st = String(row?.status || "ready");
+          if (st !== "ready") {
+            throw httpError(
+              400,
+              "KLING_V3_ELEMENT_NOT_READY",
+              "Uno o más Elements todavía se están creando o fallaron. Espera o usa Refresh status.",
+              { elementUuid, status: row?.status || null, statusDetail: row?.status_detail || null }
+            );
+          }
+
+          const raw = row?.kling_element_id;
+
+          if (!raw) {
+            throw httpError(
+              400,
+              "KLING_V3_ELEMENT_MISSING_KLING_ID",
+              "Un Element no tiene kling_element_id guardado (no se puede mandar a Kling).",
+              { elementUuid }
+            );
+          }
 
             const rawStr = String(raw).trim();
             const eid = /^\d+$/.test(rawStr) ? Number(rawStr) : rawStr;

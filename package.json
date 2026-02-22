@@ -16,6 +16,7 @@
   "start:api": "cross-env SERVE_CLIENT=0 node --import ./server/instrument.mjs server/server.js",
 
   "start:worker": "node --import ./server/instrument.mjs server/workers/workerAll.js",
+  "start:worker:elements": "node --import ./server/instrument.mjs server/workers/klingElementsWorker.js",
 
   "migrate:storage:r2": "node tools/migrate-storage-to-r2.mjs",
   "preset:wizard": "node tools/preset-wizard/server.mjs",

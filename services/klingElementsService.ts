@@ -120,6 +120,22 @@ export async function listKlingElements(): Promise<KlingElement[]> {
   }
 }
 
+export async function refreshKlingElementsStatus(opts?: { maxPoll?: number }) {
+  const maxPoll = Math.max(0, Math.min(25, Number(opts?.maxPoll ?? 10)));
+
+  invalidateKlingElementsCache();
+
+  const first = await listKlingElements();
+  const creating = (first || []).filter((e) => e.status === "creating").slice(0, maxPoll);
+
+  if (creating.length) {
+    await Promise.allSettled(creating.map((e) => getKlingElementById(e.id)));
+  }
+
+  invalidateKlingElementsCache();
+  return await listKlingElements();
+}
+
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }

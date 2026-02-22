@@ -286,9 +286,9 @@ async function handleUploadForSlot(slotIdx: number, file: File) {
           {mode === "library" ? (
             <>
               <div className={styles.elementAllTop}>
-                <div className={styles.elementAllMeta}>
-                  Selected: <b>{selectedCount}</b>/5
-                </div>
+              <div className={styles.elementAllMeta}>
+                Selected: <b>{selectedCount}</b>/{maxSelected}
+              </div>
 
                 <input
                   className={styles.search}
@@ -310,54 +310,70 @@ async function handleUploadForSlot(slotIdx: number, file: File) {
                 <button
                   type="button"
                   className={styles.smallBtnGhost}
-                  onClick={onClear}
-                  disabled={busy || selectedCount === 0}
-                  title="Clear selection"
-                >
-                  Clear
-                </button>
-
-                <button
-                  type="button"
-                  className={styles.smallBtnGhost}
                   onClick={async () => {
                     setLocalError(null);
                     setBusy(true);
                     try {
                       await onRefresh();
                     } catch (e: any) {
-                      setLocalError(e?.message || "No pude refrescar los Elements.");
+                      setLocalError(e?.message || "No pude refrescar el estado de los Elements.");
                     } finally {
                       setBusy(false);
                     }
                   }}
                   disabled={busy}
-                  title="Refresh"
+                  title="Fuerza polling de Elements en estado creating"
                 >
-                  Refresh
+                  Refresh status
                 </button>
               </div>
 
               <div className={styles.elementAllGrid}>
                 {filteredElements.map((el) => {
-                  const active = selectedIds.includes(el.id);
-                  const src = elementThumb(el);
+                const active = selectedIds.includes(el.id);
+                const src = elementThumb(el);
 
-                  return (
-                    <div
-                      key={el.id}
-                      className={`${styles.elementAllCard} ${active ? styles.elementAllCardActive : ""}`}
+                const status = (el.status ?? (el.klingElementId ? "ready" : "creating")) as any;
+                const isReady = status === "ready" && Boolean(el.klingElementId);
+                const isCreating = status === "creating";
+                const isFailed = status === "failed";
+
+                // Bloqueamos seleccionar si no está listo (pero permitimos DESELECCIONAR si ya estaba activo)
+                const selectionBlocked = !isReady;
+
+                const statusLabel = isReady ? "READY" : isCreating ? "CREATING" : "FAILED";
+
+                return (
+                  <div key={el.id} className={`${styles.elementAllCard} ${active ? styles.elementAllCardActive : ""}`}>
+                    <button
+                      type="button"
+                      className={styles.elementAllThumb}
+                      onClick={() => {
+                        if (!active && selectionBlocked) {
+                          setLocalError(
+                            isCreating
+                              ? `El Element "${el.name}" todavía se está creando. Usa "Refresh status" o espera.`
+                              : `El Element "${el.name}" falló. Crea uno nuevo o bórralo.`
+                          );
+                          return;
+                        }
+                        toggleSelectElement(el.id);
+                      }}
+                      disabled={busy || (!active && selectionBlocked)}
+                      title={!active && selectionBlocked ? `${statusLabel}: no usable todavía` : el.name}
                     >
-                      <button
-                        type="button"
-                        className={styles.elementAllThumb}
-                        onClick={() => toggleSelectElement(el.id)}
-                        title={el.name}
-                      >
-                        <img src={src} alt={el.name} />
-                        <span className={styles.elementAllBadge}>{active ? "SELECTED" : "SELECT"}</span>
-                      </button>
+                      <img src={src} alt={el.name} />
 
+                      <span
+                        className={`${styles.elementStatusBadge} ${
+                          isReady ? styles.elementStatusReady : isCreating ? styles.elementStatusCreating : styles.elementStatusFailed
+                        }`}
+                      >
+                        {statusLabel}
+                      </span>
+
+                      <span className={styles.elementAllBadge}>{active ? "SELECTED" : "SELECT"}</span>
+                    </button>
                       {active && (
                         <button
                           type="button"
@@ -373,15 +389,25 @@ async function handleUploadForSlot(slotIdx: number, file: File) {
                       <div className={styles.elementAllName}>{el.name}</div>
 
                       <div className={styles.elementAllActions}>
-                        <button
-                          type="button"
-                          className={styles.smallBtn}
-                          onClick={() => toggleSelectElement(el.id)}
-                          disabled={busy}
-                          title={active ? "Deselect" : "Select"}
-                        >
-                          {active ? "Deselect" : "Select"}
-                        </button>
+                    <button
+                      type="button"
+                      className={styles.smallBtn}
+                      onClick={() => {
+                        if (!active && selectionBlocked) {
+                          setLocalError(
+                            isCreating
+                              ? `El Element "${el.name}" todavía se está creando. Usa "Refresh status" o espera.`
+                              : `El Element "${el.name}" falló. Crea uno nuevo o bórralo.`
+                          );
+                          return;
+                        }
+                        toggleSelectElement(el.id);
+                      }}
+                      disabled={busy || (!active && selectionBlocked)}
+                      title={active ? "Deselect" : selectionBlocked ? `${statusLabel}: no usable` : "Select"}
+                    >
+                      {active ? "Deselect" : "Select"}
+                    </button>
 
                         <button
                           type="button"

@@ -563,7 +563,7 @@ export function createAiImageRouter(ctx) {
 
             const { data: rows, error: rowsErr } = await supabaseAdmin
               .from("kling_elements")
-              .select("id, kling_element_id, name, preview_path")
+              .select("id, status, status_detail, kling_element_id, name, preview_path")
               .eq("owner_id", user.id)
               .in("id", klingElementIds);
 
@@ -589,6 +589,26 @@ export function createAiImageRouter(ctx) {
               name: r.name || null,
               preview_path: r.preview_path || null,
             }));
+
+            for (const r of ordered) {
+              const st = String(r?.status || "ready");
+              if (st !== "ready") {
+                throw httpError(
+                  400,
+                  "KLING_ELEMENT_NOT_READY",
+                  "Uno o más Elements todavía se están creando o fallaron. Espera o usa Refresh status.",
+                  { id: r?.id || null, status: r?.status || null, statusDetail: r?.status_detail || null }
+                );
+              }
+              if (!String(r?.kling_element_id || "").trim()) {
+                throw httpError(
+                  400,
+                  "KLING_ELEMENT_MISSING_ID",
+                  "Un Element no tiene kling_element_id guardado.",
+                  { id: r?.id || null }
+                );
+              }
+            }
 
             element_list = ordered
               .map((r) => String(r.kling_element_id || "").trim())

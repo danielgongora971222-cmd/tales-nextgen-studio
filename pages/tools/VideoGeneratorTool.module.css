@@ -2214,3 +2214,34 @@
   font-weight: 800;
   font-size: 13px;
 }
+
+.elementStatusBadge{
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255,255,255,0.18);
+}
+
+.elementStatusReady{
+  background: rgba(40, 160, 90, 0.22);
+  color: rgba(180, 255, 210, 0.92);
+  border-color: rgba(120, 255, 180, 0.22);
+}
+
+.elementStatusCreating{
+  background: rgba(70, 140, 255, 0.20);
+  color: rgba(200, 225, 255, 0.92);
+  border-color: rgba(120, 190, 255, 0.22);
+}
+
+.elementStatusFailed{
+  background: rgba(255, 80, 80, 0.18);
+  color: rgba(255, 190, 190, 0.92);
+  border-color: rgba(255, 140, 140, 0.22);
+}
