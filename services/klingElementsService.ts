@@ -11,7 +11,11 @@ import { apiUrl } from "./apiBase";
 export type KlingElement = {
   id: string;
   name: string;
-  tag?: string;
+
+  tag?: string | null;
+  description?: string | null;
+  referenceType?: "image_refer" | "video_refer";
+  voiceId?: string | null;
 
   klingElementId?: string | null;
 
@@ -21,7 +25,9 @@ export type KlingElement = {
   taskId?: string | null;
   updatedAt?: number | null;
 
+  previewType?: "image" | "video";
   previewUrl?: string | null;
+
   imageUrls: string[];
   createdAt: number;
 };
@@ -77,7 +83,10 @@ function mapRowToKlingElement(row: any): KlingElement {
   return {
     id: String(row.id),
     name: String(row.name ?? ""),
-    tag: row.tag ? String(row.tag) : undefined,
+    tag: row.tag != null ? String(row.tag) : null,
+    description: row.description != null ? String(row.description) : null,
+    referenceType: (row.referenceType ?? row.reference_type ?? "image_refer") as any,
+    voiceId: row.voiceId ?? row.voice_id ?? null,
 
     klingElementId: row.klingElementId ?? row.kling_element_id ?? null,
 
@@ -87,6 +96,7 @@ function mapRowToKlingElement(row: any): KlingElement {
     taskId: row.taskId ?? row.kling_task_id ?? null,
     updatedAt,
 
+    previewType: (row.previewType ?? row.preview_type ?? (row.videoAssetId || row.video_asset_id ? "video" : "image")) as any,
     previewUrl: row.previewUrl ?? row.preview_url ?? null,
     imageUrls: Array.isArray(row.imageUrls ?? row.image_urls) ? (row.imageUrls ?? row.image_urls).map(String) : [],
     createdAt,
@@ -175,11 +185,25 @@ async function waitKlingElementReady(id: string, opts?: { timeoutMs?: number; in
   throw new Error("Kling: timeout esperando que el Element termine de crearse.");
 }
 
-export async function createKlingElement(payload: {
-  name: string;
-  tag?: string;
-  images: Array<{ assetId: string } | { dataUrl: string }>;
-}): Promise<KlingElement> {
+export type CreateKlingElementPayload =
+  | {
+      name: string;
+      tag?: string;
+      description?: string;
+      voiceId?: string;
+      referenceType?: "image_refer";
+      images: Array<{ assetId: string } | { dataUrl: string }>;
+    }
+  | {
+      name: string;
+      tag?: string;
+      description?: string;
+      voiceId?: string;
+      referenceType: "video_refer";
+      video: { assetId: string };
+    };
+
+export async function createKlingElement(payload: CreateKlingElementPayload): Promise<KlingElement> {
   const headers = await authHeadersJson();
   const resp = await fetch(apiUrl("/api/kling/elements"), {
     method: "POST",
@@ -218,4 +242,71 @@ export async function deleteKlingElement(id: string): Promise<void> {
     throw new Error(data?.error?.message || "Error borrando Element.");
   }
   invalidateKlingElementsCache();
+}
+
+// ===============================
+// Kling Voices (para element_voice_id)
+// La lista se obtiene del backend (/api/kling/voices), que a su vez lee el schema OpenAPI
+// del endpoint de Fal/Kling TTS para construir un catálogo de voces.
+// ===============================
+
+export type KlingVoice = {
+  id: string;
+  label: string;
+  source?: string;
+};
+
+type VoicesCacheEntry = {
+  ts: number;
+  items: KlingVoice[];
+  inFlight?: Promise<KlingVoice[]>;
+};
+
+const VOICES_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 horas
+let voicesCache: VoicesCacheEntry | null = null;
+
+export function invalidateKlingVoicesCache() {
+  voicesCache = null;
+}
+
+export async function listKlingVoices(opts?: { force?: boolean }): Promise<KlingVoice[]> {
+  const force = Boolean(opts?.force);
+
+  if (force) invalidateKlingVoicesCache();
+
+  if (voicesCache && Date.now() - voicesCache.ts < VOICES_CACHE_TTL_MS) return voicesCache.items;
+  if (voicesCache?.inFlight) return voicesCache.inFlight;
+
+  const headers = await authHeadersJson();
+
+  const inFlight = (async () => {
+    const resp = await fetch(apiUrl("/api/kling/voices"), { method: "GET", headers });
+    const data = await resp.json();
+
+    if (!resp.ok || data?.ok === false) {
+      throw new Error(data?.error?.message || "Error listando voces de Kling.");
+    }
+
+    const items = Array.isArray(data.items) ? data.items : Array.isArray(data.voices) ? data.voices : [];
+
+    const out: KlingVoice[] = items
+      .map((v: any) => {
+        const id = String(v?.id ?? v?.voice_id ?? v ?? "").trim();
+        if (!id) return null;
+        const label = String(v?.label ?? v?.name ?? id).trim();
+        const source = v?.source ? String(v.source) : undefined;
+        return { id, label, source };
+      })
+      .filter(Boolean) as any;
+
+    voicesCache = { ts: Date.now(), items: out };
+    return out;
+  })();
+
+  voicesCache = { ts: Date.now(), items: voicesCache?.items ?? [], inFlight };
+  try {
+    return await inFlight;
+  } finally {
+    if (voicesCache?.inFlight === inFlight) delete voicesCache.inFlight;
+  }
 }

@@ -119,6 +119,13 @@ create table if not exists public.kling_elements (
   preview_path text,
   image_paths text[] not null default '{}'::text[],
 
+  -- ✅ V3 Advanced element metadata
+  reference_type text not null default 'image_refer' check (reference_type in ('image_refer','video_refer')),
+  description text,
+  tag text,
+  voice_id text,
+  video_asset_id uuid references public.assets(id) on delete set null,
+
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

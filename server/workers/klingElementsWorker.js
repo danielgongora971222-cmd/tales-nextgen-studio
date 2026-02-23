@@ -142,15 +142,26 @@ function resolveTaskStatusPaths({ createPath, taskId }) {
 
 function extractElementIdFromAny(obj) {
   const d = obj?.data || obj;
+
   const elementId =
     d?.element_id ||
     d?.elementId ||
     d?.id ||
     d?.element?.id ||
     d?.element?.element_id ||
+
+    // ✅ Kling advanced: task_result.element_id
+    d?.task_result?.element_id ||
+    d?.task_result?.elementId ||
+    d?.task_result?.id ||
+    d?.taskResult?.element_id ||
+    d?.taskResult?.elementId ||
+    d?.taskResult?.id ||
+
     d?.result?.element_id ||
     d?.result?.elementId ||
     d?.result?.id;
+
   return elementId ? String(elementId) : null;
 }
 

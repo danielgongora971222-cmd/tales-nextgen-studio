@@ -282,11 +282,51 @@ export const KlingElementImageSchema = z.union([
   z.object({ dataUrl: z.string().min(20) }),
 ]);
 
-export const CreateKlingElementRequestSchema = z.object({
-  name: z.string().min(1).max(20),
-  tag: z.string().optional(),
-  images: z.array(KlingElementImageSchema).min(1).max(4),
+export const KlingElementVideoSchema = z.object({
+  assetId: z.string().uuid(),
 });
+
+export const CreateKlingElementRequestSchema = z
+  .object({
+    name: z.string().min(1).max(20),
+    description: z.string().max(100).optional(),
+    tag: z.string().optional(),
+
+    // Kling Advanced: image_refer | video_refer
+    referenceType: z.enum(["image_refer", "video_refer"]).optional(),
+
+    // Kling Advanced: bind manual de voz (opcional)
+    voiceId: z.string().min(1).max(128).optional(),
+
+    // image_refer
+    images: z.array(KlingElementImageSchema).min(1).max(4).optional(),
+
+    // video_refer (solo assetId; NO dataUrl por tamaño)
+    video: KlingElementVideoSchema.optional(),
+  })
+  .superRefine((val, ctx) => {
+    const ref = val.referenceType || (val.video ? "video_refer" : "image_refer");
+
+    if (ref === "video_refer") {
+      if (!val.video?.assetId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "referenceType=video_refer requiere video.assetId",
+          path: ["video"],
+        });
+      }
+      return;
+    }
+
+    // image_refer
+    if (!val.images || val.images.length < 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "referenceType=image_refer requiere images (1–4)",
+        path: ["images"],
+      });
+    }
+  });
 
 export const FalJobSchema = z.object({
   jobToken: z.string().min(10),

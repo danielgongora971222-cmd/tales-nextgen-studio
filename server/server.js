@@ -825,6 +825,76 @@ function falAuthHeader() {
   return `Key ${key}`;
 }
 
+// =============================
+// Fal Platform API (model metadata + OpenAPI schema)
+// Usamos esto para construir un catálogo de voces “oficiales” desde el schema del endpoint Kling TTS.
+// Docs: https://docs.fal.ai/platform-apis/v1/models (expand=openapi-3.0)
+// =============================
+const FAL_PLATFORM_BASE_URL = "https://api.fal.ai/v1";
+
+let klingVoicesCache = { ts: 0, items: null, source: null };
+const KLING_VOICES_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6h
+
+async function falPlatformFetchModelOpenApi(endpointId) {
+  const auth = falAuthHeader();
+  if (!auth) throw httpError(500, "FAL_KEY_MISSING", "Missing FAL_KEY env var (Fal.ai)");
+
+  const url = `${FAL_PLATFORM_BASE_URL}/models?endpoint_id=${encodeURIComponent(endpointId)}&expand=openapi-3.0`;
+  const resp = await fetch(url, { headers: { Authorization: auth } });
+
+  const text = await resp.text();
+  let json;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw httpError(502, "FAL_PLATFORM_BAD_RESPONSE", `Fal Platform devolvió texto no JSON. Inicio: ${text.slice(0, 120)}`);
+  }
+
+  if (!resp.ok) {
+    throw httpError(502, "FAL_PLATFORM_ERROR", `Fal Platform error ${resp.status}`, { body: json });
+  }
+
+  return json;
+}
+
+function extractVoiceIdsFromOpenApi(openapi) {
+  // En OpenAPI 3.0 de Fal, suele existir components.schemas.VoiceIdEnum.enum
+  const enumValues =
+    openapi?.components?.schemas?.VoiceIdEnum?.enum ||
+    openapi?.components?.schemas?.VoiceIdEnum?.items?.enum ||
+    null;
+
+  if (!Array.isArray(enumValues)) return [];
+
+  const out = [];
+  for (const raw of enumValues) {
+    const id = String(raw || "").trim();
+    if (!id) continue;
+
+    // Label: humanizamos un poco el id
+    const label = id.replace(/_/g, " ").replace(/\s+/g, " ").trim();
+    out.push({ id, label, source: "fal-openapi:kling-tts" });
+  }
+  return out;
+}
+
+async function getKlingVoicesCatalog() {
+  const now = Date.now();
+  if (klingVoicesCache.items && now - klingVoicesCache.ts < KLING_VOICES_CACHE_TTL_MS) {
+    return klingVoicesCache.items;
+  }
+
+  const endpointId = process.env.KLING_VOICE_CATALOG_ENDPOINT_ID || "fal-ai/kling-video/v1/tts";
+
+  const json = await falPlatformFetchModelOpenApi(endpointId);
+  const model = Array.isArray(json?.models) ? json.models[0] : null;
+  const openapi = model?.openapi || null;
+
+  const items = extractVoiceIdsFromOpenApi(openapi);
+  klingVoicesCache = { ts: Date.now(), items, source: endpointId };
+  return items;
+}
+
 function falDimsFromAspectQuality(aspectRatio, quality) {
   // Map your UI quality to a base long-side pixel size
   const base =
@@ -1456,18 +1526,30 @@ function resolveKlingElementTaskStatusPaths({ createPath, taskId }) {
 function extractElementIdFromAny(obj) {
   if (!obj) return null;
   const d = obj?.data || obj;
+
   const elementId =
+    // respuestas directas
     d?.element_id ||
     d?.elementId ||
     d?.id ||
     d?.element?.id ||
     d?.element?.element_id ||
+
+    // ✅ Kling advanced: viene dentro de task_result
+    d?.task_result?.element_id ||
+    d?.task_result?.elementId ||
+    d?.task_result?.id ||
+    d?.taskResult?.element_id ||
+    d?.taskResult?.elementId ||
+    d?.taskResult?.id ||
+
+    // compat antiguos
     d?.result?.element_id ||
     d?.result?.elementId ||
     d?.result?.id;
+
   return elementId ? String(elementId) : null;
 }
-
 function extractTaskStatusFromAny(obj) {
   const d = obj?.data || obj;
   return (
@@ -1520,7 +1602,7 @@ async function klingGetElementTaskStatusOnce({ createPath, taskId }) {
 }
 
 
-async function klingCreateElement({ name, tag, imageUrls }) {
+async function klingCreateElement({ name, tag, description, referenceType, voiceId, imageUrls, videoUrl }) {
   const accessKey = process.env.KLING_ACCESS_KEY;
   const secretKey = process.env.KLING_SECRET_KEY;
   if (!accessKey || !secretKey) {
@@ -1530,17 +1612,6 @@ async function klingCreateElement({ name, tag, imageUrls }) {
       "Faltan KLING_ACCESS_KEY / KLING_SECRET_KEY en el backend."
     );
   }
-
-  const createPath = resolveKlingCreateElementPath();
-
-  // Legacy payload (compat): element_name, element_description, element_frontal_image, element_refer_list (1..3)
-  const frontal = imageUrls?.[0];
-  if (!frontal) {
-    throw httpError(400, "KLING_ELEMENT_NO_IMAGES", "No hay imágenes para crear el Element.");
-  }
-
-  const refer = (imageUrls || []).slice(1, 4);
-  const referList = refer.length ? refer : [frontal];
 
   const t = String(tag || "").trim().toLowerCase();
   const tagId =
@@ -1553,18 +1624,89 @@ async function klingCreateElement({ name, tag, imageUrls }) {
           : "o_102";
 
   const elementDescription = (() => {
+    const raw = String(description || "").trim();
+    if (raw) return raw.slice(0, 100);
+
     const base = t ? `${t} element` : "custom element";
     const desc = `${base} created in Tales NextGen Studio.`;
     return desc.slice(0, 100);
   })();
 
-  const payload = {
-    element_name: name,
-    element_description: elementDescription,
-    element_frontal_image: frontal,
-    element_refer_list: referList.map((u) => ({ image_url: u })),
-    ...(tagId ? { tag_list: [{ tag_id: tagId }] } : {}),
-  };
+  const createPath = resolveKlingCreateElementPath();
+  const isAdvanced = /advanced-custom-elements/i.test(createPath);
+
+  const ref = referenceType || (videoUrl ? "video_refer" : "image_refer");
+
+  let payload;
+
+  if (isAdvanced) {
+    // ✅ Kling advanced (image_refer / video_refer)
+    if (ref === "video_refer") {
+      if (!videoUrl) {
+        throw httpError(400, "KLING_ELEMENT_NO_VIDEO", "referenceType=video_refer requiere un video_url.");
+      }
+
+      payload = {
+        element_name: name,
+        element_description: elementDescription,
+        reference_type: "video_refer",
+        element_video_list: {
+          refer_videos: [{ video_url: videoUrl }],
+        },
+        ...(voiceId ? { element_voice_id: voiceId } : {}),
+        ...(tagId ? { tag_list: [{ tag_id: tagId }] } : {}),
+      };
+    } else {
+      const frontal = imageUrls?.[0];
+      const refer = (imageUrls || []).slice(1, 4);
+
+      // docs: frontal + 1..3 refer_images :contentReference[oaicite:7]{index=7}
+      if (!frontal || refer.length < 1) {
+        throw httpError(
+          400,
+          "KLING_ELEMENT_NEEDS_2_IMAGES",
+          "Kling advanced image_refer requiere mínimo 2 imágenes (frontal + 1 referencia)."
+        );
+      }
+
+      payload = {
+        element_name: name,
+        element_description: elementDescription,
+        reference_type: "image_refer",
+        element_image_list: {
+          frontal_image: frontal,
+          refer_images: refer.map((u) => ({ image_url: u })),
+        },
+        ...(voiceId ? { element_voice_id: voiceId } : {}),
+        ...(tagId ? { tag_list: [{ tag_id: tagId }] } : {}),
+      };
+    }
+  } else {
+    // ✅ Legacy (solo imágenes)
+    const frontal = imageUrls?.[0];
+    if (!frontal) {
+      throw httpError(400, "KLING_ELEMENT_NO_IMAGES", "No hay imágenes para crear el Element.");
+    }
+
+    const refer = (imageUrls || []).slice(1, 4);
+    const referList = refer.length ? refer : [frontal];
+
+    payload = {
+      element_name: name,
+      element_description: elementDescription,
+      element_frontal_image: frontal,
+      element_refer_list: referList.map((u) => ({ image_url: u })),
+      ...(tagId ? { tag_list: [{ tag_id: tagId }] } : {}),
+    };
+
+    if (ref === "video_refer") {
+      throw httpError(
+        400,
+        "KLING_ELEMENT_ADVANCED_REQUIRED",
+        "Para crear Elements con video (video_refer) debes usar KLING_ELEMENT_CREATE_PATH=/general/advanced-custom-elements."
+      );
+    }
+  }
 
   const apiVersion = /advanced-custom-elements/i.test(createPath) ? "advanced" : "legacy";
 
@@ -1611,6 +1753,25 @@ async function klingCreateElement({ name, tag, imageUrls }) {
   );
 }
 
+// GET /api/kling/voices -> catálogo de voces para selector (element_voice_id)
+app.get("/api/kling/voices", async (req, res) => {
+  const { user, error } = await requireUser(req);
+  if (error) return res.status(401).json({ ok: false, error });
+
+  try {
+    const items = await getKlingVoicesCatalog();
+    return res.json({ ok: true, items });
+  } catch (e) {
+    return res.status(502).json({
+      ok: false,
+      error: {
+        code: "KLING_VOICES_FETCH_FAILED",
+        message: e?.message || "No pude obtener el catálogo de voces.",
+      },
+    });
+  }
+});
+
 // GET /api/kling/elements  -> lista elementos del usuario
 app.get("/api/kling/elements", async (req, res) => {
   const { user, error } = await requireUser(req);
@@ -1618,7 +1779,7 @@ app.get("/api/kling/elements", async (req, res) => {
 
   const { data, error: dbErr } = await supabaseAdmin
     .from("kling_elements")
-    .select("id, name, kling_element_id, status, status_detail, api_version, kling_task_id, preview_path, image_paths, created_at, updated_at")
+    .select("id, name, tag, description, reference_type, voice_id, video_asset_id, kling_element_id, status, status_detail, api_version, kling_task_id, preview_path, image_paths, created_at, updated_at")
     .eq("owner_id", user.id)
     .order("created_at", { ascending: false });
 
@@ -1628,7 +1789,11 @@ app.get("/api/kling/elements", async (req, res) => {
 
   const items = await Promise.all(
     (data || []).map(async (row) => {
-      const previewUrl = row.preview_path ? await signStoragePath(row.preview_path, 60 * 60) : null;
+      const previewUrl = row.preview_path
+        ? await signStoragePath(row.preview_path, 60 * 60)
+        : row.video_asset_id
+          ? await assetIdToSignedUrl(row.video_asset_id, user.id, 60 * 60)
+          : null;
       const imageUrls = Array.isArray(row.image_paths)
         ? await Promise.all(row.image_paths.map((p) => signStoragePath(p, 60 * 60)))
         : [];
@@ -1637,6 +1802,12 @@ app.get("/api/kling/elements", async (req, res) => {
         id: row.id,
         name: row.name,
         klingElementId: row.kling_element_id || null,
+
+        tag: row.tag || null,
+        description: row.description || null,
+        referenceType: row.reference_type || "image_refer",
+        voiceId: row.voice_id || null,
+        previewType: row.video_asset_id ? "video" : "image",
 
         status: row.status || "ready",
         statusDetail: row.status_detail || null,
@@ -1660,55 +1831,101 @@ app.post("/api/kling/elements", async (req, res, next) => {
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
 
-    const { name, tag, images } = CreateKlingElementRequestSchema.parse(req.body);
+    const { name, tag, images, referenceType, description, voiceId, video } = CreateKlingElementRequestSchema.parse(req.body);
 
     const elementUuid = randomUUID();
 
-    // 1) Subir imágenes a Storage bajo /<userId>/kling-element/<uuid>-N.ext
-    const imagePaths = [];
-    for (let i = 0; i < images.length; i++) {
-      const item = images[i];
+    const ref = referenceType || (video?.assetId ? "video_refer" : "image_refer");
 
-      let bytes;
-      let mimeType = "image/png";
+    let imagePaths = [];
+    let previewPath = null;
+    let videoAssetId = null;
 
-      if ("assetId" in item) {
-        const file = await assetIdToImageFile(item.assetId, user.id);
-        bytes = file.buffer;
-        mimeType = file.mimeType || "image/png";
-      } else {
-        const parsed = parseDataUrl(item.dataUrl);
-        mimeType = parsed.mimeType || "image/png";
-        bytes = Buffer.from(parsed.base64, "base64");
+    let created = null;
+
+    if (ref === "video_refer") {
+      // ✅ Video Character Element (advanced)
+      if (!video?.assetId) {
+        throw httpError(400, "KLING_ELEMENT_NO_VIDEO", "Selecciona o sube 1 video (mp4/mov) para crear el Element.");
       }
 
-      const uploaded = await uploadBufferToStorage({
-        userId: user.id,
-        tool: "kling-element",
-        buffer: bytes,
-        mimeType,
-        nameHint: `${name || "element"}-${elementUuid}-${i + 1}`,
+      // Kling descarga el video desde una URL firmada
+      const signedVideoUrl = await assetIdToSignedUrl(video.assetId, user.id, 60 * 30);
+
+      created = await klingCreateElement({
+        name,
+        tag: tag || "character",
+        description,
+        referenceType: "video_refer",
+        voiceId,
+        videoUrl: signedVideoUrl,
       });
 
-      imagePaths.push(uploaded.storagePath);
+      videoAssetId = video.assetId;
+      imagePaths = [];
+      previewPath = null;
+    } else {
+      // ✅ Multi-Image Element (image_refer)
+      if (!images || images.length < 1) {
+        throw httpError(400, "KLING_ELEMENT_NO_IMAGES", "Selecciona imágenes para crear el Element.");
+      }
+
+      // 1) Subir imágenes a Storage bajo /<userId>/kling-element/<uuid>-N.ext
+      imagePaths = [];
+      for (let i = 0; i < images.length; i++) {
+        const item = images[i];
+
+        let bytes;
+        let mimeType = "image/png";
+
+        if ("assetId" in item) {
+          const file = await assetIdToImageFile(item.assetId, user.id);
+          bytes = file.buffer;
+          mimeType = file.mimeType || "image/png";
+        } else {
+          const parsed = parseDataUrl(item.dataUrl);
+          mimeType = parsed.mimeType || "image/png";
+          bytes = Buffer.from(parsed.base64, "base64");
+        }
+
+        const uploaded = await uploadBufferToStorage({
+          userId: user.id,
+          tool: "kling-element",
+          buffer: bytes,
+          mimeType,
+          nameHint: `${name || "element"}-${elementUuid}-${i + 1}`,
+        });
+
+        imagePaths.push(uploaded.storagePath);
+      }
+
+      // 2) Firmar URLs (para que Kling pueda descargar)
+      const signedImageUrls = await Promise.all(imagePaths.map((p) => signStoragePath(p, 60 * 30)));
+
+      // 3) Crear Element en Kling
+      created = await klingCreateElement({
+        name,
+        tag: tag || "character",
+        description,
+        referenceType: "image_refer",
+        voiceId,
+        imageUrls: signedImageUrls,
+      });
+
+      previewPath = imagePaths[0] || null;
     }
 
-    // 2) Firmar URLs (para que Kling pueda descargar)
-    const signedImageUrls = await Promise.all(imagePaths.map((p) => signStoragePath(p, 60 * 30)));
-
-    // 3) Crear Element en Kling (endpoint configurable via env)
-    const created = await klingCreateElement({
-      name,
-      tag: tag || "character",
-      imageUrls: signedImageUrls,
-    });
-
     // 4) Guardar en DB (paths, no URLs firmadas)
-    const previewPath = imagePaths[0];
-
     const insertPayload = {
       owner_id: user.id,
       name,
+
+      // metadata (nuevo)
+      reference_type: referenceType || (videoAssetId ? "video_refer" : "image_refer"),
+      description: description ? String(description).slice(0, 100) : null,
+      tag: tag ? String(tag).slice(0, 50) : null,
+      voice_id: voiceId ? String(voiceId).slice(0, 128) : null,
+      video_asset_id: videoAssetId,
 
       kling_element_id: created.elementId ? String(created.elementId) : null,
 
@@ -1736,7 +1953,12 @@ app.post("/api/kling/elements", async (req, res, next) => {
       return res.status(500).json({ ok: false, error: { code: "DB_INSERT_FAILED", message: insErr.message } });
     }
 
-    const previewUrl = await signStoragePath(row.preview_path, 60 * 60);
+    const previewUrl = row.preview_path
+      ? await signStoragePath(row.preview_path, 60 * 60)
+      : row.video_asset_id
+        ? await assetIdToSignedUrl(row.video_asset_id, user.id, 60 * 60)
+        : null;
+
     const imageUrls = await Promise.all((row.image_paths || []).map((p) => signStoragePath(p, 60 * 60)));
 
     return res.status(row.status === "creating" ? 202 : 201).json({

@@ -340,6 +340,8 @@ const VideoGeneratorTool: React.FC = () => {
 
   // Assets
   const [imageAssets, setImageAssets] = useState<Asset[]>([]);
+  const [videoLibraryAssets, setVideoLibraryAssets] = useState<Asset[]>([]);
+  const [isLoadingVideosForElements, setIsLoadingVideosForElements] = useState(false);
   const [videoAssets, setVideoAssets] = useState<Asset[]>([]);
   const [isLoadingImages, setIsLoadingImages] = useState(false);
 
@@ -416,6 +418,21 @@ const VideoGeneratorTool: React.FC = () => {
       (typeof anyA.thumbUrl === "string" && anyA.thumbUrl) ||
       null
     );
+  }
+
+  async function reloadVideosForElements() {
+    setIsLoadingVideosForElements(true);
+    try {
+      const vids = await listMyAssets({ type: "video", limit: 500 });
+      setVideoLibraryAssets(Array.isArray(vids) ? vids : []);
+      return vids;
+    } catch (e: any) {
+      console.warn(e);
+      setVideoLibraryAssets([]);
+      return [];
+    } finally {
+      setIsLoadingVideosForElements(false);
+    }
   }
 
   async function reloadImages() {
@@ -980,11 +997,13 @@ useEffect(() => {
   }, [isKlingV3, elementsOpen, refreshKlingElements]);
 
   useEffect(() => {
-  if (!isKlingV3) return;
-  if (!elementsOpen) return;
-  // Refresca imágenes para el selector del creador de Elements
-  reloadImages();
-}, [isKlingV3, elementsOpen]);
+    if (!isKlingV3) return;
+    if (!elementsOpen) return;
+
+    // Refresca imágenes y videos para el creador de Elements
+    reloadImages();
+    reloadVideosForElements();
+  }, [isKlingV3, elementsOpen]);
 
   const modelLabel = useMemo(() => prettyVideoModelLabel(modelNorm), [modelNorm]);
 
@@ -2018,11 +2037,16 @@ const clearModalSelectedIds = () => {
         setSelectedIds={setModalSelectedIds}
         onClear={clearModalSelectedIds}
         imageAssets={imageAssets}
+        videoAssets={videoLibraryAssets}
         getAssetUrl={getAssetUrl}
         onRefresh={refreshKlingElements}
-        onAssetUploaded={(asset) =>
-          setImageAssets((prev) => [asset, ...prev.filter((x) => x.id !== asset.id)])
-        }
+        onAssetUploaded={(asset) => {
+          if (asset.type === "video") {
+            setVideoLibraryAssets((prev) => [asset, ...prev.filter((x) => x.id !== asset.id)]);
+          } else {
+            setImageAssets((prev) => [asset, ...prev.filter((x) => x.id !== asset.id)]);
+          }
+        }}
         maxSelected={modelNorm === KLING_V3 ? 3 : 5}
         uploadToolName="video-elements"
       />
