@@ -851,12 +851,20 @@ function parseVoiceIdsEnv(raw) {
 
 function resolveKlingVoiceCatalogPath() {
   const urlRaw = String(process.env.KLING_VOICE_CATALOG_URL || "").trim();
+
+  // Evita placeholders tipo "<ruta-real-de-voces>" o textos de ejemplo
+  if (urlRaw && /<|>|ruta-real|example|TODO/i.test(urlRaw)) return "";
+
   if (urlRaw) {
-    const u = new URL(urlRaw);
-    let p = (u.pathname || "").trim();
-    if (!p.startsWith("/")) p = "/" + p;
-    if (p.startsWith("/v1/")) p = p.slice(3);
-    return p.replace(/\/+$/g, "");
+    try {
+      const u = new URL(urlRaw);
+      let p = (u.pathname || "").trim();
+      if (!p.startsWith("/")) p = "/" + p;
+      if (p.startsWith("/v1/")) p = p.slice(3);
+      return p.replace(/\/+$/g, "");
+    } catch {
+      return "";
+    }
   }
 
   let p = String(process.env.KLING_VOICE_CATALOG_PATH || "").trim();
@@ -1433,10 +1441,17 @@ function resolveKlingCreateElementUrl() {
     // Si te dieron una URL completa, úsala.
     if (directRaw) {
       if (/^https?:\/\//i.test(directRaw)) return directRaw.replace(/\/+$/g, "");
-      // Si pusiste "api.klingai.com/v1/..." sin https, lo arreglamos.
       if (/^api\.klingai\.com/i.test(directRaw)) return `https://${directRaw}`.replace(/\/+$/g, "");
-      // Si pusiste un PATH (ej: "/v1/general/custom-elements"), lo tratamos como PATH.
-      process.env.KLING_ELEMENT_CREATE_PATH = directRaw;
+
+      // Si parece PATH, SOLO lo usamos si NO existe KLING_ELEMENT_CREATE_PATH (evita pisadas accidentales)
+      const explicitPath = String(process.env.KLING_ELEMENT_CREATE_PATH || "").trim();
+      if (!explicitPath) {
+        process.env.KLING_ELEMENT_CREATE_PATH = directRaw;
+      } else {
+        console.warn(
+          `[WARN] KLING_ELEMENT_CREATE_URL parece un PATH pero KLING_ELEMENT_CREATE_PATH ya está seteado. Ignorando CREATE_URL="${directRaw}".`
+        );
+      }
     }
 
     let baseUrl = (process.env.KLING_BASE_URL || "https://api.klingai.com")
@@ -1658,10 +1673,19 @@ async function klingCreateElement({ name, tag, description, referenceType, voice
     return desc.slice(0, 100);
   })();
 
-  const createPath = resolveKlingCreateElementPath();
-  const isAdvanced = /advanced-custom-elements/i.test(createPath);
-
   const ref = referenceType || (videoUrl ? "video_refer" : "image_refer");
+
+  let createPath = resolveKlingCreateElementPath();
+
+  // ✅ Hardening: video_refer SIEMPRE requiere advanced-custom-elements
+  if (ref === "video_refer" && !/advanced-custom-elements/i.test(createPath)) {
+    console.warn(
+      `[WARN] video_refer requiere advanced-custom-elements. Path actual="${createPath}". Forzando "/general/advanced-custom-elements".`
+    );
+    createPath = "/general/advanced-custom-elements";
+  }
+
+  const isAdvanced = /advanced-custom-elements/i.test(createPath);
 
   let payload;
 
@@ -1787,9 +1811,11 @@ app.get("/api/kling/voices", async (req, res) => {
     const items = await getKlingVoicesCatalog();
     return res.json({ ok: true, items });
   } catch (e) {
-    return res.status(502).json({
-      ok: false,
-      error: {
+    // ✅ Voces son opcionales: no rompas el creador de Elements por esto
+    return res.json({
+      ok: true,
+      items: [],
+      warning: {
         code: "KLING_VOICES_FETCH_FAILED",
         message: e?.message || "No pude obtener el catálogo de voces.",
       },
