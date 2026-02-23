@@ -983,8 +983,34 @@ useEffect(() => {
 
   const refreshKlingElements = useCallback(async () => {
     try {
-      const items = await refreshKlingElementsStatus({ maxPoll: 10 });
-      setKlingElements(items || []);
+      const raw = await refreshKlingElementsStatus({ maxPoll: 10 });
+
+      // Normaliza IDs a string (evita mismatch string/number)
+      const items = (raw || []).map((e: any) => ({
+        ...e,
+        id: String(e?.id ?? ""),
+      }));
+
+      setKlingElements(items);
+
+      // Limpia IDs fantasma (causan "(unknown)" en el Quality Gate)
+      const validIds = new Set(items.map((e: any) => String(e?.id ?? "")).filter(Boolean));
+
+      setSelectedKlingElementIds((prev) => {
+        const arr = Array.isArray(prev) ? prev : [];
+        return arr.map(String).filter((id) => validIds.has(id));
+      });
+
+      // También limpia selección por-shot (multishot customize)
+      setKlingShots((prev: any) => {
+        const arr = Array.isArray(prev) ? prev : [];
+        return arr.map((s: any) => ({
+          ...s,
+          elementIds: Array.isArray(s?.elementIds)
+            ? s.elementIds.map(String).filter((id: string) => validIds.has(id))
+            : [],
+        }));
+      });
     } catch (e: any) {
       setError(e?.message || "No pude cargar tus Elements.");
     }
@@ -1285,16 +1311,27 @@ const durationLabel = useMemo(() => {
 
   // ✅ Quality Gate: no permitir Elements no listos (creating/failed o sin klingElementId)
   if (isKlingV3) {
-    const byId = new Map(klingElements.map((e) => [e.id, e]));
+    const byId = new Map(klingElements.map((e) => [String(e.id), e]));
 
-    const bad = (selectedKlingElementIdsForModel || [])
+    const selected = (selectedKlingElementIdsForModel || []).map((x) => String(x)).filter(Boolean);
+
+    const missingIds = selected.filter((id) => !byId.has(id));
+
+    const notReady = selected
       .map((id) => byId.get(id))
-      .filter((e) => !e || (e.status ?? "ready") !== "ready" || !e.klingElementId);
+      .filter((e) => e && ((e.status ?? "ready") !== "ready" || !e.klingElementId));
 
-    if (bad.length) {
-      const names = bad.map((e: any) => (e?.name ? `"${e.name}"` : "(unknown)")).join(", ");
+    if (missingIds.length || notReady.length) {
+      const missingLabel = missingIds.length ? `missingIds: ${missingIds.join(", ")}` : "";
+      const notReadyLabel = notReady.length
+        ? `notReady: ${notReady.map((e: any) => (e?.name ? `"${e.name}"` : String(e?.id || ""))).join(", ")}`
+        : "";
+
+      const sep = missingLabel && notReadyLabel ? " | " : "";
+      const detail = `${missingLabel}${sep}${notReadyLabel}`.trim();
+
       throw new Error(
-        `Estos Elements no están listos (creating/failed): ${names}. Usa "Refresh status" o espera.`
+        `Estos Elements no están listos o no existen: ${detail || "(unknown)"}. Usa "Refresh status" o reabre Elements.`
       );
     }
   }
