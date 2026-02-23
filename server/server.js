@@ -826,56 +826,74 @@ function falAuthHeader() {
 }
 
 // =============================
-// Fal Platform API (model metadata + OpenAPI schema)
-// Usamos esto para construir un catálogo de voces “oficiales” desde el schema del endpoint Kling TTS.
-// Docs: https://docs.fal.ai/platform-apis/v1/models (expand=openapi-3.0)
+// KLING Voices Catalog (element_voice_id) - Kling-only
+//
+// Fuente:
+// - Modo manual (default): KLING_VOICE_IDS="id1,id2,id3" (CSV o líneas)
+// - Modo API: configura KLING_VOICE_CATALOG_URL (URL completa) o KLING_VOICE_CATALOG_PATH (path bajo /v1)
+//
+// Nota: tus docs indican que element_voice_id se obtiene via "voice-related API",
+// pero no traen el endpoint exacto. Este diseño te permite enchufarlo cuando lo tengas.
 // =============================
-const FAL_PLATFORM_BASE_URL = "https://api.fal.ai/v1";
 
 let klingVoicesCache = { ts: 0, items: null, source: null };
 const KLING_VOICES_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6h
 
-async function falPlatformFetchModelOpenApi(endpointId) {
-  const auth = falAuthHeader();
-  if (!auth) throw httpError(500, "FAL_KEY_MISSING", "Missing FAL_KEY env var (Fal.ai)");
-
-  const url = `${FAL_PLATFORM_BASE_URL}/models?endpoint_id=${encodeURIComponent(endpointId)}&expand=openapi-3.0`;
-  const resp = await fetch(url, { headers: { Authorization: auth } });
-
-  const text = await resp.text();
-  let json;
-  try {
-    json = JSON.parse(text);
-  } catch {
-    throw httpError(502, "FAL_PLATFORM_BAD_RESPONSE", `Fal Platform devolvió texto no JSON. Inicio: ${text.slice(0, 120)}`);
-  }
-
-  if (!resp.ok) {
-    throw httpError(502, "FAL_PLATFORM_ERROR", `Fal Platform error ${resp.status}`, { body: json });
-  }
-
-  return json;
+function parseVoiceIdsEnv(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return [];
+  return s
+    .split(/[\n,]+/g)
+    .map((x) => String(x || "").trim())
+    .filter(Boolean)
+    .map((id) => ({ id, label: id, source: "env:KLING_VOICE_IDS" }));
 }
 
-function extractVoiceIdsFromOpenApi(openapi) {
-  // En OpenAPI 3.0 de Fal, suele existir components.schemas.VoiceIdEnum.enum
-  const enumValues =
-    openapi?.components?.schemas?.VoiceIdEnum?.enum ||
-    openapi?.components?.schemas?.VoiceIdEnum?.items?.enum ||
-    null;
-
-  if (!Array.isArray(enumValues)) return [];
-
-  const out = [];
-  for (const raw of enumValues) {
-    const id = String(raw || "").trim();
-    if (!id) continue;
-
-    // Label: humanizamos un poco el id
-    const label = id.replace(/_/g, " ").replace(/\s+/g, " ").trim();
-    out.push({ id, label, source: "fal-openapi:kling-tts" });
+function resolveKlingVoiceCatalogPath() {
+  const urlRaw = String(process.env.KLING_VOICE_CATALOG_URL || "").trim();
+  if (urlRaw) {
+    const u = new URL(urlRaw);
+    let p = (u.pathname || "").trim();
+    if (!p.startsWith("/")) p = "/" + p;
+    if (p.startsWith("/v1/")) p = p.slice(3);
+    return p.replace(/\/+$/g, "");
   }
-  return out;
+
+  let p = String(process.env.KLING_VOICE_CATALOG_PATH || "").trim();
+  if (!p) return "";
+  if (!p.startsWith("/")) p = "/" + p;
+  if (p.startsWith("/v1/")) p = p.slice(3);
+  return p.replace(/\/+$/g, "");
+}
+
+function normalizeKlingVoiceItems(anyJson) {
+  const d = anyJson?.data ?? anyJson;
+  const arr =
+    (Array.isArray(d?.items) && d.items) ||
+    (Array.isArray(d?.voices) && d.voices) ||
+    (Array.isArray(d?.data) && d.data) ||
+    (Array.isArray(d) && d) ||
+    [];
+
+  return arr
+    .map((v) => {
+      const id = String(v?.voice_id ?? v?.id ?? v ?? "").trim();
+      if (!id) return null;
+
+      const label = String(v?.voice_name ?? v?.name ?? v?.label ?? id).trim();
+      const ownedBy = v?.owned_by ? String(v.owned_by) : "kling";
+      return { id, label, source: `kling:${ownedBy}` };
+    })
+    .filter(Boolean);
+}
+
+async function fetchKlingVoicesFromApi() {
+  const path = resolveKlingVoiceCatalogPath();
+  if (!path) return [];
+
+  // usa auth de Kling ya implementada en klingGetWithRetry (server/klingVideo.js)
+  const raw = await klingGetWithRetry(path, { timeoutMs: 20_000, retries: 2 });
+  return normalizeKlingVoiceItems(raw);
 }
 
 async function getKlingVoicesCatalog() {
@@ -884,14 +902,22 @@ async function getKlingVoicesCatalog() {
     return klingVoicesCache.items;
   }
 
-  const endpointId = process.env.KLING_VOICE_CATALOG_ENDPOINT_ID || "fal-ai/kling-video/v1/tts";
+  const mode = String(process.env.KLING_VOICE_CATALOG_MODE || "manual").trim().toLowerCase();
 
-  const json = await falPlatformFetchModelOpenApi(endpointId);
-  const model = Array.isArray(json?.models) ? json.models[0] : null;
-  const openapi = model?.openapi || null;
+  let items = [];
+  let source = "manual";
 
-  const items = extractVoiceIdsFromOpenApi(openapi);
-  klingVoicesCache = { ts: Date.now(), items, source: endpointId };
+  if (mode === "api") {
+    items = await fetchKlingVoicesFromApi();
+    source = resolveKlingVoiceCatalogPath() || "api";
+  }
+
+  if (!items.length) {
+    items = parseVoiceIdsEnv(process.env.KLING_VOICE_IDS || "");
+    source = items.length ? "env" : source;
+  }
+
+  klingVoicesCache = { ts: Date.now(), items, source };
   return items;
 }
 
@@ -1421,7 +1447,7 @@ function resolveKlingCreateElementUrl() {
     // Fuerza /v1 en base
     if (!/\/v1$/i.test(baseUrl)) baseUrl += "/v1";
 
-    let pathRaw = (process.env.KLING_ELEMENT_CREATE_PATH || "/general/custom-elements")
+    let pathRaw = (process.env.KLING_ELEMENT_CREATE_PATH || "/general/advanced-custom-elements")
       .toString()
       .trim()
       .replace(/\s+/g, "");
@@ -1447,14 +1473,14 @@ function resolveKlingCreateElementPath() {
     let p = (u.pathname || "").trim();
     if (!p.startsWith("/")) p = "/" + p;
     if (p.startsWith("/v1/")) p = p.slice(3); // "/v1" => ""
-    return p.replace(/\/+$/g, "") || "/general/custom-elements";
+        return p.replace(/\/+$/g, "") || "/general/advanced-custom-elements";
   }
 
   // Si nos llega un PATH
   let p = String(url || "").trim();
   if (!p.startsWith("/")) p = "/" + p;
   if (p.startsWith("/v1/")) p = p.slice(3);
-  return p.replace(/\/+$/g, "") || "/general/custom-elements";
+      return p.replace(/\/+$/g, "") || "/general/advanced-custom-elements";
 }
 
 function normalizeKlingTaskStatus(raw) {
@@ -1683,6 +1709,14 @@ async function klingCreateElement({ name, tag, description, referenceType, voice
     }
   } else {
     // ✅ Legacy (solo imágenes)
+    if (ref === "video_refer") {
+      throw httpError(
+        400,
+        "KLING_ELEMENT_ADVANCED_REQUIRED",
+        "Para crear Elements con video (video_refer) debes usar /v1/general/advanced-custom-elements (configura KLING_ELEMENT_CREATE_PATH=/general/advanced-custom-elements)."
+      );
+    }
+
     const frontal = imageUrls?.[0];
     if (!frontal) {
       throw httpError(400, "KLING_ELEMENT_NO_IMAGES", "No hay imágenes para crear el Element.");
@@ -1698,16 +1732,7 @@ async function klingCreateElement({ name, tag, description, referenceType, voice
       element_refer_list: referList.map((u) => ({ image_url: u })),
       ...(tagId ? { tag_list: [{ tag_id: tagId }] } : {}),
     };
-
-    if (ref === "video_refer") {
-      throw httpError(
-        400,
-        "KLING_ELEMENT_ADVANCED_REQUIRED",
-        "Para crear Elements con video (video_refer) debes usar KLING_ELEMENT_CREATE_PATH=/general/advanced-custom-elements."
-      );
-    }
   }
-
   const apiVersion = /advanced-custom-elements/i.test(createPath) ? "advanced" : "legacy";
 
   let json;
@@ -1942,7 +1967,7 @@ app.post("/api/kling/elements", async (req, res, next) => {
     const { data: row, error: insErr } = await supabaseAdmin
       .from("kling_elements")
       .insert(insertPayload)
-      .select("id, name, kling_element_id, status, status_detail, api_version, kling_task_id, preview_path, image_paths, created_at, updated_at")
+            .select("id, name, tag, description, reference_type, voice_id, video_asset_id, kling_element_id, status, status_detail, api_version, kling_task_id, preview_path, image_paths, created_at, updated_at")
       .single();
 
     if (insErr) {
@@ -1994,7 +2019,7 @@ app.get("/api/kling/elements/:id", async (req, res) => {
 
   const { data: row, error: getErr } = await supabaseAdmin
     .from("kling_elements")
-    .select("id, owner_id, name, kling_element_id, status, status_detail, api_version, kling_task_id, kling_raw, preview_path, image_paths, created_at, updated_at")
+    .select("id, owner_id, name, tag, description, reference_type, voice_id, video_asset_id, kling_element_id, status, status_detail, api_version, kling_task_id, kling_raw, preview_path, image_paths, created_at, updated_at")
     .eq("id", id)
     .single();
 
@@ -2078,7 +2103,11 @@ app.get("/api/kling/elements/:id", async (req, res) => {
     }
   }
 
-  const previewUrl = row.preview_path ? await signStoragePath(row.preview_path, 60 * 60) : null;
+    const previewUrl = row.preview_path
+    ? await signStoragePath(row.preview_path, 60 * 60)
+    : row.video_asset_id
+      ? await assetIdToSignedUrl(row.video_asset_id, user.id, 60 * 60)
+      : null;
   const imageUrls = Array.isArray(row.image_paths)
     ? await Promise.all(row.image_paths.map((p) => signStoragePath(p, 60 * 60)))
     : [];

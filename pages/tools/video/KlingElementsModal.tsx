@@ -825,10 +825,10 @@ async function handleUploadVideo(file: File) {
                         </div>
                       )}
 
-                      <div className={styles.elementHint}>
-                        Nota: esta lista se obtiene desde la API de Fal (schema del endpoint de Kling TTS). Para voces
-                        personalizadas, crea una con el endpoint <b>fal-ai/kling-video/create-voice</b> y usa “Custom voice ID…”.
-                      </div>
+                    <div className={styles.elementHint}>
+                      Nota: selecciona una voz de la librería de Kling (si tu backend la tiene configurada) o usa “Custom voice ID…”
+                      para pegar un <b>voice_id</b> obtenido desde la API de voces de Kling.
+                    </div>
                     </>
                   )}
                 </div>

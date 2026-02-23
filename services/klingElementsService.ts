@@ -246,8 +246,8 @@ export async function deleteKlingElement(id: string): Promise<void> {
 
 // ===============================
 // Kling Voices (para element_voice_id)
-// La lista se obtiene del backend (/api/kling/voices), que a su vez lee el schema OpenAPI
-// del endpoint de Fal/Kling TTS para construir un catálogo de voces.
+// La lista se obtiene del backend (/api/kling/voices), que consulta la librería de voces de Kling
+// (o un catálogo manual vía variables de entorno).
 // ===============================
 
 export type KlingVoice = {
