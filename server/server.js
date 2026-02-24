@@ -1914,7 +1914,7 @@ app.post("/api/kling/elements", async (req, res, next) => {
 
       videoAssetId = video.assetId;
       imagePaths = [];
-      previewPath = null;
+      previewPath = "";
     } else {
       // ✅ Multi-Image Element (image_refer)
       if (!images || images.length < 1) {

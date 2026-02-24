@@ -203,7 +203,19 @@ export type CreateKlingElementPayload =
       video: { assetId: string };
     };
 
-export async function createKlingElement(payload: CreateKlingElementPayload): Promise<KlingElement> {
+export type CreateKlingElementOptions = {
+  // Si es false, devolvemos rápido aunque Kling siga procesando (status="creating").
+  waitForReady?: boolean;
+
+  // Solo aplica cuando waitForReady=true
+  timeoutMs?: number;
+  intervalMs?: number;
+};
+
+export async function createKlingElement(
+  payload: CreateKlingElementPayload,
+  opts?: CreateKlingElementOptions
+): Promise<KlingElement> {
   const headers = await authHeadersJson();
   const resp = await fetch(apiUrl("/api/kling/elements"), {
     method: "POST",
@@ -220,13 +232,19 @@ export async function createKlingElement(payload: CreateKlingElementPayload): Pr
 
   const created = mapRowToKlingElement(data.item);
 
-  // ✅ Si viene pending/creating, hacemos polling hasta ready/failed
-  if (created.status === "creating") {
-    const finalEl = await waitKlingElementReady(created.id, { timeoutMs: 180_000, intervalMs: 2000 });
+  const waitForReady = opts?.waitForReady ?? true;
+
+  // ✅ Si viene creating y el caller quiere esperar, hacemos polling.
+  if (created.status === "creating" && waitForReady) {
+    const finalEl = await waitKlingElementReady(created.id, {
+      timeoutMs: opts?.timeoutMs ?? 180_000,
+      intervalMs: opts?.intervalMs ?? 2000,
+    });
     invalidateKlingElementsCache();
     return finalEl;
   }
 
+  // ✅ Modo recomendado para UI: devolver rápido y dejar que worker/Refresh status actualice.
   return created;
 }
 

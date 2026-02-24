@@ -436,23 +436,29 @@ async function handleUploadVideo(file: File) {
     setBusy(true);
     try {
       if (newReferenceType === "video_refer") {
-        await createKlingElement({
-          name,
-          tag: newTag.trim() || "character",
-          description: newDescription.trim() || undefined,
-          voiceId: (voicePickerValue === "__custom__" ? customVoiceId : voicePickerValue).trim() || undefined,
-          referenceType: "video_refer",
-          video: { assetId: pickedVideoAssetId },
-        });
+        await createKlingElement(
+          {
+            name,
+            tag: newTag.trim() || "character",
+            description: newDescription.trim() || undefined,
+            voiceId: (voicePickerValue === "__custom__" ? customVoiceId : voicePickerValue).trim() || undefined,
+            referenceType: "video_refer",
+            video: { assetId: pickedVideoAssetId },
+          },
+          { waitForReady: false }
+        );
       } else {
-        await createKlingElement({
-          name,
-          tag: newTag.trim() || "character",
-          description: newDescription.trim() || undefined,
-          voiceId: (voicePickerValue === "__custom__" ? customVoiceId : voicePickerValue).trim() || undefined,
-          referenceType: "image_refer",
-          images: pickedAssetIds.map((id) => ({ assetId: id })),
-        });
+        await createKlingElement(
+          {
+            name,
+            tag: newTag.trim() || "character",
+            description: newDescription.trim() || undefined,
+            voiceId: (voicePickerValue === "__custom__" ? customVoiceId : voicePickerValue).trim() || undefined,
+            referenceType: "image_refer",
+            images: pickedAssetIds.map((id) => ({ assetId: id })),
+          },
+          { waitForReady: false }
+        );
       }
 
       await onRefresh();

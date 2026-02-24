@@ -847,7 +847,7 @@ const isKling = selectedModelNorm.startsWith("kling-");
 
           const { data: rows, error: rowsErr } = await supabaseAdmin
             .from("kling_elements")
-            .select("id, owner_id, kling_element_id")
+            .select("id, owner_id, kling_element_id, status, status_detail")
             .in("id", klingElementIds)
             .eq("owner_id", user.id);
 
