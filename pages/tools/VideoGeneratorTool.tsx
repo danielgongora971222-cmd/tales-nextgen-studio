@@ -624,8 +624,8 @@ const VideoGeneratorTool: React.FC = () => {
 
   const maxKlingElements = isKlingV3 ? (hasFirst ? 3 : 5) : 0;
 
-  // ✅ Solo Kling API oficial (mode std/pro => 720/1080). Excluye O3 (Fal).
-  const isKlingApi = isKling && !isKlingO3;
+  // ✅ Kling API oficial (mode std/pro => 720/1080). Incluye O3 (Omni).
+  const isKlingApi = isKling;
     // ===============================
   // Mentions (@) para Elements (Kling V3 / O3)
   // - El usuario escribe tags tipo @mi_elemento (slug del nombre).

@@ -127,7 +127,8 @@ function sleepAbortable(ms: number, signal?: AbortSignal) {
 }
 
 function isFalModel(modelNorm: string) {
-  return modelNorm === KLING_O3_PRO;
+  // ✅ Kling O3 ahora usa Kling Tasks (Omni-Video), no Fal.
+  return false;
 }
 
 function asArray(v: any) {
@@ -200,7 +201,7 @@ export const GenerationQueueProvider: React.FC<{ children: React.ReactNode }> = 
       }
 
       // ✅ Reanudable: Kling (Tasks) (supabaseJobId)
-      if ((modelNorm === KLING_V3 || modelNorm === KLING_2_6 || modelNorm === KLING_2_5_TURBO) && supaId) {
+      if ((modelNorm === KLING_V3 || modelNorm === KLING_2_6 || modelNorm === KLING_2_5_TURBO || modelNorm === KLING_O3_PRO) && supaId) {
         return {
           ...j,
           status: "queued" as const,
@@ -426,8 +427,8 @@ async function runVideoJob(
     // ===============================
   // ✅ Kling V3 (API oficial): esperar al worker por public.jobs
   // ===============================
-  if (modelNorm === KLING_V3 || modelNorm === KLING_2_6 || modelNorm === KLING_2_5_TURBO) {
-    const existingJobId = payload?.supabaseJobId ? String(payload.supabaseJobId) : "";
+    if (modelNorm === KLING_V3 || modelNorm === KLING_2_6 || modelNorm === KLING_2_5_TURBO || modelNorm === KLING_O3_PRO) {
+      const existingJobId = payload?.supabaseJobId ? String(payload.supabaseJobId) : "";
 
     // Reanudar si ya tenemos jobId
     if (existingJobId) {

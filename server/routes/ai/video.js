@@ -389,7 +389,7 @@ const isKling = selectedModelNorm.startsWith("kling-");
 
     // ✅ Idempotencia: si el frontend reintenta el mismo job (clientJobId),
     // devolvemos el job existente en vez de responder 429.
-    if (isKling && asyncMode && selectedModelNorm !== "kling-o3-pro" && clientJobIdNorm) {
+    if (isKling && asyncMode && clientJobIdNorm) {
       const existing = await findKlingJobByClientJobId({
         ownerId: user.id,
         clientJobId: clientJobIdNorm,
@@ -407,7 +407,7 @@ const isKling = selectedModelNorm.startsWith("kling-");
 
     // ✅ Kling (API oficial): si está al límite (global/per-user), devolvemos 429 con Retry-After
     // ANTES de consumir el rate-limit por usuario.
-    if (isKling && asyncMode && selectedModelNorm !== "kling-o3-pro") {
+    if (isKling && asyncMode) {
       const blocked = await enforceKlingParallelLimit(res, user.id);
       if (blocked) return;
     }
@@ -433,87 +433,97 @@ const isKling = selectedModelNorm.startsWith("kling-");
 
     if (isKling) {
       // ✅ KLING V3 PRO via FAL (fal-ai/kling-video/v3/pro/*)
-            if (selectedModelNorm === "kling-o3-pro") {
-              const isO3 = true;
+      if (selectedModelNorm === "kling-o3-pro") {
         const hasElements =
           Array.isArray(klingElementIds) && klingElementIds.length > 0;
 
-        // ⚠️ Fal/Kling debe poder descargar imágenes (start/end/elements).
-        // Si el job queda en cola, URLs firmadas muy cortas pueden expirar.
+        // ⚠️ Kling debe poder descargar inputs durante cola/ejecución.
+        // Si el job tarda, URLs firmadas muy cortas pueden expirar.
         const INPUT_URL_TTL_SECONDS = 60 * 60 * 6; // 6 horas
 
-        // Audio nativo (Fal: generate_audio). Si no viene nada, Fal suele default true.
-        const generateAudio =
-          klingSound !== undefined ? Boolean(klingSound) : true;
-
-        // Voice IDs (limpiamos vacíos, max 2)
-        const voiceIds = Array.isArray(klingVoiceIds)
-          ? klingVoiceIds
-              .map((v) => String(v || "").trim())
-              .filter(Boolean)
-              .slice(0, 2)
-          : [];
-
-        // Shot type (solo aplica en TEXT-TO-VIDEO cuando hay multi_prompt)
-        const normalizedShotType =
-          klingShotType === "intelligent" ? "intelligent" : "customize";
-
-        // Duración (Fal: 3..15)
+        // Duration global 3..15
         let dur = durationSeconds != null ? Number(durationSeconds) : 5;
         dur = Math.trunc(dur);
         if (dur < 3) dur = 3;
         if (dur > 15) dur = 15;
 
-        const ar = aspectRatio || "16:9";
+        // O3/Omni: multishot solo soporta shot_type=customize
+        const KLING_SHOT_PROMPT_LIMIT = 512;
 
-        // Multi-shot (Fal: multi_prompt + shot_type)
-        const KLING_V3_SHOT_PROMPT_LIMIT = 512;
-        const multi =
-          Array.isArray(klingMultiPrompt) && klingMultiPrompt.length
-            ? klingMultiPrompt.map((s, idx) => {
-                const p = String(s?.prompt || "");
-                if (p.length > KLING_V3_SHOT_PROMPT_LIMIT) {
-                  throw httpError(
-                    400,
-                    "KLING_V3_MULTISHOT_PROMPT_TOO_LONG",
-                    `Kling V3 Multishot: el prompt del shot ${idx + 1} supera ${KLING_V3_SHOT_PROMPT_LIMIT} caracteres (${p.length}).`
-                  );
-                }
+        const multiIn = Array.isArray(klingMultiPrompt) ? klingMultiPrompt : [];
+        let multiPrompt = null;
 
-                let sDur = s?.durationSeconds != null ? Number(s.durationSeconds) : 5;
-                sDur = Math.trunc(sDur);
-                if (sDur < 3) sDur = 3;
-                if (sDur > 15) sDur = 15;
-                return { prompt: p, duration: String(sDur) };
-              })
-            : null;
+        if (multiIn.length) {
+          if (multiIn.length > 6) {
+            throw httpError(
+              400,
+              "KLING_O3_MULTISHOT_TOO_MANY_SHOTS",
+              "Kling O3 Multishot: máximo 6 shots."
+            );
+          }
 
+          multiPrompt = multiIn.map((s, idx) => {
+            const p = String(s?.prompt || "").trim();
+            if (!p) {
+              throw httpError(
+                400,
+                "KLING_O3_MULTISHOT_EMPTY_PROMPT",
+                `Kling O3 Multishot: el shot ${idx + 1} tiene prompt vacío.`
+              );
+            }
+            if (p.length > KLING_SHOT_PROMPT_LIMIT) {
+              throw httpError(
+                400,
+                "KLING_O3_MULTISHOT_PROMPT_TOO_LONG",
+                `Kling O3 Multishot: el prompt del shot ${idx + 1} supera ${KLING_SHOT_PROMPT_LIMIT} caracteres (${p.length}).`
+              );
+            }
 
-        // Si hay multishot: suma total debe ser 3..15
-        let totalDur = dur;
-        if (multi && multi.length) {
-          totalDur = multi.reduce(
+            let sDur =
+              s?.durationSeconds != null ? Number(s.durationSeconds) : 1;
+            sDur = Math.trunc(sDur);
+            if (sDur < 1) sDur = 1;
+            if (sDur > 15) sDur = 15;
+
+            return { index: idx + 1, prompt: p, duration: String(sDur) };
+          });
+
+          const totalDur = multiPrompt.reduce(
             (acc, s) => acc + Number(s.duration || 0),
             0
           );
+
           if (totalDur < 3 || totalDur > 15) {
             throw httpError(
               400,
-              "KLING_V3_MULTISHOT_DURATION_INVALID",
-              "Kling V3 Multishot: la suma de durations debe ser entre 3 y 15 segundos."
+              "KLING_O3_MULTISHOT_DURATION_INVALID",
+              "Kling O3 Multishot: la suma de durations debe ser entre 3 y 15 segundos."
             );
           }
+
+          // En O3/Omni, preferimos que duration sea la suma real del storyboard
+          dur = totalDur;
         }
 
-        // Elements (se pueden usar también en text-to-video)
-        let elements = undefined;
-        if (hasElements) {
+        const multiShotEnabled = Boolean(multiPrompt && multiPrompt.length);
 
-        const { data: rows, error: rowsErr } = await supabaseAdmin
-          .from("kling_elements")
-          .select("id, owner_id, status, status_detail, kling_element_id")
-          .in("id", klingElementIds)
-          .eq("owner_id", user.id);
+        // Elements (kling_elements en tu DB) → element_list (IDs reales de Kling)
+        let elementList = undefined;
+        if (hasElements) {
+          const maxElems = hasFirst ? 3 : 5;
+          if (klingElementIds.length > maxElems) {
+            throw httpError(
+              400,
+              "KLING_O3_TOO_MANY_ELEMENTS",
+              `Kling O3: máximo ${maxElems} Elements en este modo.`
+            );
+          }
+
+          const { data: rows, error: rowsErr } = await supabaseAdmin
+            .from("kling_elements")
+            .select("id, owner_id, kling_element_id, status, status_detail")
+            .in("id", klingElementIds)
+            .eq("owner_id", user.id);
 
           if (rowsErr) {
             throw httpError(500, "DB_ERROR", "No pude leer tus Elements.", {
@@ -526,175 +536,224 @@ const isKling = selectedModelNorm.startsWith("kling-");
           if (missing.length) {
             throw httpError(
               400,
-              "KLING_V3_ELEMENT_NOT_FOUND",
+              "KLING_O3_ELEMENT_NOT_FOUND",
               "Uno o más Elements no existen o no te pertenecen.",
               { missing }
             );
           }
 
           const out = [];
-          for (const elementId of klingElementIds) {
-            const row = byId.get(elementId);
-            const paths = Array.isArray(row?.image_paths) ? row.image_paths : [];
-            if (!paths.length) continue;
+          for (const elementUuid of klingElementIds) {
+            const row = byId.get(elementUuid);
 
-            // firmamos hasta 4 imágenes
-            const urls = [];
-            for (const storagePath of paths.slice(0, 4)) {
-              const signed = await signStoragePath(
-                storagePath,
-                INPUT_URL_TTL_SECONDS
+            const st = String(row?.status || "ready");
+            if (st !== "ready") {
+              throw httpError(
+                400,
+                "KLING_O3_ELEMENT_NOT_READY",
+                "Uno o más Elements todavía se están creando o fallaron. Espera o usa Refresh status.",
+                { elementUuid, status: row?.status || null, statusDetail: row?.status_detail || null }
               );
-              urls.push(signed);
             }
-            if (!urls.length) continue;
 
-            const frontal = urls[0];
-            const refs = urls.slice(1, 4);
-            if (!refs.length) refs.push(frontal);
+            const raw = row?.kling_element_id;
 
-            out.push({
-              frontal_image_url: frontal,
-              reference_image_urls: refs,
-            });
+            if (!raw) {
+              throw httpError(
+                400,
+                "KLING_O3_ELEMENT_MISSING_KLING_ID",
+                "Un Element no tiene kling_element_id guardado (no se puede mandar a Kling).",
+                { elementUuid }
+              );
+            }
+
+            const rawStr = String(raw).trim();
+            const eid = /^\d+$/.test(rawStr) ? Number(rawStr) : rawStr;
+            out.push({ element_id: eid });
           }
 
-          if (out.length) elements = out;
+          if (out.length) elementList = out;
         }
 
-        // Armamos el input Fal
-        let endpointId = isO3
-          ? "fal-ai/kling-video/o3/pro/text-to-video"
-          : "fal-ai/kling-video/v3/pro/text-to-video";
-
+        // Image list (first/last frame) via URLs firmadas para no exceder el JSON limit (25mb)
+        const imageList = [];
         if (hasFirst) {
-          endpointId = isO3
-            ? "fal-ai/kling-video/o3/pro/image-to-video"
-            : "fal-ai/kling-video/v3/pro/image-to-video";
-        }
-
-        const falInput = {
-          aspect_ratio: ar,
-          duration: String(totalDur),
-          generate_audio: generateAudio,
-          ...(negativePrompt ? { negative_prompt: negativePrompt } : {}),
-          ...(klingCfgScale !== undefined ? { cfg_scale: klingCfgScale } : {}),
-          ...(voiceIds.length ? { voice_ids: voiceIds } : {}),
-        };
-
-        // Text-to-video (single o multishot)
-        if (multi && multi.length) {
-          falInput.multi_prompt = multi;
-          falInput.shot_type = isO3 ? "customize" : normalizedShotType;
-        } else {
-          falInput.prompt = prompt;
-        }
-
-        if (elements) falInput.elements = elements;
-
-        // Image-to-video (si hay first frame)
-        if (hasFirst) {
-          // O3 usa image_url, V3 usa start_image_url
-          falInput[isO3 ? "image_url" : "start_image_url"] = await assetIdToSignedUrl(
+          const firstUrl = await assetIdToSignedUrl(
             firstFrameAssetId,
             user.id,
             INPUT_URL_TTL_SECONDS
           );
+          imageList.push({ image_url: firstUrl, type: "first_frame" });
 
-          // End frame: lo dejamos igual que estaba para V3
-          // (y evitamos mandarlo en O3 para no romper)
-          if (hasLast && !isO3) {
-            falInput.end_image_url = await assetIdToSignedUrl(
+          if (hasLast) {
+            const lastUrl = await assetIdToSignedUrl(
               lastFrameAssetId,
               user.id,
               INPUT_URL_TTL_SECONDS
             );
+            imageList.push({ image_url: lastUrl, type: "end_frame" });
+          }
+        }
+
+        const klingModeValue = klingMode || "std";
+
+        // Omni: `sound` usa "on" | "off"
+        const soundValue =
+          klingSound === undefined ? undefined : (Boolean(klingSound) ? "on" : "off");
+
+        const ar = aspectRatio || "16:9";
+
+        // ✅ Kling Omni API (Tasks)
+        const omniPayload = {
+          model_name: String(process.env.KLING_OMNI_MODEL_NAME || "kling-v3-omni"),
+          mode: klingModeValue,
+          duration: String(dur),
+          ...(soundValue !== undefined ? { sound: soundValue } : {}),
+          ...(elementList ? { element_list: elementList } : {}),
+          ...(imageList.length ? { image_list: imageList } : {}),
+          // aspect_ratio es requerido cuando NO usamos first frame y NO editamos video
+          ...(!hasFirst ? { aspect_ratio: ar } : {}),
+        };
+
+        if (multiShotEnabled) {
+          omniPayload.multi_shot = true;
+          omniPayload.shot_type = "customize";
+          omniPayload.multi_prompt = multiPrompt;
+        } else {
+          const p = String(prompt || "").trim();
+          if (!p) {
+            throw httpError(
+              400,
+              "KLING_O3_PROMPT_REQUIRED",
+              "Kling O3: prompt es obligatorio cuando no usas multi_shot."
+            );
+          }
+          omniPayload.prompt = p;
+        }
+
+        let taskResponse = null;
+        try {
+          taskResponse = await klingPostWithRetry(
+            "/videos/omni-video",
+            omniPayload,
+            { timeoutMs: 60_000, retries: 3 }
+          );
+        } catch (e) {
+          const status = Number(e?.status || 0);
+          const code = e?.code != null ? Number(e.code) : null;
+
+          // 1303: parallel task over resource pack limit
+          if (status === 429 && code === 1303) {
+            respondKlingBusy(res, {
+              retryAfterSeconds: Number(process.env.KLING_RETRY_AFTER_SECONDS || process.env.KLING_V3_RETRY_AFTER_SECONDS || 30),
+              message:
+                "Kling rechazó la solicitud por límite de tareas en paralelo (1303). Vamos a reintentar cuando haya cupo.",
+              details: { klingCode: code, requestId: e?.requestId || null },
+            });
+            return;
           }
 
-          if (elements) falInput.elements = elements;
-
-          // i2v: shot_type solo "customize"
-          if (multi && multi.length) falInput.shot_type = "customize";
+          throw e;
         }
-        
-        // ✅ Modo async para evitar el timeout 120s de Vercel
-        if (asyncMode) {
-          const { requestId, statusUrl, responseUrl } = await falQueueSubmit(
-            endpointId,
-            falInput
-          );
 
-          const jobToken = signJobToken({
-            uid: user.id,
-            requestId,
-            statusUrl,
-            responseUrl,
-            endpointId,
-            toolName,
-            hint,
+        const taskId =
+          taskResponse?.data?.task_id ||
+          taskResponse?.task_id ||
+          taskResponse?.data?.taskId ||
+          taskResponse?.taskId;
+
+        if (!taskId) {
+          throw httpError(502, "KLING_BAD_RESPONSE", "Kling no devolvió task_id.", {
+            response: taskResponse,
+          });
+        }
+
+        const taskType = "omni-video";
+
+        // ✅ Async: devolvemos jobId; el worker hace polling y guarda el video
+        if (asyncMode) {
+          const meta = {
+            tool: toolName,
+            provider: "kling",
             model: selectedModelNorm,
-            ar,
-            totalDur,
+            aspectRatio: hasFirst ? null : ar,
+            resolution: klingModeValue === "pro" ? "1080p" : "720p",
+            durationSeconds: dur,
             firstFrameAssetId: firstFrameAssetId || null,
             lastFrameAssetId: lastFrameAssetId || null,
-            generateAudio,
-          });
+            klingMode: klingModeValue,
+            klingSound: klingSound === undefined ? null : Boolean(klingSound),
+            klingTaskId: String(taskId),
+            klingTaskType: taskType,
+            klingShotType: multiShotEnabled ? "customize" : null,
+            klingMultiPrompt: multiPrompt || null,
+            klingElementIds: hasElements ? klingElementIds : null,
+          };
 
-          const jobId = await upsertFalJobRow({
+          const jobId = await upsertKlingJobRow({
             ownerId: user.id,
             kind: "video",
-            requestId,
-            jobToken,
-            statusUrl,
-            responseUrl,
-            endpointId,
+            taskId: String(taskId),
+            taskType,
             toolName,
             hint,
             model: selectedModelNorm,
             prompt,
-            extra: {
-              ar,
-              totalDur,
-              firstFrameAssetId: firstFrameAssetId || null,
-              lastFrameAssetId: lastFrameAssetId || null,
-              generateAudio,
-              negativePrompt: negativePrompt || null,
-              klingCfgScale: klingCfgScale ?? null,
-            },
+            extra: { meta, clientJobId: clientJobIdNorm || null },
           });
 
-          return res.json({ ok: true, mode: "async", jobId, jobToken, requestId });
+          return res.json({ ok: true, mode: "async", jobId, taskId: String(taskId) });
         }
 
-        const falJson = await falQueueRun(endpointId, falInput);
+        // ✅ Sync (solo dev): polling aquí y guardamos asset
+        let taskData = null;
+        try {
+          taskData = await pollTaskUntilDone({
+            type: taskType,
+            taskId: String(taskId),
+            modelName: selectedModelNorm,
+            maxWaitMs: 10 * 60 * 1000,
+            intervalMs: 2000,
+          });
+        } catch (err) {
+          throw httpError(502, "KLING_TASK_FAILED", err.message || "Kling task failed.", {
+            taskId: String(taskId),
+            requestId: err?.requestId || null,
+          });
+        }
+
+        const taskResult = taskData?.task_result || taskData?.data?.task_result || {};
+        const firstVideo =
+          Array.isArray(taskResult?.videos) && taskResult.videos.length ? taskResult.videos[0] : null;
 
         const videoUrl =
-          falJson?.video?.url ||
-          falJson?.data?.video?.url ||
-          falJson?.videos?.[0]?.url ||
-          falJson?.output?.video?.url;
+          firstVideo?.url_with_audio ||
+          firstVideo?.urlWithAudio ||
+          firstVideo?.url_audio ||
+          firstVideo?.urlAudio ||
+          firstVideo?.url ||
+          taskResult?.video_url ||
+          taskResult?.videoUrl ||
+          taskResult?.video?.url;
 
         if (!videoUrl) {
-          throw httpError(
-            502,
-            "FAL_KLING_V3_NO_VIDEO",
-            "Fal/Kling V3 no devolvió video.",
-            { endpointId, response: falJson }
-          );
+          throw httpError(502, "KLING_NO_VIDEOS", "Kling: tarea completada pero sin videos.", {
+            taskId: String(taskId),
+            response: taskData,
+          });
         }
 
-        // Descargar video y guardarlo como Asset
         const videoResp = await fetch(videoUrl);
         if (!videoResp.ok) {
           throw httpError(
             502,
-            "FAL_KLING_V3_VIDEO_DOWNLOAD_FAILED",
-            `No pude descargar el video de Fal (${videoResp.status}).`
+            "KLING_VIDEO_DOWNLOAD_FAILED",
+            `No pude descargar el video de Kling (${videoResp.status}).`
           );
         }
 
-        const bytes = Buffer.from(await videoResp.arrayBuffer());
         const mimeType = videoResp.headers.get("content-type") || "video/mp4";
+        const bytes = Buffer.from(await videoResp.arrayBuffer());
 
         const uploaded = await uploadBufferToStorage({
           userId: user.id,
@@ -708,21 +767,20 @@ const isKling = selectedModelNorm.startsWith("kling-");
 
         const meta = {
           tool: toolName,
-          provider: "fal",
+          provider: "kling",
           model: selectedModelNorm,
-          falEndpointId: endpointId,
-          aspectRatio: ar,
-          durationSeconds: totalDur,
+          aspectRatio: hasFirst ? null : ar,
+          resolution: klingModeValue === "pro" ? "1080p" : "720p",
+          durationSeconds: dur,
           firstFrameAssetId: firstFrameAssetId || null,
           lastFrameAssetId: lastFrameAssetId || null,
-          klingSound: generateAudio,
-          negativePrompt: negativePrompt || null,
-          klingCfgScale: klingCfgScale ?? null,
-          klingVoiceIds: Array.isArray(klingVoiceIds)
-            ? klingVoiceIds.slice(0, 2)
-            : null,
+          klingMode: klingModeValue,
+          klingSound: klingSound === undefined ? null : Boolean(klingSound),
+          klingTaskId: String(taskId),
+          klingTaskType: taskType,
+          klingShotType: multiShotEnabled ? "customize" : null,
+          klingMultiPrompt: multiPrompt || null,
           klingElementIds: hasElements ? klingElementIds : null,
-          klingMultiPrompt: multi || null,
         };
 
         const assetId = await insertAssetRow({
@@ -1592,424 +1650,437 @@ const isKling = selectedModelNorm.startsWith("kling-");
 });
 
     // ===============================
-  // KLING O3 PRO - Edit / Reference (Fal async)
-  // POST /api/ai/video/edit
-  // ===============================
-  router.post("/ai/video/edit", async (req, res, next) => {
-    try {
-      ensureAI();
+    // ===============================
+    // KLING O3 (Omni-Video) - Edit / Reference (Kling Tasks) — SIN Fal
+    // POST /api/ai/video/edit
+    // ===============================
+    router.post("/ai/video/edit", async (req, res, next) => {
+      try {
+        ensureAI();
 
-      const { user, error } = await requireUser(req);
-      if (error) return res.status(401).json({ ok: false, error });
+        const { user, error } = await requireUser(req);
+        if (error) return res.status(401).json({ ok: false, error });
 
-      const rl = await checkUserRateLimit({
-        userId: user.id,
-        scope: "ai_video_edit",
-        windowMs: 60 * 1000,
-        max: 4,
-      });
-      if (!rl.ok) {
-        return res.status(429).json({
-          ok: false,
-          error: {
-            code: "RATE_LIMITED",
-            message: "Demasiadas ediciones de video por usuario. Espera un momento.",
-            details: { scope: "ai_video_edit_user", retryAfterSeconds: rl.retryAfterSeconds },
-          },
+        const rl = await checkUserRateLimit({
+          userId: user.id,
+          scope: "ai_video_edit",
+          windowMs: 60 * 1000,
+          max: 4,
         });
-      }
-
-      const body = VideoEditRequestSchema.parse(req.body);
-
-      const toolName = body.toolName || "video-edit";
-      const hint = body.hint || "video-edit";
-      const asyncMode = body.async !== false; // default true
-
-      if (!asyncMode) {
-        throw httpError(
-          400,
-          "VIDEO_EDIT_ASYNC_REQUIRED",
-          "Video Edit requiere modo async (Fal queue)."
-        );
-      }
-
-      // ⚠️ Fal/Kling debe poder descargar inputs durante cola/ejecución.
-      const INPUT_URL_TTL_SECONDS = 60 * 60 * 6; // 6 horas
-
-      // Map: model -> Fal endpoint
-      const model = body.model;
-      let endpointId = null;
-      let kind = null;
-
-      if (model === "kling-o3-ref-to-video-pro") {
-        endpointId = "fal-ai/kling-video/o3/pro/reference-to-video";
-        kind = "reference-to-video";
-      } else if (model === "kling-o3-edit-video-pro") {
-        endpointId = "fal-ai/kling-video/o3/pro/video-to-video/edit";
-        kind = "video-to-video/edit";
-      } else if (model === "kling-o3-ref-video-to-video-pro") {
-        endpointId = "fal-ai/kling-video/o3/pro/video-to-video/reference";
-        kind = "video-to-video/reference";
-      } else {
-        throw httpError(400, "VIDEO_EDIT_MODEL_INVALID", "Modelo inválido.");
-      }
-
-      const promptRaw = String(body.prompt || "").trim();
-
-      // ✅ Límite de referencias combinadas por modelo
-      // - reference-to-video (Ingredientes → Video): 1..7
-      // - video-to-video (edit / reference):         0..4
-      const MAX_COMBINED_REFS = kind === "reference-to-video" ? 7 : 4;
-
-      // ✅ Este modelo NO soporta START/END (first/last frame).
-      // Aceptamos null en el schema para evitar 400, pero si llega un UUID, rechazamos.
-      const startLegacy = body.startImageAssetId || null;
-      const endLegacy = body.endImageAssetId || null;
-      if (kind === "reference-to-video" && (startLegacy || endLegacy)) {
-        throw httpError(
-          400,
-          "VIDEO_EDIT_FRAMES_NOT_SUPPORTED",
-          "Este modelo no soporta first/last frame (START/END). Elimina START/END y usa solo ingredientes (imágenes de referencia + Elements).",
-          { startImageAssetId: startLegacy, endImageAssetId: endLegacy }
-        );
-      }
-
-      // Multi-shot (solo en reference-to-video)
-      const KLING_SHOT_PROMPT_LIMIT = 512;
-      const multiRaw =
-        Array.isArray(body.klingMultiPrompt) && body.klingMultiPrompt.length
-          ? body.klingMultiPrompt
-          : null;
-
-      if (multiRaw && kind !== "reference-to-video") {
-        throw httpError(
-          400,
-          "VIDEO_EDIT_MULTISHOT_NOT_SUPPORTED",
-          "Multishot solo está disponible en Reference to Video."
-        );
-      }
-
-      if (kind === "reference-to-video") {
-        if (!promptRaw && !multiRaw) {
-          throw httpError(
-            400,
-            "VIDEO_EDIT_PROMPT_REQUIRED",
-            "Debes escribir un prompt (o configurar multishot)."
-          );
-        }
-        if (promptRaw && multiRaw) {
-          throw httpError(
-            400,
-            "VIDEO_EDIT_PROMPT_CONFLICT",
-            "Usa prompt o multishot, pero no ambos a la vez."
-          );
-        }
-      } else {
-        if (!promptRaw) {
-          throw httpError(
-            400,
-            "VIDEO_EDIT_PROMPT_REQUIRED",
-            "Debes escribir un prompt para editar tu video."
-          );
-        }
-      }
-
-      // Refs (imágenes)
-      const referenceImageAssetIds = Array.isArray(body.referenceImageAssetIds)
-        ? body.referenceImageAssetIds.filter(Boolean).slice(0, MAX_COMBINED_REFS)
-        : [];
-
-      const imageUrls = [];
-      for (const assetId of referenceImageAssetIds) {
-        const signed = await assetIdToSignedUrl(
-          assetId,
-          user.id,
-          INPUT_URL_TTL_SECONDS
-        );
-        imageUrls.push(signed);
-      }
-
-      // Elements (librería Kling)
-      const klingElementIds = Array.isArray(body.klingElementIds)
-        ? body.klingElementIds.filter(Boolean).slice(0, MAX_COMBINED_REFS)
-        : [];
-
-      // ✅ Para reference-to-video exigimos al menos 1 ingrediente visual (1–7)
-      if (kind === "reference-to-video" && referenceImageAssetIds.length + klingElementIds.length < 1) {
-        throw httpError(
-          400,
-          "VIDEO_EDIT_MISSING_REFS",
-          `Este modelo requiere entre 1 y ${MAX_COMBINED_REFS} referencias (imágenes + Elements).`,
-          { refCount: referenceImageAssetIds.length, elementCount: klingElementIds.length }
-        );
-      }
-
-
-      let elements = undefined;
-      if (klingElementIds.length) {
-        const { data: rows, error: rowsErr } = await supabaseAdmin
-          .from("kling_elements")
-          .select("id, owner_id, image_paths")
-          .in("id", klingElementIds)
-          .eq("owner_id", user.id);
-
-        if (rowsErr) {
-          throw httpError(500, "DB_ERROR", "No pude leer tus Elements.", {
-            rowsErr,
+        if (!rl.ok) {
+          return res.status(429).json({
+            ok: false,
+            error: {
+              code: "RATE_LIMITED",
+              message: "Demasiadas ediciones de video por usuario. Espera un momento.",
+              details: { scope: "ai_video_edit_user", retryAfterSeconds: rl.retryAfterSeconds },
+            },
           });
         }
 
-        const byId = new Map((rows || []).map((r) => [r.id, r]));
-        const missing = klingElementIds.filter((id) => !byId.has(id));
-        if (missing.length) {
+        const body = VideoEditRequestSchema.parse(req.body);
+
+        const toolName = body.toolName || "video-edit";
+        const hint = body.hint || "video-edit";
+        const asyncMode = body.async !== false; // default true
+
+        if (!asyncMode) {
           throw httpError(
             400,
-            "VIDEO_EDIT_ELEMENT_NOT_FOUND",
-            "Uno o más Elements no existen o no te pertenecen.",
-            { missing }
+            "VIDEO_EDIT_ASYNC_REQUIRED",
+            "Video Edit requiere modo async (Kling Tasks)."
           );
         }
 
-        const out = [];
-        for (const elementId of klingElementIds) {
-          const row = byId.get(elementId);
-          const paths = Array.isArray(row?.image_paths) ? row.image_paths : [];
-          if (!paths.length) continue;
+        // ⚠️ Kling debe poder descargar inputs durante cola/ejecución.
+        const INPUT_URL_TTL_SECONDS = 60 * 60 * 6; // 6 horas
 
-          // firmamos hasta 4 imágenes
-          const urls = [];
-          for (const storagePath of paths.slice(0, 4)) {
-            const signed = await signStoragePath(
-              storagePath,
-              INPUT_URL_TTL_SECONDS
-            );
-            urls.push(signed);
-          }
-          if (!urls.length) continue;
+        const model = body.model;
+        let kind = null;
 
-          const frontal = urls[0];
-          const refs = urls.slice(1, 4);
-          if (!refs.length) refs.push(frontal);
-
-          out.push({
-            frontal_image_url: frontal,
-            reference_image_urls: refs,
-          });
-        }
-
-        if (out.length) elements = out;
-      }
-
-      // Kling: máximo 4 referencias combinadas (Elements + image_urls)
-      const elementCount = Array.isArray(elements) ? elements.length : 0;
-      const refCount = imageUrls.length;
-      if (refCount + elementCount > MAX_COMBINED_REFS) {
-        throw httpError(
-          400,
-          "VIDEO_EDIT_TOO_MANY_REFS",
-          `Kling permite máximo ${MAX_COMBINED_REFS} referencias combinadas (Elements + imágenes). Reduce tu selección.`,
-          { refCount, elementCount }
-        );
-      }
-
-      // Duración y aspect ratio (si aplica)
-      let dur = body.durationSeconds != null ? Number(body.durationSeconds) : 5;
-      dur = Math.trunc(dur);
-      if (dur < 3) dur = 3;
-      if (dur > 15) dur = 15;
-
-      // Reference-to-video no soporta "auto"
-      const arRaw = String(body.aspectRatio || "").trim();
-      const arAllowed = ["16:9", "9:16", "1:1", "auto"];
-      const ar0 = arAllowed.includes(arRaw) ? arRaw : null;
-      const ar =
-        kind === "reference-to-video"
-          ? ar0 === "auto" || !ar0
-            ? "16:9"
-            : ar0
-          : ar0 || "auto";
-
-      // Multi-shot: normalizamos y validamos suma
-      let multi = null;
-      let totalDur = dur;
-      if (multiRaw && multiRaw.length) {
-        multi = multiRaw.map((s, idx) => {
-          const p = String(s?.prompt || "");
-          if (!p.trim()) {
-            throw httpError(
-              400,
-              "VIDEO_EDIT_MULTISHOT_EMPTY",
-              `Multishot: el shot ${idx + 1} está vacío.`
-            );
-          }
-          if (p.length > KLING_SHOT_PROMPT_LIMIT) {
-            throw httpError(
-              400,
-              "VIDEO_EDIT_MULTISHOT_PROMPT_TOO_LONG",
-              `Multishot: el prompt del shot ${idx + 1} supera ${KLING_SHOT_PROMPT_LIMIT} caracteres (${p.length}).`
-            );
-          }
-          let sDur = s?.durationSeconds != null ? Number(s.durationSeconds) : 5;
-          sDur = Math.trunc(sDur);
-          if (sDur < 3) sDur = 3;
-          if (sDur > 15) sDur = 15;
-          return { prompt: p, duration: String(sDur) };
-        });
-
-        if (multi.length < 2) {
-          throw httpError(
-            400,
-            "VIDEO_EDIT_MULTISHOT_TOO_FEW",
-            "Multishot requiere mínimo 2 shots."
-          );
-        }
-
-        totalDur = multi.reduce((acc, s) => acc + Number(s.duration || 0), 0);
-        if (totalDur < 3 || totalDur > 15) {
-          throw httpError(
-            400,
-            "VIDEO_EDIT_MULTISHOT_DURATION_INVALID",
-            "Multishot: la suma total debe estar entre 3s y 15s."
-          );
-        }
-      }
-
-      // Inputs principales
-      const falInput = {};
-
-      if (kind === "reference-to-video") {
-        if (multi && multi.length) {
-          falInput.multi_prompt = multi;
-          falInput.shot_type = "customize";
+        if (model === "kling-o3-ref-to-video-pro") {
+          kind = "reference-to-video";
+        } else if (model === "kling-o3-edit-video-pro") {
+          kind = "video-to-video/edit";
+        } else if (model === "kling-o3-ref-video-to-video-pro") {
+          kind = "video-to-video/reference";
         } else {
-          falInput.prompt = promptRaw;
+          throw httpError(400, "VIDEO_EDIT_MODEL_INVALID", "Modelo inválido.");
         }
 
-        falInput.duration = String(totalDur);
-        falInput.aspect_ratio = ar;
-        falInput.generate_audio = body.generateAudio === true;
+        const promptRaw = String(body.prompt || "").trim();
 
-        if (imageUrls.length) falInput.image_urls = imageUrls;
-        if (elements) falInput.elements = elements;
-      }
+        // ✅ Límite de referencias combinadas por modelo (imágenes + Elements)
+        // - reference-to-video: 1..7
+        // - video-to-video:     0..4
+        const MAX_COMBINED_REFS = kind === "reference-to-video" ? 7 : 4;
 
-      if (kind === "video-to-video/edit") {
-        if (!body.videoAssetId) {
+        // ✅ START/END legacy no se soporta aquí (Omni usa image_list; este tool usa "ingredientes").
+        const startLegacy = body.startImageAssetId || null;
+        const endLegacy = body.endImageAssetId || null;
+        if (kind === "reference-to-video" && (startLegacy || endLegacy)) {
           throw httpError(
             400,
-            "VIDEO_EDIT_VIDEO_REQUIRED",
-            "Debes seleccionar un video de referencia."
+            "VIDEO_EDIT_FRAMES_NOT_SUPPORTED",
+            "Este modelo no soporta first/last frame (START/END). Elimina START/END y usa solo ingredientes (imágenes de referencia + Elements).",
+            { startImageAssetId: startLegacy, endImageAssetId: endLegacy }
           );
         }
 
-        falInput.prompt = promptRaw;
-        falInput.video_url = await assetIdToSignedUrl(
-          body.videoAssetId,
-          user.id,
-          INPUT_URL_TTL_SECONDS
-        );
-        falInput.keep_audio = body.keepAudio !== false;
-        falInput.shot_type = "customize";
+        // Multi-shot (solo en reference-to-video)
+        const KLING_SHOT_PROMPT_LIMIT = 512;
+        const multiRaw =
+          Array.isArray(body.klingMultiPrompt) && body.klingMultiPrompt.length
+            ? body.klingMultiPrompt
+            : null;
 
-        if (imageUrls.length) falInput.image_urls = imageUrls;
-        if (elements) falInput.elements = elements;
-      }
-
-      if (kind === "video-to-video/reference") {
-        if (!body.videoAssetId) {
+        if (multiRaw && kind !== "reference-to-video") {
           throw httpError(
             400,
-            "VIDEO_EDIT_VIDEO_REQUIRED",
-            "Debes seleccionar un video de referencia."
+            "VIDEO_EDIT_MULTISHOT_NOT_SUPPORTED",
+            "Multishot solo está disponible en Ingredientes → Video."
           );
         }
 
-        falInput.prompt = promptRaw;
-        falInput.video_url = await assetIdToSignedUrl(
-          body.videoAssetId,
-          user.id,
-          INPUT_URL_TTL_SECONDS
-        );
-        falInput.keep_audio = body.keepAudio !== false;
-        falInput.shot_type = "customize";
-        falInput.duration = String(dur);
-        falInput.aspect_ratio = ar;
+        if (kind === "reference-to-video") {
+          if (!promptRaw && !multiRaw) {
+            throw httpError(
+              400,
+              "VIDEO_EDIT_PROMPT_REQUIRED",
+              "Debes escribir un prompt (o configurar multishot)."
+            );
+          }
+          if (promptRaw && multiRaw) {
+            throw httpError(
+              400,
+              "VIDEO_EDIT_PROMPT_CONFLICT",
+              "Usa prompt o multishot, pero no ambos a la vez."
+            );
+          }
+        } else {
+          if (!promptRaw) {
+            throw httpError(
+              400,
+              "VIDEO_EDIT_PROMPT_REQUIRED",
+              "Debes escribir un prompt para editar tu video."
+            );
+          }
+        }
 
-        if (imageUrls.length) falInput.image_urls = imageUrls;
-        if (elements) falInput.elements = elements;
-      }
+        // Refs (imágenes) -> Omni: image_list (URLs firmadas)
+        const referenceImageAssetIds = Array.isArray(body.referenceImageAssetIds)
+          ? body.referenceImageAssetIds.filter(Boolean).slice(0, MAX_COMBINED_REFS)
+          : [];
 
-      const { requestId, statusUrl, responseUrl } = await falQueueSubmit(
-        endpointId,
-        falInput
-      );
+        const imageList = [];
+        for (const assetId of referenceImageAssetIds) {
+          const signed = await assetIdToSignedUrl(
+            assetId,
+            user.id,
+            INPUT_URL_TTL_SECONDS
+          );
+          imageList.push({ image_url: signed });
+        }
 
-      const savedPrompt =
-        multi && multi.length
-          ? multi.map((s, i) => `Shot ${i + 1}: ${s.prompt}`).join(" | ")
-          : promptRaw;
+        // Elements (kling_elements en tu DB) -> Omni: element_list (IDs reales de Kling)
+        const klingElementIds = Array.isArray(body.klingElementIds)
+          ? body.klingElementIds.filter(Boolean).slice(0, MAX_COMBINED_REFS)
+          : [];
 
-      const jobToken = signJobToken({
-        uid: user.id,
-        requestId,
-        statusUrl,
-        responseUrl,
-        endpointId,
-        toolName,
-        hint,
-        model,
-        ar: kind === "video-to-video/edit" ? null : ar,
-        totalDur: kind === "video-to-video/edit" ? null : totalDur,
-        // ✅ Este endpoint ya no usa first/last frame
-        firstFrameAssetId: null,
-        lastFrameAssetId: null,
-        generateAudio:
-          kind === "reference-to-video" ? body.generateAudio === true : null,
-        editVideo: {
-          kind,
+        // ✅ Para reference-to-video exigimos al menos 1 ingrediente visual
+        if (kind === "reference-to-video" && imageList.length + klingElementIds.length < 1) {
+          throw httpError(
+            400,
+            "VIDEO_EDIT_MISSING_REFS",
+            `Este modelo requiere entre 1 y ${MAX_COMBINED_REFS} referencias (imágenes + Elements).`,
+            { refCount: imageList.length, elementCount: klingElementIds.length }
+          );
+        }
+
+        let elementList = undefined;
+        if (klingElementIds.length) {
+          const { data: rows, error: rowsErr } = await supabaseAdmin
+            .from("kling_elements")
+            .select("id, owner_id, kling_element_id, status, status_detail")
+            .in("id", klingElementIds)
+            .eq("owner_id", user.id);
+
+          if (rowsErr) {
+            throw httpError(500, "DB_ERROR", "No pude leer tus Elements.", {
+              rowsErr,
+            });
+          }
+
+          const byId = new Map((rows || []).map((r) => [r.id, r]));
+          const missing = klingElementIds.filter((id) => !byId.has(id));
+          if (missing.length) {
+            throw httpError(
+              400,
+              "VIDEO_EDIT_ELEMENT_NOT_FOUND",
+              "Uno o más Elements no existen o no te pertenecen.",
+              { missing }
+            );
+          }
+
+          const out = [];
+          for (const elementUuid of klingElementIds) {
+            const row = byId.get(elementUuid);
+
+            const st = String(row?.status || "ready");
+            if (st !== "ready") {
+              throw httpError(
+                400,
+                "VIDEO_EDIT_ELEMENT_NOT_READY",
+                "Uno o más Elements todavía se están creando o fallaron. Espera o usa Refresh status.",
+                { elementUuid, status: row?.status || null, statusDetail: row?.status_detail || null }
+              );
+            }
+
+            const raw = row?.kling_element_id;
+            if (!raw) {
+              throw httpError(
+                400,
+                "VIDEO_EDIT_ELEMENT_MISSING_KLING_ID",
+                "Un Element no tiene kling_element_id guardado (no se puede mandar a Kling).",
+                { elementUuid }
+              );
+            }
+
+            const rawStr = String(raw).trim();
+            const eid = /^\d+$/.test(rawStr) ? Number(rawStr) : rawStr;
+            out.push({ element_id: eid });
+          }
+
+          if (out.length) elementList = out;
+        }
+
+        // Kling: máximo MAX_COMBINED_REFS referencias combinadas (element_list + image_list)
+        const elementCount = Array.isArray(elementList) ? elementList.length : 0;
+        const refCount = imageList.length;
+        if (refCount + elementCount > MAX_COMBINED_REFS) {
+          throw httpError(
+            400,
+            "VIDEO_EDIT_TOO_MANY_REFS",
+            `Kling permite máximo ${MAX_COMBINED_REFS} referencias combinadas (Elements + imágenes). Reduce tu selección.`,
+            { refCount, elementCount }
+          );
+        }
+
+        // Duración y aspect ratio (si aplica)
+        let dur = body.durationSeconds != null ? Number(body.durationSeconds) : 5;
+        dur = Math.trunc(dur);
+        if (dur < 3) dur = 3;
+        if (dur > 15) dur = 15;
+
+        // Reference-to-video no soporta "auto"
+        const arRaw = String(body.aspectRatio || "").trim();
+        const arAllowed = ["16:9", "9:16", "1:1", "auto"];
+        const ar0 = arAllowed.includes(arRaw) ? arRaw : null;
+        const ar =
+          kind === "reference-to-video"
+            ? ar0 === "auto" || !ar0
+              ? "16:9"
+              : ar0
+            : ar0 || "auto";
+
+        // Multi-shot: normalizamos y validamos suma total (1..15 por shot, 3..15 total)
+        let multiPrompt = null;
+        let totalDur = dur;
+
+        if (multiRaw && multiRaw.length) {
+          if (multiRaw.length > 6) {
+            throw httpError(
+              400,
+              "VIDEO_EDIT_MULTISHOT_TOO_MANY_SHOTS",
+              "Multishot: máximo 6 shots."
+            );
+          }
+
+          multiPrompt = multiRaw.map((s, idx) => {
+            const p = String(s?.prompt || "").trim();
+            if (!p) {
+              throw httpError(
+                400,
+                "VIDEO_EDIT_MULTISHOT_EMPTY",
+                `Multishot: el shot ${idx + 1} está vacío.`
+              );
+            }
+            if (p.length > KLING_SHOT_PROMPT_LIMIT) {
+              throw httpError(
+                400,
+                "VIDEO_EDIT_MULTISHOT_PROMPT_TOO_LONG",
+                `Multishot: el prompt del shot ${idx + 1} supera ${KLING_SHOT_PROMPT_LIMIT} caracteres (${p.length}).`
+              );
+            }
+
+            let sDur = s?.durationSeconds != null ? Number(s.durationSeconds) : 1;
+            sDur = Math.trunc(sDur);
+            if (sDur < 1) sDur = 1;
+            if (sDur > 15) sDur = 15;
+
+            return { index: idx + 1, prompt: p, duration: String(sDur) };
+          });
+
+          if (multiPrompt.length < 2) {
+            throw httpError(
+              400,
+              "VIDEO_EDIT_MULTISHOT_TOO_FEW",
+              "Multishot requiere mínimo 2 shots."
+            );
+          }
+
+          totalDur = multiPrompt.reduce((acc, s) => acc + Number(s.duration || 0), 0);
+          if (totalDur < 3 || totalDur > 15) {
+            throw httpError(
+              400,
+              "VIDEO_EDIT_MULTISHOT_DURATION_INVALID",
+              "Multishot: la suma total debe estar entre 3s y 15s."
+            );
+          }
+        }
+
+        // ✅ Construimos payload para Omni-Video
+        const modelName = String(process.env.KLING_OMNI_MODEL_NAME || "kling-v3-omni");
+        const omniPayload = {
+          model_name: modelName,
+          ...(imageList.length ? { image_list: imageList } : {}),
+          ...(elementList ? { element_list: elementList } : {}),
+        };
+
+        // NOTE: este tool se llama "Pro" (calidad). Si quieres std por costo, cambia a "std".
+        omniPayload.mode = "pro";
+
+        if (kind === "reference-to-video") {
+          omniPayload.duration = String(totalDur);
+          omniPayload.aspect_ratio = ar;
+
+          // Audio en Omni: sound "on"/"off"
+          omniPayload.sound = body.generateAudio === true ? "on" : "off";
+
+          if (multiPrompt && multiPrompt.length) {
+            omniPayload.multi_shot = true;
+            omniPayload.shot_type = "customize";
+            omniPayload.multi_prompt = multiPrompt;
+          } else {
+            omniPayload.prompt = promptRaw;
+          }
+        }
+
+        if (kind === "video-to-video/edit") {
+          if (!body.videoAssetId) {
+            throw httpError(
+              400,
+              "VIDEO_EDIT_VIDEO_REQUIRED",
+              "Debes seleccionar un video de referencia."
+            );
+          }
+
+          const videoUrl = await assetIdToSignedUrl(
+            body.videoAssetId,
+            user.id,
+            INPUT_URL_TTL_SECONDS
+          );
+
+          // En Omni: si hay video_list, sound SOLO puede ser "off"
+          omniPayload.sound = "off";
+          omniPayload.prompt = promptRaw;
+          omniPayload.video_list = [
+            {
+              video_url: videoUrl,
+              refer_type: "base",
+              keep_original_sound: body.keepAudio !== false ? "yes" : "no",
+            },
+          ];
+        }
+
+        if (kind === "video-to-video/reference") {
+          if (!body.videoAssetId) {
+            throw httpError(
+              400,
+              "VIDEO_EDIT_VIDEO_REQUIRED",
+              "Debes seleccionar un video de referencia."
+            );
+          }
+
+          const videoUrl = await assetIdToSignedUrl(
+            body.videoAssetId,
+            user.id,
+            INPUT_URL_TTL_SECONDS
+          );
+
+          // En Omni: si hay video_list, sound SOLO puede ser "off"
+          omniPayload.sound = "off";
+          omniPayload.prompt = promptRaw;
+          omniPayload.duration = String(dur);
+          // Si el cliente manda "auto", Kling puede rechazar; forzamos un valor estable.
+          omniPayload.aspect_ratio = ar === "auto" ? "16:9" : ar;
+
+          omniPayload.video_list = [
+            {
+              video_url: videoUrl,
+              refer_type: "feature",
+              keep_original_sound: body.keepAudio !== false ? "yes" : "no",
+            },
+          ];
+        }
+
+        let taskResponse = null;
+        try {
+          taskResponse = await klingPostWithRetry(
+            "/videos/omni-video",
+            omniPayload,
+            { timeoutMs: 60_000, retries: 3 }
+          );
+        } catch (e) {
+          const status = Number(e?.status || 0);
+          const code = e?.code != null ? Number(e.code) : null;
+
+          // 1303: parallel task over resource pack limit
+          if (status === 429 && code === 1303) {
+            respondKlingBusy(res, {
+              retryAfterSeconds: Number(process.env.KLING_RETRY_AFTER_SECONDS || process.env.KLING_V3_RETRY_AFTER_SECONDS || 30),
+              message:
+                "Kling rechazó la solicitud por límite de tareas en paralelo (1303). Reintenta en unos segundos.",
+              details: { klingCode: code, requestId: e?.requestId || null },
+            });
+            return;
+          }
+
+          throw e;
+        }
+
+        const taskId =
+          taskResponse?.data?.task_id ||
+          taskResponse?.task_id ||
+          taskResponse?.data?.taskId ||
+          taskResponse?.taskId;
+
+        if (!taskId) {
+          throw httpError(502, "KLING_BAD_RESPONSE", "Kling no devolvió task_id.", {
+            response: taskResponse,
+          });
+        }
+
+        const taskType = "omni-video";
+
+        const savedPrompt =
+          multiPrompt && multiPrompt.length
+            ? multiPrompt.map((s, i) => `Shot ${i + 1}: ${s.prompt}`).join(" | ")
+            : promptRaw;
+
+        const meta = {
+          tool: toolName,
+          provider: "kling",
           model,
-          prompt: savedPrompt,
-          promptRaw: promptRaw || null,
-          multiPrompt: multi
-            ? multi.map((s) => ({ prompt: s.prompt, duration: s.duration }))
-            : null,
-          // ✅ Este endpoint ya no usa START/END
-          startImageAssetId: null,
-          endImageAssetId: null,
-          videoAssetId: body.videoAssetId || null,
-          referenceImageAssetIds,
-          klingElementIds,
-          keepAudio: kind.startsWith("video-to-video")
-            ? body.keepAudio !== false
-            : null,
-          generateAudio:
-            kind === "reference-to-video" ? body.generateAudio === true : null,
-          durationSeconds: kind === "video-to-video/edit" ? null : totalDur,
-          aspectRatio: kind === "video-to-video/edit" ? null : ar,
-        },
-        exp: Date.now() + 1000 * 60 * 60 * 8,
-      });
-
-      const jobId = await upsertFalJobRow({
-        ownerId: user.id,
-        kind: "video",
-        requestId,
-        jobToken,
-        statusUrl,
-        responseUrl,
-        endpointId,
-        toolName,
-        hint,
-        model,
-        prompt: savedPrompt,
-        extra: {
+          klingTaskId: String(taskId),
+          klingTaskType: taskType,
           editVideo: {
             kind,
             model,
             prompt: savedPrompt,
             promptRaw: promptRaw || null,
-            multiPrompt: multi
-              ? multi.map((s) => ({ prompt: s.prompt, duration: s.duration }))
+            multiPrompt: multiPrompt
+              ? multiPrompt.map((s) => ({ index: s.index, prompt: s.prompt, duration: s.duration }))
               : null,
             videoAssetId: body.videoAssetId || null,
             referenceImageAssetIds,
@@ -2019,17 +2090,28 @@ const isKling = selectedModelNorm.startsWith("kling-");
               : null,
             generateAudio:
               kind === "reference-to-video" ? body.generateAudio === true : null,
-            durationSeconds: kind === "video-to-video/edit" ? null : totalDur,
-            aspectRatio: kind === "video-to-video/edit" ? null : ar,
+            durationSeconds: kind === "video-to-video/edit" ? null : (kind === "reference-to-video" ? totalDur : dur),
+            aspectRatio: kind === "video-to-video/edit" ? null : (kind === "reference-to-video" ? ar : omniPayload.aspect_ratio),
           },
-        },
-      });
+        };
 
-      return res.json({ ok: true, mode: "async", jobId, jobToken, requestId });
-    } catch (err) {
-      next(err);
-    }
-  });
+        const jobId = await upsertKlingJobRow({
+          ownerId: user.id,
+          kind: "video",
+          taskId: String(taskId),
+          taskType,
+          toolName,
+          hint,
+          model,
+          prompt: savedPrompt,
+          extra: { meta },
+        });
+
+        return res.json({ ok: true, mode: "async", jobId, taskId: String(taskId) });
+      } catch (err) {
+        next(err);
+      }
+    });
 
 
   // --- PASTE END ---

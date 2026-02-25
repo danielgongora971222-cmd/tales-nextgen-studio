@@ -11,7 +11,8 @@ import {
   unpublishAsset,
   uploadUserAsset,
 } from "../../services/assetsApi";
-import { apiPostJson, formatErr, waitFalJob } from "../../services/videoGenApi";
+import { apiPostJson, formatErr } from "../../services/videoGenApi";
+import { waitJobCompletion } from "../../services/jobsApi";
 import { EditHistorySection } from "./video/EditHistorySection";
 import { ViewerModal } from "./video/viewermodal";
 import { Icon } from "./video/icon";
@@ -34,13 +35,13 @@ type EditModelId =
 type AspectRatio = "auto" | "16:9" | "9:16" | "1:1";
 
 const TOOL_NAME = "video-edit";
-const PENDING_KEY = "tales_pending_video_edit_job_v1";
+const PENDING_KEY = "tales_pending_video_edit_job_v2";
 
 // 🔒 Feature flag: oculta Storyboard/Multishot SOLO en Edit Video Tool (por ahora)
 const ENABLE_EDITVIDEO_MULTISHOT = false;
 
 type PendingVideoEditJob = {
-  jobToken: string;
+  supabaseJobId: string;
   prompt: string;
   model: EditModelId;
   createdAt: number;
@@ -536,7 +537,7 @@ export default function EditVideoTool() {
       const raw = localStorage.getItem(PENDING_KEY);
       if (!raw) return null;
       const parsed = JSON.parse(raw);
-      if (!parsed?.jobToken || !parsed?.prompt || !parsed?.model) return null;
+      if (!parsed?.supabaseJobId || !parsed?.prompt || !parsed?.model) return null;
       return parsed as PendingVideoEditJob;
     } catch {
       return null;
@@ -794,7 +795,7 @@ export default function EditVideoTool() {
     prevPromptImageTokensRef.current = current;
 
     if (current.size > maxRefImages) {
-      setError(`No puedes usar más de ${maxRefImages} imágenes de referencia a la vez (máx 4 combinado).`);
+      setError(`No puedes usar más de ${maxRefImages} imágenes de referencia a la vez (máx ${maxCombinedRefs} combinado).`);
     }
   }, [prompt, imageTokenToId, maxRefImages, setReferenceImageIdsLimited, multishotEnabled]);
 
@@ -854,8 +855,12 @@ export default function EditVideoTool() {
     }
   }, [prompt, elementTokenToId, maxElements, setKlingElementIdsLimited, multishotEnabled]);
 
-  // ===== Generation =====
-    const validateAndBuildRequest = useCallback(() => {
+    // ===== Generation =====
+    type BuildRequestResult =
+      | { ok: false; error: string }
+      | { ok: true; body: any; finalPrompt: string };
+
+    const validateAndBuildRequest = useCallback((): BuildRequestResult => {
     // Construye prompt + orden de refs/elements en función de los @tokens.
     // - En el prompt el usuario puede escribir:
     //    - Imágenes: @img_xxx (dropdown) o @Image1/@image1 (alias numérico)
@@ -1034,7 +1039,7 @@ export default function EditVideoTool() {
         // Preparamos refs/elements mirando TODOS los shots (tokens reales)
         const allPrompts = clean.map((s) => String(s.prompt || "")).join("\n");
         const preparedAll = preparePromptAndRefs(allPrompts);
-        if (!preparedAll.ok) return preparedAll;
+        if (!preparedAll.ok) return { ok: false as const, error: preparedAll.error };
 
         const totalIngredients =
           preparedAll.referenceImageAssetIds.length + preparedAll.klingElementIds.length;
@@ -1074,7 +1079,7 @@ export default function EditVideoTool() {
       }
 
       const prepared = preparePromptAndRefs(prompt);
-      if (!prepared.ok) return prepared;
+      if (!prepared.ok) return { ok: false as const, error: prepared.error };
 
       if (!prepared.promptForModel) {
         return { ok: false as const, error: "Escribe un prompt (obligatorio) para generar el video." };
@@ -1118,7 +1123,7 @@ export default function EditVideoTool() {
     }
 
     const prepared = preparePromptAndRefs(prompt);
-    if (!prepared.ok) return prepared;
+    if (!prepared.ok) return { ok: false as const, error: prepared.error };
 
     if (!prepared.promptForModel) {
       return { ok: false as const, error: "Escribe un prompt (obligatorio) para editar el video." };
@@ -1185,22 +1190,19 @@ export default function EditVideoTool() {
   ]);
 
 
-  const runFinalizeFlow = useCallback(
-    async (jobToken: string, finalPrompt: string) => {
-      setProgressText("Procesando (Fal)…");
-      await waitFalJob(jobToken, {
+  const runWaitFlow = useCallback(
+    async (supabaseJobId: string) => {
+      setProgressText("Procesando (Kling, background)…");
+
+      const row = await waitJobCompletion(supabaseJobId, {
         signal: abortRef.current?.signal,
         onProgress: (msg) => setProgressText(msg),
+        pollMs: 15_000,
       });
 
-      setProgressText("Finalizando…");
-      const fin = await apiPostJson<any>(
-        "/api/ai/video/fal/finalize",
-        { jobToken, prompt: finalPrompt },
-        { signal: abortRef.current?.signal, timeoutMs: 120_000, retries: 1 }
-      );
-
-      if (!fin?.ok) throw new Error(fin?.error || "Finalize failed.");
+      if (row.status === "failed") {
+        throw new Error(row.error || "Falló el job de Kling en background.");
+      }
 
       clearPending();
       setPendingJob(null);
@@ -1218,7 +1220,8 @@ export default function EditVideoTool() {
 
     const built = validateAndBuildRequest();
     if (!built.ok) {
-      setError(built.error);
+      // Narrowing explícito para TS
+      setError("error" in built ? built.error : "Error de validación.");
       return;
     }
 
@@ -1236,14 +1239,14 @@ export default function EditVideoTool() {
         { signal: ctrl.signal, timeoutMs: 120_000, retries: 0 }
       );
 
-      if (!resp?.ok || resp?.mode !== "async" || !resp?.jobToken) {
-        throw new Error(resp?.error || "Respuesta inválida del backend (esperaba async + jobToken).");
+      if (!resp?.ok || resp?.mode !== "async" || !resp?.jobId) {
+        throw new Error(resp?.error || "Respuesta inválida del backend (esperaba async + jobId).");
       }
 
-      const jobToken = String(resp.jobToken);
+      const supabaseJobId = String(resp.jobId);
 
       const pj: PendingVideoEditJob = {
-        jobToken,
+        supabaseJobId,
         prompt: finalPrompt,
         model: model,
         createdAt: Date.now(),
@@ -1251,22 +1254,19 @@ export default function EditVideoTool() {
       savePending(pj);
       setPendingJob(pj);
 
-      await runFinalizeFlow(jobToken, finalPrompt);
-      await reloadHistory();
+      await runWaitFlow(supabaseJobId);
     } catch (err: any) {
-      setError(formatErr(err));
-      setProgressText("");
+      if (err?.name === "AbortError" || err?.isCanceled) {
+        setProgressText("Cancelado.");
+      } else {
+        setError(formatErr(err));
+        setProgressText("");
+      }
     } finally {
       setIsGenerating(false);
       abortRef.current = null;
     }
-  }, [isGenerating, validateAndBuildRequest, model, runFinalizeFlow, savePending, reloadHistory]);
-
-  const onCancel = useCallback(() => {
-    abortRef.current?.abort();
-    setProgressText("");
-    setIsGenerating(false);
-  }, []);
+  }, [isGenerating, validateAndBuildRequest, model, runWaitFlow, savePending]);
 
   const onResumePending = useCallback(async () => {
     const pj = loadPending();
@@ -1281,8 +1281,7 @@ export default function EditVideoTool() {
     abortRef.current = ctrl;
 
     try {
-      await runFinalizeFlow(pj.jobToken, pj.prompt);
-      await reloadHistory();
+      await runWaitFlow(pj.supabaseJobId);
     } catch (err: any) {
       setError(formatErr(err));
       setProgressText("");
@@ -1290,12 +1289,23 @@ export default function EditVideoTool() {
       setIsGenerating(false);
       abortRef.current = null;
     }
-  }, [loadPending, runFinalizeFlow, reloadHistory]);
+  }, [loadPending, runWaitFlow]);
 
   const onDiscardPending = useCallback(() => {
     clearPending();
     setPendingJob(null);
   }, [clearPending]);
+
+  const onCancel = useCallback(() => {
+    const ctrl = abortRef.current;
+    if (ctrl) ctrl.abort();
+    abortRef.current = null;
+
+    // Si el request ya salió, el job seguirá en background; el usuario puede reanudar luego.
+    setIsGenerating(false);
+    setProgressText("Cancelado. Si ya se envió, el job seguirá en background y puedes reanudar.");
+  }, []);
+    
 
   // ===== Labels =====
   const paramsLabelParts: string[] = [];
@@ -1461,7 +1471,7 @@ export default function EditVideoTool() {
                     )}
 
                     <button type="button" className={styles.promptTag} title="Límite Kling">
-                      Total refs: {combinedRefsCount}/4
+                      Total refs: {combinedRefsCount}/{maxCombinedRefs}
                     </button>
 
                     {ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled && (
@@ -1741,7 +1751,7 @@ export default function EditVideoTool() {
                       ))}
 
                       <div className={styles.note} style={{ gridColumn: "1 / -1" }}>
-                        <b>Tip:</b> Si Kling falla, reduce referencias (máx 4 combinadas), simplifica el prompt, o prueba una duración menor.
+                        <b>Tip:</b> Si Kling falla, reduce referencias (máx {maxCombinedRefs} combinadas), simplifica el prompt, o prueba una duración menor.
                       </div>
                     </div>
                   ) : (
@@ -1946,6 +1956,7 @@ export default function EditVideoTool() {
         setSelectedIds={setKlingElementIdsLimited}
         onClear={() => setKlingElementIds([])}
         imageAssets={imageAssets}
+        videoAssets={videoAssets}
         getAssetUrl={getAssetUrl}
         onRefresh={reloadKlingElements}
         onAssetUploaded={(asset) =>

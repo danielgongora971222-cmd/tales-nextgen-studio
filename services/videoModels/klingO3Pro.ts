@@ -63,7 +63,7 @@ export const klingO3ProHandler: VideoModelHandler = {
   matches: (m) => m === KLING_O3_PRO,
 
     getCapability: ({ hasFirst }) => ({
-    supportsResolution: false,
+      supportsResolution: true,
 
     // ✅ Si hay FIRST frame: se bloquea aspect ratio (igual que Kling V3)
     supportsAspectRatio: !hasFirst,
@@ -74,7 +74,7 @@ export const klingO3ProHandler: VideoModelHandler = {
     supportsLastFrame: true,
   }),
 
-  getSupportedResolutions: () => ["720p"],
+  getSupportedResolutions: () => ["720p", "1080p"],
 
   buildPlan: (args: BuildPlanArgs): BuildPlanResult => {
     const modelNorm = normalizeModelId(args.model);
@@ -131,25 +131,23 @@ export const klingO3ProHandler: VideoModelHandler = {
       count: 1,
       durationSeconds: effectiveDurationSeconds,
 
+      klingMode: args.klingMode,
       klingSound: Boolean(args.klingSound),
-      negativePrompt: args.negativePrompt,
-      klingCfgScale: args.klingCfgScale,
     };
 
     if (args.firstFrameAssetId) body.firstFrameAssetId = args.firstFrameAssetId;
     if (args.lastFrameAssetId) body.lastFrameAssetId = args.lastFrameAssetId;
 
-    body.aspectRatio = args.aspectRatio;
+    // Si hay FIRST frame, el backend bloquea aspect ratio (como Kling V3)
+    if (!hasFirst) body.aspectRatio = args.aspectRatio;
 
-    if (hasFirst && globalElementIds.length > 0) body.klingElementIds = globalElementIds;
+    // ✅ Enviar Elements siempre (el backend ya valida el máximo según modo/frames)
+    if (globalElementIds.length > 0) body.klingElementIds = globalElementIds;
 
     if (args.multishotEnabled) {
       body.klingMultiPrompt = vShots;
       body.klingShotType = "customize"; // O3: solo customize
     }
-
-    const voiceIds = args.klingVoiceIdsText.split(",").map((s) => s.trim()).filter(Boolean).slice(0, 2);
-    if (voiceIds.length) body.klingVoiceIds = voiceIds;
 
     return {
       modelNorm,

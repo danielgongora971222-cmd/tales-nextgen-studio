@@ -314,7 +314,7 @@ async function processJob(row) {
     const safeTaskType = String(taskType || "").trim();
     const pollCount = Math.max(0, Number(params.providerPollCount || 0)) + 1;
 
-    if (!(safeTaskType === "text2video" || safeTaskType === "image2video")) {
+    if (!(safeTaskType === "text2video" || safeTaskType === "image2video" || safeTaskType === "omni-video")) {
       await releaseAndReschedule(jobId, {
         status: "failed",
         error: `Job Kling inválido: taskType no soportado (${safeTaskType}).`,

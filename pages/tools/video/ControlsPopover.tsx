@@ -192,7 +192,7 @@ export function ControlsPopover({
               }}
             >
               <div className={styles.modelName}>Kling O3 Pro</div>
-              <div className={styles.modelDesc}>Pro (Fal) · 3–15s · T2V + I2V + audio</div>
+              <div className={styles.modelDesc}>Omni (Kling API) · 3–15s · T2V + I2V + audio</div>
             </button>
 
             <button
@@ -387,44 +387,24 @@ export function ControlsPopover({
                   )}
                 </div>
 
-                <div className={styles.formRow}>
-                  <label className={styles.formLabel}>Negative prompt</label>
-                  <textarea
-                    className={styles.textarea}
-                    rows={2}
-                    value={negativePrompt}
-                    onChange={(e) => setNegativePrompt(e.target.value)}
-                    placeholder="Evitar: blur, low quality, artifacts..."
-                  />
-                </div>
+                {isKlingV3Model && (
+                  <div className={styles.formRow}>
+                    <label className={styles.formLabel}>Negative prompt</label>
+                    <textarea
+                      className={styles.textarea}
+                      rows={2}
+                      value={negativePrompt}
+                      onChange={(e) => setNegativePrompt(e.target.value)}
+                      placeholder="Evitar: blur, low quality, artifacts..."
+                    />
+                  </div>
+                )}
 
-                  {isKlingO3 && (
-                    <>
-                      <div className={styles.formRow}>
-                        <label className={styles.formLabel}>CFG scale</label>
-                        <input
-                          className={styles.input}
-                          type="number"
-                          min={0}
-                          max={1}
-                          step={0.05}
-                          value={klingCfgScale}
-                          onChange={(e) => setKlingCfgScale(Number(e.target.value))}
-                        />
-                        <div className={styles.noteSmall}>Rango típico 0.0–1.0</div>
-                      </div>
-
-                      <div className={styles.formRow}>
-                        <label className={styles.formLabel}>Voice IDs (opcional)</label>
-                        <input
-                          className={styles.input}
-                          value={klingVoiceIdsText}
-                          onChange={(e) => setKlingVoiceIdsText(e.target.value)}
-                          placeholder="Ej: voice_1, voice_2"
-                        />
-                      </div>
-                    </>
-                  )}
+                {isKlingO3 && (
+                  <div className={styles.noteSmall}>
+                    Kling O3 (Omni): este modelo no expone Negative prompt / CFG / Voice IDs en esta UI.
+                  </div>
+                )}
               </>
             )}
           </>
