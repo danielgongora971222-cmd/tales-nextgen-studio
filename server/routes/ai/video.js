@@ -14,6 +14,72 @@ export function createAiVideoRouter(ctx) {
   // Utilidad: pausa para loops de "polling" (Node.js)
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+  // ===============================
+  // Kling Elements mention mapping
+  // UX: @slug  -> API Kling: <<element_1>>
+  // ===============================
+
+  function slugifyName(s) {
+    return (
+      (s || "")
+        .normalize("NFKD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "")
+        .slice(0, 28) || "element"
+    );
+  }
+
+  function makeElementTag(name) {
+    return `@${slugifyName(name || "element")}`;
+  }
+
+  function buildElementTokenMap(allElementsOrdered) {
+    // Debe ser IDENTICO al frontend (VideoGeneratorTool.tsx)
+    const reserved = new Set(["@element1", "@element2", "@element3", "@element4", "@element5"]);
+    const used = new Set(reserved);
+    const map = new Map(); // elementUuid -> token
+
+    for (const el of allElementsOrdered || []) {
+      const base = makeElementTag(el.name || "element");
+      let token = base;
+
+      if (used.has(token)) {
+        let n = 2;
+        while (used.has(`${base}_${n}`)) n++;
+        token = `${base}_${n}`;
+      }
+
+      used.add(token);
+      map.set(String(el.id), token);
+    }
+    return map;
+  }
+
+  function replaceSelectedElementMentionsWithPlaceholders(text, selectedUuids, tokenByUuid) {
+    const selected = Array.isArray(selectedUuids) ? selectedUuids.map(String) : [];
+    if (!selected.length) return String(text || "");
+
+    // Orden = orden del array selectedUuids (así <<element_1>> corresponde al 1er elemento del element_list)
+    const tokenToPlaceholder = new Map();
+    for (let i = 0; i < selected.length; i++) {
+      const uuid = selected[i];
+      const token = tokenByUuid.get(uuid);
+      if (!token) continue;
+      tokenToPlaceholder.set(token.toLowerCase(), `<<element_${i + 1}>>`);
+    }
+
+    const raw = String(text || "");
+    if (!raw) return raw;
+
+    // Reemplaza solo menciones que sean de Elements reconocidos y seleccionados
+    return raw.replace(/@[a-z0-9_]+/gi, (m) => {
+      const ph = tokenToPlaceholder.get(String(m).toLowerCase());
+      return ph || m;
+    });
+  }
+
   const router = express.Router();
 
   // Destructuring: dejamos disponibles con los MISMOS nombres
@@ -577,6 +643,41 @@ const isKling = selectedModelNorm.startsWith("kling-");
           if (out.length) elementList = out;
         }
 
+        // ✅ Traducir @slug -> <<element_n>> para Omni (prompt y multi_prompt)
+        // Docs: prompt puede referenciar <<element_1>> ... y element_list define el orden.
+        let translateMentions = (t) => String(t || "");
+
+        if (hasElements) {
+          // Para que coincida con el frontend, construimos tokens usando TODOS los elements del usuario
+          // ordenados por created_at desc (igual que GET /api/kling/elements).
+          const { data: allEls, error: allElsErr } = await supabaseAdmin
+            .from("kling_elements")
+            .select("id, name, created_at")
+            .eq("owner_id", user.id)
+            .order("created_at", { ascending: false });
+
+          if (allElsErr) {
+            throw httpError(500, "DB_ERROR", "No pude leer tus Elements (token map).", { allElsErr });
+          }
+
+          const tokenByUuid = buildElementTokenMap(allEls || []);
+
+          translateMentions = (t) =>
+            replaceSelectedElementMentionsWithPlaceholders(
+              t,
+              klingElementIds, // orden del element_list
+              tokenByUuid
+            );
+
+          // Aplicar a multi_prompt si existe
+          if (multiPrompt && Array.isArray(multiPrompt)) {
+            multiPrompt = multiPrompt.map((s) => ({
+              ...s,
+              prompt: translateMentions(s?.prompt),
+            }));
+          }
+        }
+
         // Image list (first/last frame) via URLs firmadas para no exceder el JSON limit (25mb)
         const imageList = [];
         if (hasFirst) {
@@ -632,7 +733,7 @@ const isKling = selectedModelNorm.startsWith("kling-");
               "Kling O3: prompt es obligatorio cuando no usas multi_shot."
             );
           }
-          omniPayload.prompt = p;
+          omniPayload.prompt = translateMentions(p);
         }
 
         let taskResponse = null;
@@ -964,6 +1065,38 @@ const isKling = selectedModelNorm.startsWith("kling-");
           if (out.length) elementList = out;
         }
 
+        // ✅ Traducir @slug -> <<element_n>> (Kling V3 y Omni-Video cuando V3 cae a omni-video)
+        let translateMentions = (t) => String(t || "");
+
+        if (hasElements) {
+          const { data: allEls, error: allElsErr } = await supabaseAdmin
+            .from("kling_elements")
+            .select("id, name, created_at")
+            .eq("owner_id", user.id)
+            .order("created_at", { ascending: false });
+
+          if (allElsErr) {
+            throw httpError(500, "DB_ERROR", "No pude leer tus Elements (token map).", { allElsErr });
+          }
+
+          const tokenByUuid = buildElementTokenMap(allEls || []);
+
+          translateMentions = (t) =>
+            replaceSelectedElementMentionsWithPlaceholders(
+              t,
+              klingElementIds, // orden del element_list
+              tokenByUuid
+            );
+
+          // multi_prompt también debe traducirse
+          if (multiPrompt && Array.isArray(multiPrompt)) {
+            multiPrompt = multiPrompt.map((s) => ({
+              ...s,
+              prompt: translateMentions(s?.prompt),
+            }));
+          }
+        }
+
         const klingModeValue = klingMode || "std";
 
         // Audio (V2.6+): Kling usa `sound: "on" | "off"`
@@ -1023,7 +1156,7 @@ const isKling = selectedModelNorm.startsWith("kling-");
                     "Kling: prompt es obligatorio cuando shot_type=intelligence."
                   );
                 }
-                basePayload.prompt = p;
+                basePayload.prompt = translateMentions(p);
               }
             } else {
               const p = String(prompt || "").trim();
@@ -1034,7 +1167,7 @@ const isKling = selectedModelNorm.startsWith("kling-");
                   "Kling: prompt es obligatorio cuando no usas multi_shot."
                 );
               }
-              basePayload.prompt = p;
+              basePayload.prompt = translateMentions(p);
             }
 
             taskResponse = await klingPostWithRetry(
@@ -1105,7 +1238,7 @@ const isKling = selectedModelNorm.startsWith("kling-");
                     "Kling: prompt es obligatorio cuando shot_type=intelligence."
                   );
                 }
-                basePayload.prompt = p;
+                basePayload.prompt = translateMentions(p);
               }
             } else {
               const p = String(prompt || "").trim();
@@ -1116,7 +1249,7 @@ const isKling = selectedModelNorm.startsWith("kling-");
                   "Kling: prompt es obligatorio cuando no usas multi_shot."
                 );
               }
-              basePayload.prompt = p;
+              basePayload.prompt = translateMentions(p);
             }
 
             taskResponse = await klingPostWithRetry(
