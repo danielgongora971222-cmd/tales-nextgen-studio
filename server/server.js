@@ -1569,28 +1569,51 @@ function extractElementIdFromAny(obj) {
   if (!obj) return null;
   const d = obj?.data || obj;
 
-  const elementId =
-    // respuestas directas
+  // 1) Directo
+  const direct =
     d?.element_id ||
     d?.elementId ||
-    d?.id ||
-    d?.element?.id ||
     d?.element?.element_id ||
+    d?.element?.elementId ||
+    d?.element?.id;
 
-    // ✅ Kling advanced: viene dentro de task_result
-    d?.task_result?.element_id ||
-    d?.task_result?.elementId ||
-    d?.task_result?.id ||
-    d?.taskResult?.element_id ||
-    d?.taskResult?.elementId ||
-    d?.taskResult?.id ||
+  if (direct) return String(direct);
 
-    // compat antiguos
-    d?.result?.element_id ||
-    d?.result?.elementId ||
-    d?.result?.id;
+  // 2) Task result (advanced)
+  const tr = d?.task_result || d?.taskResult || d?.result || null;
 
-  return elementId ? String(elementId) : null;
+  const fromTaskResult =
+    tr?.element_id ||
+    tr?.elementId ||
+    tr?.id ||
+    tr?.element?.element_id ||
+    tr?.element?.elementId ||
+    tr?.element?.id ||
+    tr?.element_info?.element_id ||
+    tr?.element_info?.elementId ||
+    tr?.element_info?.id;
+
+  if (fromTaskResult) return String(fromTaskResult);
+
+  // 3) Variantes con listas dentro del task_result
+  const arr =
+    (Array.isArray(tr?.elements) && tr.elements) ||
+    (Array.isArray(tr?.element_list) && tr.element_list) ||
+    (Array.isArray(tr?.items) && tr.items) ||
+    null;
+
+  const first = arr?.[0];
+  const fromArray =
+    first?.element_id ||
+    first?.elementId ||
+    first?.id ||
+    first?.element?.element_id ||
+    first?.element?.elementId ||
+    first?.element?.id;
+
+  if (fromArray) return String(fromArray);
+
+  return null;
 }
 function extractTaskStatusFromAny(obj) {
   const d = obj?.data || obj;
@@ -1625,38 +1648,50 @@ async function klingFindElementIdInAdvancedList({ createPath, taskId }) {
     .replace(/\/+$/g, "")
     .replace(/\/tasks$/i, "");
 
-  // Solo aplica a advanced-custom-elements
   if (!/advanced-custom-elements/i.test(base)) return null;
 
   const targetTaskId = String(taskId);
 
-  // Doc: pageSize permite hasta 500; usamos 100 y 3 páginas para no abusar.
-  const pageSize = 100;
+  // Doc: pageSize permite hasta 500 → usamos 500 por defecto para minimizar páginas.
+  const pageSize = Math.max(1, Math.min(500, Number(process.env.KLING_ELEMENT_LIST_PAGE_SIZE || 500)));
+  const maxPages = Math.max(1, Math.min(30, Number(process.env.KLING_ELEMENT_LIST_MAX_PAGES || 10)));
 
-  for (let pageNum = 1; pageNum <= 3; pageNum++) {
+  function normalizeList(raw) {
+    const v = raw?.data ?? raw;
+
+    if (Array.isArray(v)) return v;
+    if (Array.isArray(v?.data)) return v.data;
+    if (Array.isArray(v?.list)) return v.list;
+    if (Array.isArray(v?.items)) return v.items;
+    if (Array.isArray(v?.records)) return v.records;
+    if (Array.isArray(v?.result)) return v.result;
+
+    return null;
+  }
+
+  for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
     const path = `${base}?pageNum=${pageNum}&pageSize=${pageSize}`;
 
     try {
       const raw = await klingGetWithRetry(path, { timeoutMs: 20_000, retries: 2 });
-      const list = raw?.data || raw;
+      const list = normalizeList(raw);
 
       if (!Array.isArray(list)) continue;
 
       for (const entry of list) {
         const d = entry?.data || entry;
-        const tid = d?.task_id || d?.taskId || d?.id;
+
+        // En la doc es task_id; evitamos usar d.id como fallback para no confundir con element_id
+        const tid = d?.task_id || d?.taskId;
         if (!tid) continue;
 
         if (String(tid) === targetTaskId) {
           const elementId = extractElementIdFromAny(entry);
-          if (elementId) {
-            return { elementId: String(elementId), raw: entry, pathUsed: path };
-          }
+          if (elementId) return { elementId: String(elementId), raw: entry, pathUsed: path };
           return null;
         }
       }
     } catch {
-      // si falla una página, probamos la siguiente
       continue;
     }
   }
@@ -1700,7 +1735,14 @@ async function klingGetElementTaskStatusOnce({ createPath, taskId }) {
 
     // ✅ Si succeed pero sin element_id, fallback al LIST endpoint
     if (isKlingSuccessStatus(statusNorm) && !firstOk.elementId) {
-      const found = await klingFindElementIdInAdvancedList({ createPath, taskId });
+      let found = await klingFindElementIdInAdvancedList({ createPath, taskId });
+
+      // ✅ Consistencia eventual: a veces task_status ya es succeed pero task_result aparece un poco después
+      if (!found?.elementId) {
+        await new Promise((r) => setTimeout(r, 1500));
+        found = await klingFindElementIdInAdvancedList({ createPath, taskId });
+      }
+
       if (found?.elementId) {
         return {
           ...firstOk,
@@ -2181,19 +2223,25 @@ app.get("/api/kling/elements/:id", async (req, res) => {
 
         row.status = "failed";
         row.status_detail = polled.msg || `Task failed (${statusNorm})`;
-      } else {
-        // Sigue corriendo
-        await supabaseAdmin
-          .from("kling_elements")
-          .update({
-            status_detail: polled.msg || statusNorm || "running",
-            kling_raw: polled.raw || null,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", row.id);
+    } else {
+      // Sigue corriendo (o succeed sin element_id)
+      const detail =
+        polled.msg ||
+        (isKlingSuccessStatus(statusNorm) && !polled.elementId
+          ? "succeed (pending element_id)"
+          : (statusNorm || "running"));
 
-        row.status_detail = polled.msg || statusNorm || "running";
-      }
+      await supabaseAdmin
+        .from("kling_elements")
+        .update({
+          status_detail: detail,
+          kling_raw: polled.raw || null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", row.id);
+
+      row.status_detail = detail;
+    }
     } else {
       // Poll falló (no matamos el row), solo dejamos detalle
       await supabaseAdmin
