@@ -1617,6 +1617,53 @@ function extractTaskStatusMsgFromAny(obj) {
   );
 }
 
+// ✅ Fallback: cuando Kling responde succeed pero NO incluye task_result.element_id,
+// buscamos el elemento en el LIST endpoint (que según la doc incluye task_result.element_id).
+async function klingFindElementIdInAdvancedList({ createPath, taskId }) {
+  const base = String(createPath || "/general/advanced-custom-elements")
+    .split("?")[0]
+    .replace(/\/+$/g, "")
+    .replace(/\/tasks$/i, "");
+
+  // Solo aplica a advanced-custom-elements
+  if (!/advanced-custom-elements/i.test(base)) return null;
+
+  const targetTaskId = String(taskId);
+
+  // Doc: pageSize permite hasta 500; usamos 100 y 3 páginas para no abusar.
+  const pageSize = 100;
+
+  for (let pageNum = 1; pageNum <= 3; pageNum++) {
+    const path = `${base}?pageNum=${pageNum}&pageSize=${pageSize}`;
+
+    try {
+      const raw = await klingGetWithRetry(path, { timeoutMs: 20_000, retries: 2 });
+      const list = raw?.data || raw;
+
+      if (!Array.isArray(list)) continue;
+
+      for (const entry of list) {
+        const d = entry?.data || entry;
+        const tid = d?.task_id || d?.taskId || d?.id;
+        if (!tid) continue;
+
+        if (String(tid) === targetTaskId) {
+          const elementId = extractElementIdFromAny(entry);
+          if (elementId) {
+            return { elementId: String(elementId), raw: entry, pathUsed: path };
+          }
+          return null;
+        }
+      }
+    } catch {
+      // si falla una página, probamos la siguiente
+      continue;
+    }
+  }
+
+  return null;
+}
+
 async function klingGetElementTaskStatusOnce({ createPath, taskId }) {
   const paths = resolveKlingElementTaskStatusPaths({ createPath, taskId });
 
@@ -1648,7 +1695,24 @@ async function klingGetElementTaskStatusOnce({ createPath, taskId }) {
     }
   }
 
-  if (firstOk) return firstOk;
+  if (firstOk) {
+    const statusNorm = normalizeKlingTaskStatus(firstOk.status);
+
+    // ✅ Si succeed pero sin element_id, fallback al LIST endpoint
+    if (isKlingSuccessStatus(statusNorm) && !firstOk.elementId) {
+      const found = await klingFindElementIdInAdvancedList({ createPath, taskId });
+      if (found?.elementId) {
+        return {
+          ...firstOk,
+          elementId: String(found.elementId),
+          raw: found.raw || firstOk.raw,
+          pathUsed: `${firstOk.pathUsed} -> ${found.pathUsed}`,
+        };
+      }
+    }
+
+    return firstOk;
+  }
 
   return {
     ok: false,

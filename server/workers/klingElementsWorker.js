@@ -178,6 +178,46 @@ function extractTaskMsgFromAny(obj) {
   return d?.task_status_msg || d?.taskStatusMsg || d?.message || d?.msg || d?.error?.message || "";
 }
 
+// ✅ Fallback LIST: recuperar element_id buscando por task_id en el listado advanced
+async function klingFindElementIdInAdvancedList({ createPath, taskId }) {
+  const base = String(createPath || "/general/advanced-custom-elements")
+    .split("?")[0]
+    .replace(/\/+$/g, "")
+    .replace(/\/tasks$/i, "");
+
+  if (!/advanced-custom-elements/i.test(base)) return null;
+
+  const targetTaskId = String(taskId);
+  const pageSize = 100;
+
+  for (let pageNum = 1; pageNum <= 3; pageNum++) {
+    const path = `${base}?pageNum=${pageNum}&pageSize=${pageSize}`;
+
+    try {
+      const raw = await klingGetWithRetry(path, { timeoutMs: 20_000, retries: 2 });
+      const list = raw?.data || raw;
+
+      if (!Array.isArray(list)) continue;
+
+      for (const entry of list) {
+        const d = entry?.data || entry;
+        const tid = d?.task_id || d?.taskId || d?.id;
+        if (!tid) continue;
+
+        if (String(tid) === targetTaskId) {
+          const elementId = extractElementIdFromAny(entry);
+          if (elementId) return { elementId: String(elementId), raw: entry, pathUsed: path };
+          return null;
+        }
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
 async function pollOnce({ createPath, taskId }) {
   const paths = resolveTaskStatusPaths({ createPath, taskId });
 
@@ -207,7 +247,20 @@ async function pollOnce({ createPath, taskId }) {
     }
   }
 
-  if (firstOk) return firstOk;
+  if (firstOk) {
+    if (isSuccess(firstOk.status) && !firstOk.elementId) {
+      const found = await klingFindElementIdInAdvancedList({ createPath, taskId });
+      if (found?.elementId) {
+        return {
+          ...firstOk,
+          elementId: String(found.elementId),
+          raw: found.raw || firstOk.raw,
+          pathUsed: `${firstOk.pathUsed} -> ${found.pathUsed}`,
+        };
+      }
+    }
+    return firstOk;
+  }
 
   return { ok: false, error: lastErr ? String(lastErr?.message || lastErr) : "unknown", pathsTried: paths };
 }
