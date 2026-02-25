@@ -607,7 +607,9 @@ const isKling = selectedModelNorm.startsWith("kling-");
 
         // ✅ Kling Omni API (Tasks)
         const omniPayload = {
-          model_name: String(process.env.KLING_OMNI_MODEL_NAME || "kling-v3-omni"),
+          // ✅ O3 Pro debe usar un model_name O3 (video character elements requieren O3+)
+          // Docs: video customization elements soportados para modelos `kling-video-o3` y posteriores. :contentReference[oaicite:4]{index=4}
+          model_name: String(process.env.KLING_O3_MODEL_NAME || "kling-video-o3"),
           mode: klingModeValue,
           duration: String(dur),
           ...(soundValue !== undefined ? { sound: soundValue } : {}),
@@ -989,14 +991,14 @@ const isKling = selectedModelNorm.startsWith("kling-");
         try {
           if (hasFirst) {
             taskType = "image2video";
-          const firstPart = await assetIdToInlinePart(firstFrameAssetId, user.id);
-          const image = firstPart.inlineData.data;
+            const firstPart = await assetIdToInlinePart(firstFrameAssetId, user.id);
+            const image = firstPart.inlineData.data;
 
-          let imageTail = undefined;
-          if (hasLast) {
-            const lastPart = await assetIdToInlinePart(lastFrameAssetId, user.id);
-            imageTail = lastPart.inlineData.data;
-          }
+            let imageTail = undefined;
+            if (hasLast) {
+              const lastPart = await assetIdToInlinePart(lastFrameAssetId, user.id);
+              imageTail = lastPart.inlineData.data;
+            }
 
             const basePayload = {
               model_name: klingApiModelName,
@@ -1040,7 +1042,46 @@ const isKling = selectedModelNorm.startsWith("kling-");
               basePayload,
               { timeoutMs: 60_000, retries: 3 }
             );
+          } else if (hasElements) {
+            // ✅ HARDENING: Cuando hay Elements sin first-frame, usamos Omni-Video.
+            // Docs: Omni soporta templating `<<element_1>>` y `element_list`. :contentReference[oaicite:5]{index=5} :contentReference[oaicite:6]{index=6}
+            taskType = "omni-video";
 
+            const omniModelName = String(process.env.KLING_V3_OMNI_MODEL_NAME || "kling-v3-omni");
+
+            const ar = aspectRatio || "16:9";
+
+            const omniPayload = {
+              model_name: omniModelName,
+              mode: klingModeValue,
+              duration: String(dur),
+              ...(soundValue !== undefined ? { sound: soundValue } : {}),
+              ...(elementList ? { element_list: elementList } : {}),
+              aspect_ratio: ar,
+            };
+
+            if (multiShotEnabled) {
+              // En Omni: multi-shot soporta shot_type=customize (según tu doc consolidado). :contentReference[oaicite:7]{index=7}
+              omniPayload.multi_shot = true;
+              omniPayload.shot_type = "customize";
+              omniPayload.multi_prompt = multiPrompt;
+            } else {
+              const p = String(prompt || "").trim();
+              if (!p) {
+                throw httpError(
+                  400,
+                  "KLING_V3_PROMPT_REQUIRED",
+                  "Kling: prompt es obligatorio cuando no usas multi_shot."
+                );
+              }
+              omniPayload.prompt = p;
+            }
+
+            taskResponse = await klingPostWithRetry(
+              "/videos/omni-video",
+              omniPayload,
+              { timeoutMs: 60_000, retries: 3 }
+            );
           } else {
             const basePayload = {
               model_name: klingApiModelName,
@@ -1083,8 +1124,8 @@ const isKling = selectedModelNorm.startsWith("kling-");
               basePayload,
               { timeoutMs: 60_000, retries: 3 }
             );
-        }
-      } catch (e) {
+          }
+        } catch (e) {
           const status = Number(e?.status || 0);
           const code = e?.code != null ? Number(e.code) : null;
 

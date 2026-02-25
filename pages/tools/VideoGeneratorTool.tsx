@@ -631,7 +631,10 @@ const VideoGeneratorTool: React.FC = () => {
   // - El usuario escribe tags tipo @mi_elemento (slug del nombre).
   // - Antes de enviar al modelo, los convertimos a @Element1, @Element2...
   // ===============================
-  const elementTokenById = useMemo(() => (isKlingV3 ? buildElementTokenMap(klingElements) : new Map<string, string>()), [isKlingV3, klingElements]);
+  const elementTokenById = useMemo(
+  () => ((isKlingV3 || isKlingO3) ? buildElementTokenMap(klingElements) : new Map<string, string>()),
+  [isKlingV3, isKlingO3, klingElements]
+);
 
   const elementTokenToId = useMemo(() => {
     const m = new Map<string, string>(); // token(lower) -> elementId
@@ -642,15 +645,19 @@ const VideoGeneratorTool: React.FC = () => {
   }, [elementTokenById]);
 
   const elementMentionItems = useMemo<MentionItem[]>(() => {
-    if (!isKlingV3) return [];
+    if (!(isKlingV3 || isKlingO3)) return [];
     return klingElements
       .filter((el) => (el.status ?? "ready") === "ready" && Boolean(el.klingElementId))
       .map((el) => {
-        const token = elementTokenById.get(el.id) || makeElementTag(el.name || "element");
-        const previewUrl = el.previewUrl || el.imageUrls?.[0] || null;
-        return { id: el.id, token, label: el.name || "Element", kind: "element", previewUrl };
+        const token = elementTokenById.get(el.id) || `@element${Math.floor(Math.random() * 1000)}`;
+        return {
+          id: el.id,
+          label: token,
+          description: el.name || el.description || "Element",
+          icon: "sparkles",
+        };
       });
-  }, [isKlingV3, klingElements, elementTokenById]);
+  }, [isKlingV3, isKlingO3, klingElements, elementTokenById]);
 
   // Sync Elements con el prompt:
   // - Si borras un token de Element del prompt -> se deselecciona.
