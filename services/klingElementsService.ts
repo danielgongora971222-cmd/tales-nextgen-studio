@@ -179,6 +179,11 @@ async function waitKlingElementReady(id: string, opts?: { timeoutMs?: number; in
       throw new Error(el.statusDetail || "Kling: falló la creación del Element.");
     }
 
+    // ✅ Si el backend no pudo consultar el task (auth / endpoint / red), no tiene sentido esperar 3 min.
+    if (typeof el.statusDetail === "string" && el.statusDetail.toLowerCase().startsWith("poll_error:")) {
+      throw new Error(`Kling: error consultando el estado del Element. ${el.statusDetail}`);
+    }
+
     await sleep(intervalMs);
   }
 

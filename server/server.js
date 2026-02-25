@@ -1545,9 +1545,10 @@ function resolveKlingElementTaskStatusPaths({ createPath, taskId }) {
     .replace(/\/+$/g, "");
   const safeTask = encodeURIComponent(String(taskId));
 
-  // Candidatos más probables
-  paths.push(`${base}/tasks/${safeTask}`);
+  // ✅ Prioriza endpoint documentado: /v1/general/advanced-custom-elements/{task_id}
+  // (En algunos tenants existe también /tasks/{task_id}, pero puede NO incluir task_result.element_id)
   paths.push(`${base}/${safeTask}`);
+  paths.push(`${base}/tasks/${safeTask}`);
 
   // Fallbacks
   paths.push(`/general/custom-elements/tasks/${safeTask}`);
@@ -1620,6 +1621,7 @@ async function klingGetElementTaskStatusOnce({ createPath, taskId }) {
   const paths = resolveKlingElementTaskStatusPaths({ createPath, taskId });
 
   let lastErr = null;
+  let firstOk = null;
 
   for (const p of paths) {
     try {
@@ -1628,12 +1630,25 @@ async function klingGetElementTaskStatusOnce({ createPath, taskId }) {
       const msg = extractTaskStatusMsgFromAny(raw);
       const elementId = extractElementIdFromAny(raw);
 
-      return { ok: true, pathUsed: p, raw, status, msg, elementId };
+      const out = { ok: true, pathUsed: p, raw, status, msg, elementId };
+      if (!firstOk) firstOk = out;
+
+      // ✅ Bug real observado: hay endpoints que devuelven task_status=succeed
+      // pero NO incluyen task_result.element_id. En ese caso seguimos probando
+      // otros paths (por ejemplo el endpoint documentado /advanced-custom-elements/{id}).
+      const statusNorm = normalizeKlingTaskStatus(status);
+      if (isKlingSuccessStatus(statusNorm) && !elementId) {
+        continue;
+      }
+
+      return out;
     } catch (e) {
       lastErr = e;
       continue;
     }
   }
+
+  if (firstOk) return firstOk;
 
   return {
     ok: false,

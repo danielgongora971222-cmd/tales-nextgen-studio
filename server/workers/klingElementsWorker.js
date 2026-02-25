@@ -71,7 +71,8 @@ function resolveKlingCreateElementUrl() {
 
   if (!/\/v1$/i.test(baseUrl)) baseUrl += "/v1";
 
-  let pathRaw = (process.env.KLING_ELEMENT_CREATE_PATH || "/general/custom-elements")
+  // ✅ Default a endpoint "advanced" (es el recomendado / actual para image_refer y requerido para video_refer)
+  let pathRaw = (process.env.KLING_ELEMENT_CREATE_PATH || "/general/advanced-custom-elements")
     .toString()
     .trim()
     .replace(/\s+/g, "");
@@ -91,13 +92,13 @@ function resolveKlingCreateElementPath() {
     let p = (u.pathname || "").trim();
     if (!p.startsWith("/")) p = "/" + p;
     if (p.startsWith("/v1/")) p = p.slice(3);
-    return p.replace(/\/+$/g, "") || "/general/custom-elements";
+    return p.replace(/\/+$/g, "") || "/general/advanced-custom-elements";
   }
 
   let p = String(url || "").trim();
   if (!p.startsWith("/")) p = "/" + p;
   if (p.startsWith("/v1/")) p = p.slice(3);
-  return p.replace(/\/+$/g, "") || "/general/custom-elements";
+  return p.replace(/\/+$/g, "") || "/general/advanced-custom-elements";
 }
 
 function normalizeStatus(raw) {
@@ -129,8 +130,10 @@ function resolveTaskStatusPaths({ createPath, taskId }) {
   const base = String(createPath || "/general/custom-elements").split("?")[0].replace(/\/+$/g, "");
   const safeTask = encodeURIComponent(String(taskId));
 
-  paths.push(`${base}/tasks/${safeTask}`);
+  // ✅ Prioriza endpoint documentado: /v1/general/advanced-custom-elements/{task_id}
   paths.push(`${base}/${safeTask}`);
+  // Fallback no documentado
+  paths.push(`${base}/tasks/${safeTask}`);
 
   paths.push(`/general/custom-elements/tasks/${safeTask}`);
   paths.push(`/general/custom-elements/${safeTask}`);
@@ -179,18 +182,32 @@ async function pollOnce({ createPath, taskId }) {
   const paths = resolveTaskStatusPaths({ createPath, taskId });
 
   let lastErr = null;
+  let firstOk = null;
+
   for (const p of paths) {
     try {
       const raw = await klingGetWithRetry(p, { timeoutMs: 20_000, retries: 2 });
       const status = extractTaskStatusFromAny(raw);
       const msg = extractTaskMsgFromAny(raw);
       const elementId = extractElementIdFromAny(raw);
-      return { ok: true, pathUsed: p, raw, status, msg, elementId };
+
+      const out = { ok: true, pathUsed: p, raw, status, msg, elementId };
+      if (!firstOk) firstOk = out;
+
+      // ✅ Igual que en server.js: si ya dice "succeed" pero no trae element_id,
+      // seguimos probando otros endpoints (a menudo el endpoint documentado sí lo incluye).
+      if (isSuccess(status) && !elementId) {
+        continue;
+      }
+
+      return out;
     } catch (e) {
       lastErr = e;
       continue;
     }
   }
+
+  if (firstOk) return firstOk;
 
   return { ok: false, error: lastErr ? String(lastErr?.message || lastErr) : "unknown", pathsTried: paths };
 }
