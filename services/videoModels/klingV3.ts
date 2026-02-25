@@ -19,7 +19,7 @@ function uniqueNumbers(xs: number[]) {
 
 function refsFromIndexes(indexes: number[]) {
   const uniq = uniqueNumbers(indexes).sort((a, b) => a - b);
-  return uniq.map((i) => `@Element${i}`).join(" ");
+  return uniq.map((i) => `<<element_${i}>>`).join(" ");
 }
 
 function injectRefsIfMissing(prompt: string, indexes: number[]) {
@@ -27,7 +27,7 @@ function injectRefsIfMissing(prompt: string, indexes: number[]) {
   if (indexes.length <= 0) return p;
 
   // Si el usuario ya escribió @ElementN manualmente, no tocamos el prompt
-  if (/@Element\s*\d+/i.test(p)) return p;
+  if (/<<\s*element_\s*\d+\s*>>/i.test(p)) return p;
 
   const refs = refsFromIndexes(indexes).trim();
   if (!refs) return p;

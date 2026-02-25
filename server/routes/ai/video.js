@@ -567,9 +567,11 @@ const isKling = selectedModelNorm.startsWith("kling-");
               );
             }
 
-            const rawStr = String(raw).trim();
-            const eid = /^\d+$/.test(rawStr) ? Number(rawStr) : rawStr;
-            out.push({ element_id: eid });
+          const rawStr = String(raw).trim();
+
+          // ⚠️ NO convertir a Number: element_id es "long" y puede exceder 2^53-1.
+          // Si lo conviertes a Number pierdes precisión y Kling responde "Element id not found".
+          out.push({ element_id: rawStr });
           }
 
           if (out.length) elementList = out;
@@ -952,8 +954,9 @@ const isKling = selectedModelNorm.startsWith("kling-");
           }
 
             const rawStr = String(raw).trim();
-            const eid = /^\d+$/.test(rawStr) ? Number(rawStr) : rawStr;
-            out.push({ element_id: eid });
+
+            // ⚠️ No convertir a Number (precisión)
+            out.push({ element_id: rawStr });
           }
 
           if (out.length) elementList = out;
@@ -1847,8 +1850,9 @@ const isKling = selectedModelNorm.startsWith("kling-");
             }
 
             const rawStr = String(raw).trim();
-            const eid = /^\d+$/.test(rawStr) ? Number(rawStr) : rawStr;
-            out.push({ element_id: eid });
+
+            // ⚠️ No convertir a Number (precisión)
+            out.push({ element_id: rawStr });
           }
 
           if (out.length) elementList = out;

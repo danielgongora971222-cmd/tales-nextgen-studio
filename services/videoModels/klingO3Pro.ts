@@ -19,15 +19,20 @@ function uniqueNumbers(xs: number[]) {
 
 function refsFromIndexes(indexes: number[]) {
   const uniq = uniqueNumbers(indexes).sort((a, b) => a - b);
-  return uniq.map((i) => `@Element${i}`).join(" ");
+  return uniq.map((i) => `<<element_${i}>>`).join(" ");
 }
 
 function injectRefsIfMissing(prompt: string, indexes: number[]) {
   const p = String(prompt || "").trim();
   if (indexes.length <= 0) return p;
-  if (/@Element\s*\d+/i.test(p)) return p;
-  const refs = refsFromIndexes(indexes);
-  return `${p}\n\nUse ${refs}.`.trim();
+  if (/<<\s*element_\s*\d+\s*>>/i.test(p)) return p;
+
+  const refs = refsFromIndexes(indexes).trim();
+  if (!refs) return p;
+  if (!p) return refs;
+
+  // Sin texto extra: solo inyectamos las refs
+  return `${p}\n\n${refs}`.trim();
 }
 
 function assertPromptLimit(prompt: string, limit: number, label: string) {

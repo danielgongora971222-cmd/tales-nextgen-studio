@@ -1226,7 +1226,7 @@ const durationLabel = useMemo(() => {
   let selectedKlingElementIdsForModel = selectedKlingElementIds;
   let klingShotsForModel = klingShots;
 
-  if (isKlingV3) {
+  if (isKlingV3 || isKlingO3) {
     const tokenRe = /@[a-z0-9_]+/gi;
 
     const idsMentionedInText = (text: string) => {
@@ -1254,7 +1254,9 @@ const durationLabel = useMemo(() => {
         if (!id) return m;
         const n = indexById.get(id);
         if (!n) return m;
-        return `@Element${n}`;
+
+        // Kling V3/Omni: templating recomendado con <<element_N>>
+        return `<<element_${n}>>`;
       });
     };
 
