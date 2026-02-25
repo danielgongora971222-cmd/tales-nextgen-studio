@@ -644,21 +644,25 @@ const VideoGeneratorTool: React.FC = () => {
     return m;
   }, [elementTokenById]);
 
-  const elementMentionItems = useMemo<MentionItem[]>(() => {
-    if (!(isKlingV3 || isKlingO3)) return [];
-    return klingElements
-      .filter((el) => (el.status ?? "ready") === "ready" && Boolean(el.klingElementId))
-      .map((el) => {
-        const token = elementTokenById.get(el.id) || `@element${Math.floor(Math.random() * 1000)}`;
-        return {
-          id: el.id,
-          label: token,
-          description: el.name || el.description || "Element",
-          icon: "sparkles",
-        };
-      });
-  }, [isKlingV3, isKlingO3, klingElements, elementTokenById]);
+const elementMentionItems = useMemo<MentionItem[]>(() => {
+  if (!(isKlingV3 || isKlingO3)) return [];
 
+  return (klingElements || [])
+    .filter((el) => (el.status ?? "ready") === "ready" && Boolean(el.klingElementId))
+    .map((el) => {
+      const token = elementTokenById.get(el.id) || makeElementTag(el.name || "element");
+      const previewUrl = (el as any)?.previewUrl || (el as any)?.imageUrls?.[0] || null;
+
+      return {
+        id: el.id,
+        token, // ✅ ESTO es lo que MentionTextarea inserta en el prompt
+        label: el.name || token, // ✅ texto visible
+        kind: "element",
+        previewUrl,
+      };
+    });
+}, [isKlingV3, isKlingO3, klingElements, elementTokenById]);
+  
   // Sync Elements con el prompt:
   // - Si borras un token de Element del prompt -> se deselecciona.
   // - Si agregas un token de Element al prompt -> se selecciona (hasta 5).
@@ -988,46 +992,58 @@ useEffect(() => {
     klingShots,
   ]);
 
-  const refreshKlingElements = useCallback(async () => {
-    try {
-      const raw = await refreshKlingElementsStatus({ maxPoll: 10 });
+const refreshKlingElements = useCallback(async () => {
+  try {
+    const raw = await refreshKlingElementsStatus({ maxPoll: 10 });
 
-      // Normaliza IDs a string (evita mismatch string/number)
-      const items = (raw || []).map((e: any) => ({
-        ...e,
-        id: String(e?.id ?? ""),
+    // Normaliza IDs a string (evita mismatch string/number)
+    const items = (raw || []).map((e: any) => ({
+      ...e,
+      id: String(e?.id ?? ""),
+    }));
+
+    setKlingElements(items);
+
+    // Limpia IDs fantasma (causan "(unknown)" en el Quality Gate)
+    const validIds = new Set(items.map((e: any) => String(e?.id ?? "")).filter(Boolean));
+
+    setSelectedKlingElementIds((prev) => {
+      const arr = Array.isArray(prev) ? prev : [];
+      return arr.map(String).filter((id) => validIds.has(id));
+    });
+
+    // También limpia selección por-shot (multishot customize)
+    setKlingShots((prev: any) => {
+      const arr = Array.isArray(prev) ? prev : [];
+      return arr.map((s: any) => ({
+        ...s,
+        elementIds: Array.isArray(s?.elementIds)
+          ? s.elementIds.map(String).filter((id: string) => validIds.has(id))
+          : [],
       }));
+    });
+  } catch (e: any) {
+    setError(e?.message || "No pude cargar tus Elements.");
+  }
+}, []);
 
-      setKlingElements(items);
+// ✅ Prefetch: para que @ funcione apenas entras (sin abrir modal)
+const elementsPrefetchDoneRef = useRef(false);
 
-      // Limpia IDs fantasma (causan "(unknown)" en el Quality Gate)
-      const validIds = new Set(items.map((e: any) => String(e?.id ?? "")).filter(Boolean));
+useEffect(() => {
+  if (!isKlingV3) return;
+  if (!user?.id) return;
+  if (elementsPrefetchDoneRef.current) return;
 
-      setSelectedKlingElementIds((prev) => {
-        const arr = Array.isArray(prev) ? prev : [];
-        return arr.map(String).filter((id) => validIds.has(id));
-      });
+  elementsPrefetchDoneRef.current = true;
+  refreshKlingElements();
+}, [isKlingV3, user?.id, refreshKlingElements]);
 
-      // También limpia selección por-shot (multishot customize)
-      setKlingShots((prev: any) => {
-        const arr = Array.isArray(prev) ? prev : [];
-        return arr.map((s: any) => ({
-          ...s,
-          elementIds: Array.isArray(s?.elementIds)
-            ? s.elementIds.map(String).filter((id: string) => validIds.has(id))
-            : [],
-        }));
-      });
-    } catch (e: any) {
-      setError(e?.message || "No pude cargar tus Elements.");
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!isKlingV3) return;
-    if (!elementsOpen) return;
-    refreshKlingElements();
-  }, [isKlingV3, elementsOpen, refreshKlingElements]);
+useEffect(() => {
+  if (!isKlingV3) return;
+  if (!elementsOpen) return;
+  refreshKlingElements();
+}, [isKlingV3, elementsOpen, refreshKlingElements]);
 
   useEffect(() => {
     if (!isKlingV3) return;
@@ -2093,7 +2109,7 @@ const clearModalSelectedIds = () => {
             setImageAssets((prev) => [asset, ...prev.filter((x) => x.id !== asset.id)]);
           }
         }}
-        maxSelected={modelNorm === KLING_V3 ? 3 : 5}
+        maxSelected={maxKlingElements}
         uploadToolName="video-elements"
       />
     </div>
