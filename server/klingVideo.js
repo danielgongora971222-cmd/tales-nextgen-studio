@@ -169,6 +169,20 @@ function patchKlingBigIntFields(rawText) {
   return out;
 }
 
+function klingSafeStringify(body) {
+  // Kling espera IDs tipo "long" como NÚMERO en JSON, pero en JS debemos guardarlos como string
+  // para no perder precisión. Aquí convertimos SOLO los campos long a número SIN comillas.
+  const json = body ? JSON.stringify(body) : "{}";
+
+  // Solo convertimos strings de 16+ dígitos (para no tocar ids cortos).
+  // Campos relevantes según docs y respuestas reales:
+  // element_id / voice_id / element_voice_id (+ camelCase)
+  return json.replace(
+    /"(element_id|voice_id|element_voice_id|elementId|voiceId|elementVoiceId)"\s*:\s*"(\d{16,})"/g,
+    (_m, key, digits) => `"${key}":${digits}`
+  );
+}
+
 async function klingFetch(path, options = {}) {
   const url = resolveKlingUrl(path);
   const token = getKlingAuthToken();
@@ -222,7 +236,7 @@ async function klingPostForm(path, fields = {}) {
 }
 
 export async function klingPost(path, body) {
-  const payload = body ? JSON.stringify(body) : "{}";
+  const payload = klingSafeStringify(body);
   const { json } = await klingFetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -289,7 +303,7 @@ export async function klingPostWithRetry(path, body, opts = {}) {
   const timeoutMs = Number(opts.timeoutMs || 60000);
   const retries = Math.max(0, Math.min(5, Number(opts.retries || 2)));
 
-  const payload = body ? JSON.stringify(body) : "{}";
+  const payload = klingSafeStringify(body);
 
   let attempt = 0;
   while (true) {
