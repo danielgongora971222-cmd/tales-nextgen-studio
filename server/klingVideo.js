@@ -170,10 +170,17 @@ function patchKlingBigIntFields(rawText) {
 }
 
 function klingSafeStringify(body) {
-  // IMPORTANTE: NO debemos quitar las comillas de los IDs largos al enviarlos a Kling.
-  // Si enviamos números de 18 dígitos sin comillas, los servidores de Kling pierden precisión
-  // al procesar el JSON (redondean terminando en 00) causando el error "Element id not found (1201)".
-  return body ? JSON.stringify(body) : "{}";
+  // Kling espera IDs tipo "long" como NÚMERO en JSON, pero en JS debemos guardarlos como string
+  // para no perder precisión. Aquí convertimos SOLO los campos long a número SIN comillas.
+  const json = body ? JSON.stringify(body) : "{}";
+
+  // Solo convertimos strings de 16+ dígitos (para no tocar ids cortos).
+  // Campos relevantes según docs y respuestas reales:
+  // element_id / voice_id / element_voice_id (+ camelCase)
+  return json.replace(
+    /"(element_id|voice_id|element_voice_id|elementId|voiceId|elementVoiceId)"\s*:\s*"(\d{16,})"/g,
+    (_m, key, digits) => `"${key}":${digits}`
+  );
 }
 
 async function klingFetch(path, options = {}) {
