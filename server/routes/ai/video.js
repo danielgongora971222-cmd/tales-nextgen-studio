@@ -700,7 +700,7 @@ const isKling = selectedModelNorm.startsWith("kling-");
 
           const { data: rows, error: rowsErr } = await supabaseAdmin
             .from("kling_elements")
-            .select("id, owner_id, kling_element_id, status, status_detail")
+            .select("id, owner_id, reference_type, kling_task_id, kling_element_id, status, status_detail")
             .in("id", klingElementIds)
             .eq("owner_id", user.id);
 
@@ -834,22 +834,30 @@ const isKling = selectedModelNorm.startsWith("kling-");
             }
 
             for (const it of out) {
-              // Si no hay task_id, no podemos validar (en tu DB a veces hay filas sin task_id).
-              if (!it.task_id) {
-                invalid.push({ element_uuid: it.element_uuid, reason: "MISSING_TASK_ID", element_id: it.element_id });
-                continue;
-              }
-
-              const check = await validateByTaskId(it.task_id);
+              // 1) Validación principal por task_id (endpoint más fiable cuando existe).
+              // 2) Fallback por element_id en listado advanced (útil para rows históricos sin task_id
+              //    o con task_id dañado por precisión/token mismatch), para reducir falsos negativos.
+              const check = it.task_id ? await validateByTaskId(it.task_id) : { ok: false, status: "", elementId: null, pathUsed: null };
 
               if (!check.ok) {
-                invalid.push({
-                  element_uuid: it.element_uuid,
-                  reason: "TASK_NOT_FOUND_OR_TOKEN_MISMATCH",
-                  task_id: it.task_id,
-                  element_id: it.element_id,
-                  error: check.error || null,
-                });
+                const fallback = await klingElementExistsCached(it.element_id);
+                if (fallback.ok) continue;
+
+                invalid.push(
+                  it.task_id
+                    ? {
+                        element_uuid: it.element_uuid,
+                        reason: "TASK_NOT_FOUND_OR_TOKEN_MISMATCH",
+                        task_id: it.task_id,
+                        element_id: it.element_id,
+                        error: check.error || null,
+                      }
+                    : {
+                        element_uuid: it.element_uuid,
+                        reason: "MISSING_TASK_ID",
+                        element_id: it.element_id,
+                      }
+                );
                 continue;
               }
 
