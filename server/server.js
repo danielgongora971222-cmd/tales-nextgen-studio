@@ -1893,12 +1893,14 @@ async function klingCreateElement({ name, tag, description, referenceType, voice
 
   const data = json?.data || json;
 
+  // ⚠️ HARDENING:
+  // NO aceptamos `id` como fallback porque en Kling puede ser task_id u otro identificador interno.
+  // Solo aceptamos campos explícitos de element_id.
   const elementId =
     data?.element_id ||
     data?.elementId ||
-    data?.id ||
-    data?.element?.id ||
-    data?.element?.element_id;
+    data?.element?.element_id ||
+    data?.element?.elementId;
 
   if (elementId) {
     return { mode: "ready", apiVersion, elementId: String(elementId), taskId: null, raw: json };

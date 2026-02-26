@@ -147,12 +147,14 @@ function extractElementIdFromAny(obj) {
   if (!obj) return null;
   const d = obj?.data || obj;
 
+  // ⚠️ HARDENING:
+  // Jamás usamos `id` como fallback porque puede ser task_id u otro id interno.
+  // Solo aceptamos claves explícitas de element_id.
   const direct =
     d?.element_id ||
     d?.elementId ||
     d?.element?.element_id ||
-    d?.element?.elementId ||
-    d?.element?.id;
+    d?.element?.elementId;
 
   if (direct) return String(direct);
 
@@ -161,13 +163,10 @@ function extractElementIdFromAny(obj) {
   const fromTaskResult =
     tr?.element_id ||
     tr?.elementId ||
-    tr?.id ||
     tr?.element?.element_id ||
     tr?.element?.elementId ||
-    tr?.element?.id ||
     tr?.element_info?.element_id ||
-    tr?.element_info?.elementId ||
-    tr?.element_info?.id;
+    tr?.element_info?.elementId;
 
   if (fromTaskResult) return String(fromTaskResult);
 
@@ -181,16 +180,13 @@ function extractElementIdFromAny(obj) {
   const fromArray =
     first?.element_id ||
     first?.elementId ||
-    first?.id ||
     first?.element?.element_id ||
-    first?.element?.elementId ||
-    first?.element?.id;
+    first?.element?.elementId;
 
   if (fromArray) return String(fromArray);
 
   return null;
 }
-
 function extractTaskStatusFromAny(obj) {
   const d = obj?.data || obj;
   return d?.task_status || d?.taskStatus || d?.status || d?.task?.status || d?.result?.status || d?.state || "";
