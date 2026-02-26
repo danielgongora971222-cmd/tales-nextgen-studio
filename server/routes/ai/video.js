@@ -15,34 +15,116 @@ export function createAiVideoRouter(ctx) {
   // Utilidad: pausa para loops de "polling" (Node.js)
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-    // ===============================
+  // ===============================
   // Kling Element preflight (cache)
   // ===============================
-  const _elementExistsCache = new Map(); // elementId -> { ok, exp }
+  const _elementExistsCache = new Map(); // elementId -> { ok, exp, meta }
+
+  function normalizeAdvancedList(raw) {
+    const v = raw?.data ?? raw;
+    if (Array.isArray(v)) return v;
+    if (Array.isArray(v?.data)) return v.data;
+    if (Array.isArray(v?.list)) return v.list;
+    if (Array.isArray(v?.items)) return v.items;
+    if (Array.isArray(v?.records)) return v.records;
+    if (Array.isArray(v?.result)) return v.result;
+    return null;
+  }
+
+  function extractElementIdFromAny(obj) {
+    if (!obj) return null;
+    const d = obj?.data || obj;
+
+    const direct =
+      d?.element_id ||
+      d?.elementId ||
+      d?.element?.element_id ||
+      d?.element?.elementId;
+
+    if (direct) return String(direct);
+
+    const tr = d?.task_result || d?.taskResult || d?.result || null;
+
+    const fromTaskResult =
+      tr?.element_id ||
+      tr?.elementId ||
+      tr?.element?.element_id ||
+      tr?.element?.elementId ||
+      tr?.element_info?.element_id ||
+      tr?.element_info?.elementId;
+
+    if (fromTaskResult) return String(fromTaskResult);
+
+    const arr =
+      (Array.isArray(tr?.elements) && tr.elements) ||
+      (Array.isArray(tr?.element_list) && tr.element_list) ||
+      (Array.isArray(tr?.items) && tr.items) ||
+      null;
+
+    const first = arr?.[0];
+    const fromArray =
+      first?.element_id ||
+      first?.elementId ||
+      first?.element?.element_id ||
+      first?.element?.elementId;
+
+    if (fromArray) return String(fromArray);
+
+    return null;
+  }
+
+  async function klingFindElementInAdvancedList(elementId) {
+    const target = String(elementId || "").trim();
+    if (!target) return null;
+
+    const pageSize = 500;
+    const maxPages = 5; // suficiente para la mayoría de cuentas; si tienes miles, lo subimos
+
+    for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+      const path = `/general/advanced-custom-elements?pageNum=${pageNum}&pageSize=${pageSize}`;
+
+      let raw;
+      try {
+        raw = await klingGetWithRetry(path, { timeoutMs: 20_000, retries: 1 });
+      } catch {
+        continue;
+      }
+
+      const list = normalizeAdvancedList(raw);
+      if (!Array.isArray(list) || !list.length) continue;
+
+      for (const entry of list) {
+        const eid = extractElementIdFromAny(entry);
+        if (eid && String(eid) === target) {
+          const d = entry?.data || entry;
+          const ref = d?.reference_type || d?.referenceType || null;
+          const tid = d?.task_id || d?.taskId || null;
+
+          return {
+            elementId: String(eid),
+            referenceType: ref ? String(ref) : null,
+            taskId: tid != null ? String(tid) : null,
+          };
+        }
+      }
+    }
+
+    return null;
+  }
 
   async function klingElementExistsCached(elementId, ttlMs = 5 * 60 * 1000) {
     const key = String(elementId || "").trim();
-    if (!key) return false;
+    if (!key) return { ok: false, meta: null };
 
     const now = Date.now();
     const hit = _elementExistsCache.get(key);
-    if (hit && hit.exp > now) return Boolean(hit.ok);
+    if (hit && hit.exp > now) return { ok: Boolean(hit.ok), meta: hit.meta || null };
 
-    try {
-      // Endpoint documentado para custom elements advanced:
-      // /v1/general/advanced-custom-elements/{id}
-      await klingGetWithRetry(`/general/advanced-custom-elements/${encodeURIComponent(key)}`, {
-        timeoutMs: 15_000,
-        retries: 1,
-      });
+    const meta = await klingFindElementInAdvancedList(key);
+    const ok = Boolean(meta && meta.elementId);
 
-      _elementExistsCache.set(key, { ok: true, exp: now + ttlMs });
-      return true;
-    } catch (e) {
-      // Si no existe / no pertenece al token / no aplica al scope, lo tratamos como inválido
-      _elementExistsCache.set(key, { ok: false, exp: now + ttlMs });
-      return false;
-    }
+    _elementExistsCache.set(key, { ok, meta: meta || null, exp: now + ttlMs });
+    return { ok, meta: meta || null };
   }
 
   // ===============================
@@ -676,8 +758,8 @@ const isKling = selectedModelNorm.startsWith("kling-");
             // Evita errores 1201 y da un error tuyo explicable.
             const invalid = [];
             for (const it of out) {
-              const ok = await klingElementExistsCached(it.element_id);
-              if (!ok) invalid.push(String(it.element_id));
+              const res = await klingElementExistsCached(it.element_id);
+              if (!res.ok) invalid.push(String(it.element_id));
             }
 
             if (invalid.length) {
