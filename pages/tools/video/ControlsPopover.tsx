@@ -419,14 +419,8 @@ export function ControlsPopover({
                   Multishot (<b>customize</b>) activo.
                 </div>
                 <div className={styles.noteSmall}>
-                  Total shots: {multishotTotalSeconds}s · Debe igualar la Duration seleccionada (y estar entre 3s y 15s)
+                  La duración final se calcula automáticamente como la suma de los shots (3s–15s).
                 </div>
-
-                {multishotTotalSeconds !== durationSeconds && (
-                  <div className={styles.noteSmall}>
-                    ⚠ Ajusta shots o Duration: {multishotTotalSeconds}s ≠ {durationSeconds}s
-                  </div>
-                )}
 
                 <div className={styles.formRow}>
                   <button type="button" className={styles.segmentBtn} onClick={() => setMultishotOpen(true)}>
@@ -436,18 +430,20 @@ export function ControlsPopover({
               </div>
             )}
 
-            <div className={styles.durationGrid}>
-              {allowedDurations.map((d) => (
-                <button
-                  key={d}
-                  type="button"
-                  className={`${styles.durationOption} ${durationSeconds === d ? styles.durationOptionActive : ""}`}
-                  onClick={() => setDurationSeconds(d)}
-                >
-                  {d}s
-                </button>
-              ))}
-            </div>
+            {!(isKlingV3Model && multishotEnabled && klingShotType === "customize") && (
+              <div className={styles.durationGrid}>
+                {allowedDurations.map((d) => (
+                  <button
+                    key={d}
+                    type="button"
+                    className={`${styles.durationOption} ${durationSeconds === d ? styles.durationOptionActive : ""}`}
+                    onClick={() => setDurationSeconds(d)}
+                  >
+                    {d}s
+                  </button>
+                ))}
+              </div>
+            )}
 
             <div className={styles.noteSmall}>
               Las opciones dependen del modelo (y en Veo 3.1 también de resolución/frames).

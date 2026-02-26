@@ -59,9 +59,9 @@ const MODEL_OPTIONS: Array<{
     id: "kling-o3-ref-to-video-pro",
     uiName: "Ingredientes → Video (Pro)",
     uiDesc:
-      "Crea un video nuevo desde cero usando ingredientes visuales (Elements + referencias subidas). No usa START/END.",
+      "Crea un video nuevo desde cero usando referencias visuales subidas. No usa START/END.",
     uiHint:
-      "Usa entre 1 y 7 ingredientes combinados. En el prompt puedes referenciar: @Image1..@Image7 y @Element1..@Element7 (según tu selección).",
+      "Usa entre 1 y 7 referencias. En el prompt puedes referenciar: @Image1..@Image7 (según tu selección).",
   },
   {
     id: "kling-o3-edit-video-pro",
@@ -69,7 +69,7 @@ const MODEL_OPTIONS: Array<{
     uiDesc:
       "Edita un video existente siguiendo tu prompt (cambios de estilo, objetos, ambiente, correcciones).",
     uiHint:
-      "Ideal para retoques: cambia estilo/objetos/ambiente sin perder coherencia. En el prompt, el video base es @Video1. También puedes usar @Image1.. y @Element1.. como referencias.",
+      "Ideal para retoques: cambia estilo/objetos/ambiente sin perder coherencia. En el prompt, el video base es @Video1. También puedes usar @Image1.. como referencias.",
   },
   {
     id: "kling-o3-ref-video-to-video-pro",
@@ -1596,7 +1596,7 @@ export default function EditVideoTool() {
                         ? "Describe la escena… (personaje, acción, cámara, estilo)."
                         : model === "kling-o3-edit-video-pro"
                           ? "Describe qué cambiar y qué conservar… (El video base es @Video1. Ej: “cambia el ambiente a nieve, conserva la identidad y el movimiento”)."
-                          : "Describe la nueva versión… (El video base es @Video1. Usa @Image1/@Element1 para identidad/estilo)."
+                          : "Describe la nueva versión… (El video base es @Video1. Usa @Image1 para identidad/estilo)."
                     }
                     rows={3}
                   />
@@ -1696,18 +1696,20 @@ export default function EditVideoTool() {
                 <span className={styles.controlBtnMeta}>({referenceImageIds.length})</span>
               </button>
 
-              <button
-                type="button"
-                className={styles.controlBtn}
-                onClick={() => VIDEO_ELEMENTS_UI_ENABLED && setElementsOpen(true)}
-                title={`Kling Elements (máx ${maxCombinedRefs} combinado)`}
-              >
-                <span className={styles.controlBtnLeft}>
-                  <Icon name="elements" />
-                  Elements
-                </span>
-                <span className={styles.controlBtnMeta}>({klingElementIds.length})</span>
-              </button>
+              {VIDEO_ELEMENTS_UI_ENABLED && (
+                <button
+                  type="button"
+                  className={styles.controlBtn}
+                  onClick={() => setElementsOpen(true)}
+                  title={`Kling Elements (máx ${maxCombinedRefs} combinado)`}
+                >
+                  <span className={styles.controlBtnLeft}>
+                    <Icon name="elements" />
+                    Elements
+                  </span>
+                  <span className={styles.controlBtnMeta}>({klingElementIds.length})</span>
+                </button>
+              )}
 
               {ENABLE_EDITVIDEO_MULTISHOT && model === "kling-o3-ref-to-video-pro" && (
                 <button
@@ -1886,8 +1888,8 @@ export default function EditVideoTool() {
                         <div>
                           <b>Referencias:</b>{" "}
                           {model === "kling-o3-ref-to-video-pro"
-                            ? `Requiere 1–${maxCombinedRefs} ingredientes (Elements + imágenes). `
-                            : `Máximo ${maxCombinedRefs} referencias combinadas (Elements + imágenes). `}
+                            ? `Requiere 1–${maxCombinedRefs} referencias visuales. `
+                            : `Máximo ${maxCombinedRefs} referencias visuales.`}
                           1–2 referencias fuertes suele funcionar mejor que muchas débiles.
                         </div>
                       </div>

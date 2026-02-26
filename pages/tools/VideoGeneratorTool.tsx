@@ -1078,7 +1078,7 @@ const multishotValidShots = useMemo(() => {
   return klingShots
     .map((s) => ({
       prompt: (s.prompt || "").trim(),
-      durationSeconds: clampInt(s.durationSeconds, 3, 15, 3),
+      durationSeconds: clampInt(s.durationSeconds, 1, 15, 1),
     }))
     .filter((s) => s.prompt.length > 0);
 }, [isMultishotCustomize, klingShots]);
@@ -1087,6 +1087,18 @@ const multishotTotalSeconds = useMemo(() => {
   if (!isMultishotCustomize) return 0;
   return multishotValidShots.reduce((acc, s) => acc + s.durationSeconds, 0);
 }, [isMultishotCustomize, multishotValidShots]);
+
+useEffect(() => {
+  if (!isMultishotCustomize) return;
+
+  // En customize, la duración final debe seguir la suma de shots
+  // (esto también evita que el botón GENERATE quede bloqueado por mismatch)
+  if (Number.isFinite(multishotTotalSeconds) && multishotTotalSeconds > 0) {
+    // Kling V3 normalmente trabaja 3–15s de duración total
+    const synced = clampInt(multishotTotalSeconds, 3, 15, 8);
+    if (synced !== durationSeconds) setDurationSeconds(synced);
+  }
+}, [isMultishotCustomize, multishotTotalSeconds, durationSeconds]);
 
 const multishotHasOverLimitPrompt = useMemo(() => {
   if (!isMultishotCustomize) return false;
@@ -1101,11 +1113,11 @@ const multishotIsReady = useMemo(() => {
     return prompt.trim().length > 0;
   }
 
-  // ✅ Customize: storyboard + hardening (sum durations == Duration)
+  // ✅ Customize: storyboard + hardening
   if (multishotValidShots.length < 2) return false;
   if (multishotHasOverLimitPrompt) return false;
   if (multishotTotalSeconds < 3 || multishotTotalSeconds > 15) return false;
-  return multishotTotalSeconds === durationSeconds;
+  return true;
 }, [
   isKlingV3,
   multishotEnabled,
@@ -1633,16 +1645,16 @@ const clearModalSelectedIds = () => {
           <div className={styles.promptRow}>
             <div className={styles.promptInputWrap}>
               <div className={styles.promptEditor}>
-                {(selectedKlingElementIds.length > 0 || (isKlingV3 && multishotEnabled)) && (
+                {((VIDEO_ELEMENTS_UI_ENABLED && selectedKlingElementIds.length > 0) || (isKlingV3 && multishotEnabled)) && (
                   <div className={styles.promptTags}>
-                    {selectedKlingElementIds.length > 0 && (
+                    {VIDEO_ELEMENTS_UI_ENABLED && selectedKlingElementIds.length > 0 && (
                       <button
                         type="button"
                         className={styles.promptTag}
                         onClick={() => setSelectedKlingElementIds([])}
-                        title="Click para limpiar Elements"
+                        title="Click para limpiar selección"
                       >
-                        Elements: {selectedKlingElementIds.length}
+                        Selección: {selectedKlingElementIds.length}
                         <span className={styles.promptTagRemove}>×</span>
                       </button>
                     )}
@@ -1675,7 +1687,7 @@ const clearModalSelectedIds = () => {
                             </div>
 
                             <div className={styles.multishotHint}>
-                              Escribe el prompt de cada shot. Usa <b>@</b> para insertar Elements (o abre “Elements” por shot).
+                              Escribe el prompt de cada shot. Mantén consistencia de sujeto/estilo entre shots para mejor continuidad.
                             </div>
                           </div>
 
@@ -1836,9 +1848,9 @@ const clearModalSelectedIds = () => {
                         </div>
 
                         {!multishotIsReady && (
-                          <div className={styles.multishotWarn}>
-                            Para generar: mínimo 2 shots con prompt, suma total entre 3s y 15s, cada shot 1–15s (≤ 512 caracteres), y la suma debe igualar Duration.
-                          </div>
+                        <div className={styles.multishotWarn}>
+                          Para generar: mínimo 2 shots con prompt, suma total entre 3s y 15s, y cada shot 1–15s (≤ 512 caracteres).
+                        </div>
                         )}
                       </div>
                     ) : (

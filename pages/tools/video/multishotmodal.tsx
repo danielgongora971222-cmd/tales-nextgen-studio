@@ -125,10 +125,10 @@ export function MultishotModal({
                 ))}
               </div>
 
-              <div className={styles.modalNote}>
-                Customize: el backend enviará `multi_prompt` y validará que Total shots == Duration.
-                Intelligence: NO se envía storyboard; se usa solo `prompt`.
-              </div>
+          <div className={styles.modalNote}>
+            Customize: se envía `multi_prompt` (storyboard) y la duración final se deriva de la suma de los shots.
+            Intelligence: NO se envía storyboard; se usa solo `prompt`.
+          </div>
             </>
           ) : (
             <div className={styles.note}>
