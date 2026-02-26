@@ -303,29 +303,11 @@ export function ViewerModal({
                         ))
                       : null}
 
-                    {elements && elements.length > 0
-                      ? elements.map((el: any) => {
-                          const url = getThumbUrlFromElement(el);
-                          return (
-                            <div key={el.id} className={styles.recipeRefThumb} title={String(el.name || el.id)}>
-                              {url ? (
-                                <img src={url} alt={String(el.name || el.id)} />
-                              ) : (
-                                <div className={styles.recipeEmpty}>No preview</div>
-                              )}
-                              <span className={styles.recipeRefTag}>EL</span>
-                            </div>
-                          );
-                        })
-                      : null}
 
                     {!refImages && refImageIds && refImageIds.length > 0 ? (
                       <div className={styles.recipeEmpty}>Image refs (ids): {refImageIds.map(String).join(", ")}</div>
                     ) : null}
 
-                    {!elements && elementIds && elementIds.length > 0 ? (
-                      <div className={styles.recipeEmpty}>Elements (ids): {elementIds.map(String).join(", ")}</div>
-                    ) : null}
 
                     {(!refImages || refImages.length === 0) &&
                     (!elements || elements.length === 0) &&

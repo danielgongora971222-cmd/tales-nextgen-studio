@@ -204,7 +204,7 @@ export function ControlsPopover({
               }}
             >
               <div className={styles.modelName}>Kling V3</div>
-              <div className={styles.modelDesc}>Elements + Multishot · 3–15s</div>
+              <div className={styles.modelDesc}>Multishot · 3–15s</div>
             </button>
           </div>
         )}

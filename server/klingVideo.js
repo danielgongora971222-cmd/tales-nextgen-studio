@@ -143,56 +143,6 @@ function throwKlingError({ status, json, text }) {
   throw err;
 }
 
-function patchKlingBigIntFields(rawText) {
-  // Kling devuelve algunos IDs como `long` (pueden superar 2^53 y romper precisión en JS).
-  // Importante: a veces el mismo ID viene como "element_id", pero otras como "id" o "elementId".
-  // Solución: antes de JSON.parse(), convertimos esos números largos (16+ dígitos) a strings.
-  let out = String(rawText || "");
-
-  // Cubrimos snake_case y camelCase + casos donde el element_id viene como "id"
-  const keys = [
-    // Element IDs (long)
-    "element_id",
-    "elementId",
-
-    // Task IDs (pueden venir como long en algunos responses)
-    "task_id",
-    "taskId",
-
-    // Voice IDs (long)
-    "voice_id",
-    "voiceId",
-    "element_voice_id",
-    "elementVoiceId",
-
-    // OJO: "id" existe en algunos payloads, pero SOLO lo convertimos a string
-    // (no lo usamos como fallback semántico para element_id en otros archivos).
-    "id",
-  ];
-
-  for (const key of keys) {
-    // Solo convertimos números "largos" (16+ dígitos) para no tocar ids cortos/timestamps.
-    const re = new RegExp(`("${key}"\\s*:\\s*)(\\d{16,})`, "g");
-    out = out.replace(re, `$1"$2"`);
-  }
-
-  return out;
-}
-
-function klingSafeStringify(body) {
-  // Kling espera IDs tipo "long" como NÚMERO en JSON, pero en JS debemos guardarlos como string
-  // para no perder precisión. Aquí convertimos SOLO los campos long a número SIN comillas.
-  const json = body ? JSON.stringify(body) : "{}";
-
-  // Solo convertimos strings de 16+ dígitos (para no tocar ids cortos).
-  // Campos relevantes según docs y respuestas reales:
-  // element_id / voice_id / element_voice_id (+ camelCase)
-  return json.replace(
-    /"(element_id|voice_id|element_voice_id|task_id|elementId|voiceId|elementVoiceId|taskId)"\s*:\s*"(\d{16,})"/g,
-    (_m, key, digits) => `"${key}":${digits}`
-  );
-}
-
 async function klingFetch(path, options = {}) {
   const url = resolveKlingUrl(path);
   const token = getKlingAuthToken();
@@ -207,8 +157,7 @@ async function klingFetch(path, options = {}) {
 
   let json = null;
   try {
-    const patched = patchKlingBigIntFields(text);
-    json = patched ? JSON.parse(patched) : null;
+    json = text ? JSON.parse(text) : null;
   } catch {}
 
   if (!resp.ok || (json && json.code !== undefined && json.code !== 0)) {
@@ -246,7 +195,7 @@ async function klingPostForm(path, fields = {}) {
 }
 
 export async function klingPost(path, body) {
-  const payload = klingSafeStringify(body);
+  const payload = body ? JSON.stringify(body) : "{}";
   const { json } = await klingFetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -313,7 +262,7 @@ export async function klingPostWithRetry(path, body, opts = {}) {
   const timeoutMs = Number(opts.timeoutMs || 60000);
   const retries = Math.max(0, Math.min(5, Number(opts.retries || 2)));
 
-  const payload = klingSafeStringify(body);
+  const payload = body ? JSON.stringify(body) : "{}";
 
   let attempt = 0;
   while (true) {

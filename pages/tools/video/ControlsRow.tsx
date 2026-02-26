@@ -25,7 +25,7 @@ type Props = {
   klingSound: boolean;
   toggleSound: () => void;
 
-  supportsVideoElements: boolean;
+  isKlingV3: boolean;
   selectedKlingElementCount: number;
   openElements: () => void;
 
@@ -49,7 +49,7 @@ export function ControlsRow({
   supportsSound,
   klingSound,
   toggleSound,
-  supportsVideoElements,
+  isKlingV3,
   selectedKlingElementCount,
   openElements,
   multishotEnabled,
@@ -148,7 +148,7 @@ export function ControlsRow({
         </button>
       )}
 
-      {supportsVideoElements && (
+      {isKlingV3 && (
         <>
           <button
             type="button"

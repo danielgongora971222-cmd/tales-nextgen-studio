@@ -6,7 +6,6 @@ import {
   FalJobSchema,
   FalFinalizeSchema,
 } from "../../schemas/index.js";
-import { klingGetWithRetry } from "../../klingVideo.js";
 import { checkUserRateLimit } from "../../lib/userRateLimit.js";
 import { assertJobLimits } from "../../lib/jobLimits.js";
 
@@ -14,184 +13,6 @@ export function createAiVideoRouter(ctx) {
 
   // Utilidad: pausa para loops de "polling" (Node.js)
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-  // ===============================
-  // Kling Element preflight (cache)
-  // ===============================
-  const _elementExistsCache = new Map(); // elementId -> { ok, exp, meta }
-
-  function normalizeAdvancedList(raw) {
-    const v = raw?.data ?? raw;
-    if (Array.isArray(v)) return v;
-    if (Array.isArray(v?.data)) return v.data;
-    if (Array.isArray(v?.list)) return v.list;
-    if (Array.isArray(v?.items)) return v.items;
-    if (Array.isArray(v?.records)) return v.records;
-    if (Array.isArray(v?.result)) return v.result;
-    return null;
-  }
-
-  function extractElementIdFromAny(obj) {
-    if (!obj) return null;
-    const d = obj?.data || obj;
-
-    const direct =
-      d?.element_id ||
-      d?.elementId ||
-      d?.element?.element_id ||
-      d?.element?.elementId;
-
-    if (direct) return String(direct);
-
-    const tr = d?.task_result || d?.taskResult || d?.result || null;
-
-    const fromTaskResult =
-      tr?.element_id ||
-      tr?.elementId ||
-      tr?.element?.element_id ||
-      tr?.element?.elementId ||
-      tr?.element_info?.element_id ||
-      tr?.element_info?.elementId;
-
-    if (fromTaskResult) return String(fromTaskResult);
-
-    const arr =
-      (Array.isArray(tr?.elements) && tr.elements) ||
-      (Array.isArray(tr?.element_list) && tr.element_list) ||
-      (Array.isArray(tr?.items) && tr.items) ||
-      null;
-
-    const first = arr?.[0];
-    const fromArray =
-      first?.element_id ||
-      first?.elementId ||
-      first?.element?.element_id ||
-      first?.element?.elementId;
-
-    if (fromArray) return String(fromArray);
-
-    return null;
-  }
-
-  async function klingFindElementInAdvancedList(elementId) {
-    const target = String(elementId || "").trim();
-    if (!target) return null;
-
-    const pageSize = 500;
-    const maxPages = 5; // suficiente para la mayoría de cuentas; si tienes miles, lo subimos
-
-    for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
-      const path = `/general/advanced-custom-elements?pageNum=${pageNum}&pageSize=${pageSize}`;
-
-      let raw;
-      try {
-        raw = await klingGetWithRetry(path, { timeoutMs: 20_000, retries: 1 });
-      } catch {
-        continue;
-      }
-
-      const list = normalizeAdvancedList(raw);
-      if (!Array.isArray(list) || !list.length) continue;
-
-      for (const entry of list) {
-        const eid = extractElementIdFromAny(entry);
-        if (eid && String(eid) === target) {
-          const d = entry?.data || entry;
-          const ref = d?.reference_type || d?.referenceType || null;
-          const tid = d?.task_id || d?.taskId || null;
-
-          return {
-            elementId: String(eid),
-            referenceType: ref ? String(ref) : null,
-            taskId: tid != null ? String(tid) : null,
-          };
-        }
-      }
-    }
-
-    return null;
-  }
-
-  async function klingElementExistsCached(elementId, ttlMs = 5 * 60 * 1000) {
-    const key = String(elementId || "").trim();
-    if (!key) return { ok: false, meta: null };
-
-    const now = Date.now();
-    const hit = _elementExistsCache.get(key);
-    if (hit && hit.exp > now) return { ok: Boolean(hit.ok), meta: hit.meta || null };
-
-    const meta = await klingFindElementInAdvancedList(key);
-    const ok = Boolean(meta && meta.elementId);
-
-    _elementExistsCache.set(key, { ok, meta: meta || null, exp: now + ttlMs });
-    return { ok, meta: meta || null };
-  }
-
-  // ===============================
-  // Kling Elements mention mapping
-  // UX: @slug  -> API Kling: <<element_1>>
-  // ===============================
-
-  function slugifyName(s) {
-    return (
-      (s || "")
-        .normalize("NFKD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "_")
-        .replace(/^_+|_+$/g, "")
-        .slice(0, 28) || "element"
-    );
-  }
-
-  function makeElementTag(name) {
-    return `@${slugifyName(name || "element")}`;
-  }
-
-  function buildElementTokenMap(allElementsOrdered) {
-    // Debe ser IDENTICO al frontend (VideoGeneratorTool.tsx)
-    const reserved = new Set(["@element1", "@element2", "@element3", "@element4", "@element5"]);
-    const used = new Set(reserved);
-    const map = new Map(); // elementUuid -> token
-
-    for (const el of allElementsOrdered || []) {
-      const base = makeElementTag(el.name || "element");
-      let token = base;
-
-      if (used.has(token)) {
-        let n = 2;
-        while (used.has(`${base}_${n}`)) n++;
-        token = `${base}_${n}`;
-      }
-
-      used.add(token);
-      map.set(String(el.id), token);
-    }
-    return map;
-  }
-
-  function replaceSelectedElementMentionsWithPlaceholders(text, selectedUuids, tokenByUuid) {
-    const selected = Array.isArray(selectedUuids) ? selectedUuids.map(String) : [];
-    if (!selected.length) return String(text || "");
-
-    // Orden = orden del array selectedUuids (así <<element_1>> corresponde al 1er elemento del element_list)
-    const tokenToPlaceholder = new Map();
-    for (let i = 0; i < selected.length; i++) {
-      const uuid = selected[i];
-      const token = tokenByUuid.get(uuid);
-      if (!token) continue;
-      tokenToPlaceholder.set(token.toLowerCase(), `<<element_${i + 1}>>`);
-    }
-
-    const raw = String(text || "");
-    if (!raw) return raw;
-
-    // Reemplaza solo menciones que sean de Elements reconocidos y seleccionados
-    return raw.replace(/@[a-z0-9_]+/gi, (m) => {
-      const ph = tokenToPlaceholder.get(String(m).toLowerCase());
-      return ph || m;
-    });
-  }
 
   const router = express.Router();
 
@@ -700,7 +521,7 @@ const isKling = selectedModelNorm.startsWith("kling-");
 
           const { data: rows, error: rowsErr } = await supabaseAdmin
             .from("kling_elements")
-            .select("id, owner_id, reference_type, kling_task_id, kling_element_id, status, status_detail")
+            .select("id, owner_id, kling_element_id, status, status_detail")
             .in("id", klingElementIds)
             .eq("owner_id", user.id);
 
@@ -746,229 +567,14 @@ const isKling = selectedModelNorm.startsWith("kling-");
               );
             }
 
-            const rawStr = String(raw).trim();
-            const taskStr = row?.kling_task_id != null ? String(row.kling_task_id).trim() : "";
+          const rawStr = String(raw).trim();
 
-            // ⚠️ NO convertir a Number: element_id es "long" y puede exceder 2^53-1.
-            out.push({
-              element_id: rawStr,
-              task_id: taskStr,
-              reference_type: row?.reference_type ? String(row.reference_type) : null,
-              element_uuid: elementUuid,
-            });
+          // ⚠️ NO convertir a Number: element_id es "long" y puede exceder 2^53-1.
+          // Si lo conviertes a Number pierdes precisión y Kling responde "Element id not found".
+          out.push({ element_id: rawStr });
           }
 
-          if (out.length) {
-            // Preflight (fiable): valida por task_id, no por listado.
-            // Si Kling responde "succeed" pero el element_id no coincide, reportamos mismatch (precisión/guardado viejo).
-            const invalid = [];
-            const mismatch = [];
-            const repaired = [];
-
-            // helpers locales (no dependen del listado)
-            function extractTaskStatusFromAny(obj) {
-              const d = obj?.data || obj;
-              return (
-                d?.task_status ||
-                d?.taskStatus ||
-                d?.status ||
-                d?.task?.status ||
-                d?.result?.status ||
-                d?.state ||
-                ""
-              );
-            }
-            function isSuccessStatus(st) {
-              const s = String(st || "").toLowerCase();
-              return s === "succeed" || s === "success" || s === "done" || s === "finished";
-            }
-            function extractElementIdFromAny(obj) {
-              if (!obj) return null;
-              const d = obj?.data || obj;
-
-              const direct =
-                d?.element_id ||
-                d?.elementId ||
-                d?.element?.element_id ||
-                d?.element?.elementId;
-
-              if (direct) return String(direct);
-
-              const tr = d?.task_result || d?.taskResult || d?.result || null;
-
-              const fromTaskResult =
-                tr?.element_id ||
-                tr?.elementId ||
-                tr?.element?.element_id ||
-                tr?.element?.elementId ||
-                tr?.element_info?.element_id ||
-                tr?.element_info?.elementId;
-
-              if (fromTaskResult) return String(fromTaskResult);
-
-              return null;
-            }
-
-            async function validateByTaskId(taskId) {
-              const safe = String(taskId || "").trim();
-              if (!safe) return { ok: false, status: "", elementId: null, pathUsed: null };
-
-              const paths = [
-                `/general/advanced-custom-elements/tasks/${encodeURIComponent(safe)}`,
-                `/general/advanced-custom-elements/${encodeURIComponent(safe)}`,
-              ];
-
-              let lastErr = null;
-              for (const p of paths) {
-                try {
-                  const raw = await klingGetWithRetry(p, { timeoutMs: 20_000, retries: 1 });
-                  const st = extractTaskStatusFromAny(raw);
-                  const eid = extractElementIdFromAny(raw);
-                  return { ok: true, status: st, elementId: eid, pathUsed: p };
-                } catch (e) {
-                  lastErr = e;
-                  continue;
-                }
-              }
-
-              return { ok: false, status: "", elementId: null, pathUsed: null, error: String(lastErr?.message || lastErr) };
-            }
-
-            for (const it of out) {
-              // 1) Validación principal por task_id (endpoint más fiable cuando existe).
-              // 2) Fallback por element_id en listado advanced (útil para rows históricos sin task_id
-              //    o con task_id dañado por precisión/token mismatch), para reducir falsos negativos.
-              const check = it.task_id ? await validateByTaskId(it.task_id) : { ok: false, status: "", elementId: null, pathUsed: null };
-
-              if (!check.ok) {
-                const fallback = await klingElementExistsCached(it.element_id);
-                if (fallback.ok) continue;
-
-                invalid.push(
-                  it.task_id
-                    ? {
-                        element_uuid: it.element_uuid,
-                        reason: "TASK_NOT_FOUND_OR_TOKEN_MISMATCH",
-                        task_id: it.task_id,
-                        element_id: it.element_id,
-                        error: check.error || null,
-                      }
-                    : {
-                        element_uuid: it.element_uuid,
-                        reason: "MISSING_TASK_ID",
-                        element_id: it.element_id,
-                      }
-                );
-                continue;
-              }
-
-              // Si la task dice success pero no trae elementId, igual es sospechoso.
-              if (isSuccessStatus(check.status) && !check.elementId) {
-                invalid.push({
-                  element_uuid: it.element_uuid,
-                  reason: "TASK_SUCCEED_BUT_NO_ELEMENT_ID",
-                  task_id: it.task_id,
-                  element_id: it.element_id,
-                  pathUsed: check.pathUsed,
-                });
-                continue;
-              }
-
-              // Si task devuelve elementId y no coincide, preferimos auto-repair a fallar.
-              // Causa típica: DB guardó un id viejo/incorrecto; task_id es la fuente de verdad.
-              if (check.elementId && String(check.elementId) !== String(it.element_id)) {
-                mismatch.push({
-                  element_uuid: it.element_uuid,
-                  task_id: it.task_id,
-                  expected_element_id: String(it.element_id),
-                  kling_element_id: String(check.elementId),
-                  pathUsed: check.pathUsed,
-                });
-                it.element_id = String(check.elementId);
-                repaired.push({
-                  element_uuid: it.element_uuid,
-                  old_element_id: String(mismatch[mismatch.length - 1].expected_element_id),
-                  new_element_id: String(check.elementId),
-                  task_id: it.task_id,
-                });
-              }
-            }
-
-            if (repaired.length) {
-              for (const r of repaired) {
-                const { error: updErr } = await supabaseAdmin
-                  .from("kling_elements")
-                  .update({
-                    kling_element_id: r.new_element_id,
-                    status_detail: "repair: synced kling_element_id from task validation",
-                    updated_at: new Date().toISOString(),
-                  })
-                  .eq("id", r.element_uuid)
-                  .eq("owner_id", user.id);
-
-                if (updErr) {
-                  console.warn("[KLING_ELEMENTS_REPAIR_UPDATE_FAILED]", {
-                    ownerId: user.id,
-                    elementUuid: r.element_uuid,
-                    updErr,
-                  });
-                }
-              }
-
-              console.warn("[KLING_ELEMENTS_REPAIRED_FROM_TASK]", {
-                ownerId: user.id,
-                repaired,
-              });
-            }
-
-            if (invalid.length) {
-              // Si no se pudo validar por task/listado, evitamos false negatives de preflight.
-              // Kling validará definitivamente element_list y devolverá error proveedor si aplica.
-              console.warn("[KLING_ELEMENTS_PREFLIGHT_SOFT_FAIL]", {
-                ownerId: user.id,
-                invalidCount: invalid.length,
-                invalid,
-              });
-            }
-
-            // IMPORTANTE: elementList debe ser SOLO [{element_id: "..."}] como espera Kling
-            elementList = out.map((x) => ({ element_id: String(x.element_id) }));
-          }
-        }
-
-        // ✅ Traducir @slug -> <<element_n>> para Omni (prompt y multi_prompt)
-        // Docs: prompt puede referenciar <<element_1>> ... y element_list define el orden.
-        let translateMentions = (t) => String(t || "");
-
-        if (hasElements) {
-          // Para que coincida con el frontend, construimos tokens usando TODOS los elements del usuario
-          // ordenados por created_at desc (igual que GET /api/kling/elements).
-          const { data: allEls, error: allElsErr } = await supabaseAdmin
-            .from("kling_elements")
-            .select("id, name, created_at")
-            .eq("owner_id", user.id)
-            .order("created_at", { ascending: false });
-
-          if (allElsErr) {
-            throw httpError(500, "DB_ERROR", "No pude leer tus Elements (token map).", { allElsErr });
-          }
-
-          const tokenByUuid = buildElementTokenMap(allEls || []);
-
-          translateMentions = (t) =>
-            replaceSelectedElementMentionsWithPlaceholders(
-              t,
-              klingElementIds, // orden del element_list
-              tokenByUuid
-            );
-
-          // Aplicar a multi_prompt si existe
-          if (multiPrompt && Array.isArray(multiPrompt)) {
-            multiPrompt = multiPrompt.map((s) => ({
-              ...s,
-              prompt: translateMentions(s?.prompt),
-            }));
-          }
+          if (out.length) elementList = out;
         }
 
         // Image list (first/last frame) via URLs firmadas para no exceder el JSON limit (25mb)
@@ -1000,23 +606,10 @@ const isKling = selectedModelNorm.startsWith("kling-");
         const ar = aspectRatio || "16:9";
 
         // ✅ Kling Omni API (Tasks)
-        const ALLOWED_OMNI_MODEL_NAMES = new Set(["kling-video-o1", "kling-v3-omni"]);
-
-        // Preferimos una variable nueva (más clara) pero mantenemos compatibilidad con la anterior.
-        let omniModelName = String(
-          process.env.KLING_OMNI_MODEL_NAME ||
-            process.env.KLING_O3_MODEL_NAME || // compat legacy
-            "kling-v3-omni"
-        ).trim();
-
-        if (!ALLOWED_OMNI_MODEL_NAMES.has(omniModelName)) {
-          // Hardening: evita 1201 por valores inválidos.
-          omniModelName = "kling-v3-omni";
-        }
-
         const omniPayload = {
-          // Docs Omni-Video: enum model_name = kling-video-o1 | kling-v3-omni
-          model_name: omniModelName,
+          // ✅ O3 Pro debe usar un model_name O3 (video character elements requieren O3+)
+          // Docs: video customization elements soportados para modelos `kling-video-o3` y posteriores. :contentReference[oaicite:4]{index=4}
+          model_name: String(process.env.KLING_O3_MODEL_NAME || "kling-video-o3"),
           mode: klingModeValue,
           duration: String(dur),
           ...(soundValue !== undefined ? { sound: soundValue } : {}),
@@ -1039,7 +632,7 @@ const isKling = selectedModelNorm.startsWith("kling-");
               "Kling O3: prompt es obligatorio cuando no usas multi_shot."
             );
           }
-          omniPayload.prompt = translateMentions(p);
+          omniPayload.prompt = p;
         }
 
         let taskResponse = null;
@@ -1316,7 +909,7 @@ const isKling = selectedModelNorm.startsWith("kling-");
 
           const { data: rows, error: rowsErr } = await supabaseAdmin
             .from("kling_elements")
-            .select("id, owner_id, reference_type, kling_task_id, kling_element_id, status, status_detail")
+            .select("id, owner_id, kling_element_id, status, status_detail")
             .in("id", klingElementIds)
             .eq("owner_id", user.id);
 
@@ -1369,38 +962,6 @@ const isKling = selectedModelNorm.startsWith("kling-");
           }
 
           if (out.length) elementList = out;
-        }
-
-        // ✅ Traducir @slug -> <<element_n>> (Kling V3 y Omni-Video cuando V3 cae a omni-video)
-        let translateMentions = (t) => String(t || "");
-
-        if (hasElements) {
-          const { data: allEls, error: allElsErr } = await supabaseAdmin
-            .from("kling_elements")
-            .select("id, name, created_at")
-            .eq("owner_id", user.id)
-            .order("created_at", { ascending: false });
-
-          if (allElsErr) {
-            throw httpError(500, "DB_ERROR", "No pude leer tus Elements (token map).", { allElsErr });
-          }
-
-          const tokenByUuid = buildElementTokenMap(allEls || []);
-
-          translateMentions = (t) =>
-            replaceSelectedElementMentionsWithPlaceholders(
-              t,
-              klingElementIds, // orden del element_list
-              tokenByUuid
-            );
-
-          // multi_prompt también debe traducirse
-          if (multiPrompt && Array.isArray(multiPrompt)) {
-            multiPrompt = multiPrompt.map((s) => ({
-              ...s,
-              prompt: translateMentions(s?.prompt),
-            }));
-          }
         }
 
         const klingModeValue = klingMode || "std";
@@ -1462,7 +1023,7 @@ const isKling = selectedModelNorm.startsWith("kling-");
                     "Kling: prompt es obligatorio cuando shot_type=intelligence."
                   );
                 }
-                basePayload.prompt = translateMentions(p);
+                basePayload.prompt = p;
               }
             } else {
               const p = String(prompt || "").trim();
@@ -1473,7 +1034,7 @@ const isKling = selectedModelNorm.startsWith("kling-");
                   "Kling: prompt es obligatorio cuando no usas multi_shot."
                 );
               }
-              basePayload.prompt = translateMentions(p);
+              basePayload.prompt = p;
             }
 
             taskResponse = await klingPostWithRetry(
@@ -1544,7 +1105,7 @@ const isKling = selectedModelNorm.startsWith("kling-");
                     "Kling: prompt es obligatorio cuando shot_type=intelligence."
                   );
                 }
-                basePayload.prompt = translateMentions(p);
+                basePayload.prompt = p;
               }
             } else {
               const p = String(prompt || "").trim();
@@ -1555,7 +1116,7 @@ const isKling = selectedModelNorm.startsWith("kling-");
                   "Kling: prompt es obligatorio cuando no usas multi_shot."
                 );
               }
-              basePayload.prompt = translateMentions(p);
+              basePayload.prompt = p;
             }
 
             taskResponse = await klingPostWithRetry(

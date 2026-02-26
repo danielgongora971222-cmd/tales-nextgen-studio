@@ -1570,14 +1570,12 @@ function extractElementIdFromAny(obj) {
   const d = obj?.data || obj;
 
   // 1) Directo
-  // ⚠️ HARDENING:
-  // Jamás usamos `id` como fallback porque puede ser task_id u otro id interno.
-  // Solo aceptamos claves explícitas de element_id.
   const direct =
     d?.element_id ||
     d?.elementId ||
     d?.element?.element_id ||
-    d?.element?.elementId;
+    d?.element?.elementId ||
+    d?.element?.id;
 
   if (direct) return String(direct);
 
@@ -1587,10 +1585,13 @@ function extractElementIdFromAny(obj) {
   const fromTaskResult =
     tr?.element_id ||
     tr?.elementId ||
+    tr?.id ||
     tr?.element?.element_id ||
     tr?.element?.elementId ||
+    tr?.element?.id ||
     tr?.element_info?.element_id ||
-    tr?.element_info?.elementId;
+    tr?.element_info?.elementId ||
+    tr?.element_info?.id;
 
   if (fromTaskResult) return String(fromTaskResult);
 
@@ -1605,8 +1606,11 @@ function extractElementIdFromAny(obj) {
   const fromArray =
     first?.element_id ||
     first?.elementId ||
+    first?.id ||
     first?.element?.element_id ||
-    first?.element?.elementId;
+    first?.element?.elementId ||
+    first?.element?.id;
+
   if (fromArray) return String(fromArray);
 
   return null;
@@ -1889,21 +1893,12 @@ async function klingCreateElement({ name, tag, description, referenceType, voice
 
   const data = json?.data || json;
 
-  // ⚠️ HARDENING:
-  // NO aceptamos `id` como fallback porque en Kling puede ser task_id u otro identificador interno.
-  // Solo aceptamos campos explícitos de element_id.
-  // ✅ IMPORTANTÍSIMO:
-  // En la API "advanced", la creación suele devolver task_id primero.
-  // El element_id real aparece después (task_result.element_id) al consultar el task.
-  // NO debemos usar data.id como fallback porque puede ser un task_id.
   const elementId =
     data?.element_id ||
     data?.elementId ||
-    data?.task_result?.element_id ||
-    data?.task_result?.elementId ||
-    data?.task_result?.element?.element_id ||
-    data?.task_result?.element?.elementId ||
-    null;
+    data?.id ||
+    data?.element?.id ||
+    data?.element?.element_id;
 
   if (elementId) {
     return { mode: "ready", apiVersion, elementId: String(elementId), taskId: null, raw: json };
@@ -1962,39 +1957,6 @@ app.get("/api/kling/elements", async (req, res) => {
 
   if (dbErr) {
     return res.status(500).json({ ok: false, error: { code: "DB_SELECT_FAILED", message: dbErr.message } });
-  }
-
-  // ✅ Auto-repair: algunos rows viejos quedaron con kling_element_id == kling_task_id (bug histórico).
-  // Eso rompe video generation con Elements (Kling 1201: Element id not found).
-  const rowsNeedingRepair = (data || []).filter((r) => {
-    const tid = r?.kling_task_id ? String(r.kling_task_id) : "";
-    const eid = r?.kling_element_id ? String(r.kling_element_id) : "";
-    return Boolean(tid && eid && tid === eid && String(r?.status || "") !== "failed");
-  });
-
-  if (rowsNeedingRepair.length) {
-    const ids = rowsNeedingRepair.map((r) => r.id);
-
-    await supabaseAdmin
-      .from("kling_elements")
-      .update({
-        status: "creating",
-        status_detail: "repair: kling_element_id matched kling_task_id (will repoll)",
-        kling_element_id: null,
-        next_check_at: new Date().toISOString(),
-        poll_failures: 0,
-        locked_at: null,
-        locked_by: null,
-        updated_at: new Date().toISOString(),
-      })
-      .in("id", ids);
-
-    // Reflejamos el cambio en memoria para esta respuesta
-    for (const r of rowsNeedingRepair) {
-      r.status = "creating";
-      r.status_detail = "repair: kling_element_id matched kling_task_id (will repoll)";
-      r.kling_element_id = null;
-    }
   }
 
   const items = await Promise.all(
@@ -2213,26 +2175,6 @@ app.get("/api/kling/elements/:id", async (req, res) => {
   }
   if (row.owner_id !== user.id) {
     return res.status(403).json({ ok: false, error: { code: "FORBIDDEN", message: "No tienes permiso." } });
-  }
-    // ✅ Auto-repair (caso histórico): kling_element_id guardado erróneamente como task_id
-  if (row.kling_task_id && row.kling_element_id && String(row.kling_task_id) === String(row.kling_element_id) && row.status !== "failed") {
-    await supabaseAdmin
-      .from("kling_elements")
-      .update({
-        status: "creating",
-        status_detail: "repair: kling_element_id matched kling_task_id (will repoll)",
-        kling_element_id: null,
-        next_check_at: new Date().toISOString(),
-        poll_failures: 0,
-        locked_at: null,
-        locked_by: null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", row.id);
-
-    row.status = "creating";
-    row.status_detail = "repair: kling_element_id matched kling_task_id (will repoll)";
-    row.kling_element_id = null;
   }
 
   // Si está creando, hacemos 1 poll por request

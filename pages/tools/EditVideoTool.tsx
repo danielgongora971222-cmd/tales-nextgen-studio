@@ -40,13 +40,15 @@ const PENDING_KEY = "tales_pending_video_edit_job_v2";
 // 🔒 Feature flag: oculta Storyboard/Multishot SOLO en Edit Video Tool (por ahora)
 const ENABLE_EDITVIDEO_MULTISHOT = false;
 
+// 🔒 VIDEO: ocultar/deshabilitar Elements en editor de video
+const VIDEO_ELEMENTS_UI_ENABLED = false;
+
 type PendingVideoEditJob = {
   supabaseJobId: string;
   prompt: string;
   model: EditModelId;
   createdAt: number;
 };
-
 const MODEL_OPTIONS: Array<{
   id: EditModelId;
   uiName: string;
@@ -220,6 +222,11 @@ export default function EditVideoTool() {
   const [pickerOpen, setPickerOpen] = useState<null | "start" | "end" | "video">(null);
   const [refPickerOpen, setRefPickerOpen] = useState(false);
   const [elementsOpen, setElementsOpen] = useState(false);
+    useEffect(() => {
+    if (VIDEO_ELEMENTS_UI_ENABLED) return;
+    setKlingElementIds([]);
+    setElementsOpen(false);
+  }, []);
   const [multishotOpen, setMultishotOpen] = useState(false);
 
   // Pending resume
@@ -1383,8 +1390,8 @@ export default function EditVideoTool() {
                               className={styles.frameCard}
                               role="button"
                               tabIndex={0}
-                              onClick={() => setElementsOpen(true)}
-                              onKeyDown={(e) => e.key === "Enter" && setElementsOpen(true)}
+                              onClick={() => VIDEO_ELEMENTS_UI_ENABLED && setElementsOpen(true)}
+                              onKeyDown={(e) => e.key === "Enter" && VIDEO_ELEMENTS_UI_ENABLED && setElementsOpen(true)}
                               title={`Elements (máx ${maxCombinedRefs} combinado)`}
                             >
                               <div className={styles.frameCardEmpty}>
@@ -1455,7 +1462,7 @@ export default function EditVideoTool() {
                       </button>
                     )}
 
-                    {klingElementIds.length > 0 && (
+                    {VIDEO_ELEMENTS_UI_ENABLED && klingElementIds.length > 0 && (
                       <button type="button" className={styles.promptTag} onClick={() => setElementsOpen(true)}>
                         Elements: {klingElementIds.length}
                         <span
@@ -1692,7 +1699,7 @@ export default function EditVideoTool() {
               <button
                 type="button"
                 className={styles.controlBtn}
-                onClick={() => setElementsOpen(true)}
+                onClick={() => VIDEO_ELEMENTS_UI_ENABLED && setElementsOpen(true)}
                 title={`Kling Elements (máx ${maxCombinedRefs} combinado)`}
               >
                 <span className={styles.controlBtnLeft}>
@@ -1946,24 +1953,26 @@ export default function EditVideoTool() {
         getAssetUrl={getAssetUrl}
       />
 
-      <KlingElementsModal
-        open={elementsOpen}
-        onClose={() => setElementsOpen(false)}
-        elements={klingElements}
-        query={elementsQuery}
-        setQuery={setElementsQuery}
-        selectedIds={klingElementIds}
-        setSelectedIds={setKlingElementIdsLimited}
-        onClear={() => setKlingElementIds([])}
-        imageAssets={imageAssets}
-        videoAssets={videoAssets}
-        getAssetUrl={getAssetUrl}
-        onRefresh={reloadKlingElements}
-        onAssetUploaded={(asset) =>
-          setImageAssets((prev) => [asset, ...prev.filter((x) => x.id !== asset.id)])
-        }
-        uploadToolName="video-elements"
-      />
+      {VIDEO_ELEMENTS_UI_ENABLED && (
+        <KlingElementsModal
+          open={elementsOpen}
+          onClose={() => setElementsOpen(false)}
+          elements={klingElements}
+          query={elementsQuery}
+          setQuery={setElementsQuery}
+          selectedIds={klingElementIds}
+          setSelectedIds={setKlingElementIdsLimited}
+          onClear={() => setKlingElementIds([])}
+          imageAssets={imageAssets}
+          videoAssets={videoAssets}
+          getAssetUrl={getAssetUrl}
+          onRefresh={reloadKlingElements}
+          onAssetUploaded={(asset) =>
+            setImageAssets((prev) => [asset, ...prev.filter((x) => x.id !== asset.id)])
+          }
+          uploadToolName="video-elements"
+        />
+      )}
 
       {ENABLE_EDITVIDEO_MULTISHOT && (
         <O3MultishotModal
