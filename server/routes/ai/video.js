@@ -895,12 +895,14 @@ const isKling = selectedModelNorm.startsWith("kling-");
             }
 
             if (invalid.length) {
-              throw httpError(
-                400,
-                "KLING_ELEMENT_INVALID_OR_TOKEN_SCOPE",
-                "Uno o más Elements no se pudieron validar en Kling por task_id (token/cuenta/scope) o les falta task_id. Re-crea el Element o usa Refresh status.",
-                { invalid }
-              );
+              // Tolerancia controlada: en cuentas con datos legacy o task_id no resoluble,
+              // no bloqueamos la generación si el usuario tiene el element_id guardado como "ready".
+              // Kling validará definitivamente el element_list al crear la tarea.
+              console.warn("[KLING_ELEMENTS_PREFLIGHT_SOFT_FAIL]", {
+                ownerId: user.id,
+                invalidCount: invalid.length,
+                invalid,
+              });
             }
 
             // IMPORTANTE: elementList debe ser SOLO [{element_id: "..."}] como espera Kling
