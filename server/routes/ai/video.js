@@ -6,6 +6,7 @@ import {
   FalJobSchema,
   FalFinalizeSchema,
 } from "../../schemas/index.js";
+import { klingGetWithRetry } from "../../klingVideo.js";
 import { checkUserRateLimit } from "../../lib/userRateLimit.js";
 import { assertJobLimits } from "../../lib/jobLimits.js";
 
@@ -13,6 +14,36 @@ export function createAiVideoRouter(ctx) {
 
   // Utilidad: pausa para loops de "polling" (Node.js)
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    // ===============================
+  // Kling Element preflight (cache)
+  // ===============================
+  const _elementExistsCache = new Map(); // elementId -> { ok, exp }
+
+  async function klingElementExistsCached(elementId, ttlMs = 5 * 60 * 1000) {
+    const key = String(elementId || "").trim();
+    if (!key) return false;
+
+    const now = Date.now();
+    const hit = _elementExistsCache.get(key);
+    if (hit && hit.exp > now) return Boolean(hit.ok);
+
+    try {
+      // Endpoint documentado para custom elements advanced:
+      // /v1/general/advanced-custom-elements/{id}
+      await klingGetWithRetry(`/general/advanced-custom-elements/${encodeURIComponent(key)}`, {
+        timeoutMs: 15_000,
+        retries: 1,
+      });
+
+      _elementExistsCache.set(key, { ok: true, exp: now + ttlMs });
+      return true;
+    } catch (e) {
+      // Si no existe / no pertenece al token / no aplica al scope, lo tratamos como inválido
+      _elementExistsCache.set(key, { ok: false, exp: now + ttlMs });
+      return false;
+    }
+  }
 
   // ===============================
   // Kling Elements mention mapping
@@ -640,7 +671,26 @@ const isKling = selectedModelNorm.startsWith("kling-");
           out.push({ element_id: rawStr });
           }
 
-          if (out.length) elementList = out;
+          if (out.length) {
+            // Preflight: verifica que Kling reconoce cada element_id ANTES de crear la task de video.
+            // Evita errores 1201 y da un error tuyo explicable.
+            const invalid = [];
+            for (const it of out) {
+              const ok = await klingElementExistsCached(it.element_id);
+              if (!ok) invalid.push(String(it.element_id));
+            }
+
+            if (invalid.length) {
+              throw httpError(
+                400,
+                "KLING_ELEMENT_INVALID_OR_OUT_OF_SCOPE",
+                "Uno o más Elements no existen en Kling para tu cuenta/token o no aplican al modelo/flujo actual. Re-crea el Element o refresca su status.",
+                { invalid }
+              );
+            }
+
+            elementList = out;
+          }
         }
 
         // ✅ Traducir @slug -> <<element_n>> para Omni (prompt y multi_prompt)

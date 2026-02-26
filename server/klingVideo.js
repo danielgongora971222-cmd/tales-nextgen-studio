@@ -151,12 +151,22 @@ function patchKlingBigIntFields(rawText) {
 
   // Cubrimos snake_case y camelCase + casos donde el element_id viene como "id"
   const keys = [
+    // Element IDs (long)
     "element_id",
     "elementId",
+
+    // Task IDs (pueden venir como long en algunos responses)
+    "task_id",
+    "taskId",
+
+    // Voice IDs (long)
     "voice_id",
     "voiceId",
     "element_voice_id",
     "elementVoiceId",
+
+    // OJO: "id" existe en algunos payloads, pero SOLO lo convertimos a string
+    // (no lo usamos como fallback semántico para element_id en otros archivos).
     "id",
   ];
 
@@ -178,7 +188,7 @@ function klingSafeStringify(body) {
   // Campos relevantes según docs y respuestas reales:
   // element_id / voice_id / element_voice_id (+ camelCase)
   return json.replace(
-    /"(element_id|voice_id|element_voice_id|elementId|voiceId|elementVoiceId)"\s*:\s*"(\d{16,})"/g,
+    /"(element_id|voice_id|element_voice_id|task_id|elementId|voiceId|elementVoiceId|taskId)"\s*:\s*"(\d{16,})"/g,
     (_m, key, digits) => `"${key}":${digits}`
   );
 }
