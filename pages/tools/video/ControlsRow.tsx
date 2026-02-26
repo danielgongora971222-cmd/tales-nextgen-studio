@@ -26,6 +26,10 @@ type Props = {
   toggleSound: () => void;
 
   isKlingV3: boolean;
+
+  // ✅ Nuevo: permite ocultar SOLO el botón de Elements sin afectar Multishot
+  elementsEnabled?: boolean;
+
   selectedKlingElementCount: number;
   openElements: () => void;
 
@@ -50,6 +54,7 @@ export function ControlsRow({
   klingSound,
   toggleSound,
   isKlingV3,
+  elementsEnabled = true,
   selectedKlingElementCount,
   openElements,
   multishotEnabled,
@@ -150,23 +155,25 @@ export function ControlsRow({
 
       {isKlingV3 && (
         <>
-          <button
-            type="button"
-            className={styles.controlBtn}
-            onClick={() => {
-              setPanel(null);
-              openElements();
-            }}
-            title="Seleccionar Elements"
-          >
-            <span className={styles.controlBtnLeft}>
-              <Icon name="elements" />
-              <span>Elements</span>
-            </span>
-            <span className={styles.controlBtnMeta}>
-              {selectedKlingElementCount ? `${selectedKlingElementCount} sel` : "Optional"}
-            </span>
-          </button>
+          {elementsEnabled && (
+            <button
+              type="button"
+              className={styles.controlBtn}
+              onClick={() => {
+                setPanel(null);
+                openElements();
+              }}
+              title="Seleccionar Elements"
+            >
+              <span className={styles.controlBtnLeft}>
+                <Icon name="elements" />
+                <span>Elements</span>
+              </span>
+              <span className={styles.controlBtnMeta}>
+                {selectedKlingElementCount ? `${selectedKlingElementCount} sel` : "Optional"}
+              </span>
+            </button>
+          )}
 
           <button
             type="button"

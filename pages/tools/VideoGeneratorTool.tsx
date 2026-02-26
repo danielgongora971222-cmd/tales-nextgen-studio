@@ -1999,10 +1999,11 @@ const clearModalSelectedIds = () => {
             supportsSound={capability.supportsSound}
             klingSound={klingSound}
             toggleSound={toggleSound}
-            isKlingV3={isKlingV3ElementsUI}
-            selectedKlingElementCount={isKlingV3ElementsUI ? selectedKlingElementIds.length : 0}
+            isKlingV3={isKlingV3}
+            elementsEnabled={VIDEO_ELEMENTS_UI_ENABLED}
+            selectedKlingElementCount={VIDEO_ELEMENTS_UI_ENABLED ? selectedKlingElementIds.length : 0}
             openElements={() => {
-              if (!isKlingV3ElementsUI) return;
+              if (!VIDEO_ELEMENTS_UI_ENABLED) return;
               openElementsForShot(multishotEnabled && klingShotType === "customize" ? 0 : null);
             }}
             multishotEnabled={multishotEnabled}
