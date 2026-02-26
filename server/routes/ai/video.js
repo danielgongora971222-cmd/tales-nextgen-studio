@@ -746,32 +746,157 @@ const isKling = selectedModelNorm.startsWith("kling-");
               );
             }
 
-          const rawStr = String(raw).trim();
+            const rawStr = String(raw).trim();
+            const taskStr = row?.kling_task_id != null ? String(row.kling_task_id).trim() : "";
 
-          // ⚠️ NO convertir a Number: element_id es "long" y puede exceder 2^53-1.
-          // Si lo conviertes a Number pierdes precisión y Kling responde "Element id not found".
-          out.push({ element_id: rawStr });
+            // ⚠️ NO convertir a Number: element_id es "long" y puede exceder 2^53-1.
+            out.push({
+              element_id: rawStr,
+              task_id: taskStr,
+              reference_type: row?.reference_type ? String(row.reference_type) : null,
+              element_uuid: elementUuid,
+            });
           }
 
           if (out.length) {
-            // Preflight: verifica que Kling reconoce cada element_id ANTES de crear la task de video.
-            // Evita errores 1201 y da un error tuyo explicable.
+            // Preflight (fiable): valida por task_id, no por listado.
+            // Si Kling responde "succeed" pero el element_id no coincide, reportamos mismatch (precisión/guardado viejo).
             const invalid = [];
+            const mismatch = [];
+
+            // helpers locales (no dependen del listado)
+            function extractTaskStatusFromAny(obj) {
+              const d = obj?.data || obj;
+              return (
+                d?.task_status ||
+                d?.taskStatus ||
+                d?.status ||
+                d?.task?.status ||
+                d?.result?.status ||
+                d?.state ||
+                ""
+              );
+            }
+            function isSuccessStatus(st) {
+              const s = String(st || "").toLowerCase();
+              return s === "succeed" || s === "success" || s === "done" || s === "finished";
+            }
+            function extractElementIdFromAny(obj) {
+              if (!obj) return null;
+              const d = obj?.data || obj;
+
+              const direct =
+                d?.element_id ||
+                d?.elementId ||
+                d?.element?.element_id ||
+                d?.element?.elementId;
+
+              if (direct) return String(direct);
+
+              const tr = d?.task_result || d?.taskResult || d?.result || null;
+
+              const fromTaskResult =
+                tr?.element_id ||
+                tr?.elementId ||
+                tr?.element?.element_id ||
+                tr?.element?.elementId ||
+                tr?.element_info?.element_id ||
+                tr?.element_info?.elementId;
+
+              if (fromTaskResult) return String(fromTaskResult);
+
+              return null;
+            }
+
+            async function validateByTaskId(taskId) {
+              const safe = String(taskId || "").trim();
+              if (!safe) return { ok: false, status: "", elementId: null, pathUsed: null };
+
+              const paths = [
+                `/general/advanced-custom-elements/tasks/${encodeURIComponent(safe)}`,
+                `/general/advanced-custom-elements/${encodeURIComponent(safe)}`,
+              ];
+
+              let lastErr = null;
+              for (const p of paths) {
+                try {
+                  const raw = await klingGetWithRetry(p, { timeoutMs: 20_000, retries: 1 });
+                  const st = extractTaskStatusFromAny(raw);
+                  const eid = extractElementIdFromAny(raw);
+                  return { ok: true, status: st, elementId: eid, pathUsed: p };
+                } catch (e) {
+                  lastErr = e;
+                  continue;
+                }
+              }
+
+              return { ok: false, status: "", elementId: null, pathUsed: null, error: String(lastErr?.message || lastErr) };
+            }
+
             for (const it of out) {
-              const res = await klingElementExistsCached(it.element_id);
-              if (!res.ok) invalid.push(String(it.element_id));
+              // Si no hay task_id, no podemos validar (en tu DB a veces hay filas sin task_id).
+              if (!it.task_id) {
+                invalid.push({ element_uuid: it.element_uuid, reason: "MISSING_TASK_ID", element_id: it.element_id });
+                continue;
+              }
+
+              const check = await validateByTaskId(it.task_id);
+
+              if (!check.ok) {
+                invalid.push({
+                  element_uuid: it.element_uuid,
+                  reason: "TASK_NOT_FOUND_OR_TOKEN_MISMATCH",
+                  task_id: it.task_id,
+                  element_id: it.element_id,
+                  error: check.error || null,
+                });
+                continue;
+              }
+
+              // Si la task dice success pero no trae elementId, igual es sospechoso.
+              if (isSuccessStatus(check.status) && !check.elementId) {
+                invalid.push({
+                  element_uuid: it.element_uuid,
+                  reason: "TASK_SUCCEED_BUT_NO_ELEMENT_ID",
+                  task_id: it.task_id,
+                  element_id: it.element_id,
+                  pathUsed: check.pathUsed,
+                });
+                continue;
+              }
+
+              // Si nos devolvió elementId y no coincide con el guardado → mismatch (guardado viejo/precisión/etc)
+              if (check.elementId && String(check.elementId) !== String(it.element_id)) {
+                mismatch.push({
+                  element_uuid: it.element_uuid,
+                  task_id: it.task_id,
+                  expected_element_id: String(it.element_id),
+                  kling_element_id: String(check.elementId),
+                  pathUsed: check.pathUsed,
+                });
+              }
+            }
+
+            if (mismatch.length) {
+              throw httpError(
+                400,
+                "KLING_ELEMENT_ID_MISMATCH",
+                "Kling devolvió un element_id diferente al guardado en tu DB para una o más tasks. Esto suele indicar guardado viejo o pérdida de precisión en algún punto. Re-crea el Element o ejecuta Refresh status.",
+                { mismatch }
+              );
             }
 
             if (invalid.length) {
               throw httpError(
                 400,
-                "KLING_ELEMENT_INVALID_OR_OUT_OF_SCOPE",
-                "Uno o más Elements no existen en Kling para tu cuenta/token o no aplican al modelo/flujo actual. Re-crea el Element o refresca su status.",
+                "KLING_ELEMENT_INVALID_OR_TOKEN_SCOPE",
+                "Uno o más Elements no se pudieron validar en Kling por task_id (token/cuenta/scope) o les falta task_id. Re-crea el Element o usa Refresh status.",
                 { invalid }
               );
             }
 
-            elementList = out;
+            // IMPORTANTE: elementList debe ser SOLO [{element_id: "..."}] como espera Kling
+            elementList = out.map((x) => ({ element_id: String(x.element_id) }));
           }
         }
 
@@ -1155,7 +1280,7 @@ const isKling = selectedModelNorm.startsWith("kling-");
 
           const { data: rows, error: rowsErr } = await supabaseAdmin
             .from("kling_elements")
-            .select("id, owner_id, kling_element_id, status, status_detail")
+            .select("id, owner_id, reference_type, kling_task_id, kling_element_id, status, status_detail")
             .in("id", klingElementIds)
             .eq("owner_id", user.id);
 
