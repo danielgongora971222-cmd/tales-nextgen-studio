@@ -143,6 +143,23 @@ function throwKlingError({ status, json, text }) {
   throw err;
 }
 
+function patchKlingBigIntFields(rawText) {
+  // Kling devuelve algunos IDs como `long` (pueden superar 2^53 y romper precisión en JS).
+  // Ej: element_id, voice_id, element_voice_id.
+  // Solución: antes de JSON.parse(), convertimos esos números largos a strings.
+  let out = String(rawText || "");
+
+  const keys = ["element_id", "voice_id", "element_voice_id"];
+
+  for (const key of keys) {
+    // Solo convertimos números "largos" (16+ dígitos) para no tocar timestamps normales.
+    const re = new RegExp(`("${key}"\\s*:\\s*)(\\d{16,})`, "g");
+    out = out.replace(re, `$1"$2"`);
+  }
+
+  return out;
+}
+
 async function klingFetch(path, options = {}) {
   const url = resolveKlingUrl(path);
   const token = getKlingAuthToken();
@@ -157,7 +174,8 @@ async function klingFetch(path, options = {}) {
 
   let json = null;
   try {
-    json = text ? JSON.parse(text) : null;
+    const patched = patchKlingBigIntFields(text);
+    json = patched ? JSON.parse(patched) : null;
   } catch {}
 
   if (!resp.ok || (json && json.code !== undefined && json.code !== 0)) {

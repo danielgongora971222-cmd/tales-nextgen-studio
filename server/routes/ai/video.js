@@ -707,10 +707,23 @@ const isKling = selectedModelNorm.startsWith("kling-");
         const ar = aspectRatio || "16:9";
 
         // ✅ Kling Omni API (Tasks)
+        const ALLOWED_OMNI_MODEL_NAMES = new Set(["kling-video-o1", "kling-v3-omni"]);
+
+        // Preferimos una variable nueva (más clara) pero mantenemos compatibilidad con la anterior.
+        let omniModelName = String(
+          process.env.KLING_OMNI_MODEL_NAME ||
+            process.env.KLING_O3_MODEL_NAME || // compat legacy
+            "kling-v3-omni"
+        ).trim();
+
+        if (!ALLOWED_OMNI_MODEL_NAMES.has(omniModelName)) {
+          // Hardening: evita 1201 por valores inválidos.
+          omniModelName = "kling-v3-omni";
+        }
+
         const omniPayload = {
-          // ✅ O3 Pro debe usar un model_name O3 (video character elements requieren O3+)
-          // Docs: video customization elements soportados para modelos `kling-video-o3` y posteriores. :contentReference[oaicite:4]{index=4}
-          model_name: String(process.env.KLING_O3_MODEL_NAME || "kling-video-o3"),
+          // Docs Omni-Video: enum model_name = kling-video-o1 | kling-v3-omni
+          model_name: omniModelName,
           mode: klingModeValue,
           duration: String(dur),
           ...(soundValue !== undefined ? { sound: soundValue } : {}),
