@@ -145,14 +145,23 @@ function throwKlingError({ status, json, text }) {
 
 function patchKlingBigIntFields(rawText) {
   // Kling devuelve algunos IDs como `long` (pueden superar 2^53 y romper precisión en JS).
-  // Ej: element_id, voice_id, element_voice_id.
-  // Solución: antes de JSON.parse(), convertimos esos números largos a strings.
+  // Importante: a veces el mismo ID viene como "element_id", pero otras como "id" o "elementId".
+  // Solución: antes de JSON.parse(), convertimos esos números largos (16+ dígitos) a strings.
   let out = String(rawText || "");
 
-  const keys = ["element_id", "voice_id", "element_voice_id"];
+  // Cubrimos snake_case y camelCase + casos donde el element_id viene como "id"
+  const keys = [
+    "element_id",
+    "elementId",
+    "voice_id",
+    "voiceId",
+    "element_voice_id",
+    "elementVoiceId",
+    "id",
+  ];
 
   for (const key of keys) {
-    // Solo convertimos números "largos" (16+ dígitos) para no tocar timestamps normales.
+    // Solo convertimos números "largos" (16+ dígitos) para no tocar ids cortos/timestamps.
     const re = new RegExp(`("${key}"\\s*:\\s*)(\\d{16,})`, "g");
     out = out.replace(re, `$1"$2"`);
   }
