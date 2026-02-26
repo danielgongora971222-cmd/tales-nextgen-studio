@@ -34,7 +34,7 @@ type EditModelId =
 
 type AspectRatio = "auto" | "16:9" | "9:16" | "1:1";
 
-const TOOL_NAME = "video-edit";
+const TOOL_NAME = "extend-video";
 const PENDING_KEY = "tales_pending_video_edit_job_v2";
 
 // 🔒 Feature flag: oculta Storyboard/Multishot SOLO en Edit Video Tool (por ahora)
@@ -56,14 +56,15 @@ const MODEL_OPTIONS: Array<{
   uiHint: string;
 }> = [
   {
-    id: "kling-o3-edit-video-pro",
-    uiName: "Editar Video (Pro)",
+    id: "kling-o3-ref-video-to-video-pro",
+    uiName: "Extend Video (Pro)",
     uiDesc:
-      "Edita un video existente siguiendo tu prompt (cambios de estilo, objetos, ambiente, correcciones).",
+      "Genera una nueva versión guiada por un video base + referencias (continuidad de movimiento/cámara + identidad/estilo).",
     uiHint:
-      "Ideal para retoques: cambia estilo/objetos/ambiente sin perder coherencia. En el prompt, el video base es @Video1. También puedes usar @Image1.. como referencias.",
+      "Usa un video base (@Video1) y referencias @Image1.. para identidad/estilo. Máximo 4 referencias combinadas.",
   },
 ];
+
 function getMetaTool(a: Asset): string | null {
   const meta: any = (a as any)?.meta || {};
   return meta?.tool ?? null;
@@ -139,7 +140,7 @@ function sumSeconds(shots: O3Shot[]) {
   );
 }
 
-export default function EditVideoTool() {
+export default function ExtendVideoTool() {
   const { user } = useAuth();
 
   // ===== Root glow =====
@@ -170,7 +171,7 @@ export default function EditVideoTool() {
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const controlsRef = useRef<HTMLDivElement | null>(null);
 
-  const [model, setModel] = useState<EditModelId>("kling-o3-edit-video-pro");
+  const [model, setModel] = useState<EditModelId>("kling-o3-ref-video-to-video-pro");
   const [prompt, setPrompt] = useState("");
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>("16:9");
   const [durationSeconds, setDurationSeconds] = useState<number>(8);
@@ -1350,44 +1351,42 @@ export default function EditVideoTool() {
         <div className={styles.dock}>
           <div className={styles.promptRow}>
             {/* Inputs */}
-                        {model === "kling-o3-ref-to-video-pro" ? (
-                          <div className={styles.frameStrip}>
-                            <div
-                              className={styles.frameCard}
-                              role="button"
-                              tabIndex={0}
-                              onClick={() => setRefPickerOpen(true)}
-                              onKeyDown={(e) => e.key === "Enter" && setRefPickerOpen(true)}
-                              title={`Refs (máx ${maxCombinedRefs} combinado)`}
-                            >
-                              <div className={styles.frameCardEmpty}>
-                                <div className={styles.frameCardIcons}>
-                                  <Icon name="image" />
-                                  <Icon name="upload" />
-                                </div>
+                      {model === "kling-o3-ref-to-video-pro" ? (
+                        <div className={styles.frameStrip}>
+                          <div
+                            className={styles.frameCard}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => setRefPickerOpen(true)}
+                            onKeyDown={(e) => e.key === "Enter" && setRefPickerOpen(true)}
+                            title={`Refs (máx ${maxCombinedRefs} combinado)`}
+                          >
+                            <div className={styles.frameCardEmpty}>
+                              <div className={styles.frameCardIcons}>
+                                <Icon name="image" />
+                                <Icon name="upload" />
                               </div>
-                              <span className={styles.frameCardBadge}>REFS</span>
                             </div>
-
-                            {VIDEO_ELEMENTS_UI_ENABLED && (
-                              <div
-                                className={styles.frameCard}
-                                role="button"
-                                tabIndex={0}
-                                onClick={() => setElementsOpen(true)}
-                                onKeyDown={(e) => e.key === "Enter" && setElementsOpen(true)}
-                                title={`Elements (máx ${maxCombinedRefs} combinado)`}
-                              >
-                                <div className={styles.frameCardEmpty}>
-                                  <div className={styles.frameCardIcons}>
-                                    <Icon name="elements" />
-                                    <Icon name="upload" />
-                                  </div>
-                                </div>
-                                <span className={styles.frameCardBadge}>ELEM</span>
-                              </div>
-                            )}
+                            <span className={styles.frameCardBadge}>REFS</span>
                           </div>
+
+                          <div
+                            className={styles.frameCard}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => VIDEO_ELEMENTS_UI_ENABLED && setElementsOpen(true)}
+                            onKeyDown={(e) => e.key === "Enter" && VIDEO_ELEMENTS_UI_ENABLED && setElementsOpen(true)}
+                            title={`Elements (máx ${maxCombinedRefs} combinado)`}
+                          >
+                            <div className={styles.frameCardEmpty}>
+                              <div className={styles.frameCardIcons}>
+                                <Icon name="elements" />
+                                <Icon name="upload" />
+                              </div>
+                            </div>
+                            <span className={styles.frameCardBadge}>ELEM</span>
+                          </div>
+                        </div>
                         ) : (
                           <div className={styles.frameStrip}>
                             <div

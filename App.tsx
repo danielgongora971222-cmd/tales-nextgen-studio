@@ -14,6 +14,8 @@ import EditorTool from './pages/tools/EditorTool';
 import CameraAnglesTool from './pages/tools/CameraAnglesTool';
 import CollageTool from './pages/tools/CollageTool';
 import EditVideoTool from './pages/tools/EditVideoTool';
+import IngredientsToVideoTool from './pages/tools/IngredientsToVideoTool';
+import ExtendVideoTool from './pages/tools/ExtendVideoTool';
 import MotionControlTool from './pages/tools/MotionControlTool';
 import VideoGeneratorTool from './pages/tools/VideoGeneratorTool';
 import Background3D from './components/Background3D';
@@ -103,6 +105,10 @@ const AppContent: React.FC = () => {
         return <VideoGeneratorTool />;
       case AppRoute.TOOL_VIDEO_EDIT:
         return <EditVideoTool />;
+      case AppRoute.TOOL_INGREDIENTS_TO_VIDEO:
+        return <IngredientsToVideoTool />;
+      case AppRoute.TOOL_EXTEND_VIDEO:
+        return <ExtendVideoTool />;
       case AppRoute.TOOL_MOTION_CONTROL:
         return <MotionControlTool />;
       case AppRoute.MY_CREATIONS:

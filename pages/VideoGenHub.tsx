@@ -22,6 +22,24 @@ const getIconForVideoTool = (id: string) => {
           <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
         </svg>
       );
+        case 'ingredients-to-video':
+      return (
+        <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+          <path d="M4 7h16" />
+          <path d="M4 12h16" />
+          <path d="M4 17h16" />
+          <path d="M9 7v10" />
+        </svg>
+      );
+    case 'extend-video':
+      return (
+        <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+          <path d="M4 6h10" />
+          <path d="M4 12h16" />
+          <path d="M4 18h10" />
+          <path d="M14 6l6 6-6 6" />
+        </svg>
+      );
     case 'motion-control':
       return (
         <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">

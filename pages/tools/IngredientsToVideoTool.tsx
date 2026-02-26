@@ -34,11 +34,11 @@ type EditModelId =
 
 type AspectRatio = "auto" | "16:9" | "9:16" | "1:1";
 
-const TOOL_NAME = "video-edit";
+const TOOL_NAME = "ingredients-to-video";
 const PENDING_KEY = "tales_pending_video_edit_job_v2";
 
 // 🔒 Feature flag: oculta Storyboard/Multishot SOLO en Edit Video Tool (por ahora)
-const ENABLE_EDITVIDEO_MULTISHOT = false;
+const ENABLE_EDITVIDEO_MULTISHOT = true;
 
 // 🔒 VIDEO: ocultar/deshabilitar Elements en editor de video
 const VIDEO_ELEMENTS_UI_ENABLED = false;
@@ -56,14 +56,15 @@ const MODEL_OPTIONS: Array<{
   uiHint: string;
 }> = [
   {
-    id: "kling-o3-edit-video-pro",
-    uiName: "Editar Video (Pro)",
+    id: "kling-o3-ref-to-video-pro",
+    uiName: "Ingredients to Video (Pro)",
     uiDesc:
-      "Edita un video existente siguiendo tu prompt (cambios de estilo, objetos, ambiente, correcciones).",
+      "Crea un video nuevo desde cero usando referencias visuales subidas. No usa START/END.",
     uiHint:
-      "Ideal para retoques: cambia estilo/objetos/ambiente sin perder coherencia. En el prompt, el video base es @Video1. También puedes usar @Image1.. como referencias.",
+      "Usa entre 1 y 7 referencias. En el prompt puedes referenciar: @Image1..@Image7 (según tu selección).",
   },
 ];
+
 function getMetaTool(a: Asset): string | null {
   const meta: any = (a as any)?.meta || {};
   return meta?.tool ?? null;
@@ -139,7 +140,7 @@ function sumSeconds(shots: O3Shot[]) {
   );
 }
 
-export default function EditVideoTool() {
+export default function IngredientsToVideoTool() {
   const { user } = useAuth();
 
   // ===== Root glow =====
@@ -170,7 +171,7 @@ export default function EditVideoTool() {
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const controlsRef = useRef<HTMLDivElement | null>(null);
 
-  const [model, setModel] = useState<EditModelId>("kling-o3-edit-video-pro");
+  const [model, setModel] = useState<EditModelId>("kling-o3-ref-to-video-pro");
   const [prompt, setPrompt] = useState("");
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>("16:9");
   const [durationSeconds, setDurationSeconds] = useState<number>(8);
@@ -188,7 +189,12 @@ export default function EditVideoTool() {
   const [generateAudio, setGenerateAudio] = useState(false);
   const [keepAudio, setKeepAudio] = useState(true);
 
-  const [multishotEnabled, setMultishotEnabled] = useState(false);
+  const [multishotMode, setMultishotMode] = useState<"intelligence" | "customize">("intelligence");
+
+  // Aliases para compatibilidad con el resto del archivo (evita 20+ errores)
+  const multishotEnabled = ENABLE_EDITVIDEO_MULTISHOT && multishotMode === "customize";
+  const setMultishotEnabled = (v: boolean) => setMultishotMode(v ? "customize" : "intelligence");
+
   const [shots, setShots] = useState<O3Shot[]>([{ prompt: "", durationSeconds: 5 }]);
 
   const [isGenerating, setIsGenerating] = useState(false);
@@ -205,12 +211,14 @@ export default function EditVideoTool() {
   const [pickerOpen, setPickerOpen] = useState<null | "start" | "end" | "video">(null);
   const [refPickerOpen, setRefPickerOpen] = useState(false);
   const [elementsOpen, setElementsOpen] = useState(false);
-    useEffect(() => {
+
+  useEffect(() => {
     if (VIDEO_ELEMENTS_UI_ENABLED) return;
     setKlingElementIds([]);
     setElementsOpen(false);
   }, []);
-  const [multishotOpen, setMultishotOpen] = useState(false);
+
+const [multishotOpen, setMultishotOpen] = useState(false);
 
   // Pending resume
   const [pendingJob, setPendingJob] = useState<PendingVideoEditJob | null>(null);
@@ -444,7 +452,7 @@ export default function EditVideoTool() {
   const visibleHistory = useMemo(() => history.slice(0, visibleCount), [history, visibleCount]);
   const hasMore = history.length > visibleHistory.length;
 
-    const pendingSlots = useMemo(() => (isGenerating ? ["pending-1"] : []), [isGenerating]);
+  const pendingSlots = useMemo(() => (isGenerating ? ["pending-1"] : []), [isGenerating]);
 
   const viewerRecipeInfo = useMemo(() => {
     if (!viewer) return null;
@@ -1350,44 +1358,42 @@ export default function EditVideoTool() {
         <div className={styles.dock}>
           <div className={styles.promptRow}>
             {/* Inputs */}
-                        {model === "kling-o3-ref-to-video-pro" ? (
-                          <div className={styles.frameStrip}>
-                            <div
-                              className={styles.frameCard}
-                              role="button"
-                              tabIndex={0}
-                              onClick={() => setRefPickerOpen(true)}
-                              onKeyDown={(e) => e.key === "Enter" && setRefPickerOpen(true)}
-                              title={`Refs (máx ${maxCombinedRefs} combinado)`}
-                            >
-                              <div className={styles.frameCardEmpty}>
-                                <div className={styles.frameCardIcons}>
-                                  <Icon name="image" />
-                                  <Icon name="upload" />
-                                </div>
+                      {model === "kling-o3-ref-to-video-pro" ? (
+                        <div className={styles.frameStrip}>
+                          <div
+                            className={styles.frameCard}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => setRefPickerOpen(true)}
+                            onKeyDown={(e) => e.key === "Enter" && setRefPickerOpen(true)}
+                            title={`Refs (máx ${maxCombinedRefs} combinado)`}
+                          >
+                            <div className={styles.frameCardEmpty}>
+                              <div className={styles.frameCardIcons}>
+                                <Icon name="image" />
+                                <Icon name="upload" />
                               </div>
-                              <span className={styles.frameCardBadge}>REFS</span>
                             </div>
-
-                            {VIDEO_ELEMENTS_UI_ENABLED && (
-                              <div
-                                className={styles.frameCard}
-                                role="button"
-                                tabIndex={0}
-                                onClick={() => setElementsOpen(true)}
-                                onKeyDown={(e) => e.key === "Enter" && setElementsOpen(true)}
-                                title={`Elements (máx ${maxCombinedRefs} combinado)`}
-                              >
-                                <div className={styles.frameCardEmpty}>
-                                  <div className={styles.frameCardIcons}>
-                                    <Icon name="elements" />
-                                    <Icon name="upload" />
-                                  </div>
-                                </div>
-                                <span className={styles.frameCardBadge}>ELEM</span>
-                              </div>
-                            )}
+                            <span className={styles.frameCardBadge}>REFS</span>
                           </div>
+
+                          <div
+                            className={styles.frameCard}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => VIDEO_ELEMENTS_UI_ENABLED && setElementsOpen(true)}
+                            onKeyDown={(e) => e.key === "Enter" && VIDEO_ELEMENTS_UI_ENABLED && setElementsOpen(true)}
+                            title={`Elements (máx ${maxCombinedRefs} combinado)`}
+                          >
+                            <div className={styles.frameCardEmpty}>
+                              <div className={styles.frameCardIcons}>
+                                <Icon name="elements" />
+                                <Icon name="upload" />
+                              </div>
+                            </div>
+                            <span className={styles.frameCardBadge}>ELEM</span>
+                          </div>
+                        </div>
                         ) : (
                           <div className={styles.frameStrip}>
                             <div
@@ -1644,19 +1650,6 @@ export default function EditVideoTool() {
             <div className={styles.controlsRow}>
               <button
                 type="button"
-                className={`${styles.controlBtn} ${panel === "model" ? styles.controlBtnActive : ""}`}
-                onClick={() => setPanel((p) => (p === "model" ? null : "model"))}
-                title="Cambiar modelo"
-              >
-                <span className={styles.controlBtnLeft}>
-                  <Icon name="model" />
-                  Modelo
-                </span>
-                <span className={styles.controlBtnMeta}>{selectedModel.uiName}</span>
-              </button>
-
-              <button
-                type="button"
                 className={`${styles.controlBtn} ${panel === "params" ? styles.controlBtnActive : ""}`}
                 onClick={() => setPanel((p) => (p === "params" ? null : "params"))}
                 title="Ajustes"
@@ -1696,25 +1689,25 @@ export default function EditVideoTool() {
                 </button>
               )}
 
-              {ENABLE_EDITVIDEO_MULTISHOT && model === "kling-o3-ref-to-video-pro" && (
-                <button
-                  type="button"
-                  className={`${styles.controlBtn} ${multishotEnabled ? styles.controlBtnActive : ""}`}
-                  onClick={() => {
-                    setMultishotEnabled((v) => !v);
-                    setMultishotOpen(true);
-                  }}
-                  title="Storyboard / Multishot"
-                >
-                  <span className={styles.controlBtnLeft}>
-                    <Icon name="multishot" />
-                    Storyboard
-                  </span>
-                  <span className={styles.controlBtnMeta}>
-                    {multishotEnabled ? `(${shots.length})` : ""}
-                  </span>
-                </button>
-              )}
+                {ENABLE_EDITVIDEO_MULTISHOT && model === "kling-o3-ref-to-video-pro" && (
+                  <button
+                    type="button"
+                    className={`${styles.controlBtn} ${multishotMode === "customize" ? styles.controlBtnActive : ""}`}
+                    onClick={() => {
+                      setMultishotMode((m) => (m === "customize" ? "intelligence" : "customize"));
+                      setMultishotOpen(true);
+                    }}
+                    title="Multishot"
+                  >
+                    <span className={styles.controlBtnLeft}>
+                      <Icon name="multishot" />
+                      Multishot
+                    </span>
+                    <span className={styles.controlBtnMeta}>
+                      {multishotMode === "customize" ? `(customize)` : `(intelligence)`}
+                    </span>
+                  </button>
+                )}
             </div>
 
             {panel && (
@@ -1963,11 +1956,12 @@ export default function EditVideoTool() {
 
       {ENABLE_EDITVIDEO_MULTISHOT && (
         <O3MultishotModal
-          open={multishotOpen}
+          open={multishotOpen && multishotMode === "customize"}
           onClose={() => setMultishotOpen(false)}
           shots={shots}
           setShots={setShots}
           totalSeconds={multishotTotalSeconds}
+          mentionItems={promptMentionItems}
         />
       )}
 

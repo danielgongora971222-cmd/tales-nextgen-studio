@@ -1,6 +1,7 @@
 import React, { useEffect } from "react";
 import styles from "../VideoGeneratorTool.module.css";
 import { LimitedTextarea } from "./LimitedTextarea";
+import { MentionTextarea, type MentionItem } from "../../../components/MentionTextarea";
 
 export type O3Shot = { prompt: string; durationSeconds: number };
 
@@ -12,12 +13,14 @@ export function O3MultishotModal({
   shots,
   setShots,
   totalSeconds,
+  mentionItems,
 }: {
   open: boolean;
   onClose: () => void;
   shots: O3Shot[];
   setShots: React.Dispatch<React.SetStateAction<O3Shot[]>>;
   totalSeconds: number;
+  mentionItems?: MentionItem[];
 }) {
   useEffect(() => {
     if (!open) return;
@@ -73,15 +76,25 @@ export function O3MultishotModal({
                   </button>
                 </div>
 
-                <LimitedTextarea
-                  surfaceClassName={styles.textarea}
-                  rows={3}
-                  value={s.prompt}
-                  onChange={(next) => setShots((prev) => prev.map((x, idx) => (idx === i ? { ...x, prompt: next } : x)))}
-                  placeholder="Prompt de este shot…"
-                  limit={O3_SHOT_PROMPT_LIMIT}
-                  inputResize="vertical"
-                />
+                {mentionItems && mentionItems.length > 0 ? (
+                  <MentionTextarea
+                    textareaClassName={styles.textarea}
+                    value={s.prompt}
+                    onChange={(next) => setShots((prev) => prev.map((x, idx) => (idx === i ? { ...x, prompt: next } : x)))}
+                    items={mentionItems}
+                    placeholder="Prompt de este shot… (usa @ para insertar Refs)"
+                  />
+                ) : (
+                  <LimitedTextarea
+                    surfaceClassName={styles.textarea}
+                    rows={3}
+                    value={s.prompt}
+                    onChange={(next) => setShots((prev) => prev.map((x, idx) => (idx === i ? { ...x, prompt: next } : x)))}
+                    placeholder="Prompt de este shot…"
+                    limit={O3_SHOT_PROMPT_LIMIT}
+                    inputResize="vertical"
+                  />
+                )}
 
                 <div className={styles.formRow}>
                   <label className={styles.formLabel}>Duration</label>

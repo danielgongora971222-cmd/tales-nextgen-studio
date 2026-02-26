@@ -20,6 +20,8 @@ export enum AppRoute {
   // Video Tools
   TOOL_VIDEO_GENERATOR = 'tool-video-generator',
   TOOL_VIDEO_EDIT = 'tool-video-edit',
+  TOOL_INGREDIENTS_TO_VIDEO = 'tool-ingredients-to-video',
+  TOOL_EXTEND_VIDEO = 'tool-extend-video',
   TOOL_MOTION_CONTROL = 'tool-motion-control',
   
   CHAT = 'chat'
