@@ -621,8 +621,9 @@ const VideoGeneratorTool: React.FC = () => {
   // ✅ Kling O3 se comporta como “V3 family” en UI (Elements + Multishot)
   const isKlingO3 = modelNorm === KLING_O3_PRO;
   const isKlingV3 = modelNorm === KLING_V3 || isKlingO3;
+  const supportsVideoElements = modelNorm === KLING_V3 || modelNorm === KLING_O3_PRO;
 
-  const maxKlingElements = isKlingV3 ? (hasFirst ? 3 : 5) : 0;
+  const maxKlingElements = supportsVideoElements ? (hasFirst ? 3 : 5) : 0;
 
   // ✅ Kling API oficial (mode std/pro => 720/1080). Incluye O3 (Omni).
   const isKlingApi = isKling;
@@ -632,8 +633,8 @@ const VideoGeneratorTool: React.FC = () => {
   // - Antes de enviar al modelo, los convertimos a @Element1, @Element2...
   // ===============================
   const elementTokenById = useMemo(
-  () => ((isKlingV3 || isKlingO3) ? buildElementTokenMap(klingElements) : new Map<string, string>()),
-  [isKlingV3, isKlingO3, klingElements]
+  () => (supportsVideoElements ? buildElementTokenMap(klingElements) : new Map<string, string>()),
+  [supportsVideoElements, klingElements]
 );
 
   const elementTokenToId = useMemo(() => {
@@ -645,7 +646,7 @@ const VideoGeneratorTool: React.FC = () => {
   }, [elementTokenById]);
 
 const elementMentionItems = useMemo<MentionItem[]>(() => {
-  if (!(isKlingV3 || isKlingO3)) return [];
+  if (!supportsVideoElements) return [];
 
   return (klingElements || [])
     .filter((el) => (el.status ?? "ready") === "ready" && Boolean(el.klingElementId))
@@ -661,7 +662,7 @@ const elementMentionItems = useMemo<MentionItem[]>(() => {
         previewUrl,
       };
     });
-}, [isKlingV3, isKlingO3, klingElements, elementTokenById]);
+}, [supportsVideoElements, klingElements, elementTokenById]);
   
   // Sync Elements con el prompt:
   // - Si borras un token de Element del prompt -> se deselecciona.
@@ -1031,28 +1032,28 @@ const refreshKlingElements = useCallback(async () => {
 const elementsPrefetchDoneRef = useRef(false);
 
 useEffect(() => {
-  if (!isKlingV3) return;
+  if (!supportsVideoElements) return;
   if (!user?.id) return;
   if (elementsPrefetchDoneRef.current) return;
 
   elementsPrefetchDoneRef.current = true;
   refreshKlingElements();
-}, [isKlingV3, user?.id, refreshKlingElements]);
+}, [supportsVideoElements, user?.id, refreshKlingElements]);
 
 useEffect(() => {
-  if (!isKlingV3) return;
+  if (!supportsVideoElements) return;
   if (!elementsOpen) return;
   refreshKlingElements();
-}, [isKlingV3, elementsOpen, refreshKlingElements]);
+}, [supportsVideoElements, elementsOpen, refreshKlingElements]);
 
   useEffect(() => {
-    if (!isKlingV3) return;
+    if (!supportsVideoElements) return;
     if (!elementsOpen) return;
 
     // Refresca imágenes y videos para el creador de Elements
     reloadImages();
     reloadVideosForElements();
-  }, [isKlingV3, elementsOpen]);
+  }, [supportsVideoElements, elementsOpen]);
 
   const modelLabel = useMemo(() => prettyVideoModelLabel(modelNorm), [modelNorm]);
 
@@ -1130,6 +1131,15 @@ const durationLabel = useMemo(() => {
   return `${durationSeconds}s`;
 }, [durationSeconds, isMultishotCustomize, multishotTotalSeconds]);
 
+
+  useEffect(() => {
+    if (supportsVideoElements) return;
+    setElementsOpen(false);
+    setElementsShotIndex(null);
+    setElementsQuery("");
+    if (selectedKlingElementIds.length) setSelectedKlingElementIds([]);
+    setKlingShots((prev) => prev.map((s) => ({ ...s, elementIds: [] })));
+  }, [supportsVideoElements]);
 
   const openPicker = (slot: FrameSlotKey) => {
     if (slot === "last" && !hasFirst) return; // bloquea last si no hay first
@@ -1249,7 +1259,7 @@ const durationLabel = useMemo(() => {
   let selectedKlingElementIdsForModel = selectedKlingElementIds;
   let klingShotsForModel = klingShots;
 
-  if (isKlingV3 || isKlingO3) {
+  if (supportsVideoElements) {
     const tokenRe = /@[a-z0-9_]+/gi;
 
     const idsMentionedInText = (text: string) => {
@@ -1335,7 +1345,7 @@ const durationLabel = useMemo(() => {
   }
 
   // ✅ Quality Gate: no permitir Elements no listos (creating/failed o sin klingElementId)
-  if (isKlingV3) {
+  if (supportsVideoElements) {
     const byId = new Map(klingElements.map((e) => [String(e.id), e]));
 
     const selected = (selectedKlingElementIdsForModel || []).map((x) => String(x)).filter(Boolean);
@@ -1533,7 +1543,7 @@ const setModalSelectedIds: React.Dispatch<React.SetStateAction<string[]>> = (nex
       }
 
       // Sync selección ⇄ tokens en el prompt principal
-      if (isKlingV3) {
+      if (supportsVideoElements) {
         const synced = syncElementTokensInText({
           text: String(prompt || ""),
           selectedIds: value,
@@ -1570,7 +1580,7 @@ const clearModalSelectedIds = () => {
         })
       );
     } else {
-      if (isKlingV3) {
+      if (supportsVideoElements) {
         const synced = syncElementTokensInText({
           text: String(prompt || ""),
           selectedIds: [],
@@ -1627,9 +1637,9 @@ const clearModalSelectedIds = () => {
           <div className={styles.promptRow}>
             <div className={styles.promptInputWrap}>
               <div className={styles.promptEditor}>
-                {(selectedKlingElementIds.length > 0 || (isKlingV3 && multishotEnabled)) && (
+                {((supportsVideoElements && selectedKlingElementIds.length > 0) || (isKlingV3 && multishotEnabled)) && (
                   <div className={styles.promptTags}>
-                    {selectedKlingElementIds.length > 0 && (
+                    {supportsVideoElements && selectedKlingElementIds.length > 0 && (
                       <button
                         type="button"
                         className={styles.promptTag}
@@ -1697,7 +1707,7 @@ const clearModalSelectedIds = () => {
                           </div>
                         </div>
 
-                        {isKlingV3 && selectedKlingElementIds.length > 0 && (
+                        {supportsVideoElements && selectedKlingElementIds.length > 0 && (
                           <div className={styles.elementsMap}>
                             <div className={styles.elementsMapTitle}>Elements mapping (Kling V3)</div>
                             <div className={styles.elementsMapHelp}>
@@ -1784,7 +1794,7 @@ const clearModalSelectedIds = () => {
 
                                   // Para Kling V3: el prompt del shot es la fuente de verdad de sus Elements (tokens @...)
                                   const mentionedIds: string[] = [];
-                                  if (isKlingV3) {
+                                  if (supportsVideoElements) {
                                     for (const tok of extractMentionTokens(clipped)) {
                                       const id = elementTokenToId.get(tok.toLowerCase());
                                       if (!id) continue;
@@ -1803,7 +1813,7 @@ const clearModalSelectedIds = () => {
                                 placeholder="Prompt del shot…"
                                 rows={2}
                                 textareaClassName={styles.multishotTextarea}
-                                items={isKlingV3 ? elementMentionItems : []}
+                                items={supportsVideoElements ? elementMentionItems : []}
                               />
 
                               <div className={styles.multishotCharRow}>
@@ -1847,7 +1857,7 @@ const clearModalSelectedIds = () => {
                         placeholder="Describe el video… (ej: cinematic neon city, rain, slow dolly in, high detail)"
                         rows={2}
                         textareaClassName={styles.prompt}
-                        items={isKlingV3 ? elementMentionItems : []}
+                        items={supportsVideoElements ? elementMentionItems : []}
                         onSelectItem={(it) => {
                           if (it.kind !== "element") return true;
 
@@ -1996,7 +2006,7 @@ const clearModalSelectedIds = () => {
             supportsSound={capability.supportsSound}
             klingSound={klingSound}
             toggleSound={toggleSound}
-            isKlingV3={isKlingV3}
+            supportsVideoElements={supportsVideoElements}
             selectedKlingElementCount={selectedKlingElementIds.length}
             openElements={() => openElementsForShot(multishotEnabled && klingShotType === "customize" ? 0 : null)}
             multishotEnabled={multishotEnabled}
@@ -2087,7 +2097,7 @@ const clearModalSelectedIds = () => {
       />
 
       <KlingElementsModal
-        open={elementsOpen}
+        open={supportsVideoElements && elementsOpen}
         onClose={() => {
           setElementsOpen(false);
           setElementsShotIndex(null);
