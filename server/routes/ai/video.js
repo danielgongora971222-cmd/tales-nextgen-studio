@@ -763,6 +763,7 @@ const isKling = selectedModelNorm.startsWith("kling-");
             // Si Kling responde "succeed" pero el element_id no coincide, reportamos mismatch (precisión/guardado viejo).
             const invalid = [];
             const mismatch = [];
+            const repaired = [];
 
             // helpers locales (no dependen del listado)
             function extractTaskStatusFromAny(obj) {
@@ -873,7 +874,8 @@ const isKling = selectedModelNorm.startsWith("kling-");
                 continue;
               }
 
-              // Si nos devolvió elementId y no coincide con el guardado → mismatch (guardado viejo/precisión/etc)
+              // Si task devuelve elementId y no coincide, preferimos auto-repair a fallar.
+              // Causa típica: DB guardó un id viejo/incorrecto; task_id es la fuente de verdad.
               if (check.elementId && String(check.elementId) !== String(it.element_id)) {
                 mismatch.push({
                   element_uuid: it.element_uuid,
@@ -882,22 +884,46 @@ const isKling = selectedModelNorm.startsWith("kling-");
                   kling_element_id: String(check.elementId),
                   pathUsed: check.pathUsed,
                 });
+                it.element_id = String(check.elementId);
+                repaired.push({
+                  element_uuid: it.element_uuid,
+                  old_element_id: String(mismatch[mismatch.length - 1].expected_element_id),
+                  new_element_id: String(check.elementId),
+                  task_id: it.task_id,
+                });
               }
             }
 
-            if (mismatch.length) {
-              throw httpError(
-                400,
-                "KLING_ELEMENT_ID_MISMATCH",
-                "Kling devolvió un element_id diferente al guardado en tu DB para una o más tasks. Esto suele indicar guardado viejo o pérdida de precisión en algún punto. Re-crea el Element o ejecuta Refresh status.",
-                { mismatch }
-              );
+            if (repaired.length) {
+              for (const r of repaired) {
+                const { error: updErr } = await supabaseAdmin
+                  .from("kling_elements")
+                  .update({
+                    kling_element_id: r.new_element_id,
+                    status_detail: "repair: synced kling_element_id from task validation",
+                    updated_at: new Date().toISOString(),
+                  })
+                  .eq("id", r.element_uuid)
+                  .eq("owner_id", user.id);
+
+                if (updErr) {
+                  console.warn("[KLING_ELEMENTS_REPAIR_UPDATE_FAILED]", {
+                    ownerId: user.id,
+                    elementUuid: r.element_uuid,
+                    updErr,
+                  });
+                }
+              }
+
+              console.warn("[KLING_ELEMENTS_REPAIRED_FROM_TASK]", {
+                ownerId: user.id,
+                repaired,
+              });
             }
 
             if (invalid.length) {
-              // Tolerancia controlada: en cuentas con datos legacy o task_id no resoluble,
-              // no bloqueamos la generación si el usuario tiene el element_id guardado como "ready".
-              // Kling validará definitivamente el element_list al crear la tarea.
+              // Si no se pudo validar por task/listado, evitamos false negatives de preflight.
+              // Kling validará definitivamente element_list y devolverá error proveedor si aplica.
               console.warn("[KLING_ELEMENTS_PREFLIGHT_SOFT_FAIL]", {
                 ownerId: user.id,
                 invalidCount: invalid.length,
