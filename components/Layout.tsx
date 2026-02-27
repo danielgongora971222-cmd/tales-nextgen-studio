@@ -5,7 +5,7 @@ import Background3D from './Background3D';
 import { TOOLS_REGISTRY } from '../config/tools';
 import { VIDEO_TOOLS_REGISTRY } from '../config/videoTools';
 import { useAuth } from '../contexts/AuthContext';
-import OneNationUpMark from "@/components/brand/OneNationUpMark";
+import OneNationUpIcon from "@/components/brand/OneNationUpIcon";
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -503,19 +503,37 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
         )}
 
 
-      {/* ✅ 1NationUp Store (separa del bloque usuario/logout por la línea existente border-t) */}
-      <div className="px-4 pb-4">
+      {/* ✅ 1NationUp Store (colapsa correctamente con la sidebar) */}
+      <div className={`${sidebarOpen ? "px-4" : "px-3"} pb-4`}>
         <button
           onClick={() => onNavigate(AppRoute.STORE)}
-          className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 oneNation-pill ${
-            currentRoute === AppRoute.STORE ? "shadow-[0_0_28px_rgba(123,77,255,0.18)]" : ""
-          }`}
+          className={`w-full flex items-center rounded-xl transition-all duration-300 oneNation-pill ${
+            sidebarOpen ? "gap-3 px-4 py-3 justify-start" : "px-0 py-3 justify-center"
+          } ${currentRoute === AppRoute.STORE ? "shadow-[0_0_28px_rgba(123,77,255,0.18)]" : ""}`}
           title="1NationUp Store"
         >
-          <OneNationUpMark text="1NationUp Store" size={22} textClassName="text-sm font-black tracking-wide" />
-          <div className="flex-1 text-left">
-            <div className="text-[10px] text-white/55">Turn your art into real prints</div>
+          {/* Logo: siempre 1 sola vez */}
+          <div
+            className={`grid place-items-center rounded-xl border border-white/10 bg-[rgba(11,11,15,0.72)] ${
+              sidebarOpen ? "w-9 h-9" : "w-10 h-10"
+            }`}
+            style={{ boxShadow: "inset 0 0 20px rgba(255,255,255,0.04)" }}
+            aria-hidden="true"
+          >
+            <OneNationUpIcon size={22} />
           </div>
+
+          {/* Texto SOLO si sidebar está abierta (evita overflow/rareza) */}
+          {sidebarOpen && (
+            <div className="flex-1 text-left leading-tight">
+              <div className="text-sm font-black tracking-wide oneNation-gradientText">
+                1NationUp Store
+              </div>
+              <div className="text-[10px] text-white/55">
+                Prints • Posters • Canvas
+              </div>
+            </div>
+          )}
         </button>
       </div>
 
