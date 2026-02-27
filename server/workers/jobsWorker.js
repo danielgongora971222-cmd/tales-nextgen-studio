@@ -510,6 +510,11 @@ const taskStatusRaw = extractKlingTaskStatus(taskData, rawJson);
 
     const meta = {
       ...(params.meta || {}),
+
+      // ✅ CRÍTICO para que aparezca en MotionControlTool / MyCreations
+      tool: toolName,
+      category: toolName,
+
       provider: "kling",
       model: params.model || null,
       klingTaskId: taskId,
@@ -517,7 +522,6 @@ const taskStatusRaw = extractKlingTaskStatus(taskData, rawJson);
       providerStatus: "SUCCEED",
       providerVideoUrl: videoUrl,
     };
-
     const assetId = await insertAssetRow({
       ownerId,
       type: "video",
@@ -675,6 +679,11 @@ const taskStatusRaw = extractKlingTaskStatus(taskData, rawJson);
   }
   const meta = {
     ...(params.meta || {}),
+
+    // ✅ CRÍTICO para que aparezca en herramientas y MyCreations
+    tool: toolName,
+    category: toolName,
+
     provider: "fal",
     model: params.model || null,
     falEndpointId: params.falEndpointId || null,
