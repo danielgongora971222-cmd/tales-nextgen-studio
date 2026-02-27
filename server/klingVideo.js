@@ -333,7 +333,7 @@ export async function createImage2VideoTask({
 }
 
 export async function createMotionControlTask({
-  model,
+  model, // lo mantenemos para compatibilidad (logging/DB), pero NO se envía a Kling en motion-control
   prompt,
   imageUrl,
   videoUrl,
@@ -343,12 +343,17 @@ export async function createMotionControlTask({
   ...rest
 }) {
   const payload = {
-    model_name: model,
+    // ⚠️ Motion Control NO acepta model_name (evita error 1201).
     image_url: imageUrl,
     video_url: videoUrl,
-    keep_original_sound: keepOriginalSound,
+
+    // Kling Motion Control espera "yes" / "no"
+    keep_original_sound: keepOriginalSound ? "yes" : "no",
+
+    // Requeridos por el endpoint motion-control
     character_orientation: characterOrientation,
     mode, // "std" | "pro"
+
     ...(prompt ? { prompt } : {}),
     ...rest,
   };
@@ -377,7 +382,6 @@ export async function createMotionControlTask({
 
   throw lastErr || new Error("Kling motion control: no se pudo crear el task (endpoint desconocido).");
 }
-
 export async function pollTaskUntilDone({
   type,
   taskId,
