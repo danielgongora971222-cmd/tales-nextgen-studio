@@ -26,6 +26,20 @@ function is4K(d: { w: number; h: number } | null): boolean {
   return d.w >= 3840 && d.h >= 2160;
 }
 
+function recipeSays4K(asset: Asset | null): boolean {
+  if (!asset) return false;
+
+  const meta: any = (asset as any).meta || {};
+  const candidates = [
+    meta.quality,
+    meta?.recipe?.quality,
+    meta?.generation?.quality,
+    meta?.params?.quality,
+  ];
+
+  return candidates.some((q) => typeof q === "string" && q.trim().toLowerCase() === "4k");
+}
+
 function isCameraAngles(asset: Asset | null): boolean {
   if (!asset) return false;
   const t = String(asset.tool || "").toLowerCase();
@@ -96,7 +110,10 @@ const Store: React.FC<StoreProps> = ({ onNavigate, prefill, onRequestUpscale }) 
   }, [assets, filter]);
 
   const cameraAngles = isCameraAngles(selected);
-  const ok4k = is4K(dims);
+
+  // ✅ Acepta 4K por dimensiones reales O por receta/meta
+  const ok4k = is4K(dims) || recipeSays4K(selected);
+
   const canContinue = Boolean(selected) && ok4k && !cameraAngles;
 
   const blockReason = useMemo(() => {
@@ -143,7 +160,13 @@ const Store: React.FC<StoreProps> = ({ onNavigate, prefill, onRequestUpscale }) 
                       {dimsLoading ? "checking resolution..." : dims ? `${dims.w}×${dims.h}` : "resolution unknown"}
                     </span>
                     <span className={`${styles.badge} ${ok4k && !cameraAngles ? styles.badgeOk : styles.badgeWarn}`}>
-                      {cameraAngles ? "NOT SUPPORTED (camera angles)" : ok4k ? "4K OK" : "NOT 4K"}
+                      {cameraAngles
+                        ? "NOT SUPPORTED (camera angles)"
+                        : ok4k
+                          ? recipeSays4K(selected) && !is4K(dims)
+                            ? "4K OK (recipe)"
+                            : "4K OK"
+                          : "NOT 4K"}
                     </span>
                   </div>
                 </div>
