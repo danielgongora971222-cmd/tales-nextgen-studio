@@ -5,7 +5,7 @@ import { toggleLike, listComments, createComment } from '../services/socialApi';
 import { useAuth } from '../contexts/AuthContext';
 import styles from './Home.module.css';
 import generatorStyles from './tools/ImageGeneratorTool.module.css';
-import OneNationUpMark from "@/components/brand/OneNationUpMark";
+import OneNationUpIcon from "@/components/brand/OneNationUpIcon";
 
 interface HomeProps {
   onNavigate: (route: AppRoute) => void;
@@ -286,20 +286,26 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
           className={`${styles.heroCard} ${styles.heroCardVideo}`}
         >
           <div className={styles.heroContent}>
-            <span className={styles.heroEyebrow}>
-              <OneNationUpMark text="1NATIONUP STORE" size={16} textClassName="text-xs font-extrabold tracking-[0.22em]" />
-            </span>
+            <div className={styles.oneNationTopRow}>
+              <div className={styles.oneNationBadge} aria-hidden="true">
+                <OneNationUpIcon size={28} />
+              </div>
 
-            <h2 className={styles.heroTitle}>
-              <OneNationUpMark text="1NationUp Store" size={22} textClassName="text-3xl font-black" />
-            </h2>
+              <div className={styles.oneNationTextBlock}>
+                <span className={`${styles.heroEyebrow} oneNation-gradientText`}>1NATION UP</span>
+                <span className={styles.oneNationSub}>PRINT STORE</span>
+              </div>
+            </div>
+
+            <h2 className={styles.heroTitle}>From pixels to premium prints</h2>
 
             <p className={styles.heroCopy}>
-              Be original—turn your own art into reality: decorate your home or gift something crafted millimeter by millimeter by you.
+              Turn your generated art into posters, canvas and collectible drops—crafted with a clean, gallery-grade finish.
             </p>
 
-            <span className={styles.heroCta}>
-              <OneNationUpMark text="Open 1NationUp Store" size={16} textClassName="text-sm font-bold" />
+            <span className={styles.oneNationCtaRow}>
+              <span className={`${styles.oneNationCtaText} oneNation-gradientText`}>Open Store</span>
+              <span className={styles.oneNationCtaArrow} aria-hidden="true">→</span>
             </span>
           </div>
         </button>
