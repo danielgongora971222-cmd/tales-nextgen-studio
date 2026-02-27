@@ -393,3 +393,492 @@
   color: rgba(255,255,255,0.85);
   font-weight: 900;
 }
+
+/* =========================
+   1NationUp Studio (Steps 2-4)
+   ========================= */
+.studioWrap {
+  margin-top: 18px;
+}
+
+.studioHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.studioTitle {
+  margin: 0;
+  font-size: 20px;
+  letter-spacing: -0.01em;
+}
+
+.studioSteps {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.studioGrid {
+  display: grid;
+  grid-template-columns: 1.65fr 1fr;
+  gap: 14px;
+  align-items: start;
+}
+
+.leftPane {
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(0,0,0,0.40);
+  border-radius: 18px;
+  overflow: hidden;
+  min-height: 560px;
+  position: relative;
+}
+
+.rightPane {
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(0,0,0,0.40);
+  border-radius: 18px;
+  overflow: hidden;
+  padding: 14px;
+}
+
+.panelBlock {
+  padding: 12px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(0,0,0,0.25);
+  border-radius: 14px;
+  margin-bottom: 12px;
+}
+
+.panelTitle {
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.70);
+  margin-bottom: 10px;
+  font-weight: 800;
+}
+
+.panelFooter {
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  padding: 4px 2px 0;
+}
+
+.primaryBtn {
+  background: rgba(241,225,148,0.95);
+  color: #121212;
+  border: 0;
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-weight: 900;
+  cursor: pointer;
+  flex: 1;
+}
+
+.primaryBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.secondaryBtn {
+  background: rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.90);
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-weight: 800;
+  cursor: pointer;
+  width: 120px;
+}
+
+.materialGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.sizeGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.fitGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.materialCard,
+.sizeCard,
+.fitCard,
+.roomCard {
+  text-align: left;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(0,0,0,0.25);
+  cursor: pointer;
+  color: white;
+}
+
+.materialCard:hover,
+.sizeCard:hover,
+.fitCard:hover,
+.roomCard:hover {
+  border-color: rgba(241,225,148,0.35);
+  background: rgba(241,225,148,0.06);
+}
+
+.cardActive {
+  border-color: rgba(241,225,148,0.55);
+  background: rgba(241,225,148,0.10);
+  box-shadow: 0 0 22px rgba(241,225,148,0.10);
+}
+
+.cardName {
+  font-weight: 900;
+  font-size: 13px;
+}
+
+.cardDesc {
+  font-size: 12px;
+  color: rgba(255,255,255,0.65);
+  margin-top: 4px;
+}
+
+.goodBox {
+  border: 1px solid rgba(70, 255, 170, 0.20);
+  background: rgba(70, 255, 170, 0.06);
+  border-radius: 12px;
+  padding: 10px 12px;
+  color: rgba(220,255,235,0.9);
+  font-size: 12px;
+}
+
+.errorBox {
+  border: 1px solid rgba(255, 80, 80, 0.25);
+  background: rgba(255, 80, 80, 0.08);
+  border-radius: 12px;
+  padding: 10px 12px;
+  color: rgba(255,220,220,0.95);
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+
+.mutedHelp {
+  font-size: 12px;
+  color: rgba(255,255,255,0.55);
+  padding: 0 4px;
+}
+
+.editorStage {
+  padding: 14px;
+}
+
+.editorFrame {
+  width: 100%;
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(0,0,0,0.55);
+  overflow: hidden;
+  position: relative;
+}
+
+.editorMask {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 9999px rgba(0,0,0,0.25);
+}
+
+.editorImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  user-select: none;
+  display: block;
+}
+
+.editorImgCrop {
+  object-fit: cover;
+  transform-origin: center;
+}
+
+.smartFillOverlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 14px;
+  background: linear-gradient(180deg, rgba(0,0,0,0.10), rgba(0,0,0,0.78));
+}
+
+.smartFillTitle {
+  font-weight: 900;
+}
+
+.smartFillText {
+  font-size: 12px;
+  color: rgba(255,255,255,0.75);
+  margin-top: 6px;
+}
+
+.leftMetaRow {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.badgeOk {
+  border-color: rgba(70, 255, 170, 0.35);
+}
+
+.badgeWarn {
+  border-color: rgba(255, 190, 80, 0.35);
+}
+
+.cropControls {
+  margin-top: 10px;
+}
+
+.sliderRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sliderLabel {
+  width: 48px;
+  font-size: 12px;
+  color: rgba(255,255,255,0.65);
+}
+
+.slider {
+  width: 100%;
+}
+
+.roomStage {
+  height: 100%;
+  min-height: 560px;
+  position: relative;
+}
+
+.roomWall {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 30% 20%, rgba(255,255,255,0.12), rgba(0,0,0,0.55));
+}
+
+.room_living .roomWall {
+  background: radial-gradient(circle at 30% 20%, rgba(255,255,255,0.14), rgba(0,0,0,0.62));
+}
+
+.room_office .roomWall {
+  background: radial-gradient(circle at 60% 20%, rgba(160,210,255,0.12), rgba(0,0,0,0.64));
+}
+
+.room_bedroom .roomWall {
+  background: radial-gradient(circle at 40% 30%, rgba(255,200,240,0.12), rgba(0,0,0,0.66));
+}
+
+.roomFrame {
+  position: absolute;
+  left: 50%;
+  top: 45%;
+  transform: translate(-50%, -50%);
+  border-radius: 14px;
+  overflow: hidden;
+  border: 10px solid rgba(0,0,0,0.55);
+  box-shadow: 0 30px 70px rgba(0,0,0,0.45);
+  background: black;
+}
+
+.roomImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.roomSofa {
+  position: absolute;
+  left: 50%;
+  bottom: 70px;
+  transform: translateX(-50%);
+  width: min(720px, 86%);
+  height: 120px;
+  border-radius: 26px;
+  background: rgba(0,0,0,0.55);
+  border: 1px solid rgba(255,255,255,0.08);
+  box-shadow: 0 25px 60px rgba(0,0,0,0.40);
+}
+
+.roomCaption {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  font-size: 12px;
+  color: rgba(255,255,255,0.75);
+  padding: 10px 12px;
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 12px;
+  background: rgba(0,0,0,0.35);
+}
+
+.roomGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+}
+
+.tabs {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.tab {
+  flex: 1;
+  border-radius: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(255,255,255,0.06);
+  color: rgba(255,255,255,0.9);
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.tabActive {
+  border-color: rgba(241,225,148,0.55);
+  background: rgba(241,225,148,0.12);
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.input {
+  border-radius: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(0,0,0,0.25);
+  color: rgba(255,255,255,0.95);
+}
+
+.textarea {
+  width: 100%;
+  min-height: 90px;
+  resize: vertical;
+  border-radius: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(0,0,0,0.25);
+  color: rgba(255,255,255,0.95);
+}
+
+.summaryRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.priceBox {
+  margin-top: 10px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(0,0,0,0.22);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+
+.priceLine {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: rgba(255,255,255,0.78);
+  padding: 4px 0;
+}
+
+.priceTotal {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  font-weight: 900;
+  padding-top: 10px;
+  margin-top: 8px;
+  border-top: 1px solid rgba(255,255,255,0.10);
+}
+
+.checkoutStage {
+  padding: 18px;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  position: relative;
+}
+
+.checkoutFrame {
+  width: min(520px, 92%);
+  aspect-ratio: 1 / 1;
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.12);
+  box-shadow: 0 30px 80px rgba(0,0,0,0.45);
+  position: relative;
+  background: black;
+}
+
+.checkoutImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.checkoutGlow {
+  position: absolute;
+  inset: -60px;
+  background: radial-gradient(circle at 30% 20%, rgba(241,225,148,0.28), rgba(0,0,0,0));
+  pointer-events: none;
+}
+
+.successOverlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(0,0,0,0.35);
+}
+
+.successMark {
+  width: 72px;
+  height: 72px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  font-weight: 900;
+  font-size: 34px;
+  background: rgba(70, 255, 170, 0.14);
+  border: 1px solid rgba(70, 255, 170, 0.30);
+}
+
+.successTitle {
+  margin-top: 12px;
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.successText {
+  margin-top: 6px;
+  font-size: 12px;
+  color: rgba(255,255,255,0.75);
+}

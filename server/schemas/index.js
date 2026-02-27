@@ -261,6 +261,62 @@ export const UploadAssetSchema = z.object({
   type: z.enum(["image", "video"]).optional(),
 });
 
+export const StoreOrderSchema = z.object({
+  assetId: z.string().min(1),
+  assetUrl: z.string().min(1),
+  assetName: z.string().optional(),
+
+  imageDims: z.object({ w: z.number().int().nonnegative(), h: z.number().int().nonnegative() }).nullable().optional(),
+  require4k: z.literal(true),
+
+  material: z.enum(["metal", "acrylic", "canvas", "paper"]),
+  materialLabel: z.string().min(1),
+
+  size: z.object({
+    id: z.string().min(1),
+    wIn: z.number().positive(),
+    hIn: z.number().positive(),
+    label: z.string().min(1),
+  }),
+
+  fitMode: z.enum(["perfect", "crop", "smart_fill"]),
+  crop: z
+    .object({
+      x: z.number(),
+      y: z.number(),
+      scale: z.number().min(1).max(5),
+    })
+    .nullable()
+    .optional(),
+
+  pricing: z.object({
+    basePrice: z.number().nonnegative(),
+    shipping: z.number().nonnegative(),
+    smartFillAddon: z.number().nonnegative(),
+    total: z.number().nonnegative(),
+  }),
+
+  delivery: z.object({
+    method: z.enum(["ship", "pickup"]),
+    customerName: z.string().min(1),
+    email: z.string().min(3),
+    phone: z.string().min(3),
+
+    address1: z.string().nullable().optional(),
+    city: z.string().nullable().optional(),
+    state: z.string().nullable().optional(),
+    zip: z.string().nullable().optional(),
+  }),
+
+  notes: z.string().optional(),
+
+  flags: z
+    .object({
+      smartFillIsPlaceholder: z.boolean().optional(),
+    })
+    .optional(),
+});
+
 export const PresignUploadSchema = z.object({
   tool: z.string().optional(),
   name: z.string().optional(),
