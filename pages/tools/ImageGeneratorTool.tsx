@@ -8,6 +8,7 @@ import { supabase } from "../../services/supabaseClient";
 import { Asset, GeminiModel } from "../../types";
 import ErrorModal from "../../components/ErrorModal";
 import { STYLE_PRESETS } from "../../config/presets/restyle";
+import OneNationUpIcon from "@/components/brand/OneNationUpIcon";
 
 
 type Quality = "" | ImageGenQuality;
@@ -2049,7 +2050,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
                         title="1NationUp Store"
                         onClick={() => window.dispatchEvent(new CustomEvent("tales:open-store", { detail: { asset } }))}
                       >
-                        🛍️
+                        <OneNationUpIcon size={18} />
                       </button>
 
                       <button

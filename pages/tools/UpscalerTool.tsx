@@ -6,6 +6,7 @@ import ErrorModal from "../../components/ErrorModal";
 import { Asset, GeminiModel } from "../../types";
 import { generateImageBatch } from "../../services/geminiService";
 import { deleteAsset, listMyAssets, publishAsset, unpublishAsset, uploadUserAsset } from "../../services/assetsApi";
+import OneNationUpIcon from "@/components/brand/OneNationUpIcon";
 
 import { AssetPickerModal } from "./video/AssetPickerModal";
 
@@ -455,7 +456,7 @@ const UpscalerTool: React.FC<{ prefillAsset?: Asset | null }> = ({ prefillAsset 
                         title="1NationUp Store"
                         onClick={() => window.dispatchEvent(new CustomEvent("tales:open-store", { detail: { asset } }))}
                       >
-                        🛍️
+                        <OneNationUpIcon size={18} />
                       </button>
 
                       <button

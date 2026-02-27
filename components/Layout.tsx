@@ -5,6 +5,7 @@ import Background3D from './Background3D';
 import { TOOLS_REGISTRY } from '../config/tools';
 import { VIDEO_TOOLS_REGISTRY } from '../config/videoTools';
 import { useAuth } from '../contexts/AuthContext';
+import OneNationUpMark from "@/components/brand/OneNationUpMark";
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -502,26 +503,21 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
         )}
 
 
-  {/* ✅ 1NationUp Store (separa del bloque usuario/logout por la línea existente border-t) */}
-          <div className="px-4 pb-4">
-            <button
-              onClick={() => onNavigate(AppRoute.STORE)}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border transition-all duration-300 ${
-                currentRoute === AppRoute.STORE
-                  ? 'border-[rgba(241,225,148,0.40)] bg-[rgba(241,225,148,0.12)] text-white shadow-[0_0_22px_rgba(241,225,148,0.10)]'
-                  : 'border-white/10 bg-white/5 text-white/70 hover:text-white hover:bg-[rgba(241,225,148,0.06)] hover:border-[rgba(241,225,148,0.18)]'
-              }`}
-              title="1NationUp Store"
-            >
-              <span className="text-xl">🛍️</span>
-              <div className="flex-1 text-left">
-                <div className="text-sm font-black tracking-wide">1NationUp Store</div>
-                <div className="text-[10px] text-white/55">
-                  Turn your art into real prints
-                </div>
-              </div>
-            </button>
+      {/* ✅ 1NationUp Store (separa del bloque usuario/logout por la línea existente border-t) */}
+      <div className="px-4 pb-4">
+        <button
+          onClick={() => onNavigate(AppRoute.STORE)}
+          className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 oneNation-pill ${
+            currentRoute === AppRoute.STORE ? "shadow-[0_0_28px_rgba(123,77,255,0.18)]" : ""
+          }`}
+          title="1NationUp Store"
+        >
+          <OneNationUpMark text="1NationUp Store" size={22} textClassName="text-sm font-black tracking-wide" />
+          <div className="flex-1 text-left">
+            <div className="text-[10px] text-white/55">Turn your art into real prints</div>
           </div>
+        </button>
+      </div>
 
         <div className="p-4 border-t border-white/10">
           <div className={`rounded-xl p-4 transition-all hud-panel hud-panel--soft hud-noise ${sidebarOpen ? 'opacity-100' : 'opacity-0 hidden'}`}>

@@ -9,6 +9,7 @@ import { deleteAsset, listMyAssets, publishAsset, unpublishAsset, uploadUserAsse
 
 import { AssetPickerModal } from "./video/AssetPickerModal";
 import { LIGHTING_PRESETS } from "../../config/presets/lightroom";
+import OneNationUpIcon from "@/components/brand/OneNationUpIcon";
 
 type Quality = "1K" | "2K" | "4K";
 type PanelKey = "model" | "quality" | null;
@@ -643,7 +644,7 @@ const LightroomTool: React.FC = () => {
                         title="1NationUp Store"
                         onClick={() => window.dispatchEvent(new CustomEvent("tales:open-store", { detail: { asset } }))}
                       >
-                        🛍️
+                        <OneNationUpIcon size={18} />
                       </button>
 
                       <button

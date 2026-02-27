@@ -5,6 +5,7 @@ import { toggleLike, listComments, createComment } from '../services/socialApi';
 import { useAuth } from '../contexts/AuthContext';
 import styles from './Home.module.css';
 import generatorStyles from './tools/ImageGeneratorTool.module.css';
+import OneNationUpMark from "@/components/brand/OneNationUpMark";
 
 interface HomeProps {
   onNavigate: (route: AppRoute) => void;
@@ -285,12 +286,21 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
           className={`${styles.heroCard} ${styles.heroCardVideo}`}
         >
           <div className={styles.heroContent}>
-            <span className={styles.heroEyebrow}>1NATIONUP STORE</span>
-            <h2 className={styles.heroTitle}>1NationUp Store</h2>
+            <span className={styles.heroEyebrow}>
+              <OneNationUpMark text="1NATIONUP STORE" size={16} textClassName="text-xs font-extrabold tracking-[0.22em]" />
+            </span>
+
+            <h2 className={styles.heroTitle}>
+              <OneNationUpMark text="1NationUp Store" size={22} textClassName="text-3xl font-black" />
+            </h2>
+
             <p className={styles.heroCopy}>
               Be original—turn your own art into reality: decorate your home or gift something crafted millimeter by millimeter by you.
             </p>
-            <span className={styles.heroCta}>Open 1NationUp Store</span>
+
+            <span className={styles.heroCta}>
+              <OneNationUpMark text="Open 1NationUp Store" size={16} textClassName="text-sm font-bold" />
+            </span>
           </div>
         </button>
 

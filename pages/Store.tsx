@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AppRoute, Asset } from "../types";
 import { listMyAssets } from "../services/assetsApi";
 import styles from "./Store.module.css";
+import OneNationUpMark from "@/components/brand/OneNationUpMark";
 
 type StorePrefill = { asset?: Asset | null };
 type Material = "metal" | "acrylic" | "canvas" | "paper"; // Movido a nivel global
@@ -128,7 +129,9 @@ const Store: React.FC<StoreProps> = ({ onNavigate, prefill, onRequestUpscale }) 
   return (
     <div className={styles.wrap}>
       <div className={styles.header}>
-        <div className={styles.kicker}>1NationUp Store</div>
+        <div className={styles.kicker}>
+          <OneNationUpMark text="1NationUp Store" size={18} textClassName="font-extrabold" />
+        </div>
         <h1 className={styles.title}>Turn your creation into a real physical print</h1>
         <p className={styles.subtitle}>
           Be original—turn your own art into reality: decorate your home or gift something crafted millimeter by millimeter by you.
@@ -534,7 +537,9 @@ const PrintStudio: React.FC<PrintStudioProps> = ({ step, setStep, selected, dims
   return (
     <div className={styles.studioWrap}>
       <div className={styles.studioHeader}>
-        <div className={styles.kicker}>1NationUp Store</div>
+        <div className={styles.kicker}>
+          <OneNationUpMark text="1NationUp Store" size={18} textClassName="font-extrabold" />
+        </div>
         <h2 className={styles.studioTitle}>{panelTitle}</h2>
         <div className={styles.studioSteps}>
           <button

@@ -1,9 +1,0 @@
-services:
-  tales_nextgen_studio:
-    build: .
-    ports:
-      - "8080:8080"
-    environment:
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - PORT=8080
-      - SERVE_CLIENT=1
