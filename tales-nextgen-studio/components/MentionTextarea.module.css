@@ -1,0 +1,175 @@
+.wrap {
+  position: relative;
+  width: 100%;
+  /* El shell (wrap) recibe estilos externos (p.ej. .prompt).
+     El textarea real va encima en modo "transparente" para poder resaltar tokens. */
+}
+
+.highlighter {
+  position: absolute;
+  top: var(--mt-pad-top, 0px);
+  right: var(--mt-pad-right, 0px);
+  bottom: var(--mt-pad-bottom, 0px);
+  left: var(--mt-pad-left, 0px);
+
+  padding: 0;
+  border-radius: inherit;
+  box-sizing: border-box;
+
+  font: inherit;
+  line-height: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: break-word;
+
+  overflow: auto;
+  pointer-events: none;
+  color: inherit;
+}
+
+.textarea {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  display: block;
+
+  box-sizing: border-box;
+  margin: 0;
+
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+
+  /* IMPORTANTE: NO heredamos padding del wrapper para evitar “doble padding” */
+  padding: 0;
+  border-radius: inherit;
+
+  font: inherit;
+  line-height: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: break-word;
+
+  color: transparent;
+  caret-color: var(--text-main, rgba(255, 255, 255, 0.92));
+
+  overflow: auto;
+}
+
+
+/* Placeholder visible aunque el texto sea transparente */
+.textarea::placeholder {
+  color: rgba(255, 255, 255, 0.25);
+}
+
+.mention {
+  display: inline;
+  padding: 0;
+  border-radius: 999px;
+  background: rgba(90, 150, 255, 0.25);
+  /* IMPORTANTE: usamos box-shadow en lugar de border para no cambiar el layout
+     y evitar el desfase del caret/cursor entre el textarea y el highlighter. */
+  box-shadow: inset 0 0 0 1px rgba(90, 150, 255, 0.35);
+  color: rgba(235, 245, 255, 0.98);
+  font: inherit;
+  line-height: inherit;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+.picker {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 80;
+
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(18, 18, 24, 0.92);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+
+  max-height: 260px;
+  overflow: auto;
+  padding: 6px;
+}
+
+.empty {
+  padding: 10px 12px;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 13px;
+}
+
+.item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.92);
+  cursor: pointer;
+  text-align: left;
+}
+
+.item:hover,
+.itemActive {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.thumb {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  overflow: hidden;
+  flex: 0 0 auto;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.label {
+  font-size: 13px;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.token {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.72);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kind {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.72);
+}

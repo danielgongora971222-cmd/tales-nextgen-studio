@@ -1,0 +1,7 @@
+{
+  "name": "TALES - NextGen Studio",
+  "description": "A futuristic, high-performance AI creative studio featuring Image Generation, Video Creation, and advanced tools, migrated to a scalable React architecture.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}

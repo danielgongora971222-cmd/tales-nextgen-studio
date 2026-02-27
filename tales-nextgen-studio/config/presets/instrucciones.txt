@@ -1,0 +1,13 @@
+[[STYLE_PRESET_START]]
+(AQUÍ VA EL PROMPT DEL PRESET)
+[[STYLE_PRESET_END]]
+
+cd C:\PROYECTOS\tales-nextgen-studio
+git status
+git add .
+git commit -m "Hardening: lock down jobs RLS + unify apiUrl + disable sync in prod + fix prod debug"
+git push origin staging
+
+R2_ACCESS_KEY_ID 3b1517b7f24b92bc74369d7a8dbac65d  
+R2_SECRET_ACCESS_KEY 29135382b8f8271f213272b3c592944ba3fe6db2b228dd312249d0167f43488d
+R2_ENDPOINT https://8906964184434f6a66673cdcfa18a262.r2.cloudflarestorage.com

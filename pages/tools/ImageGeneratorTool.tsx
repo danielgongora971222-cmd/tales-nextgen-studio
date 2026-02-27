@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import styles from "./ImageGeneratorTool.module.css";
-import { generateImageBatch, type PromptReference } from "../../services/geminiService";
+import { generateImageBatch, type PromptReference, type ImageGenQuality } from "../../services/geminiService";
 import { MentionTextarea, type MentionItem } from "../../components/MentionTextarea";
 import { deleteAsset, listMyAssets, publishAsset, unpublishAsset, uploadUserAsset } from "../../services/assetsApi";
 import { useAuth } from "../../contexts/AuthContext";
@@ -10,7 +10,7 @@ import ErrorModal from "../../components/ErrorModal";
 import { STYLE_PRESETS } from "../../config/presets/restyle";
 
 
-type Quality = "" | "1K" | "2K" | "4K";
+type Quality = "" | ImageGenQuality;
 type PanelKey = "reference" | "model" | "params" | "styles";
 
 type ElementItem = {
@@ -152,6 +152,12 @@ function makeTempAsset(item: { assetId: string; url: string }, prompt: string, o
     createdAt: Date.now(),
     ownerId,
     isPublic: false,
+
+    // ✅ requeridos por types.ts
+    likedByMe: false,
+    likesCount: 0,
+    commentsCount: 0,
+
     likes: [],
     comments: [],
   };
@@ -1769,10 +1775,10 @@ const promptReferences: PromptReference[] = useMemo(() => {
         effectiveAspectRatio = "1:1";
       }
 
-      const effectiveQuality =
-        effCaps.qualities.includes(quality)
-          ? quality
-          : (effCaps.qualities[effCaps.qualities.length - 1] || effCaps.qualities[0] || "1K");
+      const effectiveQuality: ImageGenQuality =
+        quality && effCaps.qualities.includes(quality)
+          ? (quality as ImageGenQuality)
+          : ((effCaps.qualities[effCaps.qualities.length - 1] || effCaps.qualities[0] || "1K") as ImageGenQuality);
 
       const effectiveCount = effCaps.countOptions.includes(count) ? count : (effCaps.countOptions[0] || 1);
 
@@ -2037,6 +2043,15 @@ const promptReferences: PromptReference[] = useMemo(() => {
 
                     {/* Hover actions */}
                     <div className={styles.tileActions} onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        className={styles.iconBtn}
+                        title="1NationUp Store"
+                        onClick={() => window.dispatchEvent(new CustomEvent("tales:open-store", { detail: { asset } }))}
+                      >
+                        🛍️
+                      </button>
+
                       <button
                         type="button"
                         className={styles.iconBtn}
