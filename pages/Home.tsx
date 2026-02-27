@@ -49,6 +49,11 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
     }, 2500);
   };
 
+  const oneNationBtnRef = useRef<HTMLButtonElement | null>(null);
+  const oneNationCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const oneNationHoverRef = useRef<boolean>(false);
+  const oneNationMouseRef = useRef<{ x: number; y: number }>({ x: -1000, y: -1000 });
+
   const validateComment = (raw: string) => {
     const text = (raw || "").trim();
 
@@ -102,6 +107,163 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
     if (!modelId) return 'Unknown';
     return modelId.replace(/[-_]/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase());
   }
+
+    useEffect(() => {
+    const btn = oneNationBtnRef.current;
+    const canvas = oneNationCanvasRef.current;
+    if (!btn || !canvas) return;
+
+    const prefersReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+    if (prefersReducedMotion) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const colors = ['#7EAAED', '#DFB142', '#DE6C53', '#7D45A9']; // exactamente como el TXT :contentReference[oaicite:5]{index=5}
+    let particles: Array<{
+      x: number; y: number;
+      vx: number; vy: number;
+      baseRadius: number; radius: number;
+      color: string;
+      phase: number;
+    }> = [];
+
+    let raf = 0;
+
+    const resize = () => {
+      const w = btn.offsetWidth;
+      const h = btn.offsetHeight;
+      canvas.width = Math.max(1, Math.floor(w));
+      canvas.height = Math.max(1, Math.floor(h));
+
+      particles = [];
+      const count = Math.max(18, Math.floor((canvas.width * canvas.height) / 4000)); // similar al TXT :contentReference[oaicite:6]{index=6}
+      for (let i = 0; i < count; i++) {
+        particles.push({
+          x: Math.random() * canvas.width,
+          y: Math.random() * canvas.height,
+          vx: (Math.random() - 0.5) * 0.5,
+          vy: (Math.random() - 0.5) * 0.5,
+          baseRadius: Math.random() * 1.5 + 0.5,
+          radius: 1,
+          color: colors[Math.floor(Math.random() * colors.length)],
+          phase: Math.random() * Math.PI * 2
+        });
+      }
+    };
+
+    const drawLines = () => {
+      const isHovered = oneNationHoverRef.current;
+      const mouse = oneNationMouseRef.current;
+      const connectionDistance = isHovered ? 110 : 80;
+
+      for (let i = 0; i < particles.length; i++) {
+        for (let j = i + 1; j < particles.length; j++) {
+          const dx = particles[i].x - particles[j].x;
+          const dy = particles[i].y - particles[j].y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+
+          if (dist < connectionDistance) {
+            ctx.beginPath();
+            let opacity = 1 - (dist / connectionDistance);
+            opacity *= isHovered ? 0.6 : 0.2;
+            ctx.strokeStyle = `rgba(180, 200, 255, ${opacity})`;
+            ctx.lineWidth = 1;
+            ctx.moveTo(particles[i].x, particles[i].y);
+            ctx.lineTo(particles[j].x, particles[j].y);
+            ctx.stroke();
+          }
+        }
+
+        if (isHovered) {
+          const mdx = particles[i].x - mouse.x;
+          const mdy = particles[i].y - mouse.y;
+          const mdist = Math.sqrt(mdx * mdx + mdy * mdy);
+
+          if (mdist < 120) {
+            ctx.beginPath();
+            const mOpacity = 1 - (mdist / 120);
+            ctx.strokeStyle = particles[i].color;
+            ctx.globalAlpha = mOpacity * 0.8;
+            ctx.lineWidth = 1.5;
+            ctx.moveTo(particles[i].x, particles[i].y);
+            ctx.lineTo(mouse.x, mouse.y);
+            ctx.stroke();
+            ctx.globalAlpha = 1.0;
+          }
+        }
+      }
+    };
+
+    const tick = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const isHovered = oneNationHoverRef.current;
+      const mouse = oneNationMouseRef.current;
+
+      for (const p of particles) {
+        p.x += p.vx;
+        p.y += p.vy;
+
+        if (p.x < 0 || p.x > canvas.width) p.vx *= -1;
+        if (p.y < 0 || p.y > canvas.height) p.vy *= -1;
+
+        p.phase += 0.02;
+        p.radius = p.baseRadius + Math.sin(p.phase) * 0.5;
+
+        if (isHovered) {
+          const dx = mouse.x - p.x;
+          const dy = mouse.y - p.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          const interactionRadius = 100;
+
+          if (dist > 0.001 && dist < interactionRadius) {
+            const fx = dx / dist;
+            const fy = dy / dist;
+            const force = (interactionRadius - dist) / interactionRadius;
+
+            p.vx += fx * force * 0.02;
+            p.vy += fy * force * 0.02;
+
+            const maxSpeed = 1.5;
+            const sp = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+            if (sp > maxSpeed) {
+              p.vx = (p.vx / sp) * maxSpeed;
+              p.vy = (p.vy / sp) * maxSpeed;
+            }
+
+            p.radius = p.baseRadius + (force * 1.5);
+          }
+        } else {
+          p.vx *= 0.99;
+          p.vy *= 0.99;
+          if (Math.abs(p.vx) < 0.1) p.vx += (Math.random() - 0.5) * 0.05;
+          if (Math.abs(p.vy) < 0.1) p.vy += (Math.random() - 0.5) * 0.05;
+        }
+
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+        ctx.fillStyle = p.color;
+        ctx.globalAlpha = isHovered ? 0.8 : 0.5;
+        ctx.fill();
+        ctx.globalAlpha = 1.0;
+      }
+
+      drawLines();
+      raf = requestAnimationFrame(tick);
+    };
+
+    const onResize = () => resize();
+
+    resize();
+    raf = requestAnimationFrame(tick);
+    window.addEventListener('resize', onResize);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('resize', onResize);
+    };
+  }, []);
 
   useEffect(() => {
     loadFeed();
@@ -281,33 +443,57 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
         </button>
 
         <button
+          ref={oneNationBtnRef}
           type="button"
           onClick={() => onNavigate(AppRoute.STORE)}
-          className={`${styles.heroCard} ${styles.heroCardVideo}`}
+          className={`${styles.heroCard} ${styles.heroCardVideo} ${styles.oneNationHeroCard}`}
+          onMouseEnter={() => { oneNationHoverRef.current = true; }}
+          onMouseLeave={() => {
+            oneNationHoverRef.current = false;
+            oneNationMouseRef.current = { x: -1000, y: -1000 };
+          }}
+          onMouseMove={(e) => {
+            const rect = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
+            oneNationMouseRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+          }}
         >
-          <div className={styles.heroContent}>
-            <div className={styles.oneNationTopRow}>
-              <div className={styles.oneNationBadge} aria-hidden="true">
-                <OneNationUpIcon size={28} />
-              </div>
+          {/* Canvas constelaciones/ADN tecnológico (igual al TXT) */}
+          <canvas ref={oneNationCanvasRef} className={styles.oneNationCanvas} />
 
-              <div className={styles.oneNationTextBlock}>
-                <span className={`${styles.heroEyebrow} oneNation-gradientText`}>1NATION UP</span>
-                <span className={styles.oneNationSub}>PRINT STORE</span>
-              </div>
+          {/* Overlay para legibilidad (igual al TXT) */}
+          <div className={styles.oneNationOverlay} aria-hidden="true" />
+
+          {/* Contenido frontal */}
+          <div className={styles.oneNationFront}>
+            <div className={styles.oneNationLogoWrap}>
+              <img
+                src="/brands/1nation-up/logo.png"
+                alt="1NationUp Logo"
+                className={styles.oneNationLogo}
+                loading="lazy"
+                decoding="async"
+              />
             </div>
 
-            <h2 className={styles.heroTitle}>From pixels to premium prints</h2>
+            <div className={styles.oneNationTextWrap}>
+              <h2 className={styles.oneNationKicker}>Explora la</h2>
 
-            <p className={styles.heroCopy}>
-              Turn your generated art into posters, canvas and collectible drops—crafted with a clean, gallery-grade finish.
-            </p>
+              <h1 className={styles.oneNationTitle}>
+                <span className={styles.oneNationGradientText}>1NationUp</span>
+                <span className={styles.oneNationTitleWhite}>Store</span>
+              </h1>
 
-            <span className={styles.oneNationCtaRow}>
-              <span className={`${styles.oneNationCtaText} oneNation-gradientText`}>Open Store</span>
-              <span className={styles.oneNationCtaArrow} aria-hidden="true">→</span>
-            </span>
+              <div className={styles.oneNationActionRow}>
+                <span>Acceder a la tienda</span>
+                <svg className={styles.oneNationArrow} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 8l4 4m0 0l-4 4m4-4H3"></path>
+                </svg>
+              </div>
+            </div>
           </div>
+
+          {/* Borde brillante inferior (igual al TXT) */}
+          <div className={styles.oneNationBottomBorder} aria-hidden="true" />
         </button>
 
         <div className={`${styles.heroCard} ${styles.heroCardCredits}`}>
