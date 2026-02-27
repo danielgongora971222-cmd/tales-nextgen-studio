@@ -11,6 +11,7 @@ import { createHmac, randomUUID } from "crypto";
 import {
   createImage2VideoTask,
   createText2VideoTask,
+  createMotionControlTask,
   pollTaskUntilDone,
   klingPostWithRetry,
   klingGetWithRetry,
@@ -369,6 +370,7 @@ app.use(
     // kling + fal helpers (se usan dentro de routes/ai/video.js)
     createImage2VideoTask,
     createText2VideoTask,
+    createMotionControlTask,
     pollTaskUntilDone,
     klingPostWithRetry,
     falQueueSubmit,

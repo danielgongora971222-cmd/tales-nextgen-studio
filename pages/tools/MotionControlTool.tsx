@@ -4,17 +4,20 @@ import ErrorModal from "../../components/ErrorModal";
 import { useAuth } from "../../contexts/AuthContext";
 import type { Asset } from "../../types";
 import { deleteAsset, listMyAssets, publishAsset, unpublishAsset } from "../../services/assetsApi";
-import { apiPostJson, formatErr, waitFalJob } from "../../services/videoGenApi";
+import { apiPostJson, formatErr } from "../../services/videoGenApi";
+import { waitJobCompletion } from "../../services/jobsApi";
 
 type Orientation = "image" | "video";
 
 type PendingMotionControlJob = {
-  jobToken: string;
+  jobId: string;
+  taskId?: string;
   prompt: string;
   imageAssetId: string;
   videoAssetId: string;
   keepOriginalSound: boolean;
   characterOrientation: Orientation;
+  mode: "std" | "pro";
   createdAt: number;
 };
 
@@ -31,7 +34,7 @@ function loadPending(): PendingMotionControlJob | null {
     const raw = localStorage.getItem(PENDING_MOTION_KEY);
     if (!raw) return null;
     const j = JSON.parse(raw);
-    if (!j?.jobToken || !j?.prompt) return null;
+    if (!j?.jobId || !j?.prompt) return null;
     return j as PendingMotionControlJob;
   } catch {
     return null;
@@ -62,6 +65,7 @@ export default function MotionControlTool() {
   const [prompt, setPrompt] = useState("");
   const [keepOriginalSound, setKeepOriginalSound] = useState(true);
   const [characterOrientation, setCharacterOrientation] = useState<Orientation>("video");
+  const [mode, setMode] = useState<"std" | "pro">("std");
 
   // Job state
   const [isGenerating, setIsGenerating] = useState(false);
@@ -203,31 +207,23 @@ export default function MotionControlTool() {
     setProgressMsg("Cancelado. Puedes reanudar más tarde.");
   }
 
-  async function finalizeJob(jobToken: string, finalPrompt: string, signal?: AbortSignal) {
-    await apiPostJson<any>(
-      "/api/ai/video/fal/finalize",
-      { jobToken, prompt: finalPrompt },
-      { signal, timeoutMs: 2 * 60 * 1000, retries: 2 }
-    );
-
-    // refresh para obtener URL firmada + meta completa
-    await refreshHistory();
-  }
-
   async function runMotionControlJob(job: PendingMotionControlJob) {
     setIsGenerating(true);
-    setProgressMsg("Procesando (Fal)…");
+    setProgressMsg("Procesando (Kling)…");
     abortRef.current = new AbortController();
 
     try {
-      await waitFalJob(job.jobToken, {
+      const row = await waitJobCompletion(job.jobId, {
         signal: abortRef.current.signal,
-        maxWaitMs: 25 * 60 * 1000,
         onProgress: (m) => setProgressMsg(m),
+        pollMs: 12_000,
       });
 
-      setProgressMsg("Finalizando…");
-      await finalizeJob(job.jobToken, job.prompt, abortRef.current.signal);
+      if (row.status === "failed") {
+        throw new Error(row.error || "El job falló en background.");
+      }
+
+      await refreshHistory();
 
       clearPending();
       setPendingJob(null);
@@ -235,7 +231,6 @@ export default function MotionControlTool() {
       setProgressMsg("Listo.");
     } catch (e: any) {
       if (e?.name === "AbortError" || e?.isCanceled) {
-        // Cancelamos espera local pero dejamos pendiente para reanudar
         setProgressMsg("Cancelado. Puedes reanudar más tarde.");
         return;
       }
@@ -263,34 +258,36 @@ export default function MotionControlTool() {
     abortRef.current = new AbortController();
 
     try {
-      const start = await apiPostJson<any>(
-        "/api/ai/video/motion-control",
-        {
-          tool: "motion-control",
-          nameHint: "motion-control",
-          prompt: (prompt || "").trim() || undefined,
-          imageAssetId: refImage.id,
-          videoAssetId: refVideo.id,
-          keepOriginalSound,
-          characterOrientation,
-          async: true,
-        },
-        { signal: abortRef.current.signal, timeoutMs: 60_000, retries: 2 }
-      );
-
-      if (!start?.jobToken) {
-        throw new Error("No recibí jobToken del servidor.");
-      }
-
-      const job: PendingMotionControlJob = {
-        jobToken: start.jobToken,
+    const start = await apiPostJson<any>(
+      "/api/ai/video/motion-control",
+      {
+        tool: "motion-control",
+        nameHint: "motion-control",
         prompt: finalPrompt,
         imageAssetId: refImage.id,
         videoAssetId: refVideo.id,
         keepOriginalSound,
         characterOrientation,
-        createdAt: Date.now(),
-      };
+        mode,
+        async: true,
+      },
+      { timeoutMs: 60_000, retries: 0 }
+    );
+
+    const jobId = String(start?.jobId || "").trim();
+    if (!jobId) throw new Error("No llegó jobId.");
+
+    const job: PendingMotionControlJob = {
+      jobId,
+      taskId: start?.taskId ? String(start.taskId) : undefined,
+      prompt: finalPrompt,
+      imageAssetId: refImage.id,
+      videoAssetId: refVideo.id,
+      keepOriginalSound,
+      characterOrientation,
+      mode,
+      createdAt: Date.now(),
+    };
 
       savePending(job);
       setPendingJob(job);
@@ -535,6 +532,40 @@ export default function MotionControlTool() {
                   </div>
                 </div>
               </label>
+
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <div style={{ fontWeight: 700, opacity: 0.9 }}>Output:</div>
+
+                <button
+                  type="button"
+                  onClick={() => setMode("std")}
+                  disabled={isGenerating}
+                  style={{
+                    padding: "8px 12px",
+                    borderRadius: 10,
+                    border: "1px solid rgba(255,255,255,0.2)",
+                    background: mode === "std" ? "rgba(255,255,255,0.15)" : "transparent",
+                    cursor: "pointer",
+                  }}
+                >
+                  720p
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setMode("pro")}
+                  disabled={isGenerating}
+                  style={{
+                    padding: "8px 12px",
+                    borderRadius: 10,
+                    border: "1px solid rgba(255,255,255,0.2)",
+                    background: mode === "pro" ? "rgba(255,255,255,0.15)" : "transparent",
+                    cursor: "pointer",
+                  }}
+                >
+                  1080p
+                </button>
+              </div>
 
               {isGenerating ? (
                 <button

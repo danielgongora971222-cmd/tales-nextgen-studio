@@ -29,6 +29,7 @@ export function createAiVideoRouter(ctx) {
   // kling + fal helpers (vienen desde server.js)
     createImage2VideoTask,
     createText2VideoTask,
+    createMotionControlTask,
     pollTaskUntilDone,
     klingPostWithRetry,
     falQueueSubmit,
@@ -2199,52 +2200,43 @@ const isKling = selectedModelNorm.startsWith("kling-");
       const imageUrl = await assetIdToSignedUrl(body.imageAssetId, user.id, 6 * 60 * 60);
       const videoUrl = await assetIdToSignedUrl(body.videoAssetId, user.id, 6 * 60 * 60);
 
-      const endpointId = "fal-ai/kling-video/v2.6/pro/motion-control";
+      const model = "kling-2.6-motion-control";
 
-      const falInput = {
-        image_url: imageUrl,
-        video_url: videoUrl,
-        keep_original_sound: keepOriginalSound,
-        character_orientation: characterOrientation,
-      };
+      // std=720p, pro=1080p
+      const mode = body.mode === "pro" ? "pro" : "std";
 
-      if (body.prompt && body.prompt.trim()) {
-        falInput.prompt = body.prompt.trim();
-      }
-
-      // ✅ Siempre async (evita timeouts y permite videos largos)
-      const { requestId, statusUrl, responseUrl } = await falQueueSubmit(endpointId, falInput);
-
-      const jobToken = signJobToken({
-        uid: user.id,
-        requestId,
-        statusUrl,
-        responseUrl,
-        endpointId,
-        toolName,
-        hint,
-        model: "kling-2.6-motion-control",
-        motionControl: {
-          imageAssetId: body.imageAssetId,
-          videoAssetId: body.videoAssetId,
-          keepOriginalSound,
-          characterOrientation,
-        },
-        createdAt: Date.now(),
-        exp: Date.now() + 6 * 60 * 60 * 1000,
+      const taskCreate = await createMotionControlTask({
+        model,
+        prompt: body.prompt && body.prompt.trim() ? body.prompt.trim() : undefined,
+        imageUrl,
+        videoUrl,
+        mode,
+        keepOriginalSound,
+        characterOrientation,
       });
 
-      const jobId = await upsertFalJobRow({
+      const taskId = String(
+        taskCreate?.data?.task_id ||
+          taskCreate?.task_id ||
+          taskCreate?.data?.taskId ||
+          taskCreate?.taskId ||
+          ""
+      ).trim();
+
+      if (!taskId) {
+        throw httpError(500, "KLING_TASK_CREATE_FAILED", "Kling no devolvió task_id en motion-control.", {
+          taskCreate,
+        });
+      }
+
+      const jobId = await upsertKlingJobRow({
         ownerId: user.id,
         kind: "video",
-        requestId,
-        jobToken,
-        statusUrl,
-        responseUrl,
-        endpointId,
+        taskId,
+        taskType: "motion-control",
         toolName,
         hint,
-        model: "kling-2.6-motion-control",
+        model,
         prompt: body.prompt ? body.prompt.trim() : null,
         extra: {
           motionControl: {
@@ -2252,11 +2244,12 @@ const isKling = selectedModelNorm.startsWith("kling-");
             videoAssetId: body.videoAssetId,
             keepOriginalSound,
             characterOrientation,
+            mode,
           },
         },
       });
 
-      return res.json({ ok: true, mode: "async", jobId, jobToken, requestId });
+      return res.json({ ok: true, mode: "async", jobId, taskId });
     } catch (err) {
       next(err);
     }

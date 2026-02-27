@@ -314,7 +314,14 @@ async function processJob(row) {
     const safeTaskType = String(taskType || "").trim();
     const pollCount = Math.max(0, Number(params.providerPollCount || 0)) + 1;
 
-    if (!(safeTaskType === "text2video" || safeTaskType === "image2video" || safeTaskType === "omni-video")) {
+    if (
+      !(
+        safeTaskType === "text2video" ||
+        safeTaskType === "image2video" ||
+        safeTaskType === "omni-video" ||
+        safeTaskType === "motion-control"
+      )
+    ) {
       await releaseAndReschedule(jobId, {
         status: "failed",
         error: `Job Kling inválido: taskType no soportado (${safeTaskType}).`,
@@ -324,7 +331,6 @@ async function processJob(row) {
       });
       return;
     }
-
     if (pollCount > 200) {
       await releaseAndReschedule(jobId, {
         status: "failed",
@@ -351,9 +357,30 @@ if (!taskId) {
     let rawJson = null;
 
     try {
-      const endpoint = `/videos/${safeTaskType}/${taskId}`;
+      const endpoints =
+        safeTaskType === "motion-control"
+          ? [
+              `/videos/motion-control/${taskId}`,
+              `/videos/motion_create/${taskId}`,
+              `/videos/motion-create/${taskId}`,
+              `/videos/motioncontrol/${taskId}`,
+            ]
+          : [`/videos/${safeTaskType}/${taskId}`];
 
-      rawJson = await klingGetWithRetry(endpoint, { timeoutMs: 20_000, retries: 3 });
+      let lastErr = null;
+      for (const endpoint of endpoints) {
+        try {
+          rawJson = await klingGetWithRetry(endpoint, { timeoutMs: 20_000, retries: 3 });
+          break;
+        } catch (e) {
+          lastErr = e;
+          const status = e?.status || e?.response?.status || null;
+          if (status && Number(status) !== 404) throw e;
+        }
+      }
+
+      if (!rawJson) throw lastErr || new Error("No pude obtener status del task Kling.");
+
       taskData = rawJson?.data || rawJson;
     } catch (e) {
       const next = new Date(Date.now() + 20_000).toISOString();

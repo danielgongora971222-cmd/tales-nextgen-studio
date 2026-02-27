@@ -127,6 +127,10 @@ export const MotionControlRequestSchema = z.object({
   videoAssetId: z.string().uuid(),
   keepOriginalSound: z.boolean().optional(),
   characterOrientation: z.enum(["image", "video"]).optional(),
+
+  // std = 720p, pro = 1080p (lo mapeamos así en el handler)
+  mode: z.enum(["std", "pro"]).optional(),
+
   async: z.boolean().optional(),
   tool: z.string().optional(),
   nameHint: z.string().optional(),

@@ -332,6 +332,52 @@ export async function createImage2VideoTask({
   return klingPost("/videos/image2video", payload);
 }
 
+export async function createMotionControlTask({
+  model,
+  prompt,
+  imageUrl,
+  videoUrl,
+  mode,
+  keepOriginalSound,
+  characterOrientation,
+  ...rest
+}) {
+  const payload = {
+    model_name: model,
+    image_url: imageUrl,
+    video_url: videoUrl,
+    keep_original_sound: keepOriginalSound,
+    character_orientation: characterOrientation,
+    mode, // "std" | "pro"
+    ...(prompt ? { prompt } : {}),
+    ...rest,
+  };
+
+  Object.keys(payload).forEach((key) => payload[key] === undefined && delete payload[key]);
+
+  // Kling puede variar el path exacto; intentamos varios por robustez.
+  const candidates = [
+    "/videos/motion-control",
+    "/videos/motion_create",
+    "/videos/motion-create",
+    "/videos/motioncontrol",
+  ];
+
+  let lastErr = null;
+  for (const path of candidates) {
+    try {
+      return await klingPostWithRetry(path, payload, { timeoutMs: 60_000, retries: 2 });
+    } catch (e) {
+      lastErr = e;
+      const status = e?.status || e?.response?.status || null;
+      // si no es 404, no seguimos probando
+      if (status && Number(status) !== 404) throw e;
+    }
+  }
+
+  throw lastErr || new Error("Kling motion control: no se pudo crear el task (endpoint desconocido).");
+}
+
 export async function pollTaskUntilDone({
   type,
   taskId,
