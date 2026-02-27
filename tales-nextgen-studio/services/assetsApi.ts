@@ -30,6 +30,10 @@ function mapRowToAsset(row: any): Asset {
     url: row.url,
     type,
     name: row.name ?? row.filename ?? row.title ?? "",
+
+    // ✅ DB: public.assets.tool
+    tool: row.tool ?? row.meta?.tool ?? row.metadata?.tool ?? undefined,
+
     prompt: row.prompt ?? row.meta?.prompt ?? undefined,
     createdAt,
     meta: (row as any).meta ?? (row as any).metadata ?? undefined,

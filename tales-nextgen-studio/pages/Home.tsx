@@ -281,14 +281,16 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
 
         <button
           type="button"
-          onClick={() => onNavigate(AppRoute.VIDEO_GEN)}
+          onClick={() => onNavigate(AppRoute.STORE)}
           className={`${styles.heroCard} ${styles.heroCardVideo}`}
         >
           <div className={styles.heroContent}>
-            <span className={styles.heroEyebrow}>GENERAL VIDEO GENERATOR</span>
-            <h2 className={styles.heroTitle}>Create Videos</h2>
-            <p className={styles.heroCopy}>Produce motion-ready scenes with rich detail and cinematic pacing.</p>
-            <span className={styles.heroCta}>Open Video Generator</span>
+            <span className={styles.heroEyebrow}>1NATIONUP STORE</span>
+            <h2 className={styles.heroTitle}>1NationUp Store</h2>
+            <p className={styles.heroCopy}>
+              Be original—turn your own art into reality: decorate your home or gift something crafted millimeter by millimeter by you.
+            </p>
+            <span className={styles.heroCta}>Open 1NationUp Store</span>
           </div>
         </button>
 

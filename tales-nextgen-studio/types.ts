@@ -1,6 +1,9 @@
 export enum AppRoute {
   HOME = 'home',
   LOGIN = 'login',
+
+  // New Service
+  STORE = 'store',
   
   // Tool Categories
   IMAGE_GEN_ROOT = 'image-gen-root',
@@ -46,6 +49,10 @@ export interface Asset {
   url: string; 
   type: 'image' | 'video';
   name: string;
+
+  // ✅ importante para Store (y ya existe en DB: public.assets.tool)
+  tool?: string;
+
   prompt?: string;
   createdAt: number;
 

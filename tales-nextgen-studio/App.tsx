@@ -5,6 +5,7 @@ import Login from './pages/Login';
 import ImageGenHub from './pages/ImageGenHub';
 import VideoGenHub from './pages/VideoGenHub';
 import MyCreations from './pages/MyCreations';
+import Store from './pages/Store';
 import ImageGeneratorTool from './pages/tools/ImageGeneratorTool';
 import RestylerTool from './pages/tools/RestylerTool';
 import LightroomTool from './pages/tools/LightroomTool';
@@ -26,12 +27,16 @@ import { apiUrl } from "./services/apiBase";
 
 const AppContent: React.FC = () => {
   const [route, setRoute] = useState<AppRoute>(AppRoute.HOME);
+
+  const [storePrefill, setStorePrefill] = useState<{ asset?: any | null }>({ asset: null });
+  const [upscalerPrefill, setUpscalerPrefill] = useState<any | null>(null);
+
   const [backendOk, setBackendOk] = useState<boolean>(false);
   const [capabilities, setCapabilities] = useState<any>(null);
   const [checking, setChecking] = useState<boolean>(true);
-  
+
   const { user, isLoading: authLoading } = useAuth();
-  
+
   const healthUrl = apiUrl("/api/health");
 
   useEffect(() => {
@@ -55,6 +60,17 @@ const AppContent: React.FC = () => {
     checkBackend();
   }, []);
 
+  useEffect(() => {
+  const onOpenStore = (ev: any) => {
+    const asset = ev?.detail?.asset || null;
+    setStorePrefill({ asset });
+    setRoute(AppRoute.STORE);
+  };
+
+  window.addEventListener("tales:open-store", onOpenStore as any);
+  return () => window.removeEventListener("tales:open-store", onOpenStore as any);
+}, []);
+
   const handleConnect = async () => {
     setChecking(true);
     try {
@@ -76,7 +92,20 @@ const AppContent: React.FC = () => {
   const renderPage = () => {
     switch (route) {
       case AppRoute.HOME:
-        return <Home onNavigate={setRoute} />;
+        return <Home onNavigate={(r) => { setStorePrefill({ asset: null }); setRoute(r); }} />;
+
+      case AppRoute.STORE:
+        return (
+          <Store
+            onNavigate={(r) => { setStorePrefill({ asset: null }); setRoute(r); }}
+            prefill={storePrefill}
+            onRequestUpscale={(asset) => {
+              setUpscalerPrefill(asset);
+              setStorePrefill({ asset: null });
+              setRoute(AppRoute.TOOL_UPSCALER);
+            }}
+          />
+        );
       
       // Image Tools
       case AppRoute.IMAGE_GEN_ROOT:
@@ -90,7 +119,7 @@ const AppContent: React.FC = () => {
       case AppRoute.TOOL_FACESWAP:
         return <FaceSwapTool />;
       case AppRoute.TOOL_UPSCALER:
-        return <UpscalerTool />;
+        return <UpscalerTool prefillAsset={upscalerPrefill} />;
       case AppRoute.TOOL_EDITOR:
         return <EditorTool />;
       case AppRoute.TOOL_ANGLES:

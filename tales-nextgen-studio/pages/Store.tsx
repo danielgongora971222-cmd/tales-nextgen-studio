@@ -60,7 +60,7 @@ const Store: React.FC<StoreProps> = ({ onNavigate, prefill, onRequestUpscale }) 
 
   const [pickerOpen, setPickerOpen] = useState<boolean>(false);
   const [filter, setFilter] = useState<string>("");
-  const [material, setMaterial] = useState<PrintMaterial>("metal"); // Estado levantado para el Paso 1 (El Lienzo)
+  const [material, setMaterial] = useState<Material>("metal"); // Estado levantado para el Paso 1 (El Lienzo)
 
   // Si el usuario entra desde historial (prefill), precargar selección
   useEffect(() => {
@@ -310,7 +310,7 @@ const Store: React.FC<StoreProps> = ({ onNavigate, prefill, onRequestUpscale }) 
   );
 };
 
-type PrintMaterial = "metal" | "acrylic" | "canvas" | "paper";
+type Material = "metal" | "acrylic" | "canvas" | "paper";
 type FitMode = "perfect" | "crop" | "smart_fill";
 
 type PrintSize = {

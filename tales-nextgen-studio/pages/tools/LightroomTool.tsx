@@ -640,6 +640,15 @@ const LightroomTool: React.FC = () => {
                       <button
                         type="button"
                         className={styles.iconBtn}
+                        title="1NationUp Store"
+                        onClick={() => window.dispatchEvent(new CustomEvent("tales:open-store", { detail: { asset } }))}
+                      >
+                        🛍️
+                      </button>
+
+                      <button
+                        type="button"
+                        className={styles.iconBtn}
                         title={asset.isPublic ? "Quitar de público" : "Publicar"}
                         onClick={() => handleTogglePublish(asset)}
                       >

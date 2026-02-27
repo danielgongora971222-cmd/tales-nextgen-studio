@@ -176,7 +176,7 @@ function isGeneratedUpscale(a: Asset): boolean {
   return true;
 }
 
-const UpscalerTool: React.FC = () => {
+const UpscalerTool: React.FC<{ prefillAsset?: Asset | null }> = ({ prefillAsset }) => {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
 
@@ -190,6 +190,12 @@ const UpscalerTool: React.FC = () => {
   const [viewer, setViewer] = useState<Asset | null>(null);
 
   const [baseRef, setBaseRef] = useState<Asset | null>(null);
+  useEffect(() => {
+  if (prefillAsset) {
+    setBaseRef(prefillAsset);
+    setIsBasePickerOpen(false);
+  }
+}, [prefillAsset]);
   const [isBasePickerOpen, setIsBasePickerOpen] = useState(false);
 
   // ✅ Default: NanoBanana Pro
@@ -443,6 +449,15 @@ const UpscalerTool: React.FC = () => {
                     </div>
 
                     <div className={styles.tileActions} onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        className={styles.iconBtn}
+                        title="1NationUp Store"
+                        onClick={() => window.dispatchEvent(new CustomEvent("tales:open-store", { detail: { asset } }))}
+                      >
+                        🛍️
+                      </button>
+
                       <button
                         type="button"
                         className={styles.iconBtn}

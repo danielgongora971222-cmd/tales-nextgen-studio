@@ -43,6 +43,7 @@ import { createAiVideoRouter } from "./routes/ai/video.js";
 import { createAiImageRouter } from "./routes/ai/image.js";
 import { createAssetsRouter } from "./routes/ai/assets.js";
 import { createModerationRouter } from "./routes/moderation.js";
+import { createStoreRouter } from "./routes/store.js";
 import { FalFinalizeSchema } from "./schemas/index.js";
 import { assertJobLimits } from "./lib/jobLimits.js";
 
@@ -355,6 +356,14 @@ app.use(express.json({ limit: "25mb" }));
 app.use(express.urlencoded({ extended: true, limit: "25mb" }));
 
 app.use("/api", createHealthRouter({ supabaseAdmin }));
+
+app.use(
+  "/api",
+  createStoreRouter({
+    supabaseAdmin,
+    requireUser,
+  })
+);
 
 app.use(
   "/api",
