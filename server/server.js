@@ -3350,6 +3350,19 @@ app.use((err, req, res, _next) => {
     });
   }
 
+  // 3.5) Payload demasiado grande (body parser / express.json)
+  // Esto pasa cuando mandamos un dataURL enorme (croppedImageDataUrl).
+  if (err?.type === "entity.too.large" || err?.status === 413) {
+    return res.status(413).json({
+      ok: false,
+      error: {
+        code: "PAYLOAD_TOO_LARGE",
+        message:
+          "El pedido contiene demasiados datos (probablemente el recorte). Vuelve a intentar: se enviará el recorte como preview más liviano.",
+      },
+    });
+  }
+
   // 4) Cualquier otro error inesperado
   const errorId = randomUUID();
   req?.log?.error?.({ err, errorId }, "Unhandled error");

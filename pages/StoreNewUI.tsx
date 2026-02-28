@@ -249,6 +249,16 @@ function is4K(d: { w: number; h: number } | null): boolean {
   return maxSide >= 3840 && minSide >= 2160;
 }
 
+function approxDataUrlBytes(dataUrl: string): number {
+  // data:image/...;base64,XXXX
+  const i = dataUrl.indexOf(",");
+  if (i < 0) return 0;
+  const b64 = dataUrl.slice(i + 1);
+  // bytes aproximados base64: len * 3/4 (menos padding)
+  const padding = b64.endsWith("==") ? 2 : b64.endsWith("=") ? 1 : 0;
+  return Math.floor((b64.length * 3) / 4) - padding;
+}
+
 function loadImgDimsFromDataUrl(dataUrl: string): Promise<{ w: number; h: number }> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -518,8 +528,32 @@ async function makeCroppedDataUrl(
 
     ctx.drawImage(img, sx, sy, cw, ch, 0, 0, cw, ch);
 
-    // PNG para fábrica (sin pérdidas)
-    return canvas.toDataURL("image/png");
+    // Si el recorte es enorme, lo bajamos manteniendo el encuadre exacto.
+    // Esto evita payloads gigantes.
+    const MAX_SIDE = 2200; // puedes subir/bajar (más alto = más peso)
+    const maxSide = Math.max(canvas.width, canvas.height);
+
+    let outCanvas = canvas;
+
+    if (maxSide > MAX_SIDE) {
+      const scale = MAX_SIDE / maxSide;
+      const w2 = Math.max(1, Math.round(canvas.width * scale));
+      const h2 = Math.max(1, Math.round(canvas.height * scale));
+
+      const scaled = document.createElement("canvas");
+      scaled.width = w2;
+      scaled.height = h2;
+
+      const ctx2 = scaled.getContext("2d");
+      if (!ctx2) throw new Error("No canvas context (scaled)");
+
+      ctx2.drawImage(canvas, 0, 0, w2, h2);
+      outCanvas = scaled;
+    }
+
+    // JPEG reduce muchísimo el peso frente a PNG.
+    // (Para fábrica igual adjuntamos la original 4K + coordenadas; esto es preview exacto)
+    return outCanvas.toDataURL("image/jpeg", 0.9);
   } finally {
     if (blobUrl) URL.revokeObjectURL(blobUrl);
   }
@@ -668,7 +702,12 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
       fitMode,
       crop: null,
       cropNormalized: finalCrop ? finalCrop : null,
-      croppedImageDataUrl: croppedDataUrl ? croppedDataUrl : undefined,
+      // Enviamos el recorte SOLO si no es demasiado pesado (para no romper el request).
+      // 8MB es seguro bajo tu límite server (25mb) incluso con el resto del payload.
+      croppedImageDataUrl:
+        croppedDataUrl && approxDataUrlBytes(croppedDataUrl) <= 8 * 1024 * 1024
+          ? croppedDataUrl
+          : undefined,
 
       pricing: {
         basePrice,
