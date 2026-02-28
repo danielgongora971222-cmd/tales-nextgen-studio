@@ -289,6 +289,20 @@ export const StoreOrderSchema = z.object({
     .nullable()
     .optional(),
 
+  // NUEVO: crop normalizado (0..1) para fábrica / reproducibilidad
+  cropNormalized: z
+    .object({
+      x: z.number().min(0).max(1),
+      y: z.number().min(0).max(1),
+      w: z.number().min(0).max(1),
+      h: z.number().min(0).max(1),
+    })
+    .nullable()
+    .optional(),
+
+  // NUEVO: imagen recortada (dataUrl base64) para adjuntar al correo (best-effort)
+  croppedImageDataUrl: Base64ImageSchema.optional(),
+
   pricing: z.object({
     basePrice: z.number().nonnegative(),
     shipping: z.number().nonnegative(),

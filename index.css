@@ -1,3 +1,7 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 /*
   TALES.AI — HUD Base Theme (no brand/game references)
   Palette (subtle life):
