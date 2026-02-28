@@ -148,6 +148,7 @@ export default function StoreNewUI({ onNavigate, onRequestUpscale, prefill }: St
   const [is4kOk, setIs4kOk] = useState<boolean>(false);
   const [dimsLoading, setDimsLoading] = useState<boolean>(false);
   const [croppedDataUrl, setCroppedDataUrl] = useState<string | null>(null);
+  const [cropGenError, setCropGenError] = useState<string | null>(null);
   const [imageOrientation, setImageOrientation] = useState('portrait'); 
 
   useEffect(() => {
@@ -592,16 +593,20 @@ async function makeCroppedDataUrl(
           // NUEVO: generar la imagen recortada real (best-effort)
           if (image && imgW > 0 && imgH > 0 && cropRect.w > 0 && cropRect.h > 0) {
             try {
+              setCropGenError(null);
+
               const norm = {
                 x: cropRect.x / imgW,
                 y: cropRect.y / imgH,
                 w: cropRect.w / imgW,
                 h: cropRect.h / imgH,
               };
+
               const cdu = await makeCroppedDataUrl(image, norm);
               setCroppedDataUrl(cdu);
-            } catch {
+            } catch (e: any) {
               setCroppedDataUrl(null);
+              setCropGenError(e?.message ? String(e.message) : String(e));
             }
           }
        }
@@ -1124,6 +1129,11 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
                       alt="Cropped Final"
                     />
                   )}
+                {!croppedDataUrl && cropGenError && (
+                  <div className="absolute bottom-2 left-2 right-2 bg-red-900/70 border border-red-500/40 text-red-200 text-[10px] p-2 rounded-xl backdrop-blur-sm">
+                    Error generando recorte: {cropGenError}
+                  </div>
+                )}
              </div>
          </div>
          
