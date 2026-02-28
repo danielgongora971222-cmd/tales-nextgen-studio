@@ -195,7 +195,7 @@
 
 .oneNationLogoBadge {
   position: absolute;
-  top: clamp(14px, 2.2vw, 22px);
+  top: clamp(6px, 1.6vw, 14px);
   left: clamp(14px, 2.2vw, 22px);
   z-index: 12;
 

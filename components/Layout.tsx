@@ -507,9 +507,9 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
       <div className={`${sidebarOpen ? "px-4" : "px-3"} pb-4`}>
         <button
           onClick={() => onNavigate(AppRoute.STORE)}
-          className={`w-full flex items-center rounded-xl transition-all duration-300 oneNation-pill ${
+          className={`w-full flex items-center rounded-xl oneNation-sidebarPremium ${
             sidebarOpen ? "gap-3 px-4 py-3 justify-start" : "px-0 py-3 justify-center"
-          } ${currentRoute === AppRoute.STORE ? "shadow-[0_0_28px_rgba(123,77,255,0.18)]" : ""}`}
+          } ${currentRoute === AppRoute.STORE ? "ring-1 ring-white/10" : ""}`}
           title="1NationUp Store"
         >
           {/* Logo: siempre 1 sola vez */}
@@ -523,10 +523,10 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
             <OneNationUpIcon size={22} />
           </div>
 
-          {/* Texto SOLO si sidebar está abierta (evita overflow/rareza) */}
+          {/* Texto SOLO si sidebar está abierta */}
           {sidebarOpen && (
-            <div className="flex-1 text-left leading-tight">
-              <div className="text-sm font-black tracking-wide oneNation-gradientText">
+            <div className="flex-1 text-left leading-tight min-w-0">
+              <div className="text-sm font-black tracking-wide oneNation-animatedGradientText whitespace-nowrap">
                 1NationUp Store
               </div>
               <div className="text-[10px] text-white/55">
