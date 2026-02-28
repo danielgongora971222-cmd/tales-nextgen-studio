@@ -149,6 +149,71 @@ export default function StoreNewUI({ onNavigate, onRequestUpscale, prefill }: St
   const [dimsLoading, setDimsLoading] = useState<boolean>(false);
   const [croppedDataUrl, setCroppedDataUrl] = useState<string | null>(null);
   const [imageOrientation, setImageOrientation] = useState('portrait'); 
+
+  useEffect(() => {
+  let alive = true;
+
+  async function loadHistory() {
+    setHistoryLoading(true);
+    setHistoryError(null);
+
+    try {
+      // IMPORTANTE:
+      // No usamos {type:"image"} porque muchos historiales antiguos/mixtos
+      // pueden no estar etiquetados exactamente como "image" en DB.
+      // Traemos todo y filtramos en frontend.
+      const items = await listMyAssets({ limit: 500, fresh: true });
+
+      // 1) excluir camera-angles
+      const noCameraAngles = (items || []).filter((a: any) => {
+        const tool = a?.tool || a?.meta?.tool || null;
+        return tool !== "camera-angles";
+      });
+
+      // 2) quedarnos solo con "imágenes"
+      // (evitamos videos y cualquier cosa rara)
+      const onlyImages = noCameraAngles.filter((a: any) => {
+        const t = typeof a?.type === "string" ? a.type.toLowerCase() : "";
+        const mime = typeof a?.meta?.mime === "string" ? a.meta.mime.toLowerCase() : "";
+        const url = typeof a?.url === "string" ? a.url.toLowerCase() : "";
+
+        // casos comunes: type="image"
+        if (t === "image") return true;
+
+        // si guardaron mime en meta
+        if (mime.startsWith("image/")) return true;
+
+        // fallback por extensión
+        if (url.match(/\.(png|jpg|jpeg|webp|gif)(\?|#|$)/)) return true;
+
+        // si no hay type pero sí url, asumimos imagen (mejor que dejar vacío)
+        if (!t && !!url) return true;
+
+        return false;
+      });
+
+      const sorted = [...onlyImages].sort((a: any, b: any) => {
+        const ta = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const tb = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return tb - ta;
+      });
+
+      if (!alive) return;
+      setHistoryImages(sorted);
+    } catch (e: any) {
+      if (!alive) return;
+      setHistoryError(e?.message || "No se pudo cargar tu historial.");
+    } finally {
+      if (!alive) return;
+      setHistoryLoading(false);
+    }
+  }
+
+  loadHistory();
+  return () => {
+    alive = false;
+  };
+}, []);
   
   // Flujo Secuencial (Acordeón)
   const [activeStep, setActiveStep] = useState('UPLOAD'); 
@@ -595,45 +660,6 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
       notes: String(formData.notes || '').trim(),
       flags: {},
     };
-    
-  useEffect(() => {
-    let alive = true;
-
-    async function loadHistory() {
-      setHistoryLoading(true);
-      setHistoryError(null);
-
-      try {
-        const items = await listMyAssets({ type: "image", limit: 300 });
-
-        // Excluir imágenes de Camera Angles (por tool o meta.tool)
-        const filtered = (items || []).filter((a: any) => {
-          const tool = a?.tool || a?.meta?.tool || null;
-          return tool !== "camera-angles";
-        });
-
-        const sorted = [...filtered].sort((a: any, b: any) => {
-          const ta = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
-          const tb = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
-          return tb - ta;
-        });
-
-        if (!alive) return;
-        setHistoryImages(sorted);
-      } catch (e: any) {
-        if (!alive) return;
-        setHistoryError(e?.message || "No se pudo cargar tu historial.");
-      } finally {
-        if (!alive) return;
-        setHistoryLoading(false);
-      }
-    }
-
-    loadHistory();
-    return () => {
-      alive = false;
-    };
-  }, []);
 
     // 5) POST real
     const resp = await fetch(apiUrl('/api/store/order'), {
@@ -1458,8 +1484,8 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
 
         {/* Picker modal (estética tipo community feed) */}
           {pickerOpen && (
-            <div className="fixed inset-0 z-[100] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-              <div className="w-full max-w-6xl max-h-[85vh] rounded-3xl border border-white/10 bg-black/60 shadow-2xl overflow-hidden flex flex-col">
+            <div className="fixed inset-0 z-[100] bg-black/70 backdrop-blur-sm flex items-center justify-center p-0 sm:p-4">
+              <div className="w-full h-[100dvh] sm:h-auto sm:max-w-6xl sm:max-h-[85vh] rounded-none sm:rounded-3xl border border-white/10 bg-black/60 shadow-2xl overflow-hidden flex flex-col">
                 <div className="p-5 border-b border-white/10 flex items-center justify-between">
                   <div>
                     <div className="text-xl font-extrabold">Selecciona una imagen</div>
