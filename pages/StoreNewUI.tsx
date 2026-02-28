@@ -612,6 +612,16 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
     const basePrice = Number(selectedSize.basePrice || 0);
     const total = basePrice + shippingCost + smartFillAddon;
 
+    if (!selectedMaterial || !selectedSize) {
+      setSubmitError("Falta seleccionar material y tamaño antes de pagar.");
+      return;
+    }
+
+    if (!selectedMaterial.label) {
+      setSubmitError("Material inválido: falta label.");
+      return;
+    }
+
     // 4) armar payload EXACTO que espera el backend (StoreOrderSchema)
     const payload: any = {
       assetId: asset.id,
@@ -622,7 +632,7 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
       require4k: true,
 
       material: selectedMaterial.id,              // "metal" | "acrylic" | "canvas" | "paper"
-      materialLabel: selectedMaterial.name,       // texto
+      materialLabel: selectedMaterial.label,      // texto
 
       size: {
         id: selectedSize.id,
