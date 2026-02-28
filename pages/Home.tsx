@@ -463,18 +463,19 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
           {/* Overlay para legibilidad (igual al TXT) */}
           <div className={styles.oneNationOverlay} aria-hidden="true" />
 
-          {/* Contenido frontal */}
-          <div className={styles.oneNationFront}>
-            <div className={styles.oneNationLogoWrap}>
-              <img
-                src="/brands/1nation-up/logo.png"
-                alt="1NationUp Logo"
-                className={styles.oneNationLogo}
-                loading="lazy"
-                decoding="async"
-              />
-            </div>
+          {/* Logo fijo en esquina superior izquierda */}
+          <div className={styles.oneNationLogoBadge} aria-hidden="true">
+            <img
+              src="/brands/1nation-up/logo.png"
+              alt="1NationUp Logo"
+              className={styles.oneNationLogo}
+              loading="lazy"
+              decoding="async"
+            />
+          </div>
 
+          {/* Contenido frontal (solo texto, 100% responsive) */}
+          <div className={styles.oneNationFront}>
             <div className={styles.oneNationTextWrap}>
               <h2 className={styles.oneNationKicker}>Explora la</h2>
 
