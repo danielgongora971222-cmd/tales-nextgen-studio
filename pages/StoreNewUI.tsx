@@ -469,36 +469,60 @@ const handleGoToUpscale = () => {
     setActiveStep('CROP');
   };
 
-  async function makeCroppedDataUrl(
-  originalDataUrl: string,
+async function makeCroppedDataUrl(
+  originalUrlOrDataUrl: string,
   crop: { x: number; y: number; w: number; h: number }
 ): Promise<string> {
-  const img = new Image();
-  img.decoding = "async";
+  // Si viene una URL remota, la descargamos como Blob y creamos un blob: URL
+  // Esto evita muchos problemas de CORS/tainted canvas (best-effort).
+  let blobUrl: string | null = null;
 
-  await new Promise<void>((resolve, reject) => {
-    img.onload = () => resolve();
-    img.onerror = reject;
-    img.src = originalDataUrl;
-  });
+  try {
+    let src = originalUrlOrDataUrl;
 
-  const sw = img.naturalWidth;
-  const sh = img.naturalHeight;
+    const isDataUrl = /^data:image\/[^;]+;base64,/.test(originalUrlOrDataUrl);
 
-  const sx = Math.max(0, Math.min(sw - 1, Math.round(crop.x * sw)));
-  const sy = Math.max(0, Math.min(sh - 1, Math.round(crop.y * sh)));
-  const cw = Math.max(1, Math.min(sw - sx, Math.round(crop.w * sw)));
-  const ch = Math.max(1, Math.min(sh - sy, Math.round(crop.h * sh)));
+    if (!isDataUrl) {
+      const resp = await fetch(originalUrlOrDataUrl, { mode: "cors", credentials: "omit" });
+      if (!resp.ok) throw new Error(`Failed to fetch image for crop: ${resp.status}`);
+      const blob = await resp.blob();
+      blobUrl = URL.createObjectURL(blob);
+      src = blobUrl;
+    }
 
-  const canvas = document.createElement("canvas");
-  canvas.width = cw;
-  canvas.height = ch;
+    const img = new Image();
+    img.decoding = "async";
+    // Importante para CORS: si el servidor permite CORS, esto permite leer pixels
+    img.crossOrigin = "anonymous";
 
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("No canvas context");
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = reject;
+      img.src = src;
+    });
 
-  ctx.drawImage(img, sx, sy, cw, ch, 0, 0, cw, ch);
-  return canvas.toDataURL("image/png");
+    const sw = img.naturalWidth;
+    const sh = img.naturalHeight;
+
+    const sx = Math.max(0, Math.min(sw - 1, Math.round(crop.x * sw)));
+    const sy = Math.max(0, Math.min(sh - 1, Math.round(crop.y * sh)));
+    const cw = Math.max(1, Math.min(sw - sx, Math.round(crop.w * sw)));
+    const ch = Math.max(1, Math.min(sh - sy, Math.round(crop.h * sh)));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = cw;
+    canvas.height = ch;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("No canvas context");
+
+    ctx.drawImage(img, sx, sy, cw, ch, 0, 0, cw, ch);
+
+    // PNG para fábrica (sin pérdidas)
+    return canvas.toDataURL("image/png");
+  } finally {
+    if (blobUrl) URL.revokeObjectURL(blobUrl);
+  }
 }
 
   const handleConfirmCrop = async () => {

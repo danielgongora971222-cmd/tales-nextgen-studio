@@ -35,6 +35,7 @@ export async function sendStoreOrderEmail({ orderId, payload }) {
 
   // Adjuntos: original (si < 20MB) + recorte (si viene)
   const attachments = [];
+    let cropCid = null;
 
   // Original
   try {
@@ -52,7 +53,7 @@ export async function sendStoreOrderEmail({ orderId, payload }) {
     // si falla, igual mandamos link en el HTML
   }
 
-  // Cropped (dataUrl)
+  // Cropped (dataUrl) — attach + inline preview via CID
   if (payload?.croppedImageDataUrl && typeof payload.croppedImageDataUrl === "string") {
     const m = payload.croppedImageDataUrl.match(/^data:(.+);base64,(.+)$/);
     if (m) {
@@ -62,10 +63,12 @@ export async function sendStoreOrderEmail({ orderId, payload }) {
       const max = 20 * 1024 * 1024;
       if (buf.length <= max) {
         const ext = contentType.includes("png") ? "png" : contentType.includes("webp") ? "webp" : "jpg";
+        cropCid = `crop-${orderId}@1nationup`;
         attachments.push({
           filename: `crop-${orderId}.${ext}`,
           content: buf,
           contentType,
+          cid: cropCid,
         });
       }
     }
@@ -99,6 +102,28 @@ export async function sendStoreOrderEmail({ orderId, payload }) {
     </ul>
 
     <h3 style="margin: 18px 0 8px">Crop</h3>
+
+    ${
+      cropCid
+        ? `
+          <div style="margin: 0 0 12px; padding: 12px; border: 1px solid #ddd; border-radius: 12px;">
+            <div style="font-weight: 700; margin-bottom: 8px;">Cropped preview (exact framing)</div>
+            <img src="cid:${cropCid}" alt="Cropped preview" style="max-width: 520px; width: 100%; border-radius: 10px; border: 1px solid #eee;" />
+            <div style="margin-top: 8px; color: #555; font-size: 12px;">
+              También se adjunta como archivo: <b>crop-${orderId}.*</b>
+            </div>
+          </div>
+        `
+        : `
+          <div style="margin: 0 0 12px; padding: 12px; border: 1px solid #f3c5c5; border-radius: 12px; background: #fff7f7;">
+            <div style="font-weight: 700; margin-bottom: 6px;">Cropped preview not attached</div>
+            <div style="color:#555; font-size: 12px;">
+              No se pudo generar el recorte como imagen (probable CORS del storage). Se incluyen coordenadas para reproducir el recorte.
+            </div>
+          </div>
+        `
+    }
+
     <p style="margin: 0 0 12px; color: #333">
       ${
         payload?.cropNormalized
