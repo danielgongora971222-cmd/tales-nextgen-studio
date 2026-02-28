@@ -149,6 +149,7 @@ export default function StoreNewUI({ onNavigate, onRequestUpscale, prefill }: St
   const [dimsLoading, setDimsLoading] = useState<boolean>(false);
   const [croppedDataUrl, setCroppedDataUrl] = useState<string | null>(null);
   const [cropGenError, setCropGenError] = useState<string | null>(null);
+  const [cropProcessing, setCropProcessing] = useState(false);
   const [imageOrientation, setImageOrientation] = useState('portrait'); 
 
   useEffect(() => {
@@ -560,61 +561,84 @@ async function makeCroppedDataUrl(
   }
 }
 
-  const handleConfirmCrop = async () => {
-    const wrapper = imageWrapperRef.current;
-    if (wrapper) {
-       const rect = wrapper.getBoundingClientRect();
-       const imgW = rect.width;
-       const imgH = rect.height;
-       
-       if (imgW > 0 && imgH > 0 && cropRect.w > 0) {
-          // Calcula aspect real basado en el size seleccionado + orientación
-          let targetW = selectedSize.w;
-          let targetH = selectedSize.h;
+const handleConfirmCrop = async () => {
+  // No permitir doble click mientras genera
+  if (cropProcessing) return;
 
-          if (imageOrientation === 'landscape' && targetW < targetH) {
-            targetW = selectedSize.h;
-            targetH = selectedSize.w;
-          } else if (imageOrientation === 'portrait' && targetW > targetH) {
-            targetW = selectedSize.h;
-            targetH = selectedSize.w;
-          }
+  const wrapper = imageWrapperRef.current;
 
-          const aspect = targetW / targetH;
+  // Validaciones mínimas
+  if (!wrapper || !image || !selectedSize) {
+    setCropGenError("No se pudo preparar el recorte. Reintenta.");
+    setActiveStep("CROP");
+    return;
+  }
 
-          setFinalCrop({
-            x: cropRect.x / imgW,
-            y: cropRect.y / imgH,
-            w: cropRect.w / imgW,
-            h: cropRect.h / imgH,
-            aspect,
-          });
+  const rect = wrapper.getBoundingClientRect();
+  const imgW = rect.width;
+  const imgH = rect.height;
 
-          // NUEVO: generar la imagen recortada real (best-effort)
-          if (image && imgW > 0 && imgH > 0 && cropRect.w > 0 && cropRect.h > 0) {
-            try {
-              setCropGenError(null);
+  if (!(imgW > 0 && imgH > 0) || !(cropRect.w > 0 && cropRect.h > 0)) {
+    setCropGenError("Selecciona un área de recorte válida antes de confirmar.");
+    setActiveStep("CROP");
+    return;
+  }
 
-              const norm = {
-                x: cropRect.x / imgW,
-                y: cropRect.y / imgH,
-                w: cropRect.w / imgW,
-                h: cropRect.h / imgH,
-              };
+  setCropProcessing(true);
+  setCropGenError(null);
 
-              const cdu = await makeCroppedDataUrl(image, norm);
-              setCroppedDataUrl(cdu);
-            } catch (e: any) {
-              setCroppedDataUrl(null);
-              setCropGenError(e?.message ? String(e.message) : String(e));
-            }
-          }
-       }
+  try {
+    // Aspect real basado en size + orientación
+    let targetW = selectedSize.w;
+    let targetH = selectedSize.h;
+
+    if (imageOrientation === "landscape" && targetW < targetH) {
+      targetW = selectedSize.h;
+      targetH = selectedSize.w;
+    } else if (imageOrientation === "portrait" && targetW > targetH) {
+      targetW = selectedSize.h;
+      targetH = selectedSize.w;
     }
 
+    const aspect = targetW / targetH;
+
+    const normalized = {
+      x: cropRect.x / imgW,
+      y: cropRect.y / imgH,
+      w: cropRect.w / imgW,
+      h: cropRect.h / imgH,
+    };
+
+    // Guardamos finalCrop SOLO si el recorte se genera bien
+    const cdu = await makeCroppedDataUrl(image, normalized);
+
+    // Si por alguna razón no devuelve string válido, lo tratamos como fallo
+    if (!cdu || typeof cdu !== "string") {
+      throw new Error("Cropped output inválido (vacío).");
+    }
+
+    setFinalCrop({ ...normalized, aspect });
+    setCroppedDataUrl(cdu);
+
+    // ✅ SOLO AQUÍ permitimos avanzar
     setIsCropped(true);
-    setActiveStep('CHECKOUT');
-  };
+    setActiveStep("CHECKOUT");
+  } catch (e: any) {
+    // ❌ Si falla, reiniciamos Paso 3 y NO dejamos avanzar
+    setCroppedDataUrl(null);
+    setFinalCrop(null);
+    setIsCropped(false);
+
+    // Reinicio de selección de recorte (Paso 3)
+    setIsDragging(false);
+    setCropRect({ x: 0, y: 0, w: 0, h: 0 });
+
+    setCropGenError(e?.message ? String(e.message) : String(e));
+    setActiveStep("CROP");
+  } finally {
+    setCropProcessing(false);
+  }
+};
 
   const calculateTotal = () => {
     const targetSize = previewSize || selectedSize;
@@ -638,6 +662,13 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
   }
   if (!selectedMaterial || !selectedSize) {
     setSubmitError('Falta seleccionar material y tamaño.');
+    return;
+  }
+
+  // Bloqueo fuerte: no permitir completar orden si no existe recorte generado
+  if (!croppedDataUrl) {
+    setSubmitError("No se pudo generar el recorte. Vuelve al paso de encuadre y confirma el recorte correctamente.");
+    setActiveStep("CROP");
     return;
   }
 
@@ -1424,14 +1455,15 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
                  <p className="text-xs text-gray-400">Arrastra el área iluminada. Lo que quede oscurecido se desechará.</p>
               </div>
               
-              <button 
-                onClick={handleConfirmCrop}
-                className="group relative w-full p-1 rounded-2xl animate-[pulse_1.5s_ease-in-out_infinite]"
-              >
+                <button 
+                  onClick={handleConfirmCrop}
+                  disabled={cropProcessing}
+                  className={`group relative w-full p-1 rounded-2xl ${cropProcessing ? "opacity-60 cursor-not-allowed" : "animate-[pulse_1.5s_ease-in-out_infinite]"}`}
+                >
                 <div className="absolute inset-0 bg-gradient-to-r from-[#DFB142] to-[#DE6C53] rounded-2xl blur opacity-70 group-hover:opacity-100 transition duration-500"></div>
                 <div className="relative flex items-center justify-center space-x-2 px-6 py-4 bg-[#0a0a0a] rounded-xl text-white font-bold">
                   <Check className="w-5 h-5 text-[#DFB142] group-hover:scale-125 transition-transform" />
-                  <span>Confirmar Recorte</span>
+                  <span>{cropProcessing ? "Generando recorte..." : "Confirmar Recorte"}</span>
                 </div>
               </button>
             </div>
