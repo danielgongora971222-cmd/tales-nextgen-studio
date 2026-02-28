@@ -4,6 +4,7 @@ import { Asset, AppRoute } from "../types";
 import { listMyAssets } from "../services/assetsApi";
 import { supabase } from "../services/supabaseClient";
 import { apiUrl } from "../services/apiBase";
+import OneNationUpIcon from "../components/brand/OneNationUpIcon";
 
 // --- CONFIGURACIÓN DE PRODUCTOS ---
 const SIZES = [
@@ -128,18 +129,22 @@ const ParticleBackground = () => {
 };
 
 // --- APLICACIÓN PRINCIPAL ---
+type StorePrefill = { asset?: Asset | null };
+
 type StoreNewUIProps = {
   onNavigate: (route: AppRoute) => void;
   onRequestUpscale?: (asset: Asset) => void;
+  prefill?: StorePrefill;
 };
 
-export default function StoreNewUI({ onNavigate, onRequestUpscale }: StoreNewUIProps) {
+export default function StoreNewUI({ onNavigate, onRequestUpscale, prefill }: StoreNewUIProps) {
   const [image, setImage] = useState<string | null>(null); // preview (dataUrl)
   const [asset, setAsset] = useState<Asset | null>(null);  // asset subido (storage)
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
   const [historyImages, setHistoryImages] = useState<Asset[]>([]);
   const [historyLoading, setHistoryLoading] = useState<boolean>(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [is4kOk, setIs4kOk] = useState<boolean>(false);
   const [dimsLoading, setDimsLoading] = useState<boolean>(false);
   const [croppedDataUrl, setCroppedDataUrl] = useState<string | null>(null);
@@ -250,6 +255,17 @@ const handleSelectFromHistory = async (a: Asset) => {
     setDimsLoading(false);
   }
 };
+
+useEffect(() => {
+  const a = prefill?.asset || null;
+  if (!a) return;
+
+  // Carga directa del asset desde donde se clicó (historial)
+  handleSelectFromHistory(a);
+
+  // Cierra picker por si estaba abierto
+  setPickerOpen(false);
+}, [prefill?.asset]);
 
 const handleGoToUpscale = () => {
   if (!asset) return;
@@ -589,7 +605,14 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
 
       try {
         const items = await listMyAssets({ type: "image", limit: 300 });
-        const sorted = [...items].sort((a: any, b: any) => {
+
+        // Excluir imágenes de Camera Angles (por tool o meta.tool)
+        const filtered = (items || []).filter((a: any) => {
+          const tool = a?.tool || a?.meta?.tool || null;
+          return tool !== "camera-angles";
+        });
+
+        const sorted = [...filtered].sort((a: any, b: any) => {
           const ta = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
           const tb = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
           return tb - ta;
@@ -1405,66 +1428,103 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
         {/* PANEL IZQUIERDO: Editor Visual Fijo */}
         <div className="flex-[1.3] p-6 lg:p-8 flex flex-col items-center justify-center relative border-b lg:border-b-0 lg:border-r border-white/5">
           {!image ? (
-            <div className="w-full max-w-5xl h-[70vh] rounded-3xl border border-white/10 bg-white/5 backdrop-blur-sm shadow-2xl overflow-hidden flex flex-col">
-              <div className="p-6 border-b border-white/10 bg-black/30">
-                <h2 className="text-2xl font-extrabold">Selecciona tu imagen desde Historial</h2>
-                <p className="text-gray-400 mt-1">
-                  En 1NationUp Store no se permite subir desde tu PC. Debes elegir una imagen ya creada o subida en tu cuenta.
-                </p>
-              </div>
+            <div className="w-full max-w-3xl h-[60vh] rounded-3xl border border-white/10 bg-white/5 backdrop-blur-sm shadow-2xl overflow-hidden flex flex-col items-center justify-center text-center p-10">
+              <button
+                type="button"
+                onClick={() => setPickerOpen(true)}
+                className="w-28 h-28 rounded-3xl bg-white/10 hover:bg-white/20 border border-white/10 hover:border-[#7EAAED] transition flex items-center justify-center shadow-2xl"
+                title="Cargar desde historial"
+              >
+                <ImageIcon size={42} className="text-white/90" />
+              </button>
 
-              <div className="flex-1 p-6 overflow-y-auto custom-scrollbar">
-                {historyLoading && (
-                  <div className="text-gray-300">Cargando historial...</div>
-                )}
+              <h2 className="text-2xl font-extrabold mt-6">Cargar imagen desde tu historial</h2>
+              <p className="text-gray-400 mt-2 max-w-xl">
+                En 1NationUp no se permite cargar archivos desde tu PC. Haz click arriba para elegir una imagen de tu historial.
+                (Incluye todas las herramientas de imagen excepto Camera Angles)
+              </p>
 
-                {historyError && (
-                  <div className="text-red-400">{historyError}</div>
-                )}
-
-                {!historyLoading && !historyError && historyImages.length === 0 && (
-                  <div className="text-gray-400">
-                    No tienes imágenes en tu historial todavía. Genera o sube imágenes en otras herramientas primero.
-                  </div>
-                )}
-
-                {!historyLoading && !historyError && historyImages.length > 0 && (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
-                    {historyImages.map((a) => (
-                      <button
-                        key={a.id}
-                        type="button"
-                        onClick={() => handleSelectFromHistory(a)}
-                        className="group relative aspect-square rounded-2xl overflow-hidden border border-white/10 bg-black/40 hover:border-[#7EAAED] transition-all"
-                        title={a.prompt || a.name}
-                      >
-                        <img src={a.url} alt={a.name} className="w-full h-full object-cover" />
-                        <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity bg-gradient-to-t from-black/80 via-transparent to-transparent flex items-end p-2">
-                          <span className="text-[10px] text-white/90 line-clamp-2 text-left">
-                            {a.prompt || a.name}
-                          </span>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="p-6 border-t border-white/10 bg-black/30 flex items-center justify-between">
-                <div className="text-xs text-gray-400">
-                  Requisito: <span className="text-white font-bold">mínimo 4K (3840×2160)</span>.
-                </div>
-                <button
-                  type="button"
-                  onClick={() => onNavigate(AppRoute.MY_CREATIONS)}
-                  className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 transition-colors text-sm font-bold"
-                >
-                  Ir a Mis Creaciones
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={() => setPickerOpen(true)}
+                className="mt-6 px-6 py-3 rounded-2xl bg-[#7EAAED] text-black font-extrabold hover:brightness-110 transition"
+              >
+                Abrir historial
+              </button>
             </div>
           ) : (
             renderVisualEditor()
+          )}
+
+        {/* Picker modal (estética tipo community feed) */}
+          {pickerOpen && (
+            <div className="fixed inset-0 z-[100] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="w-full max-w-6xl max-h-[85vh] rounded-3xl border border-white/10 bg-black/60 shadow-2xl overflow-hidden flex flex-col">
+                <div className="p-5 border-b border-white/10 flex items-center justify-between">
+                  <div>
+                    <div className="text-xl font-extrabold">Selecciona una imagen</div>
+                    <div className="text-xs text-gray-400 mt-1">
+                      Se muestran todas tus imágenes (excepto Camera Angles).
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setPickerOpen(false)}
+                    className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 transition text-sm font-bold"
+                  >
+                    Cerrar
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-5 custom-scrollbar">
+                  {historyLoading && <div className="text-gray-300">Cargando historial...</div>}
+                  {historyError && <div className="text-red-400">{historyError}</div>}
+
+                  {!historyLoading && !historyError && historyImages.length === 0 && (
+                    <div className="text-gray-400">No hay imágenes disponibles en tu historial.</div>
+                  )}
+
+                  {!historyLoading && !historyError && historyImages.length > 0 && (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                      {historyImages.map((a) => (
+                        <button
+                          key={a.id}
+                          type="button"
+                          onClick={() => {
+                            setPickerOpen(false);
+                            handleSelectFromHistory(a);
+                          }}
+                          className="group relative aspect-square rounded-2xl overflow-hidden border border-white/10 bg-black/40 hover:border-[#7EAAED] transition"
+                          title={a.prompt || a.name}
+                        >
+                          <img src={a.url} alt={a.name} className="w-full h-full object-cover" />
+
+                          <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity bg-gradient-to-t from-black/85 via-transparent to-transparent flex items-end p-2">
+                            <span className="text-[10px] text-white/90 line-clamp-2 text-left">
+                              {a.prompt || a.name}
+                            </span>
+                          </div>
+
+                          {/* Badge 1NationUp (solo estética en picker, no navegación) */}
+                          <div className="absolute top-2 left-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <div className="flex items-center gap-1 px-2 py-1 rounded-xl bg-black/60 border border-white/10 backdrop-blur-sm">
+                              <OneNationUpIcon size={14} />
+                              <span className="text-[10px] text-white font-bold">1NationUp</span>
+                            </div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-5 border-t border-white/10 text-xs text-gray-400">
+                  Requisito para avanzar: <span className="text-white font-bold">mínimo 4K (3840×2160)</span>.
+                  Si no cumple, aparecerá la opción de ir a Upscale.
+                </div>
+              </div>
+            </div>
           )}
         </div>
 

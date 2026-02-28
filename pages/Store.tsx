@@ -10,8 +10,14 @@ interface StoreProps {
   onRequestUpscale?: (asset: Asset) => void;
 }
 
-const Store: React.FC<StoreProps> = ({ onNavigate, onRequestUpscale }) => {
-  return <StoreNewUI onNavigate={onNavigate} onRequestUpscale={onRequestUpscale} />;
+const Store: React.FC<StoreProps> = ({ onNavigate, onRequestUpscale, prefill }) => {
+  return (
+    <StoreNewUI
+      onNavigate={onNavigate}
+      onRequestUpscale={onRequestUpscale}
+      prefill={prefill}
+    />
+  );
 };
 
 export default Store;
