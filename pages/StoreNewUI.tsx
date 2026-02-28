@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Upload, Maximize, Layers, Check, ShoppingCart, CreditCard, ChevronRight, Image as ImageIcon, Sparkles, Scissors, ShieldCheck, Truck, Edit2, Info } from 'lucide-react';
+import { Maximize, Layers, Check, ShoppingCart, CreditCard, ChevronRight, Image as ImageIcon, Sparkles, Scissors, ShieldCheck, Truck, Edit2, Info } from 'lucide-react';
 import { Asset, AppRoute } from "../types";
-import { uploadUserAsset } from "../services/assetsApi";
+import { listMyAssets } from "../services/assetsApi";
 import { supabase } from "../services/supabaseClient";
 import { apiUrl } from "../services/apiBase";
 
@@ -137,6 +137,9 @@ export default function StoreNewUI({ onNavigate, onRequestUpscale }: StoreNewUIP
   const [image, setImage] = useState<string | null>(null); // preview (dataUrl)
   const [asset, setAsset] = useState<Asset | null>(null);  // asset subido (storage)
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
+  const [historyImages, setHistoryImages] = useState<Asset[]>([]);
+  const [historyLoading, setHistoryLoading] = useState<boolean>(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [is4kOk, setIs4kOk] = useState<boolean>(false);
   const [dimsLoading, setDimsLoading] = useState<boolean>(false);
   const [croppedDataUrl, setCroppedDataUrl] = useState<string | null>(null);
@@ -171,7 +174,9 @@ export default function StoreNewUI({ onNavigate, onRequestUpscale }: StoreNewUIP
 // Manejar subida de imagen
 function is4K(d: { w: number; h: number } | null): boolean {
   if (!d) return false;
-  return d.w >= 3840 && d.h >= 2160;
+  const maxSide = Math.max(d.w, d.h);
+  const minSide = Math.min(d.w, d.h);
+  return maxSide >= 3840 && minSide >= 2160;
 }
 
 function loadImgDimsFromDataUrl(dataUrl: string): Promise<{ w: number; h: number }> {
@@ -184,62 +189,76 @@ function loadImgDimsFromDataUrl(dataUrl: string): Promise<{ w: number; h: number
   });
 }
 
-const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-  const file = e.target.files?.[0];
-  if (!file) return;
+function loadImgDimsFromUrl(url: string): Promise<{ w: number; h: number }> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.decoding = "async";
+    img.onload = () => resolve({ w: img.naturalWidth || 0, h: img.naturalHeight || 0 });
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
+const resetFlowForNewImage = () => {
+  setSelectedMaterial(null);
+  setSelectedSize(null);
+  setPreviewMaterial(null);
+  setPreviewSize(null);
+  setIsCropped(false);
+  setFinalCrop(null);
+  setCropRect({ x: 0, y: 0, w: 0, h: 0 });
+  setCroppedDataUrl(null);
+  setOrderCode("");
+  setSubmitError("");
+};
+
+const handleSelectFromHistory = async (a: Asset) => {
+  resetFlowForNewImage();
+
+  setAsset(a);
+  setImage(a.url);
 
   setDims(null);
   setIs4kOk(false);
   setDimsLoading(true);
+  setActiveStep("VERIFYING");
 
   try {
-    const reader = new FileReader();
-    const dataUrl: string = await new Promise((resolve, reject) => {
-      reader.onload = () => resolve(String(reader.result || ""));
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-
-    const d = await loadImgDimsFromDataUrl(dataUrl);
+    const d = await loadImgDimsFromUrl(a.url);
     setDims(d);
 
     const ok = is4K(d);
     setIs4kOk(ok);
 
-    const img = new Image();
-    img.onload = () => {
-      setImageOrientation(img.width > img.height ? 'landscape' : 'portrait');
-      setImage(dataUrl);
-    };
-    img.src = dataUrl;
+    setImageOrientation(d.w > d.h ? "landscape" : "portrait");
 
-    setActiveStep('VERIFYING');
-    setCroppedDataUrl(null);
-
-    if (ok) {
-      const uploaded = await uploadUserAsset(file, {
-        tool: "store",
-        category: "1nationup",
-        name: file.name,
-        type: "image",
-      });
-      setAsset(uploaded);
-    } else {
-      setAsset(null);
+    // Gate estricto: si no es 4K, NO avanza a MATERIAL
+    if (!ok) {
+      setActiveStep("UPLOAD");
+      return;
     }
 
+    // Si es 4K, sí avanza
     setTimeout(() => {
-      setActiveStep('MATERIAL');
-    }, 1500);
+      setActiveStep("MATERIAL");
+    }, 500);
   } catch {
     setDims(null);
     setIs4kOk(false);
-    setAsset(null);
-    setActiveStep('UPLOAD');
+    setActiveStep("UPLOAD");
   } finally {
     setDimsLoading(false);
-    e.target.value = "";
   }
+};
+
+const handleGoToUpscale = () => {
+  if (!asset) return;
+  if (onRequestUpscale) {
+    onRequestUpscale(asset);
+    return;
+  }
+  // fallback si no te están pasando onRequestUpscale desde arriba
+  onNavigate(AppRoute.TOOL_UPSCALER);
 };
 
   // --- LÓGICA DE RECORTE ESTRICTA Y VINCULADA ---
@@ -409,11 +428,26 @@ const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
        const imgH = rect.height;
        
        if (imgW > 0 && imgH > 0 && cropRect.w > 0) {
+          // Calcula aspect real basado en el size seleccionado + orientación
+          let targetW = selectedSize.w;
+          let targetH = selectedSize.h;
+
+          if (imageOrientation === 'landscape' && targetW < targetH) {
+            targetW = selectedSize.h;
+            targetH = selectedSize.w;
+          } else if (imageOrientation === 'portrait' && targetW > targetH) {
+            targetW = selectedSize.h;
+            targetH = selectedSize.w;
+          }
+
+          const aspect = targetW / targetH;
+
           setFinalCrop({
             x: cropRect.x / imgW,
             y: cropRect.y / imgH,
             w: cropRect.w / imgW,
-            h: cropRect.h / imgH
+            h: cropRect.h / imgH,
+            aspect,
           });
 
           // NUEVO: generar la imagen recortada real (best-effort)
@@ -545,6 +579,38 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
       notes: String(formData.notes || '').trim(),
       flags: {},
     };
+    
+  useEffect(() => {
+    let alive = true;
+
+    async function loadHistory() {
+      setHistoryLoading(true);
+      setHistoryError(null);
+
+      try {
+        const items = await listMyAssets({ type: "image", limit: 300 });
+        const sorted = [...items].sort((a: any, b: any) => {
+          const ta = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const tb = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return tb - ta;
+        });
+
+        if (!alive) return;
+        setHistoryImages(sorted);
+      } catch (e: any) {
+        if (!alive) return;
+        setHistoryError(e?.message || "No se pudo cargar tu historial.");
+      } finally {
+        if (!alive) return;
+        setHistoryLoading(false);
+      }
+    }
+
+    loadHistory();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
     // 5) POST real
     const resp = await fetch(apiUrl('/api/store/order'), {
@@ -914,19 +980,28 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
                }}
              >
                 {/* Matemáticas CSS puras para ampliar y aislar solo la parte cortada */}
-                <img 
-                   src={image} 
-                   style={{
-                      position: 'absolute',
-                      left: `-${(finalCrop.x / finalCrop.w) * 100}%`,
-                      top: `-${(finalCrop.y / finalCrop.h) * 100}%`,
-                      width: `${100 / finalCrop.w}%`,
-                      height: `${100 / finalCrop.h}%`,
-                      maxWidth: 'none',
-                      maxHeight: 'none',
-                   }}
-                   alt="Cropped Final"
-                />
+                  {croppedDataUrl ? (
+                    <img
+                      src={croppedDataUrl}
+                      alt="Cropped Final"
+                      className="w-full h-full object-cover"
+                      style={{ position: "absolute", inset: 0 }}
+                    />
+                  ) : (
+                    <img
+                      src={image}
+                      style={{
+                        position: 'absolute',
+                        left: `-${(finalCrop.x / finalCrop.w) * 100}%`,
+                        top: `-${(finalCrop.y / finalCrop.h) * 100}%`,
+                        width: `${100 / finalCrop.w}%`,
+                        height: `${100 / finalCrop.h}%`,
+                        maxWidth: 'none',
+                        maxHeight: 'none',
+                      }}
+                      alt="Cropped Final"
+                    />
+                  )}
              </div>
          </div>
          
@@ -1017,6 +1092,42 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
             <h3 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-[#7EAAED] to-[#7D45A9]">
               Analizando resolución 4K...
             </h3>
+          </div>
+        )}
+
+        {image && !dimsLoading && dims && !is4kOk && (
+          <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-300 p-6 text-center">
+            <div className="max-w-xl w-full rounded-3xl border border-red-500/30 bg-black/60 p-6 shadow-[0_0_40px_rgba(239,68,68,0.15)]">
+              <h3 className="text-2xl font-extrabold text-white">Resolución insuficiente</h3>
+              <p className="text-gray-300 mt-2">
+                Tu imagen es <span className="text-white font-bold">{dims.w}×{dims.h}</span>. Para fabricar, se requiere mínimo{" "}
+                <span className="text-white font-bold">4K (3840×2160)</span>.
+              </p>
+
+              <div className="flex flex-col sm:flex-row gap-3 justify-center mt-6">
+                <button
+                  type="button"
+                  onClick={handleGoToUpscale}
+                  className="px-5 py-3 rounded-2xl bg-[#DFB142] text-black font-extrabold hover:brightness-110 transition"
+                >
+                  Ir a Upscale (hacer 4K)
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setImage(null);
+                    setAsset(null);
+                    setDims(null);
+                    setIs4kOk(false);
+                    setActiveStep("UPLOAD");
+                  }}
+                  className="px-5 py-3 rounded-2xl bg-white/10 text-white font-bold hover:bg-white/20 transition"
+                >
+                  Elegir otra imagen
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
@@ -1294,19 +1405,63 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
         {/* PANEL IZQUIERDO: Editor Visual Fijo */}
         <div className="flex-[1.3] p-6 lg:p-8 flex flex-col items-center justify-center relative border-b lg:border-b-0 lg:border-r border-white/5">
           {!image ? (
-            <div className="w-full max-w-2xl h-[60vh] border-2 border-dashed border-white/20 rounded-3xl flex flex-col items-center justify-center bg-white/5 backdrop-blur-sm hover:bg-white/10 hover:border-[#7EAAED] transition-all duration-300 group cursor-pointer relative overflow-hidden shadow-2xl">
-              <input 
-                type="file" 
-                accept="image/*" 
-                onChange={handleImageUpload}
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-              />
-              <div className="absolute inset-0 bg-gradient-to-br from-[#7EAAED]/10 to-[#7D45A9]/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
-              <div className="w-24 h-24 bg-white/10 rounded-full flex items-center justify-center mb-6 group-hover:scale-110 group-hover:shadow-[0_0_40px_rgba(126,170,237,0.4)] transition-all duration-500">
-                <Upload className="w-12 h-12 text-[#7EAAED]" />
+            <div className="w-full max-w-5xl h-[70vh] rounded-3xl border border-white/10 bg-white/5 backdrop-blur-sm shadow-2xl overflow-hidden flex flex-col">
+              <div className="p-6 border-b border-white/10 bg-black/30">
+                <h2 className="text-2xl font-extrabold">Selecciona tu imagen desde Historial</h2>
+                <p className="text-gray-400 mt-1">
+                  En 1NationUp Store no se permite subir desde tu PC. Debes elegir una imagen ya creada o subida en tu cuenta.
+                </p>
               </div>
-              <h2 className="text-4xl font-bold mb-3">Carga tu obra maestra</h2>
-              <p className="text-gray-400 text-lg">Arrastra tu imagen o haz clic aquí (Requiere 4K)</p>
+
+              <div className="flex-1 p-6 overflow-y-auto custom-scrollbar">
+                {historyLoading && (
+                  <div className="text-gray-300">Cargando historial...</div>
+                )}
+
+                {historyError && (
+                  <div className="text-red-400">{historyError}</div>
+                )}
+
+                {!historyLoading && !historyError && historyImages.length === 0 && (
+                  <div className="text-gray-400">
+                    No tienes imágenes en tu historial todavía. Genera o sube imágenes en otras herramientas primero.
+                  </div>
+                )}
+
+                {!historyLoading && !historyError && historyImages.length > 0 && (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+                    {historyImages.map((a) => (
+                      <button
+                        key={a.id}
+                        type="button"
+                        onClick={() => handleSelectFromHistory(a)}
+                        className="group relative aspect-square rounded-2xl overflow-hidden border border-white/10 bg-black/40 hover:border-[#7EAAED] transition-all"
+                        title={a.prompt || a.name}
+                      >
+                        <img src={a.url} alt={a.name} className="w-full h-full object-cover" />
+                        <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity bg-gradient-to-t from-black/80 via-transparent to-transparent flex items-end p-2">
+                          <span className="text-[10px] text-white/90 line-clamp-2 text-left">
+                            {a.prompt || a.name}
+                          </span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="p-6 border-t border-white/10 bg-black/30 flex items-center justify-between">
+                <div className="text-xs text-gray-400">
+                  Requisito: <span className="text-white font-bold">mínimo 4K (3840×2160)</span>.
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onNavigate(AppRoute.MY_CREATIONS)}
+                  className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 transition-colors text-sm font-bold"
+                >
+                  Ir a Mis Creaciones
+                </button>
+              </div>
             </div>
           ) : (
             renderVisualEditor()
