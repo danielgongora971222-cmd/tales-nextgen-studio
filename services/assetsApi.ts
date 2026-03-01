@@ -40,6 +40,8 @@ function mapRowToAsset(row: any): Asset {
     ownerId,
     isPublic,
 
+    communityListing: (row as any).communityListing ?? (row as any).community_listing ?? null,
+
     likedByMe: Boolean(row.likedByMe ?? row.liked_by_me ?? false),
     likesCount: Number.isFinite(Number(row.likesCount ?? row.likes_count)) ? Number(row.likesCount ?? row.likes_count) : 0,
     commentsCount: Number.isFinite(Number(row.commentsCount ?? row.comments_count)) ? Number(row.commentsCount ?? row.comments_count) : 0,

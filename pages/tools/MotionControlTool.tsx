@@ -3,7 +3,7 @@ import FileUploader from "../../components/FileUploader";
 import ErrorModal from "../../components/ErrorModal";
 import { useAuth } from "../../contexts/AuthContext";
 import type { Asset } from "../../types";
-import { deleteAsset, listMyAssets, publishAsset, unpublishAsset } from "../../services/assetsApi";
+import { deleteAsset, listMyAssets } from "../../services/assetsApi";
 import { apiPostJson, formatErr } from "../../services/videoGenApi";
 import { waitJobCompletion } from "../../services/jobsApi";
 
@@ -184,20 +184,8 @@ export default function MotionControlTool() {
     }
   }
 
-  async function togglePublish(asset: Asset) {
-    try {
-      if (asset.isPublic) {
-        const r = await unpublishAsset(asset.id);
-        setHistory((prev) => prev.map((a) => (a.id === asset.id ? { ...a, isPublic: r.isPublic } : a)));
-        if (viewer?.id === asset.id) setViewer((v) => (v ? { ...v, isPublic: r.isPublic } : v));
-      } else {
-        const r = await publishAsset(asset.id);
-        setHistory((prev) => prev.map((a) => (a.id === asset.id ? { ...a, isPublic: r.isPublic } : a)));
-        if (viewer?.id === asset.id) setViewer((v) => (v ? { ...v, isPublic: r.isPublic } : v));
-      }
-    } catch (e: any) {
-      setError(e?.message || "No se pudo cambiar visibilidad.");
-    }
+  function togglePublish(asset: Asset) {
+    window.dispatchEvent(new CustomEvent("tales:open-sell", { detail: { asset } }));
   }
 
   function cancelWaitOnly() {
@@ -649,9 +637,10 @@ export default function MotionControlTool() {
               <button
                 type="button"
                 className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-sm"
+                title="Vender / Administrar listing"
                 onClick={() => togglePublish(latest)}
               >
-                {latest.isPublic ? "Quitar de público" : "Publicar"}
+                Vender / Administrar listing
               </button>
 
               <button
@@ -816,9 +805,10 @@ export default function MotionControlTool() {
                 <button
                   type="button"
                   className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-sm"
+                  title="Vender / Administrar listing"
                   onClick={() => togglePublish(viewer)}
                 >
-                  {viewer.isPublic ? "Quitar de público" : "Publicar"}
+                  Vender / Administrar listing
                 </button>
                 <button
                   type="button"

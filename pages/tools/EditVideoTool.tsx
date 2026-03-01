@@ -7,8 +7,6 @@ import { useAuth } from "../../contexts/AuthContext";
 import {
   deleteAsset,
   listMyAssets,
-  publishAsset,
-  unpublishAsset,
   uploadUserAsset,
 } from "../../services/assetsApi";
 import { apiPostJson, formatErr } from "../../services/videoGenApi";
@@ -662,21 +660,10 @@ export default function EditVideoTool() {
 
   // ===== Actions (history) =====
   const onTogglePublish = useCallback(
-    async (asset: Asset) => {
-      try {
-        const meta: any = (asset as any).meta || {};
-        const published = Boolean(meta?.published);
-        if (published) {
-          await unpublishAsset(asset.id);
-        } else {
-          await publishAsset(asset.id);
-        }
-        await reloadHistory();
-      } catch (err: any) {
-        setError(formatErr(err));
-      }
+    (asset: Asset) => {
+      window.dispatchEvent(new CustomEvent("tales:open-sell", { detail: { asset } }));
     },
-    [reloadHistory]
+    []
   );
 
   const onDownload = useCallback((asset: Asset) => {

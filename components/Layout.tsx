@@ -264,9 +264,9 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
           />
 
           <NavItem
-            label={sidebarOpen ? 'Trends' : ''}
-            active={false}
-            onClick={() => {}}
+            label={sidebarOpen ? 'My Trades' : ''}
+            active={currentRoute === AppRoute.MY_TRADES}
+            onClick={() => onNavigate(AppRoute.MY_TRADES)}
             icon={
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M3 17l6-6 4 4 7-7" />
@@ -276,9 +276,9 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
           />
 
           <NavItem
-            label={sidebarOpen ? 'Projects' : ''}
-            active={false}
-            onClick={() => {}}
+            label={sidebarOpen ? 'Community Store' : ''}
+            active={currentRoute === AppRoute.COMMUNITY_STORE}
+            onClick={() => onNavigate(AppRoute.COMMUNITY_STORE)}
             icon={
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M3 7h6l2 2h10v10a2 2 0 0 1-2 2H3V7z" />

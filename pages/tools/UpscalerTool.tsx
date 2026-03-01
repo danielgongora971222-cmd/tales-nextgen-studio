@@ -5,7 +5,7 @@ import videoStyles from "./VideoGeneratorTool.module.css";
 import ErrorModal from "../../components/ErrorModal";
 import { Asset, GeminiModel } from "../../types";
 import { generateImageBatch } from "../../services/geminiService";
-import { deleteAsset, listMyAssets, publishAsset, unpublishAsset, uploadUserAsset } from "../../services/assetsApi";
+import { deleteAsset, listMyAssets, uploadUserAsset } from "../../services/assetsApi";
 import OneNationUpIcon from "@/components/brand/OneNationUpIcon";
 
 import { AssetPickerModal } from "./video/AssetPickerModal";
@@ -256,20 +256,8 @@ const UpscalerTool: React.FC<{ prefillAsset?: Asset | null }> = ({ prefillAsset 
     return () => document.removeEventListener("mousedown", onDocDown);
   }, [panel]);
 
-  async function handleTogglePublish(asset: Asset) {
-    try {
-      if (asset.isPublic) {
-        const r = await unpublishAsset(asset.id);
-        setHistory((prev) => prev.map((a) => (a.id === asset.id ? { ...a, isPublic: r.isPublic } : a)));
-        if (viewer?.id === asset.id) setViewer((v) => (v ? { ...v, isPublic: r.isPublic } : v));
-      } else {
-        const r = await publishAsset(asset.id);
-        setHistory((prev) => prev.map((a) => (a.id === asset.id ? { ...a, isPublic: r.isPublic } : a)));
-        if (viewer?.id === asset.id) setViewer((v) => (v ? { ...v, isPublic: r.isPublic } : v));
-      }
-    } catch (e: any) {
-      setError(e?.message || "No se pudo cambiar visibilidad.");
-    }
+  function handleTogglePublish(asset: Asset) {
+    window.dispatchEvent(new CustomEvent("tales:open-sell", { detail: { asset } }));
   }
 
   async function handleDownload(asset: Asset) {
@@ -471,7 +459,7 @@ const UpscalerTool: React.FC<{ prefillAsset?: Asset | null }> = ({ prefillAsset 
                       <button
                         type="button"
                         className={styles.iconBtn}
-                        title={asset.isPublic ? "Quitar de público" : "Publicar"}
+                        title="Vender / Administrar listing"
                         onClick={() => handleTogglePublish(asset)}
                       >
                         <Icon name="share" />
@@ -681,7 +669,7 @@ const UpscalerTool: React.FC<{ prefillAsset?: Asset | null }> = ({ prefillAsset 
                   <Icon name="reuse" />
                 </button>
 
-                <button className={styles.iconBtn} type="button" title={viewer.isPublic ? "Quitar de público" : "Publicar"} onClick={() => handleTogglePublish(viewer)}>
+                <button className={styles.iconBtn} type="button" title="Vender / Administrar listing" onClick={() => handleTogglePublish(viewer)}>
                   <Icon name="share" />
                 </button>
 

@@ -6,6 +6,10 @@ import ImageGenHub from './pages/ImageGenHub';
 import VideoGenHub from './pages/VideoGenHub';
 import MyCreations from './pages/MyCreations';
 import Store from './pages/Store';
+import CommunityStore from './pages/CommunityStore';
+import MyTrades from './pages/MyTrades';
+import SellListingModal from "./components/SellListingModal";
+import type { Asset } from "./types";
 import ImageGeneratorTool from './pages/tools/ImageGeneratorTool';
 import RestylerTool from './pages/tools/RestylerTool';
 import LightroomTool from './pages/tools/LightroomTool';
@@ -30,6 +34,9 @@ const AppContent: React.FC = () => {
 
   const [storePrefill, setStorePrefill] = useState<{ asset?: any | null }>({ asset: null });
   const [upscalerPrefill, setUpscalerPrefill] = useState<any | null>(null);
+
+  const [sellOpen, setSellOpen] = useState<boolean>(false);
+  const [sellAsset, setSellAsset] = useState<Asset | null>(null);
 
   const [backendOk, setBackendOk] = useState<boolean>(false);
   const [capabilities, setCapabilities] = useState<any>(null);
@@ -71,6 +78,17 @@ const AppContent: React.FC = () => {
   return () => window.removeEventListener("tales:open-store", onOpenStore as any);
 }, []);
 
+useEffect(() => {
+  const onOpenSell = (ev: any) => {
+    const asset = (ev?.detail?.asset || null) as Asset | null;
+    setSellAsset(asset);
+    setSellOpen(true);
+  };
+
+  window.addEventListener("tales:open-sell", onOpenSell as any);
+  return () => window.removeEventListener("tales:open-sell", onOpenSell as any);
+}, []);
+
   const handleConnect = async () => {
     setChecking(true);
     try {
@@ -106,6 +124,13 @@ const AppContent: React.FC = () => {
             }}
           />
         );
+
+      case AppRoute.COMMUNITY_STORE:
+        return <CommunityStore onNavigate={(r) => { setStorePrefill({ asset: null }); setRoute(r); }} />;
+
+      case AppRoute.MY_TRADES:
+        return <MyTrades onNavigate={(r) => { setStorePrefill({ asset: null }); setRoute(r); }} />;
+
       
       // Image Tools
       case AppRoute.IMAGE_GEN_ROOT:
@@ -211,6 +236,15 @@ const AppContent: React.FC = () => {
       <Layout currentRoute={route} onNavigate={setRoute}>
         {renderPage()}
       </Layout>
+
+      <SellListingModal
+        open={sellOpen}
+        asset={sellAsset}
+        onClose={() => {
+          setSellOpen(false);
+          setSellAsset(null);
+        }}
+      />
     </GenerationQueueProvider>
   );
 };

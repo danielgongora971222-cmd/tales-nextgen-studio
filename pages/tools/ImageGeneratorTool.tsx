@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import styles from "./ImageGeneratorTool.module.css";
 import { generateImageBatch, type PromptReference, type ImageGenQuality } from "../../services/geminiService";
 import { MentionTextarea, type MentionItem } from "../../components/MentionTextarea";
-import { deleteAsset, listMyAssets, publishAsset, unpublishAsset, uploadUserAsset } from "../../services/assetsApi";
+import { deleteAsset, listMyAssets, uploadUserAsset } from "../../services/assetsApi";
 import { useAuth } from "../../contexts/AuthContext";
 import { supabase } from "../../services/supabaseClient";
 import { Asset, GeminiModel } from "../../types";
@@ -1803,20 +1803,8 @@ const promptReferences: PromptReference[] = useMemo(() => {
     }
   }
 
-  async function handleTogglePublish(asset: Asset) {
-    try {
-      if (asset.isPublic) {
-        const r = await unpublishAsset(asset.id);
-        setHistory((prev) => prev.map((a) => (a.id === asset.id ? { ...a, isPublic: r.isPublic } : a)));
-        if (viewer?.id === asset.id) setViewer((v) => (v ? { ...v, isPublic: r.isPublic } : v));
-      } else {
-        const r = await publishAsset(asset.id);
-        setHistory((prev) => prev.map((a) => (a.id === asset.id ? { ...a, isPublic: r.isPublic } : a)));
-        if (viewer?.id === asset.id) setViewer((v) => (v ? { ...v, isPublic: r.isPublic } : v));
-      }
-    } catch (e: any) {
-      setError(e?.message || "No se pudo cambiar visibilidad.");
-    }
+  function handleTogglePublish(asset: Asset) {
+    window.dispatchEvent(new CustomEvent("tales:open-sell", { detail: { asset } }));
   }
 
   async function handleDownload(asset: Asset) {
@@ -2065,7 +2053,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
                       <button
                         type="button"
                         className={styles.iconBtn}
-                        title={asset.isPublic ? "Quitar de público" : "Publicar"}
+                        title="Vender / Administrar listing"
                         onClick={() => handleTogglePublish(asset)}
                       >
                         <Icon name="share" />
@@ -2659,7 +2647,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
                   <Icon name="reuse" />
                 </button>
 
-                <button className={styles.iconBtn} type="button" title={viewer.isPublic ? "Quitar de público" : "Publicar"} onClick={() => handleTogglePublish(viewer)}>
+                <button className={styles.iconBtn} type="button" title="Vender / Administrar listing" onClick={() => handleTogglePublish(viewer)}>
                   <Icon name="share" />
                 </button>
 

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import styles from "./VideoGeneratorTool.module.css";
 import ErrorModal from "../../components/ErrorModal";
 import { MentionTextarea, type MentionItem } from "../../components/MentionTextarea";
-import { deleteAsset, listMyAssets, publishAsset, unpublishAsset, uploadUserAsset } from "../../services/assetsApi";
+import { deleteAsset, listMyAssets, uploadUserAsset } from "../../services/assetsApi";
 import { useAuth } from "../../contexts/AuthContext";
 import type { Asset } from "../../types";
 import { refreshKlingElementsStatus, type KlingElement } from "../../services/klingElementsService";
@@ -507,20 +507,8 @@ const VideoGeneratorTool: React.FC = () => {
     }
   }
 
-  async function handleTogglePublish(asset: Asset) {
-    try {
-      if (asset.isPublic) {
-        const r = await unpublishAsset(asset.id);
-        setVideoAssets((prev) => prev.map((a) => (a.id === asset.id ? { ...a, isPublic: r.isPublic } : a)));
-        if (viewer?.id === asset.id) setViewer((v) => (v ? { ...v, isPublic: r.isPublic } : v));
-      } else {
-        const r = await publishAsset(asset.id);
-        setVideoAssets((prev) => prev.map((a) => (a.id === asset.id ? { ...a, isPublic: r.isPublic } : a)));
-        if (viewer?.id === asset.id) setViewer((v) => (v ? { ...v, isPublic: r.isPublic } : v));
-      }
-    } catch (e: any) {
-      setError(e?.message || "No se pudo cambiar visibilidad.");
-    }
+  function handleTogglePublish(asset: Asset) {
+    window.dispatchEvent(new CustomEvent("tales:open-sell", { detail: { asset } }));
   }
 
   async function handleDownload(asset: Asset) {

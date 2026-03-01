@@ -158,7 +158,7 @@ export function ViewerModal({
             <button
               className={styles.iconBtn}
               type="button"
-              title={viewer.isPublic ? "Quitar de público" : "Publicar"}
+              title="Vender / Administrar listing"
               onClick={() => onTogglePublish(viewer)}
             >
               <Icon name="share" />

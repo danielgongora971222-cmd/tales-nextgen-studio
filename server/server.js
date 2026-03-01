@@ -44,6 +44,10 @@ import { createAiImageRouter } from "./routes/ai/image.js";
 import { createAssetsRouter } from "./routes/ai/assets.js";
 import { createModerationRouter } from "./routes/moderation.js";
 import { createStoreRouter } from "./routes/store.js";
+import { createCommunityStoreRouter } from "./routes/communityStore.js";
+import { createTradesRouter } from "./routes/trades.js";
+import { createWalletRouter } from "./routes/wallet.js";
+import { createReferralsRouter } from "./routes/referrals.js";
 import { FalFinalizeSchema } from "./schemas/index.js";
 import { assertJobLimits } from "./lib/jobLimits.js";
 
@@ -360,6 +364,41 @@ app.use("/api", createHealthRouter({ supabaseAdmin }));
 app.use(
   "/api",
   createStoreRouter({
+    supabaseAdmin,
+    requireUser,
+  })
+);
+
+app.use(
+  "/api",
+  createCommunityStoreRouter({
+    supabaseAdmin,
+    requireUser,
+    signStoragePath,
+  })
+);
+
+app.use(
+  "/api",
+  createTradesRouter({
+    supabaseAdmin,
+    requireUser,
+    signStoragePath,
+  })
+);
+
+app.use(
+  "/api",
+  createWalletRouter({
+    supabaseAdmin,
+    requireUser,
+    ADMIN_TOKEN: process.env.ADMIN_TOKEN,
+  })
+);
+
+app.use(
+  "/api",
+  createReferralsRouter({
     supabaseAdmin,
     requireUser,
   })

@@ -135,7 +135,7 @@ export function EditHistorySection({
                       <button
                         type="button"
                         className={`${styles.iconBtn} ${isPublished ? styles.iconBtnOn : ""}`}
-                        title={isPublished ? "Unpublish" : "Publish"}
+                        title="Vender / Administrar listing"
                         onClick={() => onTogglePublish(asset)}
                       >
                         <Icon name="share" />

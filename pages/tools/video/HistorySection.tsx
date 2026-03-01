@@ -141,7 +141,7 @@ export function HistorySection({
                     <button
                       type="button"
                       className={styles.iconBtn}
-                      title={asset.isPublic ? "Quitar de público" : "Publicar"}
+                      title="Vender / Administrar listing"
                       onClick={() => onTogglePublish(asset)}
                     >
                       <Icon name="share" />

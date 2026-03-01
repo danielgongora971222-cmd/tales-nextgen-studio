@@ -112,6 +112,33 @@ router.delete("/assets/:id", async (req, res) => {
     });
   }
 
+    const { data: usedListing, error: usedErr } = await supabaseAdmin
+    .from("community_listings")
+    .select("id, status")
+    .eq("preview_asset_id", assetId)
+    .neq("status", "deleted")
+    .limit(1)
+    .maybeSingle();
+
+  if (usedErr) {
+    return res.status(500).json({
+      ok: false,
+      error: { code: "DB_QUERY_FAILED", message: usedErr.message },
+    });
+  }
+
+  if (usedListing?.id) {
+    return res.status(409).json({
+      ok: false,
+      error: {
+        code: "ASSET_IN_USE",
+        message: "No puedes eliminar este asset porque está en un listing de Community Store. Primero deja de venderlo.",
+        details: { listingId: usedListing.id, listingStatus: usedListing.status },
+      },
+    });
+  }
+
+
   // 2) Borrar del storage si existe (compatible: Supabase o R2)
   if (row.storage_path) {
     try {
@@ -184,6 +211,33 @@ router.get("/assets", async (req, res) => {
   const rows = data || [];
   const assetIds = rows.map((r) => r.id).filter(Boolean);
 
+  // 3.5) Community Store listing por asset (solo para scope=my)
+  const listingByAssetId = new Map();
+  if (scope !== "public" && assetIds.length > 0) {
+    const { data: listingRows, error: lErr } = await supabaseAdmin
+      .from("community_listings")
+      .select("id, preview_asset_id, status, price_credits, description")
+      .eq("seller_id", user.id)
+      .in("preview_asset_id", assetIds)
+      .neq("status", "deleted");
+
+    if (lErr) {
+      return res.status(500).json({
+        ok: false,
+        error: { code: "DB_QUERY_FAILED", message: lErr.message },
+      });
+    }
+
+    for (const r of listingRows || []) {
+      listingByAssetId.set(r.preview_asset_id, {
+        id: r.id,
+        status: r.status,
+        priceCredits: Number(r.price_credits) || 0,
+        description: r.description || "",
+      });
+    }
+  }
+
   // 4) likedByMe (consulta en batch)
   const likedSet = new Set();
   if (assetIds.length > 0) {
@@ -240,22 +294,25 @@ router.get("/assets", async (req, res) => {
       const commentsCount = Number.isFinite(Number(row.comments_count)) ? Number(row.comments_count) : 0;
       const comments = previewByAsset.get(row.id) || [];
 
+      const communityListing = listingByAssetId.get(row.id) || null;
+
       return {
         id: row.id,
         url,
         type: row.type === "video" ? "video" : "image",
         name: row.name || `Generation ${String(row.id).slice(0, 4)}`,
-        prompt: row.prompt || undefined,
-        meta: row.meta ?? null,
+        prompt: scope === "public" ? undefined : (row.prompt || undefined),
+        meta: scope === "public" ? null : (row.meta ?? null),
         createdAt,
         ownerId: row.owner_id,
         isPublic: !!row.is_public,
+
+        communityListing,
 
         likedByMe,
         likesCount,
         commentsCount,
 
-        // Compat: NO es lista completa (solo “hint”/preview)
         likes: likedByMe ? [user.id] : [],
         comments,
       };

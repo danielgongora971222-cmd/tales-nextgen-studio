@@ -4,6 +4,9 @@ export enum AppRoute {
 
   // New Service
   STORE = 'store',
+  COMMUNITY_STORE = 'community-store',
+  MY_TRADES = 'my-trades',
+
   
   // Tool Categories
   IMAGE_GEN_ROOT = 'image-gen-root',
@@ -61,6 +64,15 @@ export interface Asset {
   // Social & Privacy
   ownerId: string;
   isPublic: boolean;
+
+  // Community Store (si este asset está en venta)
+  communityListing?: {
+    id: string;
+    status: "active" | "unlisted" | "deleted";
+    priceCredits: number;
+    description: string;
+  } | null;
+
 
   // Social real (rápido para feed)
   likedByMe: boolean;
