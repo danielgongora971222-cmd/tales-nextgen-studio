@@ -30,6 +30,7 @@ export function createAssetsRouter(ctx) {
     uploadBufferToStorage,
     signStoragePath,
     deleteStoragePath,
+    downloadStoragePath,
     createClientUploadTarget,
     insertAssetRow,
 
@@ -166,13 +167,92 @@ router.delete("/assets/:id", async (req, res) => {
   }
 
   return res.json({ ok: true, id: assetId });
-});
+  });
 
-// ===============================
-// Assets: historial del usuario (DB)
-// GET /api/assets?type=image&limit=50
-// ===============================
-router.get("/assets", async (req, res) => {
+  // ===============================
+  // Assets: descargar (binary)
+  // GET /api/assets/:id/download
+  // ===============================
+  router.get("/assets/:id/download", async (req, res) => {
+    const { user, error } = await requireUser(req);
+    if (error) return res.status(401).json({ ok: false, error });
+
+    const assetId = req.params.id;
+
+    const { data: row, error: qErr } = await supabaseAdmin
+      .from("assets")
+      .select("id, owner_id, is_public, storage_path, url, type, name")
+      .eq("id", assetId)
+      .maybeSingle();
+
+    if (qErr) {
+      return res.status(500).json({
+        ok: false,
+        error: { code: "DB_QUERY_FAILED", message: qErr.message },
+      });
+    }
+
+    if (!row) {
+      return res.status(404).json({
+        ok: false,
+        error: { code: "NOT_FOUND", message: "Asset no encontrado." },
+      });
+    }
+
+    const allowed = row.owner_id === user.id || row.is_public === true;
+    if (!allowed) {
+      return res.status(403).json({
+        ok: false,
+        error: { code: "FORBIDDEN", message: "No tienes permiso para descargar este asset." },
+      });
+    }
+
+    let buffer = null;
+    let mimeType = "application/octet-stream";
+
+    try {
+      if (row.storage_path) {
+        const dl = await downloadStoragePath(row.storage_path);
+        buffer = dl.buffer;
+        mimeType = dl.mimeType || mimeType;
+      } else if (row.url) {
+        const upstream = await fetch(row.url);
+        if (!upstream.ok) {
+          throw new Error(`Upstream download failed (${upstream.status})`);
+        }
+        const ab = await upstream.arrayBuffer();
+        buffer = Buffer.from(ab);
+        mimeType = upstream.headers.get("content-type") || mimeType;
+      } else {
+        return res.status(400).json({
+          ok: false,
+          error: { code: "NO_STORAGE_PATH", message: "Este asset no tiene storage_path ni url." },
+        });
+      }
+    } catch (e) {
+      return res.status(500).json({
+        ok: false,
+        error: { code: "ASSET_DOWNLOAD_FAILED", message: e?.message || "No se pudo descargar el archivo." },
+      });
+    }
+
+    const baseName = String(row.name || `asset-${String(assetId).slice(0, 8)}`);
+    const safeBase = baseName.replace(/[^a-zA-Z0-9._-]+/g, "_");
+    const ext = extFromMime(mimeType);
+    const filename = safeBase.includes(".") ? safeBase : `${safeBase}.${ext}`;
+
+    res.setHeader("Content-Type", mimeType);
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Cache-Control", "private, max-age=0, must-revalidate");
+
+    return res.status(200).send(buffer);
+  });
+
+  // ===============================
+  // Assets: historial del usuario (DB)
+  // GET /api/assets?type=image&limit=50
+  // ===============================
+  router.get("/assets", async (req, res) => {
   // 1) exigir login
   const scope = typeof req.query.scope === "string" ? req.query.scope : "my";
   const { user, error } = await requireUser(req);

@@ -620,3 +620,47 @@ export async function uploadUserAsset(
   };
 }
 
+export async function downloadAssetToDisk(assetId: string, filenameHint?: string): Promise<void> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+
+  if (!token) {
+    throw new Error("Debes iniciar sesión para descargar.");
+  }
+
+  const resp = await fetch(apiUrl(`/api/assets/${assetId}/download`), {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!resp.ok) {
+    const raw = await resp.text();
+    try {
+      const parsed = JSON.parse(raw);
+      const msg = parsed?.error?.message || `Download failed (${resp.status})`;
+      throw new Error(msg);
+    } catch {
+      throw new Error(`Download failed (${resp.status}). Inicio: ${raw.slice(0, 120)}`);
+    }
+  }
+
+  const blob = await resp.blob();
+
+  let filename = filenameHint || "download";
+  const disp = resp.headers.get("content-disposition") || resp.headers.get("Content-Disposition");
+  if (disp) {
+    const m = disp.match(/filename=\"?([^\";]+)\"?/i);
+    if (m && m[1]) filename = m[1];
+  }
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+

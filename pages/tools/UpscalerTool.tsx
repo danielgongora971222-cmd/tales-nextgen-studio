@@ -5,7 +5,7 @@ import videoStyles from "./VideoGeneratorTool.module.css";
 import ErrorModal from "../../components/ErrorModal";
 import { Asset, GeminiModel } from "../../types";
 import { generateImageBatch } from "../../services/geminiService";
-import { deleteAsset, listMyAssets, uploadUserAsset } from "../../services/assetsApi";
+import { deleteAsset, listMyAssets, uploadUserAsset, downloadAssetToDisk } from "../../services/assetsApi";
 import OneNationUpIcon from "@/components/brand/OneNationUpIcon";
 
 import { AssetPickerModal } from "./video/AssetPickerModal";
@@ -262,19 +262,9 @@ const UpscalerTool: React.FC<{ prefillAsset?: Asset | null }> = ({ prefillAsset 
 
   async function handleDownload(asset: Asset) {
     try {
-      const resp = await fetch(asset.url);
-      if (!resp.ok) throw new Error("No se pudo descargar la imagen.");
-      const blob = await resp.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = asset.name || "image";
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      await downloadAssetToDisk(asset.id, asset.name || "image");
     } catch (e: any) {
-      setError(e?.message || "No se pudo descargar la imagen.");
+      setError(e?.message || "No se pudo descargar.");
     }
   }
 

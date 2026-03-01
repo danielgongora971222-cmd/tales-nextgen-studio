@@ -3,7 +3,7 @@ import FileUploader from "../../components/FileUploader";
 import ErrorModal from "../../components/ErrorModal";
 import { useAuth } from "../../contexts/AuthContext";
 import type { Asset } from "../../types";
-import { deleteAsset, listMyAssets } from "../../services/assetsApi";
+import { deleteAsset, listMyAssets, uploadUserAsset, downloadAssetToDisk } from "../../services/assetsApi";
 import { apiPostJson, formatErr } from "../../services/videoGenApi";
 import { waitJobCompletion } from "../../services/jobsApi";
 
@@ -151,19 +151,9 @@ export default function MotionControlTool() {
 
   async function handleDownload(asset: Asset) {
     try {
-      const resp = await fetch(asset.url);
-      if (!resp.ok) throw new Error("No se pudo descargar el video.");
-      const blob = await resp.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = (asset.name || "video") + ".mp4";
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      await downloadAssetToDisk(asset.id, asset.name || "image");
     } catch (e: any) {
-      setError(e?.message || "No se pudo descargar el video.");
+      setError(e?.message || "No se pudo descargar.");
     }
   }
 

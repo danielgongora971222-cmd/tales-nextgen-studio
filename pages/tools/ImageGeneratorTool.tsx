@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import styles from "./ImageGeneratorTool.module.css";
 import { generateImageBatch, type PromptReference, type ImageGenQuality } from "../../services/geminiService";
 import { MentionTextarea, type MentionItem } from "../../components/MentionTextarea";
-import { deleteAsset, listMyAssets, uploadUserAsset } from "../../services/assetsApi";
+import { deleteAsset, listMyAssets, uploadUserAsset, downloadAssetToDisk } from "../../services/assetsApi";
 import { useAuth } from "../../contexts/AuthContext";
 import { supabase } from "../../services/supabaseClient";
 import { Asset, GeminiModel } from "../../types";
@@ -1809,19 +1809,9 @@ const promptReferences: PromptReference[] = useMemo(() => {
 
   async function handleDownload(asset: Asset) {
     try {
-      const resp = await fetch(asset.url);
-      if (!resp.ok) throw new Error("No se pudo descargar la imagen.");
-      const blob = await resp.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = asset.name || "image";
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      await downloadAssetToDisk(asset.id, asset.name || "image");
     } catch (e: any) {
-      setError(e?.message || "No se pudo descargar la imagen.");
+      setError(e?.message || "No se pudo descargar.");
     }
   }
 

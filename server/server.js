@@ -512,6 +512,9 @@ app.use(
     uploadBase64ToStorage,
     uploadBufferToStorage,
     signStoragePath,
+    deleteStoragePath,
+    downloadStoragePath,
+    createClientUploadTarget,
     insertAssetRow,
 
     // env/flags
@@ -523,6 +526,7 @@ app.use(
     // agrégalas aquí con el MISMO nombre (sin tocar el handler).
   })
 );
+
 
 app.use(
   "/api",
