@@ -46,16 +46,20 @@ async function maybeUserFromReq(req, supabaseAdmin) {
 
 const CreateListingSchema = z.object({
   previewAssetId: z.string().uuid(),
+  name: z.preprocess((v) => (typeof v === "string" ? v.trim() : ""), z.string().min(3).max(80)),
   priceCredits: z.preprocess((v) => Number(v), z.number().int().min(1).max(1000000)),
   description: z.preprocess((v) => (typeof v === "string" ? v.trim() : ""), z.string().max(800)).default(""),
   listingKind: z.enum(["single", "workflow"]).default("single"),
 });
 
+
 const UpdateListingSchema = z.object({
+  name: z.preprocess((v) => (v === undefined ? undefined : String(v).trim()), z.string().min(3).max(80)).optional(),
   priceCredits: z.preprocess((v) => (v === undefined ? undefined : Number(v)), z.number().int().min(1).max(1000000)).optional(),
   description: z.preprocess((v) => (v === undefined ? undefined : String(v).trim()), z.string().max(800)).optional(),
   status: z.enum(["active", "unlisted"]).optional(),
 });
+
 
 const PurchaseSchema = z.object({
   listingId: z.string().uuid(),
@@ -105,7 +109,7 @@ export function createCommunityStoreRouter(ctx) {
     let q = supabaseAdmin
       .from("community_listings")
       .select(
-        "id, seller_id, seller_username_snapshot, seller_verified_snapshot, listing_kind, media_tag, price_credits, description, status, preview_asset_id, created_at, likes_count, comments_count, sales_count"
+        "id, name, seller_id, seller_username_snapshot, seller_verified_snapshot, listing_kind, media_tag, price_credits, description, status, preview_asset_id, created_at, likes_count, comments_count, sales_count"
       )
       .eq("status", "active");
 
@@ -162,6 +166,7 @@ export function createCommunityStoreRouter(ctx) {
       listingKind: r.listing_kind,
       mediaTag: r.media_tag,
 
+      name: r.name || "",
       priceCredits: Number(r.price_credits) || 0,
       description: r.description || "",
 
@@ -195,7 +200,7 @@ export function createCommunityStoreRouter(ctx) {
     const { data: row, error } = await supabaseAdmin
       .from("community_listings")
       .select(
-        "id, seller_id, seller_username_snapshot, seller_verified_snapshot, listing_kind, media_tag, price_credits, description, status, preview_asset_id, created_at, likes_count, comments_count, sales_count"
+        "id, name, seller_id, seller_username_snapshot, seller_verified_snapshot, listing_kind, media_tag, price_credits, description, status, preview_asset_id, created_at, likes_count, comments_count, sales_count"
       )
       .eq("id", listingId)
       .maybeSingle();
@@ -234,11 +239,12 @@ export function createCommunityStoreRouter(ctx) {
         sellerUsername: row.seller_username_snapshot || "seller",
         sellerVerified: Boolean(row.seller_verified_snapshot),
 
-        listingKind: row.listing_kind,
-        mediaTag: row.media_tag,
+        listingKind: r.listing_kind,
+        mediaTag: r.media_tag,
 
-        priceCredits: Number(row.price_credits) || 0,
-        description: row.description || "",
+        name: r.name || "",
+        priceCredits: Number(r.price_credits) || 0,
+        description: r.description || "",
 
         status: row.status,
 
@@ -269,7 +275,7 @@ export function createCommunityStoreRouter(ctx) {
       return err(res, 400, "BAD_REQUEST", e?.message || "Payload inválido.");
     }
 
-    const { previewAssetId, priceCredits, description, listingKind } = body;
+        const { previewAssetId, name, priceCredits, description, listingKind } = body;
 
     const { data: assetRow, error: aErr } = await supabaseAdmin
       .from("assets")
@@ -296,15 +302,19 @@ export function createCommunityStoreRouter(ctx) {
       const { error: upErr } = await supabaseAdmin
         .from("community_listings")
         .update({
+          name,
           price_credits: priceCredits,
           description,
           status: "active",
-          listed_at: new Date().toISOString(),
         })
         .eq("id", existing.id)
         .eq("seller_id", user.id);
 
-      if (upErr) return err(res, 500, "DB_UPDATE_FAILED", upErr.message);
+        if (insErr) {
+          if (String(insErr.code) === "23505") return err(res, 409, "NAME_TAKEN", "Ya existe un listing con ese nombre. Elige otro.");
+          return err(res, 500, "DB_INSERT_FAILED", insErr.message);
+        }
+
 
       return res.json({ ok: true, listingId: existing.id, reused: true });
     }

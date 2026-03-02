@@ -68,6 +68,7 @@ export async function getCommunityListing(listingId: string) {
 
 export async function createCommunityListingFromAsset(input: {
   previewAssetId: string;
+  name: string;
   priceCredits: number;
   description: string;
   listingKind?: "single" | "workflow";
@@ -78,6 +79,7 @@ export async function createCommunityListingFromAsset(input: {
     headers,
     body: JSON.stringify({
       previewAssetId: input.previewAssetId,
+      name: input.name,
       priceCredits: input.priceCredits,
       description: input.description,
       listingKind: input.listingKind || "single",

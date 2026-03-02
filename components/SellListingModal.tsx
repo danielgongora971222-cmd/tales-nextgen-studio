@@ -10,6 +10,7 @@ interface SellListingModalProps {
 }
 
 export default function SellListingModal({ open, asset, onClose }: SellListingModalProps) {
+  const [name, setName] = useState<string>("");
   const [price, setPrice] = useState<string>("50");
   const [description, setDescription] = useState<string>("");
   const [busy, setBusy] = useState<boolean>(false);
@@ -30,9 +31,11 @@ export default function SellListingModal({ open, asset, onClose }: SellListingMo
     setError(null);
 
     if (listing) {
+      setName(String((listing as any).name || ""));
       setPrice(String(listing.priceCredits || 50));
       setDescription(listing.description || "");
     } else {
+      setName("");
       setPrice("50");
       setDescription("");
     }
@@ -52,18 +55,24 @@ export default function SellListingModal({ open, asset, onClose }: SellListingMo
         throw new Error("El precio debe ser un número mayor que 0.");
       }
 
+      const listingName = String(name || "").trim();
+      if (!listingName) {
+        throw new Error("El nombre es obligatorio.");
+      }
+
       const desc = String(description || "").trim();
 
       if (listing?.id) {
-        // Ya existe: solo reactivamos o editamos (sin tocar receta)
         await updateCommunityListing(listing.id, {
           status: "active",
+          name: listingName,
           priceCredits,
           description: desc,
-        });
+        } as any);
       } else {
         await createCommunityListingFromAsset({
           previewAssetId: asset.id,
+          name: listingName,
           priceCredits,
           description: desc,
           listingKind: "single",
@@ -128,6 +137,15 @@ export default function SellListingModal({ open, asset, onClose }: SellListingMo
                 <img src={asset.url} className="w-full h-full object-cover" alt={asset.name} />
               )}
             </div>
+
+            <div className="text-white/80 text-xs mb-1">Nombre del listing (único)</div>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="w-full rounded-lg bg-black/40 border border-white/10 px-3 py-2 text-white text-sm mb-3"
+                placeholder="Ej: MyBestPromptPack"
+                maxLength={80}
+              />
 
             <div className="flex-1">
               <div className="text-white/80 text-xs mb-1">Precio (créditos)</div>

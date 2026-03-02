@@ -9,6 +9,7 @@ import { Asset, GeminiModel } from "../../types";
 import ErrorModal from "../../components/ErrorModal";
 import { STYLE_PRESETS } from "../../config/presets/restyle";
 import OneNationUpIcon from "@/components/brand/OneNationUpIcon";
+import { toggleLike } from "../../services/socialApi";
 
 
 type Quality = "" | ImageGenQuality;
@@ -483,7 +484,7 @@ function prettyModelLabel(modelId: string | null): string {
 
 
 // Iconitos (SVG inline) — nada externo
-function Icon({ name }: { name: "heart" | "share" | "download" | "trash" | "copy" | "reuse" | "close" }) {
+function Icon({ name }: { name: "heart" | "money" | "share" | "download" | "trash" | "copy" | "reuse" | "close" }) {
   switch (name) {
     case "heart":
       return (
@@ -494,12 +495,12 @@ function Icon({ name }: { name: "heart" | "share" | "download" | "trash" | "copy
           />
         </svg>
       );
-    case "share":
+    case "money":
       return (
         <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
           <path
             fill="currentColor"
-            d="M18 16a3 3 0 0 0-2.4 1.2l-6.3-3.15a3.1 3.1 0 0 0 0-1.05l6.3-3.15A3 3 0 1 0 15 7a3 3 0 0 0 .1.75L8.8 10.9a3 3 0 1 0 0 2.2l6.3 3.15A3 3 0 1 0 18 16z"
+            d="M3 7a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V7zm3-1a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V7a1 1 0 0 0-1-1H6zm6 2c2.2 0 4 1.34 4 3s-1.8 3-4 3-4-1.34-4-3 1.8-3 4-3zm0 2c-1.2 0-2 .62-2 1s.8 1 2 1 2-.62 2-1-.8-1-2-1z"
           />
         </svg>
       );
@@ -569,6 +570,7 @@ const ImageGeneratorTool: React.FC = () => {
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [historyVisibleCount, setHistoryVisibleCount] = useState(HISTORY_INITIAL_COUNT);
   const [visibleHistory, setVisibleHistory] = useState<Asset[]>([]);
+  const [likeBusyById, setLikeBusyById] = useState<Record<string, boolean>>({});
   const [isLoadingMoreHistory, setIsLoadingMoreHistory] = useState(false);
 
   // "library": todas tus imágenes (generadas + subidas) para el picker y recipe
@@ -2033,20 +2035,50 @@ const promptReferences: PromptReference[] = useMemo(() => {
 
                       <button
                         type="button"
-                        className={styles.iconBtn}
-                        title="Favoritos (próximamente)"
-                        onClick={() => setError("Favoritos (Like) se habilita en el paso de Mis Creaciones / Favoritos.")}
+                        className={`${styles.iconBtn} ${styles.iconBtnHeart} ${asset.likedByMe ? styles.iconBtnHeartActive : ""}`}
+                        title={asset.likedByMe ? "Quitar Like" : "Dar Like"}
+                        disabled={Boolean(likeBusyById[asset.id])}
+                        onClick={async () => {
+                          if (!user) {
+                            setError("Debes iniciar sesión para dar Like.");
+                            return;
+                          }
+                          if (likeBusyById[asset.id]) return;
+
+                          setLikeBusyById((p) => ({ ...p, [asset.id]: true }));
+                          try {
+                            const res = await toggleLike(asset.id);
+
+                            setHistory((prev) =>
+                              prev.map((a) =>
+                                a.id === asset.id ? { ...a, likedByMe: res.liked, likesCount: res.likesCount } : a
+                              )
+                            );
+
+                            setVisibleHistory((prev) =>
+                              prev.map((a) =>
+                                a.id === asset.id ? { ...a, likedByMe: res.liked, likesCount: res.likesCount } : a
+                              )
+                            );
+
+                            setViewer((v) => (v && v.id === asset.id ? { ...v, likedByMe: res.liked, likesCount: res.likesCount } : v));
+                          } catch (e: any) {
+                            setError(e?.message || "No se pudo actualizar el Like.");
+                          } finally {
+                            setLikeBusyById((p) => ({ ...p, [asset.id]: false }));
+                          }
+                        }}
                       >
                         <Icon name="heart" />
                       </button>
 
                       <button
                         type="button"
-                        className={styles.iconBtn}
+                        className={`${styles.iconBtn} ${styles.iconBtnMoney}`}
                         title="Vender / Administrar listing"
                         onClick={() => handleTogglePublish(asset)}
                       >
-                        <Icon name="share" />
+                        <Icon name="money" />
                       </button>
 
                       <button
@@ -2637,8 +2669,8 @@ const promptReferences: PromptReference[] = useMemo(() => {
                   <Icon name="reuse" />
                 </button>
 
-                <button className={styles.iconBtn} type="button" title="Vender / Administrar listing" onClick={() => handleTogglePublish(viewer)}>
-                  <Icon name="share" />
+                <button className={`${styles.iconBtn} ${styles.iconBtnMoney}`} type="button" title="Vender / Administrar listing" onClick={() => handleTogglePublish(viewer)}>
+                  <Icon name="money" />
                 </button>
 
                 <button className={styles.iconBtn} type="button" title="Descargar" onClick={() => handleDownload(viewer)}>

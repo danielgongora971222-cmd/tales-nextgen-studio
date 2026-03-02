@@ -61,9 +61,9 @@ export const TOOLS_REGISTRY: ToolDefinition[] = [
   },
   {
     id: 'collage',
-    label: 'Collage Maker',
+    label: 'YouTube Thumbnail Maker',
     route: AppRoute.TOOL_COLLAGE,
-    description: 'Compose multiple generations into a single layout.',
+    description: 'Create high-converting YouTube thumbnail layouts (coming soon).',
     status: 'beta'
   }
 ];

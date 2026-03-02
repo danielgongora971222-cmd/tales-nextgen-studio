@@ -1358,8 +1358,9 @@ async function runImageGenerateTask({ userId, params }) {
   // =============================
   // Fal.ai - Qwen Multiple Angles (camera control)
   // =============================
-  if (selectedModel.startsWith("fal-ai/qwen/")) {
-    const toolName = tool || "image-generator";
+  if (selectedModel === "fal-ai/qwen-image-edit-2511-multiple-angles") {
+    const nRequested = Math.max(1, Math.min(Number(count || 1), 4, maxCount));
+    const toolName = tool || "camera-angles";
     const hint = nameHint || "generated";
     const urlExpiresInSeconds = 60 * 60;
 
@@ -1373,37 +1374,68 @@ async function runImageGenerateTask({ userId, params }) {
     }
 
     const falInput = {
-      image_url: refUrls[0],
-      prompt: String(prompt || "").trim(),
-      horizontal: Number.isFinite(horizontalAngle) ? horizontalAngle : 0,
-      vertical: Number.isFinite(verticalAngle) ? verticalAngle : 0,
-      zoom: Number.isFinite(zoom) ? zoom : 0,
+      image_urls: [refUrls[0]],
+      horizontal_angle: Number.isFinite(horizontalAngle) ? horizontalAngle : 0,
+      vertical_angle: Number.isFinite(verticalAngle) ? verticalAngle : 0,
+      zoom: Number.isFinite(zoom) ? zoom : 5,
       lora_scale: Number.isFinite(loraScale) ? loraScale : 1,
+      additional_prompt: String(prompt || "").trim() || undefined,
       output_format: "png",
+      num_images: nRequested,
     };
 
     const falJson = await falQueueRun(selectedModel, falInput);
-    const img = Array.isArray(falJson?.images) ? falJson.images[0] : falJson?.image;
-    const dataUrl = await falResultImageToDataUrl(img);
+    const imagesArr = Array.isArray(falJson?.images) ? falJson.images : [];
+    const urls = imagesArr.map((x) => x?.url).filter(Boolean).slice(0, nRequested);
 
-    const { storagePath } = await uploadBase64ToStorage({ userId, tool: toolName, dataUrl, nameHint: hint });
-    const meta = {
-      tool: toolName,
-      provider: "fal",
-      model: selectedModel,
-      count: 1,
-      prompt,
-      camera: { horizontalAngle, verticalAngle, zoom, loraScale },
-      characterAssetIds: Array.isArray(characterAssetIds) ? characterAssetIds : [],
-      styleAssetId: styleAssetId || null,
-      backgroundAssetId: backgroundAssetId || null,
-      promptReferences: tokenRefs,
-    };
+    if (!urls.length) {
+      throw httpError(502, "QWEN_NO_IMAGES", "Qwen (Fal) no devolvió URLs de imagen.", falJson);
+    }
 
-    const assetId = await insertAssetRow({ ownerId: userId, type: "image", tool: toolName, name: hint, prompt, storagePath, isPublic: false, meta });
-    const url = await signStoragePath(storagePath, urlExpiresInSeconds);
-    return { items: [{ url, assetId }], urlExpiresInSeconds };
+    const items = [];
+    for (const imageUrl of urls) {
+      const imgRes = await fetch(imageUrl);
+      if (!imgRes.ok) {
+        throw httpError(502, "QWEN_IMAGE_DOWNLOAD_FAILED", `Qwen (Fal): no pude descargar la imagen final (${imgRes.status}).`, { imageUrl });
+      }
+
+      const buf = Buffer.from(await imgRes.arrayBuffer());
+      const mime = imgRes.headers.get("content-type") || "image/png";
+      const dataUrl = `data:${mime};base64,${buf.toString("base64")}`;
+
+      const { storagePath } = await uploadBase64ToStorage({ userId, tool: toolName, dataUrl, nameHint: hint });
+
+      const meta = {
+        tool: toolName,
+        provider: "fal",
+        model: selectedModel,
+        count: nRequested,
+        prompt,
+        camera: { horizontalAngle, verticalAngle, zoom, loraScale },
+        characterAssetIds: Array.isArray(characterAssetIds) ? characterAssetIds : [],
+        styleAssetId: styleAssetId || null,
+        backgroundAssetId: backgroundAssetId || null,
+        promptReferences: tokenRefs,
+      };
+
+      const assetId = await insertAssetRow({
+        ownerId: userId,
+        type: "image",
+        tool: toolName,
+        name: hint,
+        prompt,
+        storagePath,
+        isPublic: false,
+        meta,
+      });
+
+      const url = await signStoragePath(storagePath, urlExpiresInSeconds);
+      items.push({ url, assetId });
+    }
+
+    return { items, urlExpiresInSeconds };
   }
+
 
   // =============================
   // Fal.ai - Flux 2.0 (default)

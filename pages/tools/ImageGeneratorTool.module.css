@@ -477,6 +477,29 @@
   transform: translateY(-1px);
 }
 
+.iconBtnMoney {
+  color: rgba(34, 197, 94, 0.95);
+}
+
+.iconBtnMoney:hover {
+  background: rgba(34, 197, 94, 0.90);
+  color: rgba(0, 0, 0, 0.92);
+}
+
+.iconBtnHeart {
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.iconBtnHeartActive {
+  background: rgba(239, 68, 68, 0.18);
+  color: rgba(239, 68, 68, 0.98);
+}
+
+.iconBtnHeartActive:hover {
+  background: rgba(239, 68, 68, 0.90);
+  color: rgba(0, 0, 0, 0.92);
+}
+
 .ghostBtn {
   background: rgba(0,0,0,0.18);
   border: none;

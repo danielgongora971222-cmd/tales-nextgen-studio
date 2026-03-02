@@ -160,11 +160,21 @@ export default function StoreNewUI({ onNavigate, onRequestUpscale, prefill }: St
     setHistoryError(null);
 
     try {
-      // IMPORTANTE:
-      // No usamos {type:"image"} porque muchos historiales antiguos/mixtos
-      // pueden no estar etiquetados exactamente como "image" en DB.
-      // Traemos todo y filtramos en frontend.
-      const items = await listMyAssets({ limit: 500, fresh: true });
+      // IMPORTANTE (estabilidad):
+      // - 500 items + fresh suele ser demasiado pesado y dispara fallos de red (fetch TypeError).
+      // - Preferimos pedir imágenes directamente y con un límite más seguro.
+      // - Si por cualquier motivo tu DB tuviera assets antiguos sin type="image", hacemos fallback.
+      let items: Asset[] = [];
+
+      try {
+        items = await listMyAssets({ type: "image", limit: 250, fresh: true });
+        if (!items || items.length === 0) {
+          items = await listMyAssets({ limit: 250, fresh: true });
+        }
+      } catch {
+        items = await listMyAssets({ limit: 250 });
+      }
+
 
       // 1) excluir camera-angles
       const noCameraAngles = (items || []).filter((a: any) => {

@@ -29,7 +29,7 @@ export const ImageRequestSchema = z.object({
   nameHint: z.string().optional(),  // ej: "generated"
 
   // Referencias por Asset IDs (opcional)
-  characterAssetIds: z.array(z.string()).max(10).optional(),
+  characterAssetIds: z.array(z.string()).max(12).optional(),
   styleAssetId: z.string().optional(),
     backgroundAssetId: z.string().optional(),
 

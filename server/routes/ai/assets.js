@@ -296,7 +296,7 @@ router.delete("/assets/:id", async (req, res) => {
   if (scope !== "public" && assetIds.length > 0) {
     const { data: listingRows, error: lErr } = await supabaseAdmin
       .from("community_listings")
-      .select("id, preview_asset_id, status, price_credits, description")
+      .select("id, name, preview_asset_id, status, price_credits, description")
       .eq("seller_id", user.id)
       .in("preview_asset_id", assetIds)
       .neq("status", "deleted");
@@ -311,6 +311,7 @@ router.delete("/assets/:id", async (req, res) => {
     for (const r of listingRows || []) {
       listingByAssetId.set(r.preview_asset_id, {
         id: r.id,
+        name: r.name || "",
         status: r.status,
         priceCredits: Number(r.price_credits) || 0,
         description: r.description || "",

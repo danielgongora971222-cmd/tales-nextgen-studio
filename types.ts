@@ -68,6 +68,7 @@ export interface Asset {
   // Community Store (si este asset está en venta)
   communityListing?: {
     id: string;
+    name: string;
     status: "active" | "unlisted" | "deleted";
     priceCredits: number;
     description: string;
