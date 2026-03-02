@@ -516,9 +516,86 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
         </div>
       </section>
 
-      {/* Community Store */}
+      {/* Community Feed */}
       <section>
-        <CommunityStore onNavigate={onNavigate} />
+        <div className="flex items-center justify-between mb-8">
+          <h2 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+            Community Feed <span className="text-xs bg-white/10 px-2 py-1 rounded-full text-gray-400 font-normal">LIVE</span>
+          </h2>
+        </div>
+        
+        <div className={`${generatorStyles.grid} ${styles.feedGrid}`}>
+          {feed.map((asset) => {
+            const likeDisabled =
+              !user ||
+              Boolean(likeBusy[asset.id]) ||
+              (likeCooldownUntil[asset.id] || 0) > Date.now();
+
+            return (
+              <div
+                key={asset.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => openViewer(asset)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    openViewer(asset);
+                  }
+                }}
+                className={`${generatorStyles.tile} ${styles.feedTile}`}
+              >
+                <img
+                  src={asset.url}
+                  alt={asset.name}
+                  className={`${generatorStyles.tileImg} ${styles.feedImage}`}
+                  loading="lazy"
+                  decoding="async"
+                />
+
+                <div className={generatorStyles.tileMeta}>
+                  <span className={generatorStyles.tileCaption}>
+                    {isUpscalerAsset(asset)
+                      ? "UPSCALE"
+                      : (removeStylePresetBlock(asset.prompt || "") || asset.name || "—")}
+                  </span>
+                  <span className={styles.feedOwner}>by User_{asset.ownerId.slice(0, 4)}</span>
+                </div>
+
+                <div className={styles.feedActions} onClick={(event) => event.stopPropagation()}>
+                  <button
+                    type="button"
+                    onClick={() => handleLike(asset.id)}
+                    className={styles.feedActionButton}
+                    disabled={likeDisabled}
+                    title={!user ? "Inicia sesión" : (likeDisabled ? "Cooldown anti-spam" : "Like")}
+                  >
+                    <span className={styles.feedActionLabel}>
+                      {asset.likedByMe ? "Liked" : "Like"}
+                    </span>
+                    <span className={styles.feedActionCount}>{asset.likesCount}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => openViewer(asset)}
+                    className={styles.feedActionButton}
+                    title="Ver comentarios"
+                  >
+                    <span className={styles.feedActionLabel}>Comments</span>
+                    <span className={styles.feedActionCount}>{asset.commentsCount}</span>
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+
+          {feed.length === 0 && (
+              <div className="col-span-full py-20 text-center text-gray-500">
+                  <p>No public generations yet. Be the first to publish!</p>
+              </div>
+          )}
+        </div>
       </section>
 
       {viewer && (
