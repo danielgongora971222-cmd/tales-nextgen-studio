@@ -1787,8 +1787,8 @@ const promptReferences: PromptReference[] = useMemo(() => {
         aspectRatio: effectiveAspectRatio,
         count: effectiveCount,
         quality: effectiveQuality,
-        tool: "image-generator",
-        nameHint: "generated",
+        tool: TOOL_ID,
+        nameHint: TOOL_ID,
         characterAssetIds: mergedCharacterAssetIds,
         promptReferences,
       });
@@ -2102,62 +2102,32 @@ const promptReferences: PromptReference[] = useMemo(() => {
       {/* DOCK / BARRA DE PROMPT */}
       <div className={styles.dockWrap}>
         <div className={styles.dock}>
-          {(refs.char1 || refs.char2 || refs.char3) && (
+          {REF_SLOTS.some((slot) => Boolean((refs as any)[slot])) && (
             <div className={styles.refThumbStrip}>
-              {refs.char1 && (
-                <div className={styles.refMini} title="Reference 1">
-                  <img src={refs.char1.url} alt="char1" />
-                  <span className={styles.refMiniIcon}>R1</span>
-                  <button
-                    type="button"
-                    className={styles.refMiniRemove}
-                    aria-label="Remove Reference 1"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setRefSlot("char1", null);
-                    }}
-                  >
-                    ×
-                  </button>
-                </div>
-              )}
+              {REF_SLOTS.map((slot) => {
+                const a = (refs as any)[slot] as Asset | null;
+                if (!a) return null;
 
-              {refs.char2 && (
-                <div className={styles.refMini} title="Reference 2">
-                  <img src={refs.char2.url} alt="char2" />
-                  <span className={styles.refMiniIcon}>R2</span>
-                  <button
-                    type="button"
-                    className={styles.refMiniRemove}
-                    aria-label="Remove Reference 2"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setRefSlot("char2", null);
-                    }}
-                  >
-                    ×
-                  </button>
-                </div>
-              )}
+                const idx = slotIndex(slot) + 1;
 
-              {refs.char3 && (
-                <div className={styles.refMini} title="Reference 3">
-                  <img src={refs.char3.url} alt="char3" />
-                  <span className={styles.refMiniIcon}>R3</span>
-                  <button
-                    type="button"
-                    className={styles.refMiniRemove}
-                    aria-label="Remove Reference 3"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setRefSlot("char3", null);
-                    }}
-                  >
-                    ×
-                  </button>
-                </div>
-              )}
-
+                return (
+                  <div key={slot} className={styles.refMini} title={SLOT_LABEL[slot]}>
+                    <img src={a.url} alt={slot} />
+                    <span className={styles.refMiniIcon}>{`R${idx}`}</span>
+                    <button
+                      type="button"
+                      className={styles.refMiniRemove}
+                      aria-label={`Remove ${SLOT_LABEL[slot]}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setRefSlot(slot, null);
+                      }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           )}
           <div className={styles.promptRow}>

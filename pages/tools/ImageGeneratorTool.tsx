@@ -2001,11 +2001,18 @@ const promptReferences: PromptReference[] = useMemo(() => {
               {visibleHistory.map((asset) => {
                 const caption = removeStylePresetBlock(asset.prompt || "") || asset.name || "—";
                 return (
-                  <button
+                  <div
                     key={asset.id}
-                    type="button"
+                    role="button"
+                    tabIndex={0}
                     className={styles.tile}
                     onClick={() => setViewer(asset)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setViewer(asset);
+                      }
+                    }}
                     title="Click para ver detalles"
                   >
                     <img
@@ -2115,7 +2122,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
                         <Icon name="trash" />
                       </button>
                     </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>
