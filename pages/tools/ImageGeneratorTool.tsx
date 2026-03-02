@@ -2047,13 +2047,29 @@ const promptReferences: PromptReference[] = useMemo(() => {
 
                           setLikeBusyById((p) => ({ ...p, [asset.id]: true }));
                           try {
-                            const res = await toggleLike(asset.id);
+                        const res = await toggleLike(asset.id);
 
-                            setHistory((prev) =>
-                              prev.map((a) =>
-                                a.id === asset.id ? { ...a, likedByMe: res.liked, likesCount: res.likesCount } : a
-                              )
-                            );
+                        // ✅ Favoritos (MyCreations usa localStorage tales.favoriteAssets)
+                        try {
+                          const raw = localStorage.getItem("tales.favoriteAssets");
+                          const arr: string[] = raw ? JSON.parse(raw) : [];
+                          const set = new Set(Array.isArray(arr) ? arr : []);
+
+                          if (res.liked) set.add(asset.id);
+                          else set.delete(asset.id);
+
+                          const next = Array.from(set);
+                          localStorage.setItem("tales.favoriteAssets", JSON.stringify(next));
+                          window.dispatchEvent(new CustomEvent("tales:favorites-updated", { detail: { ids: next } }));
+                        } catch {
+                          // si falla localStorage, no bloqueamos el like
+                        }
+
+                        setHistory((prev) =>
+                          prev.map((a) =>
+                            a.id === asset.id ? { ...a, likedByMe: res.liked, likesCount: res.likesCount } : a
+                          )
+                        );
 
                             setVisibleHistory((prev) =>
                               prev.map((a) =>

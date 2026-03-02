@@ -89,6 +89,21 @@ const MyCreations: React.FC = () => {
     localStorage.setItem("tales.favoriteAssets", JSON.stringify(favoriteIds));
   }, [favoriteIds]);
 
+  useEffect(() => {
+  const onFavs = () => {
+    try {
+      const raw = localStorage.getItem("tales.favoriteAssets");
+      const arr: string[] = raw ? JSON.parse(raw) : [];
+      setFavoriteIds(Array.isArray(arr) ? arr : []);
+    } catch {
+      setFavoriteIds([]);
+    }
+  };
+
+  window.addEventListener("tales:favorites-updated", onFavs as any);
+  return () => window.removeEventListener("tales:favorites-updated", onFavs as any);
+}, []);
+
   const filteredAssets = useMemo(() => {
     const matchFilter = (asset: Asset) => {
       if (activeFilter === "all") return true;

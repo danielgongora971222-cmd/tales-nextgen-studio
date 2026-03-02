@@ -442,6 +442,34 @@ const SLOT_LABEL: Record<RefSlot, string> = {
   char12: "Reference 12",
 };
 
+const REF_SLOTS: RefSlot[] = [
+  "char1",
+  "char2",
+  "char3",
+  "char4",
+  "char5",
+  "char6",
+  "char7",
+  "char8",
+  "char9",
+  "char10",
+  "char11",
+  "char12",
+];
+
+function slotIndex(slot: RefSlot): number {
+  const n = Number(String(slot).replace("char", ""));
+  return Number.isFinite(n) ? n : 1;
+}
+
+function imgToken(slot: RefSlot): string {
+  return `@img${slotIndex(slot)}`;
+}
+
+function legacyRefToken(slot: RefSlot): string {
+  return `@reference${slotIndex(slot)}`;
+}
+
 function extractStyleBlock(input: string) {
   const pairs = [
     { start: STYLE_PRESET_BLOCK_START, end: STYLE_PRESET_BLOCK_END },
@@ -588,12 +616,21 @@ const ImageGeneratorTool: React.FC = () => {
 
 
 
-  // Reference slots (sin STYLE aquí)
-  const [refs, setRefs] = useState<Record<RefSlot, Asset | null>>({
-    char1: null,
-    char2: null,
-    char3: null,
-  });
+// Reference slots (sin STYLE aquí) - hasta 12
+const [refs, setRefs] = useState<Record<RefSlot, Asset | null>>({
+  char1: null,
+  char2: null,
+  char3: null,
+  char4: null,
+  char5: null,
+  char6: null,
+  char7: null,
+  char8: null,
+  char9: null,
+  char10: null,
+  char11: null,
+  char12: null,
+});
 
   // ===============================
   // Kling-only: Element/Person Library
@@ -626,7 +663,7 @@ const ImageGeneratorTool: React.FC = () => {
 // (Cuando hay imágenes, "auto" sí puede funcionar porque el modelo detecta el ratio desde la imagen.)
 const isKlingO1 = model === "kling:kling-image-o1";
 const hasAnyReferenceImage =
-  !!refs.char1 || !!refs.char2 || !!refs.char3 || (selectedElementAssetIds?.length || 0) > 0;
+  Object.values(refs).some(Boolean) || (selectedElementAssetIds?.length || 0) > 0;
 
 // Si el usuario está en Kling o1 y quita todas las referencias, evitamos que se quede en "auto".
 useEffect(() => {
@@ -1011,21 +1048,16 @@ useEffect(() => {
   }
 
   function getRefTag(slot: RefSlot): string {
-    if (slot === "char1") return "@img1";
-    if (slot === "char2") return "@img2";
-    return "@img3";
+    return imgToken(slot);
   }
 
     const elementTokenById = useMemo(() => {
-    const reserved = new Set([
-      "@img1",
-      "@img2",
-      "@img3",
+    const reserved = new Set<string>([
+      ...Array.from({ length: 12 }, (_, i) => `@img${i + 1}`),
+      ...Array.from({ length: 12 }, (_, i) => `@reference${i + 1}`),
+
+      // compat prompts viejos (bg ya se ignora al generar, pero lo reservamos para evitar colisiones)
       "@bg",
-      // compat prompts viejos
-      "@reference1",
-      "@reference2",
-      "@reference3",
       "@background",
     ]);
 
@@ -1063,17 +1095,14 @@ useEffect(() => {
 
   const promptMentionItems: MentionItem[] = useMemo(() => {
     // Reservados (evita colisiones con nombres de elementos)
-    const reserved = new Set([
-      "@img1",
-      "@img2",
-      "@img3",
-      "@bg",
-      // compat prompts viejos
-      "@reference1",
-      "@reference2",
-      "@reference3",
-      "@background",
-    ]);
+  const reserved = new Set<string>([
+    ...Array.from({ length: 12 }, (_, i) => `@img${i + 1}`),
+    ...Array.from({ length: 12 }, (_, i) => `@reference${i + 1}`),
+
+    // compat prompts viejos (bg ya se ignora al generar, pero lo reservamos para evitar colisiones)
+    "@bg",
+    "@background",
+  ]);
 
     const used = new Set<string>();
     const out: MentionItem[] = [];
@@ -1102,24 +1131,14 @@ useEffect(() => {
     };
 
     // ---- Refs (si existen) ----
-    if (refs.char1) {
-      push({ id: refs.char1.id, token: "@img1", label: "img1", kind: "ref", previewUrl: refs.char1.url }, false);
+    for (const slot of REF_SLOTS) {
+      const a = refs[slot];
+      if (!a) continue;
+
+      const n = slotIndex(slot);
+      push({ id: a.id, token: `@img${n}`, label: `img${n}`, kind: "ref", previewUrl: a.url }, false);
       push(
-        { id: refs.char1.id, token: "@reference1", label: "reference1", kind: "ref", previewUrl: refs.char1.url, hidden: true },
-        false
-      );
-    }
-    if (refs.char2) {
-      push({ id: refs.char2.id, token: "@img2", label: "img2", kind: "ref", previewUrl: refs.char2.url }, false);
-      push(
-        { id: refs.char2.id, token: "@reference2", label: "reference2", kind: "ref", previewUrl: refs.char2.url, hidden: true },
-        false
-      );
-    }
-    if (refs.char3) {
-      push({ id: refs.char3.id, token: "@img3", label: "img3", kind: "ref", previewUrl: refs.char3.url }, false);
-      push(
-        { id: refs.char3.id, token: "@reference3", label: "reference3", kind: "ref", previewUrl: refs.char3.url, hidden: true },
+        { id: a.id, token: `@reference${n}`, label: `reference${n}`, kind: "ref", previewUrl: a.url, hidden: true },
         false
       );
     }
@@ -1178,19 +1197,17 @@ const promptReferences: PromptReference[] = useMemo(() => {
   //    - Si el prompt usa alias viejos (@reference1, @background), vinculamos ese token.
   //    - Si el prompt no menciona el token, vinculamos el token moderno para que la referencia
   //      igualmente se adjunte (influya) cuando promptReferences != [].
-  if (refs.char1) {
-    if (tokensSet.has("@reference1") && !tokensSet.has("@img1")) add("@reference1");
-    else add("@img1");
-  }
-  if (refs.char2) {
-    if (tokensSet.has("@reference2") && !tokensSet.has("@img2")) add("@reference2");
-    else add("@img2");
-  }
-  if (refs.char3) {
-    if (tokensSet.has("@reference3") && !tokensSet.has("@img3")) add("@reference3");
-    else add("@img3");
-  }
+  for (const slot of REF_SLOTS) {
+    const a = refs[slot];
+    if (!a) continue;
 
+    const n = slotIndex(slot);
+    const legacy = `@reference${n}`;
+    const modern = `@img${n}`;
+
+    if (tokensSet.has(legacy) && !tokensSet.has(modern)) add(legacy);
+    else add(modern);
+  }
   // 2) Elements seleccionados (hasta 5)
   for (const id of (selectedElementAssetIds || []).slice(0, 5)) {
     const it = byIdElement.get(id);
@@ -1535,8 +1552,8 @@ const promptReferences: PromptReference[] = useMemo(() => {
       ? meta.characterAssetIds.filter((x: any) => typeof x === "string")
       : [];
 
-    const charRefIds = allRefIds.slice(0, 3);
-    const elementRefIds = allRefIds.slice(3);
+    const charRefIds = allRefIds.slice(0, 12);
+    const elementRefIds = allRefIds.slice(12);
     const backgroundAssetId = typeof meta.backgroundAssetId === "string" ? meta.backgroundAssetId : null;
     const styleAssetId = typeof meta.styleAssetId === "string" ? meta.styleAssetId : null;
 
@@ -1613,22 +1630,21 @@ const promptReferences: PromptReference[] = useMemo(() => {
 
   function setRefSlot(slot: RefSlot, asset: Asset | null) {
     setRefs((prev) => {
-      // Character slots: siempre compactamos a la izquierda (char1 -> char2 -> char3)
-      const current: (Asset | null)[] = [prev.char1, prev.char2, prev.char3];
-      const idx = slot === "char1" ? 0 : slot === "char2" ? 1 : 2;
+      const idx = REF_SLOTS.indexOf(slot);
+      const current = REF_SLOTS.map((s) => prev[s]);
 
       const next = [...current];
-      next[idx] = asset;
+      if (idx >= 0) next[idx] = asset;
 
-      // Compactar: elimina huecos (null) y vuelve a llenar 3 slots
+      // Compactar: elimina huecos (null) y vuelve a llenar hasta 12 slots
       const packed = next.filter(Boolean) as Asset[];
 
-      return {
-        ...prev,
-        char1: packed[0] || null,
-        char2: packed[1] || null,
-        char3: packed[2] || null,
-      };
+      const out = {} as Record<RefSlot, Asset | null>;
+      for (let i = 0; i < REF_SLOTS.length; i++) {
+        out[REF_SLOTS[i]] = packed[i] || null;
+      }
+
+      return out;
     });
   }
 
@@ -1664,7 +1680,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
 
     try {
       // IDs para backend
-      const characterAssetIds = [refs.char1?.id, refs.char2?.id, refs.char3?.id].filter(Boolean) as string[];
+      const characterAssetIds = REF_SLOTS.map((s) => refs[s]?.id).filter(Boolean) as string[];
 
       // Elements usados (máx 5):
       // - los seleccionados
@@ -1694,8 +1710,8 @@ const promptReferences: PromptReference[] = useMemo(() => {
         )
       );
 
-      if (effectiveRefIds.length > 10) {
-        throw new Error("Demasiadas referencias: usa menos Elements o menos imágenes de referencia.");
+      if (effectiveRefIds.length > 12) {
+        throw new Error("Demasiadas referencias: máximo 12 (sumando imágenes + Elements).");
       }
 
       // Kling: si el prompt trae un bloque de estilo guardado (por “Reuse prompt”),
@@ -1887,26 +1903,36 @@ const promptReferences: PromptReference[] = useMemo(() => {
       ? meta.characterAssetIds.filter((x: any) => typeof x === "string")
       : [];
 
-    const charIds = allIds.slice(0, 3);
-    const elementIdsFromCharArray = allIds.slice(3);
+    // chars (hasta 12) y Elements (compat)
+    const charIds = allIds.slice(0, 12);
+    const elementIdsFromCharArray = allIds.slice(12);
 
     // legacy fallback (por si tienes assets viejos que guardaban meta.klingElementIds)
     const legacyElementIds: string[] = Array.isArray(meta.klingElementIds)
       ? meta.klingElementIds.filter((x: any) => typeof x === "string")
       : [];
 
-    const finalElementIds = elementIdsFromCharArray.length > 0 ? elementIdsFromCharArray : legacyElementIds;
-
-    const bgId = typeof meta.backgroundAssetId === "string" ? meta.backgroundAssetId : null;
+    const finalElementIds =
+      elementIdsFromCharArray.length > 0 ? elementIdsFromCharArray : legacyElementIds;
 
     const findAsset = (id: string) => myAssets.find((a) => a.id === id) || null;
 
-    const c1 = charIds[0] ? findAsset(charIds[0]) : null;
-    const c2 = charIds[1] ? findAsset(charIds[1]) : null;
-    const c3 = charIds[2] ? findAsset(charIds[2]) : null;
-    const bg = bgId ? findAsset(bgId) : null;
+    const nextRefs: Record<RefSlot, Asset | null> = {
+      char1: charIds[0] ? findAsset(charIds[0]) : null,
+      char2: charIds[1] ? findAsset(charIds[1]) : null,
+      char3: charIds[2] ? findAsset(charIds[2]) : null,
+      char4: charIds[3] ? findAsset(charIds[3]) : null,
+      char5: charIds[4] ? findAsset(charIds[4]) : null,
+      char6: charIds[5] ? findAsset(charIds[5]) : null,
+      char7: charIds[6] ? findAsset(charIds[6]) : null,
+      char8: charIds[7] ? findAsset(charIds[7]) : null,
+      char9: charIds[8] ? findAsset(charIds[8]) : null,
+      char10: charIds[9] ? findAsset(charIds[9]) : null,
+      char11: charIds[10] ? findAsset(charIds[10]) : null,
+      char12: charIds[11] ? findAsset(charIds[11]) : null,
+    };
 
-    setRefs({ char1: c1, char2: c2, char3: c3, background: bg });
+    setRefs(nextRefs);
 
     // restaurar Elements (global)
     setSelectedElementAssetIds(finalElementIds.slice(0, 5));
@@ -2319,12 +2345,15 @@ const promptReferences: PromptReference[] = useMemo(() => {
                   </div>
 
                   <div className={styles.refSlots}>
-                    {(() => {
-                      const visible: RefSlot[] = ["char1"];
-                      if (refs.char1) visible.push("char2");
-                      if (refs.char2) visible.push("char3");
-                      return visible;
-                    })().map((slot) => {
+                  {(() => {
+                    const visible: RefSlot[] = ["char1"];
+                    for (let i = 0; i < REF_SLOTS.length - 1; i++) {
+                      const cur = REF_SLOTS[i];
+                      const next = REF_SLOTS[i + 1];
+                      if (refs[cur]) visible.push(next);
+                    }
+                    return visible;
+                  })().map((slot) => {
                       const a = refs[slot];
                       return (
                         <div key={slot} className={styles.refSlot}>
