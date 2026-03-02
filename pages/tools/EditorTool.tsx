@@ -164,12 +164,6 @@ function makeTempAsset(item: { assetId: string; url: string }, prompt: string, o
   };
 }
 
-const BACKGROUND_AUTO_PROMPT = `
-BACKGROUND AUTO-RULES (only if a background reference image is provided):
-- Preserve the original background reference composition and key elements.
-- Apply the selected style/preset consistently to the background.
-- Do not introduce new objects or change the scene layout.
-`.trim();
 // Kling tiene un límite duro en el tamaño del prompt.
 // Si además usas presets largos (como Live Action), puede romper el límite.
 // Por eso forzamos un máximo y usamos una versión “corta” de los estilos.
@@ -599,7 +593,6 @@ const ImageGeneratorTool: React.FC = () => {
     char1: null,
     char2: null,
     char3: null,
-    background: null,
   });
 
   // ===============================
@@ -633,7 +626,7 @@ const ImageGeneratorTool: React.FC = () => {
 // (Cuando hay imágenes, "auto" sí puede funcionar porque el modelo detecta el ratio desde la imagen.)
 const isKlingO1 = model === "kling:kling-image-o1";
 const hasAnyReferenceImage =
-  !!refs.char1 || !!refs.char2 || !!refs.char3 || !!refs.background || (selectedElementAssetIds?.length || 0) > 0;
+  !!refs.char1 || !!refs.char2 || !!refs.char3 || (selectedElementAssetIds?.length || 0) > 0;
 
 // Si el usuario está en Kling o1 y quita todas las referencias, evitamos que se quede en "auto".
 useEffect(() => {
@@ -791,7 +784,6 @@ useEffect(() => {
       refs.char1 ? "R1" : null,
       refs.char2 ? "R2" : null,
       refs.char3 ? "R3" : null,
-      refs.background ? "BG" : null,
     ].filter(Boolean).join(" ") || "None";
 
   // UI states
@@ -1019,7 +1011,6 @@ useEffect(() => {
   }
 
   function getRefTag(slot: RefSlot): string {
-    if (slot === "background") return "@bg";
     if (slot === "char1") return "@img1";
     if (slot === "char2") return "@img2";
     return "@img3";
@@ -1132,13 +1123,6 @@ useEffect(() => {
         false
       );
     }
-    if (refs.background) {
-      push({ id: refs.background.id, token: "@bg", label: "bg", kind: "bg", previewUrl: refs.background.url }, false);
-      push(
-        { id: refs.background.id, token: "@background", label: "background", kind: "bg", previewUrl: refs.background.url, hidden: true },
-        false
-      );
-    }
 
     // ---- Elements ----
     const selectedSet = new Set((selectedElementAssetIds || []).slice(0, 5));
@@ -1186,7 +1170,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
     out.push({
       token,
       assetId: it.id,
-      role: it.kind === "bg" ? "background" : it.kind === "element" ? "element" : "character",
+      role: it.kind === "element" ? "element" : "character",
     });
   };
 
@@ -1205,10 +1189,6 @@ const promptReferences: PromptReference[] = useMemo(() => {
   if (refs.char3) {
     if (tokensSet.has("@reference3") && !tokensSet.has("@img3")) add("@reference3");
     else add("@img3");
-  }
-  if (refs.background) {
-    if (tokensSet.has("@background") && !tokensSet.has("@bg")) add("@background");
-    else add("@bg");
   }
 
   // 2) Elements seleccionados (hasta 5)
@@ -1603,13 +1583,15 @@ const promptReferences: PromptReference[] = useMemo(() => {
   }, []);
 
   const filteredPickerAssets = useMemo(() => {
+    const base = (myAssets || []).filter((a: any) => a?.type === "image" && a?.url);
     const q = pickerQuery.trim().toLowerCase();
-    if (!q) return history;
-    return history.filter((a) => {
+    if (!q) return base;
+
+    return base.filter((a: any) => {
       const caption = removeStylePresetBlock(a.prompt || "").toLowerCase();
       return (a.name || "").toLowerCase().includes(q) || caption.includes(q);
     });
-  }, [history, pickerQuery]);
+  }, [myAssets, pickerQuery]);
 
   const recipeStyleName = useMemo(() => {
     return getStyleNameFromPromptOrSelection({ prompt, selectedStyleId });
@@ -1617,7 +1599,6 @@ const promptReferences: PromptReference[] = useMemo(() => {
 
   const recipeChips = useMemo(() => {
     const refCount = Object.values(refs).filter(Boolean).length;
-    const hasBg = !!refs.background;
     const chars = [refs.char1, refs.char2, refs.char3].filter(Boolean).length;
 
     return [
@@ -1625,18 +1606,13 @@ const promptReferences: PromptReference[] = useMemo(() => {
       { label: "Ratio", value: aspectRatio },
       { label: "Count", value: String(count) },
       { label: "Quality", value: quality },
-      { label: "Refs", value: `${chars} char${chars === 1 ? "" : "s"}${hasBg ? " + bg" : ""} (${refCount})` },
+      { label: "Refs", value: `${chars} char${chars === 1 ? "" : "s"} (${refCount})` },
       { label: "Style", value: recipeStyleName },
     ];
   }, [model, aspectRatio, count, quality, refs, recipeStyleName]);
 
   function setRefSlot(slot: RefSlot, asset: Asset | null) {
     setRefs((prev) => {
-      // Background es independiente
-      if (slot === "background") {
-        return { ...prev, background: asset };
-      }
-
       // Character slots: siempre compactamos a la izquierda (char1 -> char2 -> char3)
       const current: (Asset | null)[] = [prev.char1, prev.char2, prev.char3];
       const idx = slot === "char1" ? 0 : slot === "char2" ? 1 : 2;
@@ -1689,7 +1665,6 @@ const promptReferences: PromptReference[] = useMemo(() => {
     try {
       // IDs para backend
       const characterAssetIds = [refs.char1?.id, refs.char2?.id, refs.char3?.id].filter(Boolean) as string[];
-      const backgroundAssetId = refs.background?.id;
 
       // Elements usados (máx 5):
       // - los seleccionados
@@ -1715,18 +1690,21 @@ const promptReferences: PromptReference[] = useMemo(() => {
         new Set(
           (promptReferences && promptReferences.length)
             ? promptReferences.map((r) => r.assetId)
-            : [...mergedCharacterAssetIds, ...(backgroundAssetId ? [backgroundAssetId] : [])]
+            : [...mergedCharacterAssetIds]
         )
       );
 
       if (effectiveRefIds.length > 10) {
-        throw new Error("Demasiadas referencias: usa menos Elements o menos imágenes de personaje/fondo.");
+        throw new Error("Demasiadas referencias: usa menos Elements o menos imágenes de referencia.");
       }
 
       // Kling: si el prompt trae un bloque de estilo guardado (por “Reuse prompt”),
       // lo limpiamos y re-adjuntamos una versión corta para no romper el límite.
       const split = kling ? splitStyleBlock(basePrompt) : { cleaned: basePrompt, style: null };
       let finalPrompt = kling ? split.cleaned : basePrompt;
+      // Compat: background fue eliminado del producto.
+      // Si el usuario trae prompts viejos con @bg/@background, los ignoramos para no bloquear la generación.
+      finalPrompt = finalPrompt.replace(/@bg\b/gi, "").replace(/@background\b/gi, "");
       {
         const tokenRe = /@[a-z0-9_]+/gi;
         const tokensInPrompt: string[] = Array.from(
@@ -1740,10 +1718,6 @@ const promptReferences: PromptReference[] = useMemo(() => {
               `Selecciona las referencias/Elements primero y luego usa '@' para insertarlos.`
           );
         }
-      }
-
-      if (backgroundAssetId) {
-        finalPrompt = `${finalPrompt}\n\n${BACKGROUND_AUTO_PROMPT}`.trim();
       }
 
       // Solo aplica preset si el usuario eligió uno en Styles.
@@ -1800,7 +1774,6 @@ const promptReferences: PromptReference[] = useMemo(() => {
         tool: "image-generator",
         nameHint: "generated",
         characterAssetIds: mergedCharacterAssetIds,
-        backgroundAssetId,
         promptReferences,
       });
 
@@ -2103,7 +2076,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
       {/* DOCK / BARRA DE PROMPT */}
       <div className={styles.dockWrap}>
         <div className={styles.dock}>
-          {(refs.char1 || refs.char2 || refs.char3 || refs.background) && (
+          {(refs.char1 || refs.char2 || refs.char3) && (
             <div className={styles.refThumbStrip}>
               {refs.char1 && (
                 <div className={styles.refMini} title="Reference 1">
@@ -2159,23 +2132,6 @@ const promptReferences: PromptReference[] = useMemo(() => {
                 </div>
               )}
 
-              {refs.background && (
-                <div className={styles.refMini} title="Background">
-                  <img src={refs.background.url} alt="background" />
-                  <span className={styles.refMiniIcon}>BG</span>
-                  <button
-                    type="button"
-                    className={styles.refMiniRemove}
-                    aria-label="Remove Background"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setRefSlot("background", null);
-                    }}
-                  >
-                    ×
-                  </button>
-                </div>
-              )}
             </div>
           )}
           <div className={styles.promptRow}>
@@ -2367,7 +2323,6 @@ const promptReferences: PromptReference[] = useMemo(() => {
                       const visible: RefSlot[] = ["char1"];
                       if (refs.char1) visible.push("char2");
                       if (refs.char2) visible.push("char3");
-                      visible.push("background");
                       return visible;
                     })().map((slot) => {
                       const a = refs[slot];
@@ -2435,7 +2390,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
 
                       <input
                         className={styles.search}
-                        placeholder="Search in history..."
+                        placeholder="Search in your library..."
                         value={pickerQuery}
                         onChange={(e) => setPickerQuery(e.target.value)}
                       />

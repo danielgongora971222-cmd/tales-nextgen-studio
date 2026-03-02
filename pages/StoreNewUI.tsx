@@ -619,20 +619,31 @@ const handleConfirmCrop = async () => {
       h: cropRect.h / imgH,
     };
 
-    // Guardamos finalCrop SOLO si el recorte se genera bien
+  // Siempre guardamos coordenadas (esto es lo más importante para fábrica)
+  setFinalCrop({ ...normalized, aspect });
+
+  // Intentamos generar dataURL para preview (puede fallar por CORS/tainted canvas)
+  try {
     const cdu = await makeCroppedDataUrl(image, normalized);
-
-    // Si por alguna razón no devuelve string válido, lo tratamos como fallo
-    if (!cdu || typeof cdu !== "string") {
-      throw new Error("Cropped output inválido (vacío).");
+    if (cdu && typeof cdu === "string") {
+      setCroppedDataUrl(cdu);
+      setCropGenError(null);
+    } else {
+      setCroppedDataUrl(null);
+      setCropGenError("No se pudo generar preview del recorte (salida vacía). Se usará el encuadre por coordenadas.");
     }
+  } catch (e: any) {
+    setCroppedDataUrl(null);
+    setCropGenError(
+      e?.message
+        ? `No se pudo generar preview del recorte (CORS/Canvas). Se usará el encuadre por coordenadas. Detalle: ${String(e.message)}`
+        : "No se pudo generar preview del recorte (CORS/Canvas). Se usará el encuadre por coordenadas."
+    );
+  }
 
-    setFinalCrop({ ...normalized, aspect });
-    setCroppedDataUrl(cdu);
-
-    // ✅ SOLO AQUÍ permitimos avanzar
-    setIsCropped(true);
-    setActiveStep("CHECKOUT");
+  // ✅ Permitimos avanzar aunque el preview falle, porque las coordenadas sí están listas
+  setIsCropped(true);
+  setActiveStep("CHECKOUT");
   } catch (e: any) {
     // ❌ Si falla, reiniciamos Paso 3 y NO dejamos avanzar
     setCroppedDataUrl(null);
@@ -675,9 +686,9 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
     return;
   }
 
-  // Bloqueo fuerte: no permitir completar orden si no existe recorte generado
-  if (!croppedDataUrl) {
-    setSubmitError("No se pudo generar el recorte. Vuelve al paso de encuadre y confirma el recorte correctamente.");
+  // Bloqueo fuerte: no permitir completar orden si no hay coordenadas de recorte confirmadas
+  if (!finalCrop) {
+    setSubmitError("No se detectó un encuadre confirmado. Vuelve al paso 3 y confirma el recorte.");
     setActiveStep("CROP");
     return;
   }
