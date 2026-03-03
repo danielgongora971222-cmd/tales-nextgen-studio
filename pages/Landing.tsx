@@ -328,6 +328,45 @@ const Landing: React.FC<LandingProps> = ({ onEnter }) => {
     { name: "Extend Video", icon: <ArrowRight className="w-5 h-5" /> },
   ];
 
+  // ✅ Hace visible el contenido "reveal" (si no, queda opacity:0 siempre)
+  useEffect(() => {
+    const elements = Array.from(document.querySelectorAll<HTMLElement>(".reveal"));
+    if (elements.length === 0) return;
+
+    // Fallback: si el navegador no soporta IntersectionObserver, mostramos todo
+    if (!("IntersectionObserver" in window)) {
+      elements.forEach((el) => el.classList.add("visible"));
+      return;
+    }
+
+    // Mostrar inmediatamente lo que ya está dentro del viewport
+    const showIfInViewNow = () => {
+      const vh = window.innerHeight || document.documentElement.clientHeight;
+      elements.forEach((el) => {
+        const rect = el.getBoundingClientRect();
+        const inView = rect.top < vh * 0.9 && rect.bottom > 0;
+        if (inView) el.classList.add("visible");
+      });
+    };
+    showIfInViewNow();
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            (entry.target as HTMLElement).classList.add("visible");
+            observer.unobserve(entry.target); // ya no hace falta vigilarlo
+          }
+        });
+      },
+      { threshold: 0.12, rootMargin: "0px 0px -10% 0px" }
+    );
+
+    elements.forEach((el) => observer.observe(el));
+
+    return () => observer.disconnect();
+  }, []);
+
   return (
     <div className="min-h-screen bg-[#0A0A0A] text-[#E0E0E0] font-sans overflow-x-hidden">
       <style>{`
