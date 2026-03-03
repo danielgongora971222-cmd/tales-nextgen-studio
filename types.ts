@@ -29,6 +29,8 @@ export enum AppRoute {
   TOOL_INGREDIENTS_TO_VIDEO = 'tool-ingredients-to-video',
   TOOL_EXTEND_VIDEO = 'tool-extend-video',
   TOOL_MOTION_CONTROL = 'tool-motion-control',
+
+  PROFILE = 'profile',
   
   CHAT = 'chat'
 }

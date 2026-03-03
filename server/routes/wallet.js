@@ -21,19 +21,41 @@ export function createWalletRouter(ctx) {
 
     const { data, error: qErr } = await supabaseAdmin
       .from("wallet_balances")
-      .select("generation_credits, earnings_pending_credits, earnings_matured_credits")
+      .select("gen_plan_credits, gen_topup_credits, gen_bonus_credits, earnings_pending_credits, earnings_matured_credits")
       .eq("user_id", user.id)
       .maybeSingle();
 
     if (qErr) return err(res, 500, "DB_QUERY_FAILED", qErr.message);
 
+    // plan activo (si existe)
+    const { data: sub, error: sErr } = await supabaseAdmin.rpc("get_active_subscription", { p_user_id: user.id });
+    if (sErr) return err(res, 500, "DB_RPC_FAILED", sErr.message);
+    const active = Array.isArray(sub) ? sub[0] : null;
+
+    const gen_plan_credits = Number(data?.gen_plan_credits) || 0;
+    const gen_topup_credits = Number(data?.gen_topup_credits) || 0;
+    const gen_bonus_credits = Number(data?.gen_bonus_credits) || 0;
+
     return res.json({
       ok: true,
       wallet: {
-        generationCredits: Number(data?.generation_credits) || 0,
-        earningsPendingCredits: Number(data?.earnings_pending_credits) || 0,
-        earningsMaturedCredits: Number(data?.earnings_matured_credits) || 0,
+        gen_plan_credits,
+        gen_topup_credits,
+        gen_bonus_credits,
+        generationCredits: gen_plan_credits + gen_topup_credits + gen_bonus_credits,
+
+        earnings_pending_credits: Number(data?.earnings_pending_credits) || 0,
+        earnings_matured_credits: Number(data?.earnings_matured_credits) || 0,
       },
+      subscription: active?.subscription_id
+        ? {
+            subscription_id: active.subscription_id,
+            plan_slug: active.plan_slug,
+            plan_name: active.plan_name,
+            can_sell: !!active.can_sell,
+            current_period_end: active.current_period_end,
+          }
+        : null,
     });
   });
 
@@ -52,39 +74,48 @@ export function createWalletRouter(ctx) {
 
     await supabaseAdmin.from("wallet_balances").upsert({ user_id: userId }, { onConflict: "user_id" });
 
-    const { error: upErr } = await supabaseAdmin
-      .from("wallet_balances")
-      .update({ generation_credits: supabaseAdmin.rpc ? undefined : undefined })
-      .eq("user_id", userId);
-
-    // update con SQL literal (evita race): usamos rpc simple no disponible aqui; hacemos select+update con lock:
     const { data: row, error: qErr } = await supabaseAdmin
       .from("wallet_balances")
-      .select("generation_credits")
+      .select("gen_plan_credits, gen_topup_credits, gen_bonus_credits")
       .eq("user_id", userId)
       .maybeSingle();
 
     if (qErr) return err(res, 500, "DB_QUERY_FAILED", qErr.message);
 
-    const current = Number(row?.generation_credits) || 0;
-    const next = current + Math.floor(amount);
+    const gen_plan_credits = Number(row?.gen_plan_credits) || 0;
+    const gen_topup_credits = Number(row?.gen_topup_credits) || 0;
+    const currentBonus = Number(row?.gen_bonus_credits) || 0;
+
+    const add = Math.floor(amount);
+    const nextBonus = currentBonus + add;
 
     const { error: saveErr } = await supabaseAdmin
       .from("wallet_balances")
-      .update({ generation_credits: next })
+      .update({ gen_bonus_credits: nextBonus })
       .eq("user_id", userId);
 
     if (saveErr) return err(res, 500, "DB_UPDATE_FAILED", saveErr.message);
 
     await supabaseAdmin.from("wallet_ledger").insert({
       user_id: userId,
-      entry_type: "admin_grant_generation_credits",
-      amount_credits: Math.floor(amount),
+      entry_type: "admin_grant_gen_bonus_credits",
+      amount_credits: add,
       ref_type: "admin",
       ref_id: null,
     });
 
-    return res.json({ ok: true, userId, generationCredits: next });
+    const generationCredits = gen_plan_credits + gen_topup_credits + nextBonus;
+
+    return res.json({
+      ok: true,
+      userId,
+      wallet: {
+        gen_plan_credits,
+        gen_topup_credits,
+        gen_bonus_credits: nextBonus,
+        generationCredits,
+      },
+    });
   });
 
   return router;

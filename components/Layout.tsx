@@ -539,14 +539,21 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
 
         <div className="p-4 border-t border-white/10">
           <div className={`rounded-xl p-4 transition-all hud-panel hud-panel--soft hud-noise ${sidebarOpen ? 'opacity-100' : 'opacity-0 hidden'}`}>
-            <div className="flex items-center gap-3 mb-3">
-              <img src={user?.avatarUrl} alt="User" className="w-8 h-8 rounded-full border border-white/30" />
-              <div className="overflow-hidden">
-                <p className="text-xs font-bold text-white truncate">{user?.username || 'Guest'}</p>
-                <p className="text-[10px] text-gray-400">Pro Plan</p>
+            <button
+              onClick={() => onNavigate(AppRoute.PROFILE)}
+              className="w-full text-left rounded-lg p-2 bg-white/5 hover:bg-white/10 transition-colors"
+              title="Abrir Perfil y Créditos"
+            >
+              <div className="flex items-center gap-3">
+                <img src={user?.avatarUrl} alt="User" className="w-8 h-8 rounded-full border border-white/30" />
+                <div className="overflow-hidden">
+                  <p className="text-xs font-bold text-white truncate">{user?.username || 'Guest'}</p>
+                  <p className="text-[10px] text-gray-400">Plan & Créditos</p>
+                </div>
               </div>
-            </div>
-            <button onClick={logout} className="w-full text-xs bg-white/10 hover:bg-white/20 py-1.5 rounded transition-colors text-gray-300">
+            </button>
+
+            <button onClick={logout} className="w-full text-xs bg-white/10 hover:bg-white/20 py-1.5 rounded transition-colors text-gray-300 mt-3">
               Log Out
             </button>
           </div>

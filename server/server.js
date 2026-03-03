@@ -47,6 +47,8 @@ import { createStoreRouter } from "./routes/store.js";
 import { createCommunityStoreRouter } from "./routes/communityStore.js";
 import { createTradesRouter } from "./routes/trades.js";
 import { createWalletRouter } from "./routes/wallet.js";
+import { createBillingHelpers } from "./lib/billing.js";
+import { createBillingRouter } from "./routes/billing.js";
 import { createReferralsRouter } from "./routes/referrals.js";
 import { FalFinalizeSchema } from "./schemas/index.js";
 import { assertJobLimits } from "./lib/jobLimits.js";
@@ -72,6 +74,8 @@ const supabaseAdmin =
         auth: { persistSession: false },
       })
     : null;
+
+const billing = createBillingHelpers(supabaseAdmin);
 
 const { requireUser: requireUserBase } = createAuthHelpers(supabaseAdmin);
 
@@ -374,6 +378,7 @@ app.use(
   createCommunityStoreRouter({
     supabaseAdmin,
     requireUser,
+    billing,
     signStoragePath,
   })
 );
@@ -398,9 +403,10 @@ app.use(
 
 app.use(
   "/api",
-  createReferralsRouter({
+  createBillingRouter({
     supabaseAdmin,
     requireUser,
+    billing,
   })
 );
 
@@ -2624,6 +2630,10 @@ app.post("/api/ai/faceswap/mannequin", async (req, res, next) => {
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
 
+    // ✅ Requiere plan activo
+    const active = await billing.requireActiveSubscription(user.id);
+    if (active.error) return res.status(403).json({ ok: false, error: active.error });
+
     const body = FaceSwapMannequinSchema.parse(req.body);
     const { targetAssetId, swapType, quality } = body;
 
@@ -2654,7 +2664,35 @@ app.post("/api/ai/faceswap/mannequin", async (req, res, next) => {
         throw httpError(500, "JOB_INSERT_FAILED", "No se pudo crear el job de faceswap.", { jobErr });
       }
 
+      const costCredits = 1; // faceswap: 1 imagen (ajustable si quieres por quality)
+      const spend = await billing.spendCredits({
+        userId: user.id,
+        amountCredits: costCredits,
+        entryType: "ai_faceswap_mannequin",
+        refType: "job",
+        refId: jobRow.id,
+        idempotencyKey: billing.getIdempotencyKey(req),
+      });
+
+      if (!spend.ok) {
+        await supabaseAdmin.from("jobs").delete().eq("id", jobRow.id);
+        return res.status(402).json({ ok: false, error: spend.error });
+      }
+
       return res.json({ ok: true, jobId: jobRow.id });
+    }
+    const costCredits = 1; // faceswap: 1 imagen (ajustable)
+    const spend = await billing.spendCredits({
+      userId: user.id,
+      amountCredits: costCredits,
+      entryType: "ai_faceswap_mannequin",
+      refType: "sync",
+      refId: null,
+      idempotencyKey: billing.getIdempotencyKey(req),
+    });
+
+    if (!spend.ok) {
+      return res.status(402).json({ ok: false, error: spend.error });
     }
 
     const aiClient = await ensureAI();
@@ -2751,6 +2789,10 @@ app.post("/api/ai/faceswap/insert", async (req, res, next) => {
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
 
+    // ✅ Requiere plan activo
+    const active = await billing.requireActiveSubscription(user.id);
+    if (active.error) return res.status(403).json({ ok: false, error: active.error });
+
   const body = FaceSwapInsertSchema.parse(req.body);
   const { baseAssetId, donorElementId } = body;
   let { swapType, quality } = body;
@@ -2783,7 +2825,36 @@ app.post("/api/ai/faceswap/insert", async (req, res, next) => {
       throw httpError(500, "JOB_INSERT_FAILED", "No se pudo crear el job de faceswap insert.", { jobErr });
     }
 
+    const costCredits = 1;
+    const spend = await billing.spendCredits({
+      userId: user.id,
+      amountCredits: costCredits,
+      entryType: "ai_faceswap_insert",
+      refType: "job",
+      refId: jobRow.id,
+      idempotencyKey: billing.getIdempotencyKey(req),
+    });
+
+    if (!spend.ok) {
+      await supabaseAdmin.from("jobs").delete().eq("id", jobRow.id);
+      return res.status(402).json({ ok: false, error: spend.error });
+    }
+
     return res.json({ ok: true, jobId: jobRow.id });
+  }
+
+    const costCredits = 1;
+  const spend = await billing.spendCredits({
+    userId: user.id,
+    amountCredits: costCredits,
+    entryType: "ai_faceswap_insert",
+    refType: "sync",
+    refId: null,
+    idempotencyKey: billing.getIdempotencyKey(req),
+  });
+
+  if (!spend.ok) {
+    return res.status(402).json({ ok: false, error: spend.error });
   }
 
   // -----------------------------
@@ -2999,6 +3070,10 @@ app.post("/api/ai/upscale", async (req, res, next) => {
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
 
+    // ✅ Requiere plan activo
+    const active = await billing.requireActiveSubscription(user.id);
+    if (active.error) return res.status(403).json({ ok: false, error: active.error });
+
     const selectedModel = body.model || "imagen-3.0-generate-002";
     const scale = body.scale || 2;
 
@@ -3038,10 +3113,39 @@ app.post("/api/ai/upscale", async (req, res, next) => {
         throw httpError(500, "JOB_INSERT_FAILED", "No se pudo crear el job de upscale.", { jobErr });
       }
 
+      const costCredits = 1; // upscale: 1 imagen (ajustable por scale si quieres)
+      const spend = await billing.spendCredits({
+        userId: user.id,
+        amountCredits: costCredits,
+        entryType: "ai_upscale",
+        refType: "job",
+        refId: jobRow.id,
+        idempotencyKey: billing.getIdempotencyKey(req),
+      });
+
+      if (!spend.ok) {
+        await supabaseAdmin.from("jobs").delete().eq("id", jobRow.id);
+        return res.status(402).json({ ok: false, error: spend.error });
+      }
+
       return res.json({ ok: true, jobId: jobRow.id });
     }
 
     // ✅ SYNC (legacy): ejecuta en request (puede tardar)
+    const costCredits = 1;
+    const spend = await billing.spendCredits({
+      userId: user.id,
+      amountCredits: costCredits,
+      entryType: "ai_upscale",
+      refType: "sync",
+      refId: null,
+      idempotencyKey: billing.getIdempotencyKey(req),
+    });
+
+    if (!spend.ok) {
+      return res.status(402).json({ ok: false, error: spend.error });
+    }
+
     const aiClient = await ensureAI();
 
     const inlinePart = body.imageAssetId

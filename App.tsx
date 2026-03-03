@@ -11,6 +11,7 @@ import MyTrades from './pages/MyTrades';
 import SellListingModal from "./components/SellListingModal";
 import type { Asset } from "./types";
 import ImageGeneratorTool from './pages/tools/ImageGeneratorTool';
+import Profile from "./pages/Profile";
 import RestylerTool from './pages/tools/RestylerTool';
 import LightroomTool from './pages/tools/LightroomTool';
 import FaceSwapTool from './pages/tools/FaceSwapTool';
@@ -167,6 +168,10 @@ useEffect(() => {
         return <MotionControlTool />;
       case AppRoute.MY_CREATIONS:
         return <MyCreations />;
+
+      case AppRoute.PROFILE:
+        return <Profile onNavigate={(r) => { setStorePrefill({ asset: null }); setRoute(r); }} />;
+
       case AppRoute.CHAT:
         return (
           <div className="flex items-center justify-center h-full text-gray-500">

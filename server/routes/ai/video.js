@@ -9,6 +9,27 @@ import {
 import { checkUserRateLimit } from "../../lib/userRateLimit.js";
 import { assertJobLimits } from "../../lib/jobLimits.js";
 
+function clampInt(n, min, max) {
+  const x = Math.trunc(Number(n));
+  if (Number.isNaN(x)) return min;
+  if (x < min) return min;
+  if (x > max) return max;
+  return x;
+}
+
+function estimateVideoCostCredits({ modelNorm, isKling, durationSeconds }) {
+  const dur = clampInt(durationSeconds != null ? durationSeconds : 5, 3, 15);
+
+  // Base por segundo (ajustable)
+  let perSecond = isKling ? 30 : 15;
+
+  const m = String(modelNorm || "").toLowerCase();
+  if (m.includes("v3")) perSecond += 5;
+  if (m.includes("pro")) perSecond += 5;
+
+  return perSecond * dur;
+}
+
 export function createAiVideoRouter(ctx) {
 
   // Utilidad: pausa para loops de "polling" (Node.js)
@@ -355,6 +376,10 @@ function respondKlingBusy(res, { retryAfterSeconds, message, details }) {
     // ... resto igual
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
+
+    // ✅ Requiere plan activo
+    const active = await ctx.billing.requireActiveSubscription(user.id);
+    if (active.error) return res.status(403).json({ ok: false, error: active.error });
 
     const toolName = tool || "video-generator";
     const hint = nameHint || "generated-video";
@@ -2187,6 +2212,40 @@ const isKling = selectedModelNorm.startsWith("kling-");
           },
         });
       }
+
+          // ✅ Spend de créditos ANTES de ejecutar/encolar video
+    // Duración efectiva para cobro:
+    // - base: durationSeconds clamped 3..15
+    // - si hay storyboard (klingMultiPrompt), cobramos por suma (cap 15)
+    let effectiveDur = durationSeconds != null ? Number(durationSeconds) : 5;
+    effectiveDur = clampInt(effectiveDur, 3, 15);
+
+    if (Array.isArray(klingMultiPrompt) && klingMultiPrompt.length > 0) {
+      const sum = klingMultiPrompt.reduce((acc, s) => {
+        const d = s && s.duration != null ? Number(s.duration) : 0;
+        return acc + clampInt(d, 1, 15);
+      }, 0);
+      effectiveDur = clampInt(sum, 3, 15);
+    }
+
+    const costCredits = estimateVideoCostCredits({
+      modelNorm: selectedModelNorm,
+      isKling,
+      durationSeconds: effectiveDur,
+    });
+
+    const spend = await ctx.billing.spendCredits({
+      userId: user.id,
+      amountCredits: costCredits,
+      entryType: "ai_video_generate",
+      refType: asyncMode ? "async" : "sync",
+      refId: null,
+      idempotencyKey: ctx.billing.getIdempotencyKey(req),
+    });
+
+    if (!spend.ok) {
+      return res.status(402).json({ ok: false, error: spend.error });
+    }
 
       const body = MotionControlRequestSchema.parse(req.body);
 

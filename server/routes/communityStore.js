@@ -268,6 +268,13 @@ export function createCommunityStoreRouter(ctx) {
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
 
+    // ✅ Solo Pro/Partner/Business pueden vender
+    const active = await ctx.billing.getActiveSubscription(user.id);
+    if (active.error) return err(res, 500, active.error.code, active.error.message, active.error.details);
+    if (!active.subscription || !active.subscription.can_sell) {
+      return err(res, 403, "PLAN_REQUIRED_PRO", "Necesitas plan Pro o superior para publicar y vender.");
+    }
+
     let body;
     try {
       body = CreateListingSchema.parse(req.body);

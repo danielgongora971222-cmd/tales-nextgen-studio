@@ -9,6 +9,28 @@ import {
 import { checkUserRateLimit } from "../../lib/userRateLimit.js";
 import { assertJobLimits } from "../../lib/jobLimits.js";
 
+function estimateImageUnitCredits({ model, quality }) {
+  // Base por resolución
+  const q = String(quality || "1K").toUpperCase();
+  let unit = 1;
+  if (q === "2K") unit = 2;
+  if (q === "4K") unit = 4;
+
+  // Multiplicadores por familia de modelo (ajustables)
+  const m = String(model || "").toLowerCase();
+  if (m.startsWith("kling")) unit *= 3;
+  else if (m.startsWith("openai:")) unit *= 2;
+  else if (m.includes("pro")) unit *= 2;
+
+  return unit;
+}
+
+function estimateImageCostCredits({ model, quality, count }) {
+  const n = Math.max(1, Number(count || 1));
+  const unit = estimateImageUnitCredits({ model, quality });
+  return unit * n;
+}
+
 export function createAiImageRouter(ctx) {
   const router = express.Router();
 
@@ -96,6 +118,10 @@ export function createAiImageRouter(ctx) {
 
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
+
+    // ✅ Requiere plan activo
+    const active = await ctx.billing.requireActiveSubscription(user.id);
+    if (active.error) return res.status(403).json({ ok: false, error: active.error });
 
     const rl = await checkUserRateLimit({
       userId: user.id,
@@ -281,7 +307,49 @@ export function createAiImageRouter(ctx) {
         throw httpError(500, "JOB_INSERT_FAILED", "No se pudo crear el job de imagen.", { jobErr });
       }
 
+      // ✅ Spend de créditos ANTES de aceptar el job (con idempotencia)
+      const costCredits = estimateImageCostCredits({
+        model: selectedModel,
+        quality,
+        count,
+      });
+
+      const spend = await ctx.billing.spendCredits({
+        userId: user.id,
+        amountCredits: costCredits,
+        entryType: "ai_image_generate",
+        refType: "job",
+        refId: jobRow.id,
+        idempotencyKey: ctx.billing.getIdempotencyKey(req),
+      });
+
+      if (!spend.ok) {
+        // rollback best-effort: borrar el job si no se pudo cobrar
+        await supabaseAdmin.from("jobs").delete().eq("id", jobRow.id);
+        return res.status(402).json({ ok: false, error: spend.error });
+      }
+
       return res.json({ ok: true, jobId: jobRow.id });
+    }
+
+    // ✅ Spend de créditos ANTES de ejecutar generación SYNC (con idempotencia)
+    const costCredits = estimateImageCostCredits({
+      model: selectedModel,
+      quality,
+      count,
+    });
+
+    const spend = await ctx.billing.spendCredits({
+      userId: user.id,
+      amountCredits: costCredits,
+      entryType: "ai_image_generate",
+      refType: "sync",
+      refId: null,
+      idempotencyKey: ctx.billing.getIdempotencyKey(req),
+    });
+
+    if (!spend.ok) {
+      return res.status(402).json({ ok: false, error: spend.error });
     }
 
     // =============================
@@ -1389,6 +1457,10 @@ router.post("/ai/restyle", async (req, res, next) => {
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
 
+    // ✅ Requiere plan activo
+    const active = await ctx.billing.requireActiveSubscription(user.id);
+    if (active.error) return res.status(403).json({ ok: false, error: active.error });
+
     const rl = await checkUserRateLimit({
       userId: user.id,
       scope: "ai_restyle",
@@ -1450,10 +1522,53 @@ router.post("/ai/restyle", async (req, res, next) => {
         throw httpError(500, "JOB_INSERT_FAILED", "No se pudo crear el job de restyle.", { jobErr });
       }
 
+      // ✅ Spend de créditos ANTES de aceptar el job (idempotente)
+      const costCredits = estimateImageCostCredits({
+        model: selectedModel,
+        quality: body.quality,
+        count: 1,
+      });
+
+      const spend = await ctx.billing.spendCredits({
+        userId: user.id,
+        amountCredits: costCredits,
+        entryType: "ai_restyle",
+        refType: "job",
+        refId: jobRow.id,
+        idempotencyKey: ctx.billing.getIdempotencyKey(req),
+      });
+
+      if (!spend.ok) {
+        // rollback best-effort: borrar el job si no se pudo cobrar
+        await supabaseAdmin.from("jobs").delete().eq("id", jobRow.id);
+        return res.status(402).json({ ok: false, error: spend.error });
+      }
+
       return res.json({ ok: true, jobId: jobRow.id });
     }
 
     // ✅ SYNC (legacy): ejecuta en request (puede tardar)
+
+    // ✅ Spend de créditos ANTES de ejecutar restyle SYNC (idempotente)
+    const costCredits = estimateImageCostCredits({
+      model: selectedModel,
+      quality: body.quality,
+      count: 1,
+    });
+
+    const spend = await ctx.billing.spendCredits({
+      userId: user.id,
+      amountCredits: costCredits,
+      entryType: "ai_restyle",
+      refType: "sync",
+      refId: null,
+      idempotencyKey: ctx.billing.getIdempotencyKey(req),
+    });
+
+    if (!spend.ok) {
+      return res.status(402).json({ ok: false, error: spend.error });
+    }
+
     const aiClient = await ensureAI();
     const prompt = body.prompt || "Restyle this image with high quality.";
 
