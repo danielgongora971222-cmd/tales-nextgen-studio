@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import Layout from './components/Layout';
 import Home from './pages/Home';
 import Login from './pages/Login';
+import Landing from "./pages/Landing";
 import ImageGenHub from './pages/ImageGenHub';
 import VideoGenHub from './pages/VideoGenHub';
 import MyCreations from './pages/MyCreations';
@@ -44,6 +45,19 @@ const AppContent: React.FC = () => {
   const [checking, setChecking] = useState<boolean>(true);
 
   const { user, isLoading: authLoading } = useAuth();
+
+  // 👇 Controla qué ve el usuario NO logeado: primero Landing, luego Login si toca cualquier botón
+  const [unauthView, setUnauthView] = useState<"landing" | "login">("landing");
+  const prevUserRef = useRef<typeof user>(null);
+
+  // Si venías logeado y te deslogueas => volver a Landing como primera pantalla
+  useEffect(() => {
+    const prev = prevUserRef.current;
+    if (prev && !user) {
+      setUnauthView("landing");
+    }
+    prevUserRef.current = user;
+  }, [user]);
 
   const healthUrl = apiUrl("/api/health");
 
@@ -231,8 +245,11 @@ useEffect(() => {
     );
   }
 
-  // Login Barrier
+  // Unauth Barrier: primero Landing, y cualquier acción => Login
   if (!user) {
+    if (unauthView === "landing") {
+      return <Landing onEnter={() => setUnauthView("login")} />;
+    }
     return <Login />;
   }
 
