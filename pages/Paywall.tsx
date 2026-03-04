@@ -7,7 +7,13 @@ const TERMS_VERSION = "2026-03-03";
 const PRIVACY_VERSION = "2026-03-03";
 const AUTOPAY_VERSION = "2026-03-03";
 
-export default function Paywall({ onSubscribed }: { onSubscribed: () => Promise<void> | void }) {
+export default function Paywall({
+  onSubscribed,
+  onContinueExploring,
+}: {
+  onSubscribed: () => Promise<void> | void;
+  onContinueExploring?: () => void;
+}) {
   const { logout } = useAuth();
 
   const [plans, setPlans] = useState<any[]>([]);
@@ -69,9 +75,21 @@ export default function Paywall({ onSubscribed }: { onSubscribed: () => Promise<
             </div>
           </div>
 
-          <button type="button" className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/15" onClick={logout}>
-            Logout
-          </button>
+          <div className="flex gap-2">
+            {onContinueExploring ? (
+              <button
+                type="button"
+                className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/15"
+                onClick={onContinueExploring}
+              >
+                Seguir explorando
+              </button>
+            ) : null}
+
+            <button type="button" className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/15" onClick={logout}>
+              Logout
+            </button>
+          </div>
         </div>
 
         <div className="mt-6 rounded-2xl border border-white/10 bg-black/30 p-4">

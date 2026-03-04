@@ -2,7 +2,7 @@
 import { supabase } from "./supabaseClient";
 import { invalidateMyAssetsCache } from "./assetsApi";
 import { apiUrl } from "./apiBase";
-import { emitInsufficientCredits, emitWalletRefresh } from "./appEvents";
+import { emitInsufficientCredits, emitPlanRequired, emitWalletRefresh } from "./appEvents";
 
 const PENDING_FAL_KEY = "tales_pending_fal_job_v1";
 
@@ -145,6 +145,11 @@ function makeHttpError(message: string, resp: Response, extra?: any) {
   if (err.code === "INSUFFICIENT_CREDITS" && err.details) {
     emitInsufficientCredits(err.details);
   }
+
+  if (err.code === "NO_ACTIVE_PLAN") {
+    emitPlanRequired({ code: "NO_ACTIVE_PLAN", message: extra?.message || "Necesitas un plan activo para usar esta función." });
+  }
+
   emitWalletRefresh();
   return err;
 }

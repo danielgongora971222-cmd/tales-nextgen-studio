@@ -8,6 +8,9 @@ interface ErrorModalProps {
 const ErrorModal: React.FC<ErrorModalProps> = ({ error, onClose }) => {
   if (!error) return null;
 
+  // Evitar duplicar modales: estos errores ya tienen UI dedicada
+  if (error.includes("NO_ACTIVE_PLAN:") || error.includes("INSUFFICIENT_CREDITS:")) return null;
+
   return (
     <div className="fixed inset-0 z-[5000] flex items-center justify-center bg-black/90 backdrop-blur-md animate-in fade-in duration-200">
       <div className="relative w-full max-w-md p-6 bg-[#0a0a0a] border border-red-900/50 rounded-2xl shadow-[0_0_50px_rgba(220,38,38,0.2)] animate-in zoom-in-95 duration-300">

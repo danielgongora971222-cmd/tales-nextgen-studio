@@ -1,4 +1,5 @@
 export const EVENT_INSUFFICIENT_CREDITS = "tales:insufficient-credits";
+export const EVENT_PLAN_REQUIRED = "tales:plan-required";
 export const EVENT_WALLET_REFRESH = "tales:wallet-refresh";
 export const EVENT_MY_CREATIONS_FILTER = "tales:set-creations-filter";
 
@@ -14,4 +15,10 @@ export function emitWalletRefresh() {
 
 export function emitMyCreationsFilter(filterKey: string) {
   window.dispatchEvent(new CustomEvent(EVENT_MY_CREATIONS_FILTER, { detail: { filterKey } }));
+}
+
+export type PlanRequiredDetail = { code: string; message: string };
+
+export function emitPlanRequired(detail: PlanRequiredDetail) {
+  window.dispatchEvent(new CustomEvent(EVENT_PLAN_REQUIRED, { detail }));
 }

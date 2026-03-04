@@ -163,12 +163,12 @@ export function createCommunityStoreRouter(ctx) {
       sellerUsername: r.seller_username_snapshot || "seller",
       sellerVerified: Boolean(r.seller_verified_snapshot),
 
-      listingKind: r.listing_kind,
-      mediaTag: r.media_tag,
+      listingKind: row.listing_kind,
+      mediaTag: row.media_tag,
 
-      name: r.name || "",
-      priceCredits: Number(r.price_credits) || 0,
-      description: r.description || "",
+      name: row.name || "",
+      priceCredits: Number(row.price_credits) || 0,
+      description: row.description || "",
 
       status: r.status,
 
@@ -239,12 +239,12 @@ export function createCommunityStoreRouter(ctx) {
         sellerUsername: row.seller_username_snapshot || "seller",
         sellerVerified: Boolean(row.seller_verified_snapshot),
 
-        listingKind: r.listing_kind,
-        mediaTag: r.media_tag,
+        listingKind: row.listing_kind,
+        mediaTag: row.media_tag,
 
-        name: r.name || "",
-        priceCredits: Number(r.price_credits) || 0,
-        description: r.description || "",
+        name: row.name || "",
+        priceCredits: Number(row.price_credits) || 0,
+        description: row.description || "",
 
         status: row.status,
 
@@ -317,11 +317,10 @@ export function createCommunityStoreRouter(ctx) {
         .eq("id", existing.id)
         .eq("seller_id", user.id);
 
-        if (insErr) {
-          if (String(insErr.code) === "23505") return err(res, 409, "NAME_TAKEN", "Ya existe un listing con ese nombre. Elige otro.");
-          return err(res, 500, "DB_INSERT_FAILED", insErr.message);
-        }
-
+      if (upErr) {
+        if (String(upErr.code) === "23505") return err(res, 409, "NAME_TAKEN", "Ya existe un listing con ese nombre. Elige otro.");
+        return err(res, 500, "DB_UPDATE_FAILED", upErr.message);
+      }
 
       return res.json({ ok: true, listingId: existing.id, reused: true });
     }
@@ -340,6 +339,7 @@ export function createCommunityStoreRouter(ctx) {
         seller_verified_snapshot: false,
         listing_kind: listingKind,
         media_tag: mediaTag,
+        name,
         price_credits: priceCredits,
         description,
         status: "active",
@@ -397,6 +397,7 @@ export function createCommunityStoreRouter(ctx) {
     }
 
     const patch = {};
+    if (body.name != null) patch.name = body.name;
     if (body.priceCredits != null) patch.price_credits = body.priceCredits;
     if (body.description != null) patch.description = body.description;
     if (body.status != null) {

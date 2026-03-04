@@ -34,7 +34,8 @@ import Paywall from "./pages/Paywall";
 import { billingMe } from "./services/billingApi";
 import { WalletProvider } from "@/contexts/WalletContext";
 import InsufficientCreditsModal from "@/components/InsufficientCreditsModal";
-import { EVENT_INSUFFICIENT_CREDITS } from "@/services/appEvents";
+import PlanRequiredModal from "@/components/PlanRequiredModal";
+import { EVENT_INSUFFICIENT_CREDITS, EVENT_PLAN_REQUIRED } from "@/services/appEvents";
 
 const AppContent: React.FC = () => {
   const [route, setRoute] = useState<AppRoute>(AppRoute.HOME);
@@ -54,6 +55,9 @@ const AppContent: React.FC = () => {
 
   const [insufficientOpen, setInsufficientOpen] = useState(false);
   const [insufficientDetails, setInsufficientDetails] = useState<any | null>(null);
+
+  const [planRequiredOpen, setPlanRequiredOpen] = useState(false);
+  const [planRequiredMessage, setPlanRequiredMessage] = useState<string | null>(null);
 
   const { user, isLoading: authLoading } = useAuth();
 
@@ -123,6 +127,17 @@ useEffect(() => {
 
   window.addEventListener(EVENT_INSUFFICIENT_CREDITS, handler as any);
   return () => window.removeEventListener(EVENT_INSUFFICIENT_CREDITS, handler as any);
+}, []);
+
+useEffect(() => {
+  const handler = (ev: any) => {
+    const msg = ev?.detail?.message ? String(ev.detail.message) : "Para comenzar a generar, necesitas un plan activo.";
+    setPlanRequiredMessage(msg);
+    setPlanRequiredOpen(true);
+  };
+
+  window.addEventListener(EVENT_PLAN_REQUIRED, handler as any);
+  return () => window.removeEventListener(EVENT_PLAN_REQUIRED, handler as any);
 }, []);
 
 useEffect(() => {
@@ -234,6 +249,18 @@ useEffect(() => {
       case AppRoute.MY_CREATIONS:
         return <MyCreations />;
 
+      case AppRoute.PAYWALL:
+        return (
+          <Paywall
+            onSubscribed={async () => {
+              const sub = await billingMe();
+              setSubscription(sub || null);
+              setRoute(AppRoute.HOME);
+            }}
+            onContinueExploring={() => setRoute(AppRoute.HOME)}
+          />
+        );
+
       case AppRoute.PROFILE:
         return <Profile onNavigate={(r) => { setStorePrefill({ asset: null }); setRoute(r); }} />;
 
@@ -316,17 +343,6 @@ useEffect(() => {
     );
   }
 
-  if (!subscription) {
-    return (
-      <Paywall
-        onSubscribed={async () => {
-          const sub = await billingMe();
-          setSubscription(sub || null);
-          setRoute(AppRoute.HOME);
-        }}
-      />
-    );
-  }
 
   return (
     <GenerationQueueProvider>
@@ -344,15 +360,25 @@ useEffect(() => {
           }}
         />
 
-        <InsufficientCreditsModal
-          open={insufficientOpen}
-          details={insufficientDetails}
-          onClose={() => setInsufficientOpen(false)}
-          onGoProfile={() => {
-            setInsufficientOpen(false);
-            setRoute(AppRoute.PROFILE);
-          }}
-        />
+      <InsufficientCreditsModal
+        open={insufficientOpen}
+        details={insufficientDetails}
+        onClose={() => setInsufficientOpen(false)}
+        onGoProfile={() => {
+          setInsufficientOpen(false);
+          setRoute(AppRoute.PROFILE);
+        }}
+      />
+
+      <PlanRequiredModal
+        open={planRequiredOpen}
+        message={planRequiredMessage}
+        onClose={() => setPlanRequiredOpen(false)}
+        onGoPlans={() => {
+          setPlanRequiredOpen(false);
+          setRoute(AppRoute.PAYWALL);
+        }}
+      />
       </WalletProvider>
     </GenerationQueueProvider>
   );

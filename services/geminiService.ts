@@ -4,7 +4,7 @@ import { supabase } from "./supabaseClient";
 import { apiUrl } from "./apiBase";
 import { invalidateMyAssetsCache } from "./assetsApi";
 import { waitJobCompletion, JobRow } from "./jobsApi";
-import { emitInsufficientCredits, emitWalletRefresh } from "./appEvents";
+import { emitInsufficientCredits, emitPlanRequired, emitWalletRefresh } from "./appEvents";
 
 type ApiResponse<T> = { ok: true; dataUrl?: string; videoUrl?: string } | { ok: false; error: string };
 
@@ -119,9 +119,13 @@ async function apiPost<T>(path: string, body: any): Promise<T> {
     err.code = code;
     err.details = details;
 
-    if (code === "INSUFFICIENT_CREDITS" && details) {
-      emitInsufficientCredits(details);
-    }
+  if (code === "INSUFFICIENT_CREDITS" && details) {
+    emitInsufficientCredits(details);
+  }
+
+  if (code === "NO_ACTIVE_PLAN") {
+    emitPlanRequired({ code: "NO_ACTIVE_PLAN", message: e?.message || "Necesitas un plan activo para usar esta función." });
+  }
 
     throw err;
   }
