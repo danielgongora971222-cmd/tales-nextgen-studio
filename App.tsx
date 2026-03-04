@@ -30,6 +30,11 @@ import { AppRoute } from './types';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { GenerationQueueProvider } from './contexts/GenerationQueueContext';
 import { apiUrl } from "./services/apiBase";
+import Paywall from "./pages/Paywall";
+import { billingMe } from "./services/billingApi";
+import { WalletProvider } from "@/contexts/WalletContext";
+import InsufficientCreditsModal from "@/components/InsufficientCreditsModal";
+import { EVENT_INSUFFICIENT_CREDITS } from "@/services/appEvents";
 
 const AppContent: React.FC = () => {
   const [route, setRoute] = useState<AppRoute>(AppRoute.HOME);
@@ -43,6 +48,12 @@ const AppContent: React.FC = () => {
   const [backendOk, setBackendOk] = useState<boolean>(false);
   const [capabilities, setCapabilities] = useState<any>(null);
   const [checking, setChecking] = useState<boolean>(true);
+
+  const [billingChecked, setBillingChecked] = useState(false);
+  const [subscription, setSubscription] = useState<any | null>(null);
+
+  const [insufficientOpen, setInsufficientOpen] = useState(false);
+  const [insufficientDetails, setInsufficientDetails] = useState<any | null>(null);
 
   const { user, isLoading: authLoading } = useAuth();
 
@@ -103,6 +114,46 @@ useEffect(() => {
   window.addEventListener("tales:open-sell", onOpenSell as any);
   return () => window.removeEventListener("tales:open-sell", onOpenSell as any);
 }, []);
+
+useEffect(() => {
+  const handler = (ev: any) => {
+    setInsufficientDetails(ev?.detail || null);
+    setInsufficientOpen(true);
+  };
+
+  window.addEventListener(EVENT_INSUFFICIENT_CREDITS, handler as any);
+  return () => window.removeEventListener(EVENT_INSUFFICIENT_CREDITS, handler as any);
+}, []);
+
+useEffect(() => {
+  let alive = true;
+
+  (async () => {
+    // Si NO hay usuario, no hay que chequear plan:
+    if (!user) {
+      setSubscription(null);
+      setBillingChecked(true); // importante: no bloquear la landing/login
+      return;
+    }
+
+    setBillingChecked(false);
+    try {
+      const sub = await billingMe(); // null si no hay plan activo
+      if (!alive) return;
+      setSubscription(sub || null);
+    } catch {
+      if (!alive) return;
+      setSubscription(null);
+    } finally {
+      if (!alive) return;
+      setBillingChecked(true);
+    }
+  })();
+
+  return () => {
+    alive = false;
+  };
+}, [user?.id]);
 
   const handleConnect = async () => {
     setChecking(true);
@@ -253,20 +304,56 @@ useEffect(() => {
     return <Login />;
   }
 
-  return (
-    <GenerationQueueProvider>
-      <Layout currentRoute={route} onNavigate={setRoute}>
-        {renderPage()}
-      </Layout>
 
-      <SellListingModal
-        open={sellOpen}
-        asset={sellAsset}
-        onClose={() => {
-          setSellOpen(false);
-          setSellAsset(null);
+  // 👇 desde aquí ya hay usuario
+
+  if (!billingChecked) {
+    return (
+      <div className="relative w-full h-screen bg-black text-white flex items-center justify-center">
+        <div className="absolute inset-0 z-0 opacity-50"><Background3D /></div>
+        <div className="z-10 animate-pulse font-mono tracking-widest">CHECKING PLAN...</div>
+      </div>
+    );
+  }
+
+  if (!subscription) {
+    return (
+      <Paywall
+        onSubscribed={async () => {
+          const sub = await billingMe();
+          setSubscription(sub || null);
+          setRoute(AppRoute.HOME);
         }}
       />
+    );
+  }
+
+  return (
+    <GenerationQueueProvider>
+      <WalletProvider>
+        <Layout currentRoute={route} onNavigate={setRoute}>
+          {renderPage()}
+        </Layout>
+
+        <SellListingModal
+          open={sellOpen}
+          asset={sellAsset}
+          onClose={() => {
+            setSellOpen(false);
+            setSellAsset(null);
+          }}
+        />
+
+        <InsufficientCreditsModal
+          open={insufficientOpen}
+          details={insufficientDetails}
+          onClose={() => setInsufficientOpen(false)}
+          onGoProfile={() => {
+            setInsufficientOpen(false);
+            setRoute(AppRoute.PROFILE);
+          }}
+        />
+      </WalletProvider>
     </GenerationQueueProvider>
   );
 };

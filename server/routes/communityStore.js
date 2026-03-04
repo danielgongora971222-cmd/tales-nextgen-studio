@@ -646,7 +646,34 @@ export function createCommunityStoreRouter(ctx) {
 
     if (rpcErr) {
       const msg = rpcErr.message || "Compra fallida.";
-      if (msg.includes("INSUFFICIENT_CREDITS")) return err(res, 400, "INSUFFICIENT_CREDITS", "No tienes créditos suficientes.");
+      if (msg.includes("INSUFFICIENT_CREDITS")) {
+      let need = 0;
+      let have = 0;
+
+      try {
+        const { data: lrow } = await supabaseAdmin
+          .from("community_listings")
+          .select("price_credits")
+          .eq("id", body.listingId)
+          .maybeSingle();
+
+        need = Number(lrow?.price_credits) || 0;
+
+        const { data: bal } = await supabaseAdmin
+          .from("wallet_balances")
+          .select("gen_plan_credits, gen_topup_credits, gen_bonus_credits")
+          .eq("user_id", user.id)
+          .maybeSingle();
+
+        have =
+          (Number(bal?.gen_plan_credits) || 0) +
+          (Number(bal?.gen_topup_credits) || 0) +
+          (Number(bal?.gen_bonus_credits) || 0);
+      } catch {}
+
+      const deficit = Math.max(0, need - have);
+      return err(res, 400, "INSUFFICIENT_CREDITS", "No tienes créditos suficientes.", { need, have, deficit });
+    }
       if (msg.includes("ALREADY_OWNED")) return err(res, 400, "ALREADY_OWNED", "Ya compraste este listing.");
       if (msg.includes("CANNOT_BUY_OWN_LISTING")) return err(res, 400, "CANNOT_BUY_OWN_LISTING", "No puedes comprar tu propio listing.");
       return err(res, 500, "PURCHASE_FAILED", msg);

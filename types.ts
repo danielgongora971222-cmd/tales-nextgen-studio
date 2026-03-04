@@ -30,6 +30,8 @@ export enum AppRoute {
   TOOL_EXTEND_VIDEO = 'tool-extend-video',
   TOOL_MOTION_CONTROL = 'tool-motion-control',
 
+  PAYWALL = 'paywall',
+
   PROFILE = 'profile',
   
   CHAT = 'chat'

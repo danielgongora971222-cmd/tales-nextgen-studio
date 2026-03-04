@@ -59,7 +59,7 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
           <div className="mt-4 text-sm text-white/70">Créditos para generar</div>
           <div className="text-3xl font-extrabold">{generationCredits}</div>
           <div className="text-xs text-white/60 mt-1">
-            Plan: {wallet?.planCredits || 0} · Extra: {wallet?.topupCredits || 0} · Bonus: {wallet?.bonusCredits || 0}
+            Plan: {wallet?.gen_plan_credits || 0} · Extra: {wallet?.gen_topup_credits || 0} · Bonus: {wallet?.gen_bonus_credits || 0}
           </div>
 
           <div className="mt-4 flex gap-2">

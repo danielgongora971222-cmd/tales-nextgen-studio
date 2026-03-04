@@ -3,6 +3,7 @@ import { listMyAssets } from "../services/assetsApi";
 import { Asset } from "../types";
 import styles from "./MyCreations.module.css";
 import generatorStyles from "./tools/ImageGeneratorTool.module.css";
+import { EVENT_MY_CREATIONS_FILTER } from "../services/appEvents";
 
 type FilterKey =
   | "all"
@@ -74,6 +75,16 @@ const MyCreations: React.FC = () => {
       return [];
     }
   });
+
+  useEffect(() => {
+    const handler = (ev: any) => {
+      const key = ev?.detail?.filterKey;
+      if (key) setActiveFilter(key);
+    };
+
+    window.addEventListener(EVENT_MY_CREATIONS_FILTER, handler as any);
+    return () => window.removeEventListener(EVENT_MY_CREATIONS_FILTER, handler as any);
+  }, []);
 
   useEffect(() => {
     setLoading(true);

@@ -18,6 +18,38 @@ async function fetchAsBuffer(url) {
   return { buf, contentType };
 }
 
+function clamp(n, min, max) {
+  return Math.min(Math.max(n, min), max);
+}
+
+async function tryCropWithSharp(assetUrl, cropNormalized) {
+  // Import dinámico: si sharp no está instalado por alguna razón, no rompe todo el server.
+  const { default: sharp } = await import("sharp");
+
+  const { buf: originalBuf } = await fetchAsBuffer(assetUrl);
+
+  const meta = await sharp(originalBuf, { failOnError: false }).metadata();
+  if (!meta.width || !meta.height) throw new Error("No se pudo leer width/height de la imagen.");
+
+  const x = Number(cropNormalized?.x) || 0;
+  const y = Number(cropNormalized?.y) || 0;
+  const w = Number(cropNormalized?.w) || 1;
+  const h = Number(cropNormalized?.h) || 1;
+
+  const left = clamp(Math.round(x * meta.width), 0, meta.width - 1);
+  const top = clamp(Math.round(y * meta.height), 0, meta.height - 1);
+  const width = clamp(Math.round(w * meta.width), 1, meta.width - left);
+  const height = clamp(Math.round(h * meta.height), 1, meta.height - top);
+
+  // Generamos JPG para mantener tamaño razonable
+  const out = await sharp(originalBuf, { failOnError: false })
+    .extract({ left, top, width, height })
+    .jpeg({ quality: 92 })
+    .toBuffer();
+
+  return { buf: out, contentType: "image/jpeg", ext: "jpg" };
+}
+
 export async function sendStoreOrderEmail({ orderId, payload }) {
   const transport = makeTransport();
   if (!transport) {
@@ -53,14 +85,35 @@ export async function sendStoreOrderEmail({ orderId, payload }) {
     // si falla, igual mandamos link en el HTML
   }
 
-  // Cropped (dataUrl) — attach + inline preview via CID
-  if (payload?.croppedImageDataUrl && typeof payload.croppedImageDataUrl === "string") {
+  // Cropped — preferimos recorte server-side con sharp (assetUrl + cropNormalized)
+  // y si falla, usamos croppedImageDataUrl como plan B.
+  const max = 20 * 1024 * 1024; // 20MB
+
+  // 1) Intento: sharp + cropNormalized
+  if (payload?.assetUrl && payload?.cropNormalized) {
+    try {
+      const cropped = await tryCropWithSharp(payload.assetUrl, payload.cropNormalized);
+      if (cropped.buf.length <= max) {
+        cropCid = `crop-${orderId}@1nationup`;
+        attachments.push({
+          filename: `crop-${orderId}.${cropped.ext}`,
+          content: cropped.buf,
+          contentType: cropped.contentType,
+          cid: cropCid,
+        });
+      }
+    } catch {
+      // fallamos y seguimos al plan B (dataUrl)
+    }
+  }
+
+  // 2) Plan B: dataUrl (lo que ya hacías)
+  if (!cropCid && payload?.croppedImageDataUrl && typeof payload.croppedImageDataUrl === "string") {
     const m = payload.croppedImageDataUrl.match(/^data:(.+);base64,(.+)$/);
     if (m) {
       const contentType = m[1];
       const b64 = m[2];
       const buf = Buffer.from(b64, "base64");
-      const max = 20 * 1024 * 1024;
       if (buf.length <= max) {
         const ext = contentType.includes("png") ? "png" : contentType.includes("webp") ? "webp" : "jpg";
         cropCid = `crop-${orderId}@1nationup`;

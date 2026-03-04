@@ -57,7 +57,32 @@ export function createBillingHelpers(supabaseAdmin) {
 
     if (error) {
       const msg = String(error.message || "");
-      if (msg.includes("INSUFFICIENT_CREDITS")) return { ok: false, error: err("INSUFFICIENT_CREDITS", "Créditos insuficientes.", { need: amountCredits }) };
+      if (msg.includes("INSUFFICIENT_CREDITS")) {
+        let have = 0;
+
+        try {
+          const { data: bal } = await supabaseAdmin
+            .from("wallet_balances")
+            .select("gen_plan_credits, gen_topup_credits, gen_bonus_credits")
+            .eq("user_id", userId)
+            .maybeSingle();
+
+          have =
+            (Number(bal?.gen_plan_credits) || 0) +
+            (Number(bal?.gen_topup_credits) || 0) +
+            (Number(bal?.gen_bonus_credits) || 0);
+        } catch {
+          // fallback: have = 0
+        }
+
+        const need = amountCredits;
+        const deficit = Math.max(0, need - have);
+
+        return {
+          ok: false,
+          error: err("INSUFFICIENT_CREDITS", "Créditos insuficientes.", { need, have, deficit }),
+        };
+      }
       return { ok: false, error: err("CREDIT_SPEND_FAILED", error.message) };
     }
 

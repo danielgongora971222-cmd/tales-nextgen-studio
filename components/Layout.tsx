@@ -6,6 +6,9 @@ import { TOOLS_REGISTRY } from '../config/tools';
 import { VIDEO_TOOLS_REGISTRY } from '../config/videoTools';
 import { useAuth } from '../contexts/AuthContext';
 import OneNationUpIcon from "@/components/brand/OneNationUpIcon";
+import { useWallet } from "../contexts/WalletContext";
+import BottomSheet from "./BottomSheet";
+import { emitMyCreationsFilter } from "../services/appEvents";
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -55,6 +58,9 @@ const NavItem: React.FC<{
 
 const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [isMobile, setIsMobile] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [sheetKind, setSheetKind] = useState<"image" | "video" | "creations" | null>(null);
   const [imageMenuOpen, setImageMenuOpen] = useState(false);
   const [videoMenuOpen, setVideoMenuOpen] = useState(false);
   const [myCreationsMenuOpen, setMyCreationsMenuOpen] = useState(false);
@@ -65,13 +71,28 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
   const [videoFlyoutTop, setVideoFlyoutTop] = useState<number | null>(null);
   const [myCreationsFlyoutTop, setMyCreationsFlyoutTop] = useState<number | null>(null);
   const { user, logout } = useAuth();
+  const { wallet, refresh: refreshWallet } = useWallet();
 
   const sidebarRef = useRef<HTMLElement | null>(null);
   const imageMenuTimer = useRef<number | null>(null);
   const videoMenuTimer = useRef<number | null>(null);
   const myCreationsMenuTimer = useRef<number | null>(null);
 
-    const isImageTool =
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 768px)");
+    const apply = () => setIsMobile(mq.matches);
+    apply();
+
+    if (mq.addEventListener) mq.addEventListener("change", apply);
+    else mq.addListener(apply);
+
+    return () => {
+      if (mq.removeEventListener) mq.removeEventListener("change", apply);
+      else mq.removeListener(apply);
+    };
+  }, []);
+
+  const isImageTool =
     TOOLS_REGISTRY.some((tool) => tool.route === currentRoute) || currentRoute === AppRoute.IMAGE_GEN_ROOT;
 
   const isVideoTool =
@@ -248,6 +269,36 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
           </button>
         </div>
 
+        {sidebarOpen ? (
+          <div className="px-4 pb-2">
+            <div className="rounded-2xl border border-white/10 bg-black/30 p-3">
+              <div className="text-xs text-white/60">Credits</div>
+              <div className="text-2xl font-bold leading-tight">{wallet?.generationCredits ?? "—"}</div>
+              <div className="text-[11px] text-white/50 mt-1">
+                Plan {wallet?.gen_plan_credits ?? 0} · Extra {wallet?.gen_topup_credits ?? 0} · Bonus {wallet?.gen_bonus_credits ?? 0}
+              </div>
+
+              <div className="mt-3 flex gap-2">
+                <button
+                  type="button"
+                  className="flex-1 px-3 py-2 rounded-lg bg-white text-black text-xs font-semibold"
+                  onClick={() => onNavigate(AppRoute.PROFILE)}
+                >
+                  Buy credits
+                </button>
+                <button
+                  type="button"
+                  className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-xs"
+                  onClick={refreshWallet}
+                  title="Refresh wallet"
+                >
+                  ↻
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         <nav className="flex-1 px-4 space-y-2 py-4 overflow-y-auto overflow-x-hidden custom-scrollbar">
           <NavItem
             label={sidebarOpen ? 'Dashboard' : ''}
@@ -291,7 +342,15 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
             <NavItem
               label={sidebarOpen ? 'My Creations' : ''}
               active={currentRoute === AppRoute.MY_CREATIONS}
-              onClick={() => onNavigate(AppRoute.MY_CREATIONS)}
+              onClick={() => {
+                if (isMobile) {
+                  setSheetKind("creations");
+                  setSheetOpen(true);
+                  if (!sidebarOpen) setSidebarOpen(true);
+                  return;
+                }
+                onNavigate(AppRoute.MY_CREATIONS);
+              }}
               expanded={sidebarOpen ? myCreationsMenuOpen : undefined}
               icon={
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -310,6 +369,12 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
               label={sidebarOpen ? 'Image Gen' : ''}
               active={isImageTool}
               onClick={() => {
+                if (isMobile) {
+                  setSheetKind("image");
+                  setSheetOpen(true);
+                  if (!sidebarOpen) setSidebarOpen(true);
+                  return;
+                }
                 if (!sidebarOpen) setSidebarOpen(true);
                 onNavigate(AppRoute.IMAGE_GEN_ROOT);
               }}
@@ -329,6 +394,12 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
               label={sidebarOpen ? 'Video Gen' : ''}
               active={isVideoTool}
               onClick={() => {
+                if (isMobile) {
+                  setSheetKind("video");
+                  setSheetOpen(true);
+                  if (!sidebarOpen) setSidebarOpen(true);
+                  return;
+                }
                 if (!sidebarOpen) setSidebarOpen(true);
                 onNavigate(AppRoute.VIDEO_GEN);
               }}
@@ -434,12 +505,7 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
             }}
             onMouseLeave={handleImageMenuLeave}
           >
-            {/*
-              Si en tu rama "Motion Control" ya está dentro del desplegable de Image Gen,
-              aquí solo agregamos "Edit Video" para que quede junto a Motion Control.
-
-            
-            {/* ✅ Fix: el hover de Image Gen debe mostrar sus herramientas (no herramientas de Video) */}
+            {/* ✅ Image Gen tools */}
             {TOOLS_REGISTRY.map((tool) => {
               const isPrimary = tool.id === 'image-generator';
               return (
@@ -565,6 +631,63 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
       </main>
 
       <GenerationQueueWidget />
+
+      <BottomSheet
+        open={sheetOpen}
+        title={sheetKind === "image" ? "Image Gen" : sheetKind === "video" ? "Video Gen" : "My Creations"}
+        onClose={() => setSheetOpen(false)}
+      >
+        {sheetKind === "image" ? (
+          <div className="space-y-2">
+            {TOOLS_REGISTRY.map((tool) => (
+              <button
+                key={tool.id}
+                type="button"
+                className="w-full text-left px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10"
+                onClick={() => {
+                  setSheetOpen(false);
+                  onNavigate(tool.route);
+                }}
+              >
+                {tool.label}
+              </button>
+            ))}
+          </div>
+        ) : sheetKind === "video" ? (
+          <div className="space-y-2">
+            {VIDEO_TOOLS_REGISTRY.map((tool) => (
+              <button
+                key={tool.id}
+                type="button"
+                className="w-full text-left px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10"
+                onClick={() => {
+                  setSheetOpen(false);
+                  onNavigate(tool.route);
+                }}
+              >
+                {tool.label}
+              </button>
+            ))}
+          </div>
+        ) : sheetKind === "creations" ? (
+          <div className="space-y-2">
+            {myCreationsFilters.map((f) => (
+              <button
+                key={f.key}
+                type="button"
+                className="w-full text-left px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10"
+                onClick={() => {
+                  emitMyCreationsFilter(f.key);
+                  setSheetOpen(false);
+                  onNavigate(AppRoute.MY_CREATIONS);
+                }}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </BottomSheet>
     </div>
   );
 };

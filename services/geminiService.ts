@@ -4,6 +4,7 @@ import { supabase } from "./supabaseClient";
 import { apiUrl } from "./apiBase";
 import { invalidateMyAssetsCache } from "./assetsApi";
 import { waitJobCompletion, JobRow } from "./jobsApi";
+import { emitInsufficientCredits, emitWalletRefresh } from "./appEvents";
 
 type ApiResponse<T> = { ok: true; dataUrl?: string; videoUrl?: string } | { ok: false; error: string };
 
@@ -110,7 +111,19 @@ async function apiPost<T>(path: string, body: any): Promise<T> {
       msg = `Request failed: ${resp.status} ${resp.statusText}`;
     }
 
-    throw new Error(msg);
+    const code = e?.code;
+    const details = e?.details || null;
+
+    // "msg" ya tiene el texto final del error (incluye code + message + details)
+    const err: any = new Error(msg);
+    err.code = code;
+    err.details = details;
+
+    if (code === "INSUFFICIENT_CREDITS" && details) {
+      emitInsufficientCredits(details);
+    }
+
+    throw err;
   }
 
   // Si esta llamada creó un asset nuevo en el backend, invalida cache para que
@@ -123,6 +136,7 @@ async function apiPost<T>(path: string, body: any): Promise<T> {
     if (createsAsset) invalidateMyAssetsCache();
   } catch {}
 
+  emitWalletRefresh();
   return data as T;
 }
 

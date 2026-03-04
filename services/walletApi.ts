@@ -31,3 +31,22 @@ export async function getMyWallet() {
 
   return data.wallet;
 }
+
+export async function getWalletMe(): Promise<{ wallet: any; subscription: any | null }> {
+  const headers = await authHeaders();
+  const resp = await fetch(apiUrl(`/api/wallet/me`), { method: "GET", headers });
+
+  const raw = await resp.text();
+  const data = parseJsonOrThrow(raw);
+
+  if (!resp.ok || data?.ok === false) {
+    const code = data?.error?.code;
+    const msg = data?.error?.message || `HTTP ${resp.status}`;
+    const err: any = new Error(msg);
+    err.code = code;
+    err.details = data?.error?.details || null;
+    throw err;
+  }
+
+  return { wallet: data.wallet, subscription: data.subscription || null };
+}

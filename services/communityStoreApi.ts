@@ -130,7 +130,22 @@ export async function purchaseCommunityListing(listingId: string, referralCode?:
   const data = parseJsonOrThrow(raw);
 
   if (!resp.ok || data?.ok === false) {
-    throw new Error(data?.error?.message || `Purchase failed (${resp.status})`);
+    const msg = data?.error?.message || `Purchase failed (${resp.status})`;
+    const code = data?.error?.code;
+    const details = data?.error?.details || null;
+
+    const err: any = new Error(msg);
+    err.code = code;
+    err.details = details;
+
+    if (code === "INSUFFICIENT_CREDITS" && details) {
+      const { emitInsufficientCredits } = await import("./appEvents");
+      emitInsufficientCredits(details);
+    }
+
+    const { emitWalletRefresh } = await import("./appEvents");
+    emitWalletRefresh();
+    throw err;
   }
 
   return { purchaseId: data.purchaseId, paidCredits: Number(data.paidCredits) || 0 };

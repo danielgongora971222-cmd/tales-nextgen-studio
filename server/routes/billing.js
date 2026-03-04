@@ -29,6 +29,33 @@ export function createBillingRouter(ctx) {
     const planSlug = req.body?.planSlug ? String(req.body.planSlug) : "";
     if (!planSlug) return err(res, 400, "BAD_REQUEST", "Falta planSlug.");
 
+    // ✅ Requiere aceptación legal previa (ETAPA 2)
+    const REQUIRED_TERMS = process.env.LEGAL_TERMS_VERSION || "2026-03-03";
+    const REQUIRED_PRIVACY = process.env.LEGAL_PRIVACY_VERSION || "2026-03-03";
+    const REQUIRED_AUTOPAY = process.env.LEGAL_AUTOPAY_VERSION || "2026-03-03";
+
+    const { data: acceptance, error: aErr } = await supabaseAdmin
+      .from("legal_acceptances")
+      .select("terms_version, privacy_version, autopay_version")
+      .eq("user_id", user.id)
+      .order("accepted_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (aErr) return err(res, 500, "DB_QUERY_FAILED", aErr.message);
+
+    const okLegal =
+      acceptance &&
+      acceptance.terms_version === REQUIRED_TERMS &&
+      acceptance.privacy_version === REQUIRED_PRIVACY &&
+      acceptance.autopay_version === REQUIRED_AUTOPAY;
+
+    if (!okLegal) {
+      return err(res, 403, "LEGAL_NOT_ACCEPTED", "Debes aceptar términos, privacidad y auto-renovación antes de activar un plan.", {
+        required: { terms: REQUIRED_TERMS, privacy: REQUIRED_PRIVACY, autopay: REQUIRED_AUTOPAY },
+      });
+    }
+
     const { data: plan, error: pErr } = await supabaseAdmin
       .from("billing_plans")
       .select("id, slug, billing_period")
@@ -103,7 +130,9 @@ export function createBillingRouter(ctx) {
 
     if (tErr) {
       const msg = String(tErr.message || "");
-      if (msg.includes("TOPUP_REQUIRES_ACTIVE_PLAN")) return err(res, 403, "TOPUP_REQUIRES_PLAN", "Necesitas plan activo para comprar créditos extra.");
+      if (msg.includes("TOPUP_REQUIRES_ACTIVE_PLAN")) {
+        return err(res, 403, "NO_ACTIVE_PLAN", "Necesitas un plan activo para comprar créditos extra.");
+      }
       return err(res, 500, "TOPUP_FAILED", tErr.message);
     }
 

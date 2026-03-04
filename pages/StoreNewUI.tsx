@@ -1181,11 +1181,12 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
                       alt="Cropped Final"
                     />
                   )}
-                {!croppedDataUrl && cropGenError && (
-                  <div className="absolute bottom-2 left-2 right-2 bg-red-900/70 border border-red-500/40 text-red-200 text-[10px] p-2 rounded-xl backdrop-blur-sm">
-                    Error generando recorte: {cropGenError}
-                  </div>
-                )}
+                  {!croppedDataUrl && cropGenError && (
+                    <div className="absolute bottom-2 left-2 right-2 bg-white/10 border border-white/20 text-white text-[11px] p-2 rounded-xl backdrop-blur-sm">
+                      No se pudo mostrar el preview aquí, pero el encuadre se guardó y el servidor lo procesará.
+                      <div className="mt-1 text-white/70">Detalle: {cropGenError}</div>
+                    </div>
+                  )}
              </div>
          </div>
          

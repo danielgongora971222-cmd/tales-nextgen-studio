@@ -2,6 +2,7 @@
 import { supabase } from "./supabaseClient";
 import { invalidateMyAssetsCache } from "./assetsApi";
 import { apiUrl } from "./apiBase";
+import { emitInsufficientCredits, emitWalletRefresh } from "./appEvents";
 
 const PENDING_FAL_KEY = "tales_pending_fal_job_v1";
 
@@ -138,6 +139,13 @@ function makeHttpError(message: string, resp: Response, extra?: any) {
   const err: any = new Error(message);
   err.status = resp.status;
   err.response = { status: resp.status, data: extra };
+  err.code = extra?.code;
+  err.details = extra?.details || null;
+
+  if (err.code === "INSUFFICIENT_CREDITS" && err.details) {
+    emitInsufficientCredits(err.details);
+  }
+  emitWalletRefresh();
   return err;
 }
 
