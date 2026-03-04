@@ -4,6 +4,7 @@ import FileUploader from "../../components/FileUploader";
 import CameraAngleSimulator3D, { CameraAngleValue } from "../../components/CameraAngleSimulator3D";
 import { generateImageBatch } from "../../services/geminiService";
 import { Asset } from "../../types";
+import { estimateImageCostCredits } from "../../config/pricing.js";
 
 const CAMERA_ANGLES_MODEL = "fal-ai/qwen-image-edit-2511-multiple-angles";
 
@@ -31,6 +32,10 @@ const CameraAnglesTool: React.FC = () => {
   const canGenerate = useMemo(() => {
     return !!referenceAsset && !loading;
   }, [referenceAsset, loading]);
+
+  const estimatedCostCredits = useMemo(() => {
+    return estimateImageCostCredits({ model: CAMERA_ANGLES_MODEL, quality: "1K", count });
+  }, [count]);
 
   const selectedItem = useMemo(() => {
     if (!items.length) return null;
@@ -180,6 +185,10 @@ const CameraAnglesTool: React.FC = () => {
             >
               {loading ? "GENERATING ANGLE..." : "GENERATE ANGLE"}
             </button>
+
+            <div className="mt-2 text-center text-[12px] text-white/60">
+              Coste estimado: <span className="font-semibold text-white/85">{estimatedCostCredits}</span> créditos
+            </div>
           </div>
         </div>
       </div>

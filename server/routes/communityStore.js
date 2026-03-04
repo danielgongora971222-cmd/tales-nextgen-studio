@@ -57,7 +57,7 @@ const UpdateListingSchema = z.object({
   name: z.preprocess((v) => (v === undefined ? undefined : String(v).trim()), z.string().min(3).max(80)).optional(),
   priceCredits: z.preprocess((v) => (v === undefined ? undefined : Number(v)), z.number().int().min(1).max(1000000)).optional(),
   description: z.preprocess((v) => (v === undefined ? undefined : String(v).trim()), z.string().max(800)).optional(),
-  status: z.enum(["active", "unlisted"]).optional(),
+  status: z.enum(["active", "unlisted", "deleted"]).optional(),
 });
 
 
@@ -271,7 +271,7 @@ export function createCommunityStoreRouter(ctx) {
     // ✅ Solo Pro/Partner/Business pueden vender
     const active = await ctx.billing.getActiveSubscription(user.id);
     if (active.error) return err(res, 500, active.error.code, active.error.message, active.error.details);
-    if (!active.subscription || !active.subscription.can_sell) {
+    if (!active.subscription || !active.subscription.canSell) {
       return err(res, 403, "PLAN_REQUIRED_PRO", "Necesitas plan Pro o superior para publicar y vender.");
     }
 
@@ -402,6 +402,7 @@ export function createCommunityStoreRouter(ctx) {
     if (body.status != null) {
       patch.status = body.status;
       if (body.status === "active") patch.listed_at = new Date().toISOString();
+      if (body.status === "deleted") patch.listed_at = null;
     }
 
     const { error: upErr } = await supabaseAdmin

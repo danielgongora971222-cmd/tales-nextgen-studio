@@ -8,6 +8,7 @@ import {
 } from "../../schemas/index.js";
 import { checkUserRateLimit } from "../../lib/userRateLimit.js";
 import { assertJobLimits } from "../../lib/jobLimits.js";
+import { estimateVideoCostCredits } from "../../../config/pricing.js";
 
 function clampInt(n, min, max) {
   const x = Math.trunc(Number(n));
@@ -15,19 +16,6 @@ function clampInt(n, min, max) {
   if (x < min) return min;
   if (x > max) return max;
   return x;
-}
-
-function estimateVideoCostCredits({ modelNorm, isKling, durationSeconds }) {
-  const dur = clampInt(durationSeconds != null ? durationSeconds : 5, 3, 15);
-
-  // Base por segundo (ajustable)
-  let perSecond = isKling ? 30 : 15;
-
-  const m = String(modelNorm || "").toLowerCase();
-  if (m.includes("v3")) perSecond += 5;
-  if (m.includes("pro")) perSecond += 5;
-
-  return perSecond * dur;
 }
 
 export function createAiVideoRouter(ctx) {
@@ -2213,41 +2201,30 @@ const isKling = selectedModelNorm.startsWith("kling-");
         });
       }
 
-          // ✅ Spend de créditos ANTES de ejecutar/encolar video
-    // Duración efectiva para cobro:
-    // - base: durationSeconds clamped 3..15
-    // - si hay storyboard (klingMultiPrompt), cobramos por suma (cap 15)
-    let effectiveDur = durationSeconds != null ? Number(durationSeconds) : 5;
-    effectiveDur = clampInt(effectiveDur, 3, 15);
-
-    if (Array.isArray(klingMultiPrompt) && klingMultiPrompt.length > 0) {
-      const sum = klingMultiPrompt.reduce((acc, s) => {
-        const d = s && s.duration != null ? Number(s.duration) : 0;
-        return acc + clampInt(d, 1, 15);
-      }, 0);
-      effectiveDur = clampInt(sum, 3, 15);
-    }
-
-    const costCredits = estimateVideoCostCredits({
-      modelNorm: selectedModelNorm,
-      isKling,
-      durationSeconds: effectiveDur,
-    });
-
-    const spend = await ctx.billing.spendCredits({
-      userId: user.id,
-      amountCredits: costCredits,
-      entryType: "ai_video_generate",
-      refType: asyncMode ? "async" : "sync",
-      refId: null,
-      idempotencyKey: ctx.billing.getIdempotencyKey(req),
-    });
-
-    if (!spend.ok) {
-      return res.status(402).json({ ok: false, error: spend.error });
-    }
-
       const body = MotionControlRequestSchema.parse(req.body);
+
+      // ✅ Requiere plan activo
+      const active = await ctx.billing.requireActiveSubscription(user.id);
+      if (active.error) return res.status(403).json({ ok: false, error: active.error });
+
+      // ✅ Spend de créditos ANTES de encolar motion-control
+      // Esta ruta NO recibe duración explícita; usamos un costo estable basado en 5s.
+      const mode = body.mode === "pro" ? "pro" : "std";
+      const pricingModelNorm = mode === "pro" ? "kling-2.6-motion-control-pro" : "kling-2.6-motion-control";
+      const costCredits = estimateVideoCostCredits({ modelNorm: pricingModelNorm, isKling: true, durationSeconds: 5 });
+
+      const spend = await ctx.billing.spendCredits({
+        userId: user.id,
+        amountCredits: costCredits,
+        entryType: "ai_motion_control",
+        refType: "async",
+        refId: null,
+        idempotencyKey: ctx.billing.getIdempotencyKey(req),
+      });
+
+      if (!spend.ok) {
+        return res.status(402).json({ ok: false, error: spend.error });
+      }
 
       const toolName = body.tool || "motion-control";
       const hint = body.nameHint || "motion-control";
@@ -2261,8 +2238,7 @@ const isKling = selectedModelNorm.startsWith("kling-");
 
       const model = "kling-2.6-motion-control";
 
-      // std=720p, pro=1080p
-      const mode = body.mode === "pro" ? "pro" : "std";
+// std=720p, pro=1080p (ya calculado arriba en 'mode')
 
       const taskCreate = await createMotionControlTask({
         model,

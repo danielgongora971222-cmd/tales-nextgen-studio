@@ -9,6 +9,7 @@ import { deleteAsset, listMyAssets, uploadUserAsset, downloadAssetToDisk } from 
 import { AssetPickerModal } from "./video/AssetPickerModal";
 import { LIGHTING_PRESETS } from "../../config/presets/lightroom";
 import OneNationUpIcon from "@/components/brand/OneNationUpIcon";
+import { estimateImageCostCredits } from "../../config/pricing.js";
 
 type Quality = "1K" | "2K" | "4K";
 type PanelKey = "model" | "quality" | null;
@@ -350,6 +351,10 @@ const LightroomTool: React.FC = () => {
     const q = normalizeQuality(model, quality);
     return q;
   }, [model, quality]);
+
+  const estimatedCostCredits = useMemo(() => {
+    return estimateImageCostCredits({ model, quality: qualityLabel, count: 1 });
+  }, [model, qualityLabel]);
 
   async function reloadHistory() {
     setIsLoadingHistory(true);

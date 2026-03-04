@@ -24,6 +24,7 @@ import {
   type O3Shot,
 } from "./video/O3MultishotModal";
 import { LimitedTextarea } from "./video/LimitedTextarea";
+import { estimateVideoCostCredits } from "../../config/pricing.js";
 
 type EditModelId =
   | "kling-o3-ref-to-video-pro"
@@ -225,6 +226,11 @@ export default function ExtendVideoTool() {
     () => sumSeconds(shotsWithPrompt),
     [shotsWithPrompt]
   );
+
+  const estimatedCostCredits = useMemo(() => {
+    const dur = multishotEnabled ? multishotTotalSeconds : durationSeconds;
+    return estimateVideoCostCredits({ modelNorm: model, durationSeconds: dur });
+  }, [model, durationSeconds, multishotEnabled, multishotTotalSeconds]);
 
   const combinedRefsCount = referenceImageIds.length + klingElementIds.length;
   const maxCombinedRefs = model === "kling-o3-ref-to-video-pro" ? 7 : 4;
@@ -1596,6 +1602,10 @@ export default function ExtendVideoTool() {
                 <span className={styles.generateLabel}>{isGenerating ? "PROCESSING" : "GENERATE"}</span>
                 {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
               </button>
+
+              <div style={{ marginTop: 8, fontSize: 12, color: "rgba(255,255,255,0.65)", textAlign: "center" }}>
+                Coste estimado: <b>{estimatedCostCredits}</b> créditos
+              </div>
 
               {isGenerating && (
                 <button type="button" className={styles.cancelBtn} onClick={onCancel}>

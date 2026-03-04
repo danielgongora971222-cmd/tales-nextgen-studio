@@ -6,6 +6,7 @@ import type { Asset } from "../../types";
 import { deleteAsset, listMyAssets, uploadUserAsset, downloadAssetToDisk } from "../../services/assetsApi";
 import { apiPostJson, formatErr } from "../../services/videoGenApi";
 import { waitJobCompletion } from "../../services/jobsApi";
+import { estimateVideoCostCredits } from "../../config/pricing.js";
 
 type Orientation = "image" | "video";
 
@@ -96,6 +97,10 @@ export default function MotionControlTool() {
   const [error, setError] = useState<string | null>(null);
 
   const canGenerate = !!user && !!refImage && !!refVideo && !isGenerating;
+  const estimatedCostCredits = useMemo(() => {
+    const pricingModelNorm = mode === "pro" ? "kling-2.6-motion-control-pro" : "kling-2.6-motion-control";
+    return estimateVideoCostCredits({ modelNorm: pricingModelNorm, isKling: true, durationSeconds: 5 });
+  }, [mode]);
 
   const filteredPickerAssets = useMemo(() => {
     const q = pickerQuery.trim().toLowerCase();
@@ -567,6 +572,10 @@ export default function MotionControlTool() {
                   Generar motion control
                 </button>
               )}
+
+              <div className="text-xs text-white/60 mt-2 text-center">
+                Coste estimado: <span className="font-semibold text-white/85">{estimatedCostCredits}</span> créditos
+              </div>
 
               {progressMsg && (
                 <div className="text-xs text-white/60 mt-2">

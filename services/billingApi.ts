@@ -1,5 +1,6 @@
 import { supabase } from "./supabaseClient";
 import { apiUrl } from "./apiBase";
+import { emitWalletRefresh } from "./appEvents";
 
 async function authHeaders(extra?: Record<string, string>): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession();
@@ -56,6 +57,7 @@ export async function mockSubscribe(planSlug: string) {
     headers,
     body: JSON.stringify({ planSlug }),
   });
+  emitWalletRefresh();
   return data.subscription;
 }
 
@@ -66,6 +68,7 @@ export async function mockTopup(productId: string) {
     headers,
     body: JSON.stringify({ productId }),
   });
+  emitWalletRefresh();
   return data;
 }
 
@@ -75,5 +78,6 @@ export async function mockCancel() {
     method: "POST",
     headers,
   });
+  emitWalletRefresh();
   return data;
 }

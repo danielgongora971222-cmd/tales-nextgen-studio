@@ -4,6 +4,7 @@ import ElementLibraryPickerModal from "../../components/ElementLibraryPickerModa
 import { Asset } from "../../types";
 import { ImageGenQuality, faceswapStep1MakeMannequin, faceswapStep2InsertFromElement, FaceSwapType } from "../../services/geminiService";
 import styles from "./FaceSwapTool.module.css";
+import { estimateFaceSwapCostCredits } from "../../config/pricing.js";
 
 const QUALITYS: ImageGenQuality[] = ["1K", "2K", "4K"];
 
@@ -46,6 +47,8 @@ export default function FaceSwapTool() {
   const step2SelectedDesc = useMemo(() => {
     return SWAP_OPTIONS.find((x) => x.id === step1SwapType)?.desc || "";
   }, [step1SwapType]);
+
+  const estimatedStepCostCredits = useMemo(() => estimateFaceSwapCostCredits(), []);
 
   // 🔒 Paso 2 hereda SIEMPRE del Paso 1
   const lockedSwapType = step1SwapType;
@@ -188,6 +191,10 @@ export default function FaceSwapTool() {
             )}
           </button>
 
+          <div className="text-center text-[12px] text-white/60 -mt-2">
+            Coste estimado: <span className="font-semibold text-white/85">{estimatedStepCostCredits}</span> crédito
+          </div>
+
           {step1Error && <div className="text-sm text-red-400">{step1Error}</div>}
 
           <div className="space-y-2">
@@ -302,6 +309,10 @@ export default function FaceSwapTool() {
               "Faceswap"
             )}
           </button>
+
+          <div className="text-center text-[12px] text-white/60 -mt-2">
+            Coste estimado: <span className="font-semibold text-white/85">{estimatedStepCostCredits}</span> crédito
+          </div>
 
           {step2Error && <div className="text-sm text-red-400">{step2Error}</div>}
 

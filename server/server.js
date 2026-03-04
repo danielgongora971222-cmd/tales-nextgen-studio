@@ -425,6 +425,7 @@ app.use(
     // deps/core
     supabaseAdmin,
     requireUser,
+    billing,
     getClientIp,
     apiError,
     httpError,
@@ -468,6 +469,7 @@ app.use(
     // deps/core
     supabaseAdmin,
     requireUser,
+    billing,
     getClientIp,
     apiError,
     httpError,

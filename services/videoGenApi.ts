@@ -335,6 +335,15 @@ export async function apiPostJson<T>(
           if (createsAsset) invalidateMyAssetsCache();
         } catch {}
 
+        // ✅ Mantén Wallet en sync después de acciones que suelen gastar créditos.
+        // Importante: NO refrescar en cada poll de /fal/status (spam de requests).
+        try {
+          const shouldRefreshWallet =
+            path.startsWith("/api/ai/video") &&
+            !path.includes("/fal/status");
+          if (shouldRefreshWallet) emitWalletRefresh();
+        } catch {}
+
         return data as T;
 
       } catch (err: any) {

@@ -9,6 +9,7 @@ import { deleteAsset, listMyAssets, uploadUserAsset, downloadAssetToDisk } from 
 import { AssetPickerModal } from "./video/AssetPickerModal";
 import { STYLE_PRESETS } from "../../config/presets/restyle";
 import OneNationUpIcon from "@/components/brand/OneNationUpIcon";
+import { estimateImageCostCredits } from "../../config/pricing.js";
 
 type Quality = "1K" | "2K" | "4K";
 type PanelKey = "model" | "quality" | null;
@@ -350,6 +351,10 @@ const RestylerTool: React.FC = () => {
     const q = normalizeQuality(model, quality);
     return q;
   }, [model, quality]);
+
+  const estimatedCostCredits = useMemo(() => {
+    return estimateImageCostCredits({ model, quality: qualityLabel, count: 1 });
+  }, [model, qualityLabel]);
 
   async function reloadHistory() {
     setIsLoadingHistory(true);
@@ -843,6 +848,10 @@ const RestylerTool: React.FC = () => {
                 <span className={styles.generateLabel}>{isGenerating ? "GENERATING" : "RESTYLE"}</span>
                 {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
               </button>
+
+              <div style={{ marginTop: 8, fontSize: 12, color: "rgba(255,255,255,0.65)", textAlign: "center" }}>
+                Coste estimado: <b>{estimatedCostCredits}</b> créditos
+              </div>
             </div>
           </div>
         </div>

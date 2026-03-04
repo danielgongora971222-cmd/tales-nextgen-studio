@@ -17,6 +17,7 @@ import { FrameStrip } from "./video/FrameStrip";
 import { ControlsRow } from "./video/ControlsRow";
 import { ControlsPopover } from "./video/ControlsPopover";
 import type { KlingShotType } from "../../services/videoModels/types";
+import { estimateVideoCostCredits } from "../../config/pricing.js";
 
 
 import {
@@ -1066,6 +1067,11 @@ const multishotTotalSeconds = useMemo(() => {
   return multishotValidShots.reduce((acc, s) => acc + s.durationSeconds, 0);
 }, [isMultishotCustomize, multishotValidShots]);
 
+const estimatedCostCredits = useMemo(() => {
+  const dur = isMultishotCustomize ? (multishotTotalSeconds || durationSeconds) : durationSeconds;
+  return estimateVideoCostCredits({ modelNorm, durationSeconds: dur });
+}, [modelNorm, durationSeconds, isMultishotCustomize, multishotTotalSeconds]);
+
 useEffect(() => {
   if (!isMultishotCustomize) return;
 
@@ -1882,6 +1888,10 @@ const clearModalSelectedIds = () => {
                             <span className={styles.generateLabel}>{isGenerating ? "GENERATING" : "GENERATE"}</span>
                             {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
                           </button>
+
+                          <div style={{ marginTop: 8, fontSize: 12, color: "rgba(255,255,255,0.65)", textAlign: "center" }}>
+                            Coste estimado: <b>{estimatedCostCredits}</b> créditos
+                          </div>
 
                           <button
                             type="button"

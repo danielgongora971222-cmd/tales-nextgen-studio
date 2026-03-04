@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import type { Asset } from "../types";
-import { createCommunityListingFromAsset, updateCommunityListing } from "../services/communityStoreApi";
+import { createCommunityListingFromAsset, deleteCommunityListing, updateCommunityListing } from "../services/communityStoreApi";
 import { invalidateMyAssetsCache } from "../services/assetsApi";
 
 interface SellListingModalProps {
@@ -105,6 +105,28 @@ export default function SellListingModal({ open, asset, onClose }: SellListingMo
     }
   }
 
+  async function handleDeleteListing() {
+    if (!asset || !listing?.id) return;
+
+    const ok = window.confirm(
+      "¿Eliminar este listing?\n\nSe quitará de la Community Store y ya no estará en venta. Esta acción se puede revertir creando un listing nuevo desde este mismo asset."
+    );
+    if (!ok) return;
+
+    setBusy(true);
+    setError(null);
+
+    try {
+      await deleteCommunityListing(listing.id);
+      invalidateMyAssetsCache(asset.type);
+      onClose();
+    } catch (e: any) {
+      setError(e?.message || "No se pudo eliminar el listing.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-[6000] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
       <div className="w-full max-w-xl rounded-2xl border border-white/10 bg-[#0b0b0b] p-5 shadow-2xl">
@@ -168,6 +190,18 @@ export default function SellListingModal({ open, asset, onClose }: SellListingMo
               {error ? <div className="mt-3 text-red-400 text-sm">{error}</div> : null}
 
               <div className="mt-4 flex items-center justify-end gap-2">
+                {listing?.id ? (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={handleDeleteListing}
+                    className="px-4 py-2 rounded-lg bg-red-600/20 text-red-200 text-sm hover:bg-red-600/25 disabled:opacity-50"
+                    title="Eliminar listing (quitarlo de la tienda)"
+                  >
+                    {busy ? "Procesando..." : "Eliminar listing"}
+                  </button>
+                ) : null}
+
                 {listing?.status === "active" ? (
                   <button
                     type="button"

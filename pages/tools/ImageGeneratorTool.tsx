@@ -10,6 +10,7 @@ import ErrorModal from "../../components/ErrorModal";
 import { STYLE_PRESETS } from "../../config/presets/restyle";
 import OneNationUpIcon from "@/components/brand/OneNationUpIcon";
 import { toggleLike } from "../../services/socialApi";
+import { estimateImageCostCredits } from "../../config/pricing.js";
 
 
 type Quality = "" | ImageGenQuality;
@@ -688,6 +689,27 @@ useEffect(() => {
   const activeCaps = useMemo(() => getActiveCaps(model), [model]);
   const modelLabel = activeCaps.label;
   const paramsLabel = `${aspectRatio} • ${quality} • x${count}`;
+
+  const estimatedCostCredits = useMemo(() => {
+    const refCount =
+      (refs?.char1 ? 1 : 0) +
+      (refs?.char2 ? 1 : 0) +
+      (refs?.char3 ? 1 : 0) +
+      (refs?.background ? 1 : 0) +
+      (Array.isArray(selectedElementAssetIds) ? selectedElementAssetIds.length : 0);
+
+    const effectiveModel = model === KLING_MODEL_O3_OMNI && refCount === 0 ? KLING_MODEL_V3_TEXT : model;
+    const caps = getActiveCaps(effectiveModel);
+
+    const effQuality =
+      quality && caps.qualities.includes(quality as any)
+        ? String(quality)
+        : String(caps.qualities[caps.qualities.length - 1] || caps.qualities[0] || "1K");
+
+    const effCount = caps.countOptions.includes(count) ? count : (caps.countOptions[0] || 1);
+
+    return estimateImageCostCredits({ model: effectiveModel, quality: effQuality, count: effCount });
+  }, [model, quality, count, refs?.char1, refs?.char2, refs?.char3, refs?.background, selectedElementAssetIds]);
   const styleLabel = selectedStyleId
     ? (STYLE_PRESETS.find((p) => p.id === selectedStyleId)?.name || "Selected")
     : "None";
@@ -2356,9 +2378,13 @@ const promptReferences: PromptReference[] = useMemo(() => {
                 onClick={handleGenerate}
                 data-loading={isGenerating ? "true" : "false"}
               >
-                <span className={styles.generateLabel}>{isGenerating ? "GENERATING" : "GENERATE"}</span>
-                {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
-              </button>
+                  <span className={styles.generateLabel}>{isGenerating ? "GENERATING" : "GENERATE"}</span>
+                  {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
+                </button>
+
+                <div style={{ marginTop: 8, fontSize: 12, color: "rgba(255,255,255,0.65)", textAlign: "center" }}>
+                  Coste estimado: <b>{estimatedCostCredits}</b> créditos
+                </div>
             </div>
           </div>
 

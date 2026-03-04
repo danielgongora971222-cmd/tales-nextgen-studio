@@ -7,6 +7,7 @@ import { Asset, GeminiModel } from "../../types";
 import { generateImageBatch } from "../../services/geminiService";
 import { deleteAsset, listMyAssets, uploadUserAsset, downloadAssetToDisk } from "../../services/assetsApi";
 import OneNationUpIcon from "@/components/brand/OneNationUpIcon";
+import { estimateImageCostCredits } from "../../config/pricing.js";
 
 import { AssetPickerModal } from "./video/AssetPickerModal";
 
@@ -214,6 +215,10 @@ const UpscalerTool: React.FC<{ prefillAsset?: Asset | null }> = ({ prefillAsset 
   }, [model]);
 
   const qualityLabel = useMemo(() => normalizeQuality(model, quality), [model, quality]);
+
+  const estimatedCostCredits = useMemo(() => {
+    return estimateImageCostCredits({ model, quality: qualityLabel, count: 1 });
+  }, [model, qualityLabel]);
 
   async function reloadHistory() {
     setIsLoadingHistory(true);
@@ -618,6 +623,10 @@ const UpscalerTool: React.FC<{ prefillAsset?: Asset | null }> = ({ prefillAsset 
                 <span className={styles.generateLabel}>{isGenerating ? "GENERATING" : "UPSCALE"}</span>
                 {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
               </button>
+
+              <div style={{ marginTop: 8, fontSize: 12, color: "rgba(255,255,255,0.65)", textAlign: "center" }}>
+                Coste estimado: <b>{estimatedCostCredits}</b> créditos
+              </div>
             </div>
           </div>
         </div>

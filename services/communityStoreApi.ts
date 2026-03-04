@@ -96,7 +96,14 @@ export async function createCommunityListingFromAsset(input: {
   return { listingId: String(data.listingId), reused: Boolean(data.reused) };
 }
 
-export async function updateCommunityListing(listingId: string, patch: { priceCredits?: number; description?: string; status?: "active" | "unlisted" }) {
+export async function deleteCommunityListing(listingId: string) {
+  return updateCommunityListing(listingId, { status: "deleted" });
+}
+
+export async function updateCommunityListing(
+  listingId: string,
+  patch: { priceCredits?: number; description?: string; status?: "active" | "unlisted" | "deleted"; name?: string }
+) {
   const headers = await authHeaders();
   const resp = await fetch(apiUrl(`/api/community-store/listings/${listingId}`), {
     method: "PATCH",

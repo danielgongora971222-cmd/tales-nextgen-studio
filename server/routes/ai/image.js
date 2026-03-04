@@ -8,28 +8,7 @@ import {
 } from "../../schemas/index.js";
 import { checkUserRateLimit } from "../../lib/userRateLimit.js";
 import { assertJobLimits } from "../../lib/jobLimits.js";
-
-function estimateImageUnitCredits({ model, quality }) {
-  // Base por resolución
-  const q = String(quality || "1K").toUpperCase();
-  let unit = 1;
-  if (q === "2K") unit = 2;
-  if (q === "4K") unit = 4;
-
-  // Multiplicadores por familia de modelo (ajustables)
-  const m = String(model || "").toLowerCase();
-  if (m.startsWith("kling")) unit *= 3;
-  else if (m.startsWith("openai:")) unit *= 2;
-  else if (m.includes("pro")) unit *= 2;
-
-  return unit;
-}
-
-function estimateImageCostCredits({ model, quality, count }) {
-  const n = Math.max(1, Number(count || 1));
-  const unit = estimateImageUnitCredits({ model, quality });
-  return unit * n;
-}
+import { estimateImageCostCredits } from "../../../config/pricing.js";
 
 export function createAiImageRouter(ctx) {
   const router = express.Router();
