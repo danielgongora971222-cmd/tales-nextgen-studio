@@ -163,12 +163,12 @@ export function createCommunityStoreRouter(ctx) {
       sellerUsername: r.seller_username_snapshot || "seller",
       sellerVerified: Boolean(r.seller_verified_snapshot),
 
-      listingKind: row.listing_kind,
-      mediaTag: row.media_tag,
+      listingKind: r.listing_kind,
+      mediaTag: r.media_tag,
 
-      name: row.name || "",
-      priceCredits: Number(row.price_credits) || 0,
-      description: row.description || "",
+      name: r.name || "",
+      priceCredits: Number(r.price_credits) || 0,
+      description: r.description || "",
 
       status: r.status,
 
@@ -179,10 +179,6 @@ export function createCommunityStoreRouter(ctx) {
       likesCount: Number(r.likes_count) || 0,
       commentsCount: Number(r.comments_count) || 0,
       salesCount: Number(r.sales_count) || 0,
-
-      likedByMe: user?.id ? likedSet.has(r.id) : false,
-      ownedByMe: user?.id ? r.seller_id === user.id : false,
-      purchasedByMe: false,
     }));
 
     return res.json({
