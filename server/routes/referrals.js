@@ -45,15 +45,71 @@ async function ensureOneCode(supabaseAdmin, ownerId, variant, buyerDiscountPct, 
 
 export function createReferralsRouter(ctx) {
   const router = express.Router();
-  const { supabaseAdmin, requireUser } = ctx;
+  const { supabaseAdmin, requireUser, billing } = ctx;
 
   function err(res, status, code, message, details) {
     return res.status(status).json({ ok: false, error: { code, message, details: details || null } });
   }
 
+  async function requireReferralAccess(userId) {
+    // Safety: si por error no pasamos billing al router, fallamos con mensaje claro
+    if (!billing?.requireActiveSubscription) {
+      return {
+        ok: false,
+        subscription: null,
+        error: {
+          code: "SERVER_MISCONFIGURED",
+          message: "Referrals no está configurado en el servidor (billing missing).",
+          details: { required: "billing.requireActiveSubscription" },
+        },
+      };
+    }
+
+    const active = await billing.requireActiveSubscription(userId);
+
+    // Si no tiene plan activo, transformamos a un error que empuje al upgrade
+    if (active?.error) {
+      if (active.error.code === "NO_ACTIVE_PLAN") {
+        return {
+          ok: false,
+          subscription: null,
+          error: {
+            code: "PLAN_UPGRADE_REQUIRED",
+            message:
+              "Para desbloquear Referidos/Afiliados necesitas activar un plan compatible. Ve a Planes y elige Partner o superior.",
+            details: { requiredFeature: "referrals", havePlan: null },
+          },
+        };
+      }
+      return { ok: false, subscription: null, error: active.error };
+    }
+
+    const sub = active?.subscription || null;
+
+    // NOTA: en tu repo actual el plan sólo expone canSell (no existe canReferrals aún),
+    // así que usamos canSell como “feature gate” para referidos.
+    if (!sub?.canReferrals) {
+      return {
+        ok: false,
+        subscription: sub,
+        error: {
+          code: "PLAN_UPGRADE_REQUIRED",
+          message:
+            "Tu plan actual no incluye Referidos/Afiliados. Para obtener códigos debes subir a un plan Partner o superior.",
+          details: { requiredFeature: "referrals", havePlan: sub?.planSlug || null },
+        },
+      };
+    }
+
+    return { ok: true, subscription: sub, error: null };
+  }
+
   router.get("/referrals/me", async (req, res) => {
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
+
+    const access = await requireReferralAccess(user.id);
+    if (!access.ok) return res.status(403).json({ ok: false, error: access.error });
 
     const a = await ensureOneCode(supabaseAdmin, user.id, "A", 20, 0, "TNG20-");
     const b = await ensureOneCode(supabaseAdmin, user.id, "B", 10, 10, "TNG10-");
@@ -90,6 +146,81 @@ export function createReferralsRouter(ctx) {
         },
       ],
     });
+  });
+
+    router.get("/referrals/summary", async (req, res) => {
+    const { user, error } = await requireUser(req);
+    if (error) return res.status(401).json({ ok: false, error });
+
+    const access = await requireReferralAccess(user.id);
+    if (!access.ok) return res.status(403).json({ ok: false, error: access.error });
+
+    const { data: rows, error: qErr } = await supabaseAdmin
+      .from("billing_referrals")
+      .select(
+        "id, referred_user_id, referred_username_snapshot, plan_slug_snapshot, buyer_bonus_credits, referrer_reward_credits, created_at, matures_at, is_matured"
+      )
+      .eq("referrer_id", user.id)
+      .order("created_at", { ascending: false })
+      .limit(100);
+
+    // Si todavía no has aplicado el patch SQL que crea billing_referrals, NO rompas el UI:
+    // devuelve vacío y una flag isConfigured=false.
+    if (qErr) {
+      const msg = String(qErr.message || "");
+      const code = String(qErr.code || "");
+      const missingTable =
+        code === "42P01" || msg.toLowerCase().includes("does not exist") || msg.toLowerCase().includes("relation");
+
+      if (missingTable) {
+        return res.json({
+          ok: true,
+          isConfigured: false,
+          referrals: [],
+          totals: {
+            count: 0,
+            totalRewardCredits: 0,
+            totalBuyerBonusCredits: 0,
+            pendingRewardCredits: 0,
+            maturedRewardCredits: 0,
+          },
+        });
+      }
+
+      return err(res, 500, "DB_QUERY_FAILED", qErr.message);
+    }
+
+    const referrals = (rows || []).map((r) => ({
+      id: r.id,
+      referredUserId: r.referred_user_id,
+      referredUsername: r.referred_username_snapshot || null,
+      planSlug: r.plan_slug_snapshot || null,
+      buyerBonusCredits: Number(r.buyer_bonus_credits) || 0,
+      referrerRewardCredits: Number(r.referrer_reward_credits) || 0,
+      createdAt: r.created_at,
+      maturesAt: r.matures_at,
+      isMatured: Boolean(r.is_matured),
+    }));
+
+    const totals = referrals.reduce(
+      (acc, r) => {
+        acc.count += 1;
+        acc.totalRewardCredits += r.referrerRewardCredits;
+        acc.totalBuyerBonusCredits += r.buyerBonusCredits;
+        if (r.isMatured) acc.maturedRewardCredits += r.referrerRewardCredits;
+        else acc.pendingRewardCredits += r.referrerRewardCredits;
+        return acc;
+      },
+      {
+        count: 0,
+        totalRewardCredits: 0,
+        totalBuyerBonusCredits: 0,
+        pendingRewardCredits: 0,
+        maturedRewardCredits: 0,
+      }
+    );
+
+    return res.json({ ok: true, isConfigured: true, referrals, totals });
   });
 
   return router;

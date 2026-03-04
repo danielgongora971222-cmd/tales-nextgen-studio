@@ -112,24 +112,47 @@ export default function CommunityStore({ onNavigate }: Props) {
 
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
         {items.map((it) => (
-          <button
+          <div
             key={it.id}
-            type="button"
-            className="text-left rounded-xl overflow-hidden border border-white/10 bg-black/30 hover:bg-black/40 transition"
+            role="button"
+            tabIndex={0}
+            className="text-left rounded-xl overflow-hidden border border-white/10 bg-black/30 hover:bg-black/40 transition cursor-pointer"
             onClick={() => setSelectedId(it.id)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") setSelectedId(it.id);
+            }}
           >
             <div className="w-full aspect-square bg-black/40">
               {it.previewUrl ? <img src={it.previewUrl} alt="" className="w-full h-full object-cover" /> : null}
             </div>
+
             <div className="p-3">
-              <div className="text-sm font-semibold">{it.priceCredits} credits</div>
-              <div className="text-xs text-white/60 mt-1">@{it.sellerUsername}</div>
+              <div className="text-sm font-semibold text-white line-clamp-1">{it.name || "Sin nombre"}</div>
+
+              <div className="mt-1 flex items-center justify-between gap-3">
+                <div className="text-xs text-white/70">
+                  <span className="font-semibold text-white/80">{it.priceCredits}</span> créditos
+                </div>
+
+                <button
+                  type="button"
+                  className="px-3 py-1 rounded-lg bg-white/10 hover:bg-white/15 text-xs text-white"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedId(it.id);
+                  }}
+                >
+                  Comprar
+                </button>
+              </div>
+
+              <div className="text-xs text-white/60 mt-2">@{it.sellerUsername}</div>
               <div className="text-xs text-white/70 mt-2 line-clamp-2">{it.description}</div>
               <div className="text-[11px] text-white/50 mt-2">
                 ❤ {it.likesCount} · 💬 {it.commentsCount} · 🧾 {it.salesCount}
               </div>
             </div>
-          </button>
+          </div>
         ))}
       </div>
 

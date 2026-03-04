@@ -29,6 +29,9 @@ export function createBillingRouter(ctx) {
     const planSlug = req.body?.planSlug ? String(req.body.planSlug) : "";
     if (!planSlug) return err(res, 400, "BAD_REQUEST", "Falta planSlug.");
 
+    const rawReferral = req.body?.referralCode ? String(req.body.referralCode) : "";
+    const referralCode = rawReferral ? rawReferral.trim().toUpperCase() : "";
+
     // ✅ Requiere aceptación legal previa (ETAPA 2)
     const REQUIRED_TERMS = process.env.LEGAL_TERMS_VERSION || "2026-03-03";
     const REQUIRED_PRIVACY = process.env.LEGAL_PRIVACY_VERSION || "2026-03-03";
@@ -65,6 +68,22 @@ export function createBillingRouter(ctx) {
 
     if (pErr) return err(res, 500, "DB_QUERY_FAILED", pErr.message);
     if (!plan?.id) return err(res, 404, "PLAN_NOT_FOUND", "Plan no existe o está inactivo.");
+
+    // Validación temprana del código (si viene)
+    if (referralCode) {
+      const { data: rc, error: rcErr } = await supabaseAdmin
+        .from("community_referral_codes")
+        .select("id, owner_id, is_active")
+        .eq("code", referralCode)
+        .eq("is_active", true)
+        .maybeSingle();
+
+      if (rcErr) return err(res, 500, "DB_QUERY_FAILED", rcErr.message);
+      if (!rc?.id) return err(res, 400, "INVALID_REFERRAL_CODE", "El código de referido no es válido o está inactivo.");
+      if (rc.owner_id === user.id) {
+        return err(res, 400, "INVALID_REFERRAL_CODE", "No puedes usar tu propio código de referido.");
+      }
+    }
 
     const now = new Date();
     const periodMs = plan.billing_period === "week" ? 7 * 24 * 60 * 60 * 1000 : 30 * 24 * 60 * 60 * 1000;
@@ -113,7 +132,37 @@ export function createBillingRouter(ctx) {
       return err(res, 500, "PLAN_GRANT_FAILED", gErr.message, rbErr ? { rollback: rbErr.message } : null);
     }
 
-    return res.json({ ok: true, subscription: sub });
+    // Aplicar referral si viene (no rompemos la compra si el bonus falla por un deploy incompleto)
+    if (referralCode) {
+      const { data: refData, error: refErr } = await supabaseAdmin.rpc("billing_apply_referral_on_subscribe", {
+        p_buyer_id: user.id,
+        p_referral_code: referralCode,
+        p_plan_id: plan.id,
+        p_idempotency_key: `subref:${idem}`,
+      });
+
+      if (refErr) {
+        return res.json({
+          ok: true,
+          subscription: sub,
+          referral: { applied: false, warning: "REFERRAL_APPLY_FAILED", message: refErr.message },
+        });
+      }
+
+      const rrow = Array.isArray(refData) ? refData[0] : null;
+
+      return res.json({
+        ok: true,
+        subscription: sub,
+        referral: {
+          applied: true,
+          buyerBonusCredits: Number(rrow?.buyer_bonus_credits) || 0,
+          referrerRewardCredits: Number(rrow?.referrer_reward_credits) || 0,
+        },
+      });
+    }
+
+    return res.json({ ok: true, subscription: sub, referral: { applied: false } });
   });
 
   // POST /api/billing/mock/topup { productId }
@@ -181,7 +230,7 @@ export function createBillingRouter(ctx) {
   router.get("/billing/plans", async (req, res) => {
     const { data, error } = await supabaseAdmin
       .from("billing_plans")
-      .select("id, slug, name, billing_period, price_cents, plan_credits, bonus_credits, max_concurrency, can_sell, is_active")
+            .select("id, slug, name, billing_period, price_cents, plan_credits, bonus_credits, max_concurrency, can_sell, can_referrals, is_active")
       .eq("is_active", true)
       .order("price_cents", { ascending: true });
 

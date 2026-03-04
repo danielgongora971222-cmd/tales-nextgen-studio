@@ -17,7 +17,7 @@ export function createWalletRouter(ctx) {
     await supabaseAdmin.from("wallet_balances").upsert({ user_id: user.id }, { onConflict: "user_id" });
 
     // maturation (safe para repetirse)
-    await supabaseAdmin.rpc("community_mature_due_purchases", {});
+    await supabaseAdmin.rpc("billing_mature_due_referrals", {});
 
     const { data, error: qErr } = await supabaseAdmin
       .from("wallet_balances")
@@ -53,6 +53,7 @@ export function createWalletRouter(ctx) {
             plan_slug: active.plan_slug,
             plan_name: active.plan_name,
             can_sell: !!active.can_sell,
+            can_referrals: !!active.can_referrals,
             current_period_end: active.current_period_end,
           }
         : null,

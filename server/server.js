@@ -395,10 +395,18 @@ app.use(
 
 app.use(
   "/api",
+  createReferralsRouter({
+    supabaseAdmin,
+    requireUser,
+    billing,
+  })
+);
+
+app.use(
+  "/api",
   createWalletRouter({
     supabaseAdmin,
     requireUser,
-    ADMIN_TOKEN: process.env.ADMIN_TOKEN,
   })
 );
 

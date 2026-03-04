@@ -69,6 +69,40 @@ export function createAiVideoRouter(ctx) {
   // Uploads: SIEMPRE usamos uploadBufferToStorage / uploadBase64ToStorage / createClientUploadTarget,
   // que soportan Cloudflare R2 (principal) y Supabase Storage (solo legacy, si aún existiera).
 
+  async function spendVideoCreditsOrReject({
+    userId,
+    req,
+    modelNorm,
+    durationSeconds,
+    count = 1,
+    entryType = "gen_spend_video",
+    refType = "ai_video",
+    refId = null,
+  }) {
+    const isKling = String(modelNorm || "").startsWith("kling-");
+    const dur = clampInt(durationSeconds || 0, 1, 60);
+    const n = clampInt(count || 1, 1, 8);
+
+    const perVideo = estimateVideoCostCredits({ modelNorm, durationSeconds: dur, isKling });
+    const totalCredits = perVideo * n;
+
+    const baseIdem = ctx?.billing?.getIdempotencyKey ? ctx.billing.getIdempotencyKey(req) : undefined;
+    const idem = baseIdem ? `${refType}:${baseIdem}` : undefined;
+
+    const spend = await ctx.billing.spendCredits({
+      userId,
+      amountCredits: totalCredits,
+      entryType,
+      refType,
+      refId,
+      idempotencyKey: idem,
+    });
+
+    if (!spend.ok) return { ok: false, error: spend.error, totalCredits, idempotencyKey: idem };
+
+    return { ok: true, totalCredits, idempotencyKey: idem };
+  }
+
 
   // Helper: registra el job async (Fal queue) en la tabla public.jobs
   async function upsertFalJobRow({
@@ -648,6 +682,22 @@ const isKling = selectedModelNorm.startsWith("kling-");
           }
           omniPayload.prompt = p;
         }
+
+        const spend = await spendVideoCreditsOrReject({
+          userId: user.id,
+          req,
+          modelNorm: selectedModelNorm,
+          durationSeconds: dur,
+          count: 1,
+          entryType: "gen_spend_video",
+          refType: "ai_video",
+          refId: null,
+        });
+
+        if (!spend.ok) {
+          return res.status(402).json({ ok: false, error: spend.error });
+        }
+
 
         let taskResponse = null;
         try {

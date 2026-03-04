@@ -20,6 +20,7 @@ export function createBillingHelpers(supabaseAdmin) {
         planSlug: sub.plan_slug,
         planName: sub.plan_name,
         canSell: !!sub.can_sell,
+        canReferrals: !!sub.can_referrals,
         maxConcurrency: Number(sub.max_concurrency) || 2,
         billingPeriod: sub.billing_period,
         currentPeriodStart: sub.current_period_start,

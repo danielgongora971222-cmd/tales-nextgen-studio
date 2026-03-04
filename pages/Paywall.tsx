@@ -25,6 +25,8 @@ export default function Paywall({
   const [acceptPrivacy, setAcceptPrivacy] = useState(false);
   const [acceptAutopay, setAcceptAutopay] = useState(false);
 
+  const [referralCode, setReferralCode] = useState("");
+
   const canContinue = acceptTerms && acceptPrivacy && acceptAutopay;
 
   useEffect(() => {
@@ -55,7 +57,7 @@ export default function Paywall({
         autopayVersion: AUTOPAY_VERSION,
       });
 
-      await mockSubscribe(planSlug);
+      await mockSubscribe(planSlug, referralCode);
       await onSubscribed();
     } catch (e: any) {
       setError(e?.message || "No se pudo activar el plan.");
@@ -111,6 +113,19 @@ export default function Paywall({
           </label>
 
           {!canContinue ? <div className="text-xs text-yellow-200/80 mt-3">Debes marcar las 3 casillas para activar un plan.</div> : null}
+        </div>
+
+        <div className="mt-6 rounded-2xl border border-white/10 bg-black/30 p-4">
+          <div className="text-sm font-semibold mb-2">Código de referido (opcional)</div>
+          <input
+            className="w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-white outline-none"
+            placeholder="Ej: TALES-B-XXXXXX"
+            value={referralCode}
+            onChange={(e) => setReferralCode(e.target.value)}
+          />
+          <div className="text-xs text-white/60 mt-2">
+            Si alguien te dio un código, introdúcelo aquí para obtener la bonificación al activar tu plan.
+          </div>
         </div>
 
         {error ? <div className="mt-4 text-red-400">{error}</div> : null}

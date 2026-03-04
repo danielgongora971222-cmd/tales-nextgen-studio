@@ -50,12 +50,13 @@ export async function billingTopups() {
   return data.topups || [];
 }
 
-export async function mockSubscribe(planSlug: string) {
-  const headers = await authHeaders();
+export async function mockSubscribe(planSlug: string, referralCode?: string) {
+  const headers = await authHeaders({ "x-idempotency-key": crypto.randomUUID() });
+  const clean = referralCode ? referralCode.trim() : "";
   const data = await request("/api/billing/mock/subscribe", {
     method: "POST",
     headers,
-    body: JSON.stringify({ planSlug }),
+    body: JSON.stringify({ planSlug, referralCode: clean || null }),
   });
   emitWalletRefresh();
   return data.subscription;
