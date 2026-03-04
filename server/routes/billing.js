@@ -103,7 +103,15 @@ export function createBillingRouter(ctx) {
       p_idempotency_key: `grant:${idem}`,
     });
 
-    if (gErr) return err(res, 500, "PLAN_GRANT_FAILED", gErr.message);
+    if (gErr) {
+      // rollback: no queremos dejar una subscripción "active" si no se pudieron otorgar créditos
+      const { error: rbErr } = await supabaseAdmin
+        .from("billing_subscriptions")
+        .update({ status: "expired", updated_at: new Date().toISOString() })
+        .eq("id", sub.id);
+
+      return err(res, 500, "PLAN_GRANT_FAILED", gErr.message, rbErr ? { rollback: rbErr.message } : null);
+    }
 
     return res.json({ ok: true, subscription: sub });
   });

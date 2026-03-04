@@ -215,11 +215,11 @@ begin
   end if;
 
   -- reset del bucket plan y suma bonus
-  update public.wallet_balances
+  update public.wallet_balances as wb
     set gen_plan_credits = v_plan_credits,
-        gen_bonus_credits = gen_bonus_credits + coalesce(v_bonus_credits, 0),
+        gen_bonus_credits = wb.gen_bonus_credits + coalesce(v_bonus_credits, 0),
         updated_at = now()
-  where user_id = p_user_id;
+  where wb.user_id = p_user_id;
 
   insert into public.wallet_ledger(user_id, entry_type, amount_credits, ref_type, ref_id, idempotency_key)
   values (p_user_id, 'plan_grant', 0, 'plan', p_plan_id, p_idempotency_key)
@@ -301,10 +301,10 @@ begin
   values (p_user_id, p_product_id, v_added, v_added, 'mock', p_idempotency_key)
   returning id into v_purchase;
 
-  update public.wallet_balances
-    set gen_topup_credits = gen_topup_credits + v_added,
+  update public.wallet_balances as wb
+    set gen_topup_credits = wb.gen_topup_credits + v_added,
         updated_at = now()
-  where user_id = p_user_id;
+  where wb.user_id = p_user_id;
 
   insert into public.wallet_ledger(user_id, entry_type, amount_credits, ref_type, ref_id, idempotency_key)
   values (p_user_id, 'topup_grant', v_added, 'topup', v_purchase, p_idempotency_key)

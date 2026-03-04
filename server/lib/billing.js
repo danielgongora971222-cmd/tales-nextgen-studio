@@ -91,9 +91,9 @@ export function createBillingHelpers(supabaseAdmin) {
       ok: true,
       spend: {
         ledgerId: row?.ledger_id || null,
-        newPlanCredits: Number(row?.new_plan_credits) || 0,
-        newTopupCredits: Number(row?.new_topup_credits) || 0,
-        newBonusCredits: Number(row?.new_bonus_credits) || 0,
+        newPlanCredits: Number(row?.gen_plan_credits) || 0,
+        newTopupCredits: Number(row?.gen_topup_credits) || 0,
+        newBonusCredits: Number(row?.gen_bonus_credits) || 0,
       },
     };
   }
