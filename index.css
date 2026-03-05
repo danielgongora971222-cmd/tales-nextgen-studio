@@ -139,6 +139,148 @@ body::before {
   background: linear-gradient(90deg, transparent, rgba(241,225,148,0.18), transparent);
 }
 
+/* ===============================
+   Premium Hero Cards (My Account)
+   - Used in pages/Paywall.tsx hero cards
+   - Customize per-card with CSS variables:
+     --ph-accent, --ph-accent2
+=============================== */
+
+.premium-hero-card {
+  --ph-accent: rgba(241, 225, 148, 0.55);
+  --ph-accent2: rgba(111, 168, 255, 0.35);
+
+  position: relative;
+  overflow: hidden;
+
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+
+  background:
+    radial-gradient(900px 260px at 10% 0%, rgba(255, 255, 255, 0.06), transparent 70%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(0, 0, 0, 0.70));
+
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.58);
+  backdrop-filter: blur(14px);
+
+  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+}
+
+.premium-hero-card::before {
+  content: "";
+  position: absolute;
+  inset: -180px -160px auto auto;
+  width: 420px;
+  height: 420px;
+  background: radial-gradient(circle at center, var(--ph-accent) 0%, transparent 62%);
+  filter: blur(18px);
+  opacity: 0.75;
+  pointer-events: none;
+  transform: translateZ(0);
+  animation: premiumGlow 8s ease-in-out infinite;
+}
+
+.premium-hero-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  padding: 1px;
+  border-radius: inherit;
+  background: linear-gradient(135deg, var(--ph-accent), rgba(255, 255, 255, 0.18), var(--ph-accent2));
+  background-size: 200% 200%;
+  animation: premiumBorder 10s ease infinite;
+
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+
+  pointer-events: none;
+  opacity: 0.9;
+}
+
+.premium-hero-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow: 0 26px 64px rgba(0, 0, 0, 0.66);
+}
+
+@keyframes premiumBorder {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+@keyframes premiumGlow {
+  0% { transform: translate3d(0,0,0) scale(1); opacity: 0.68; }
+  50% { transform: translate3d(-16px, 10px, 0) scale(1.06); opacity: 0.82; }
+  100% { transform: translate3d(0,0,0) scale(1); opacity: 0.68; }
+}
+
+.premium-hero-icon {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.30);
+}
+
+.premium-hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.35);
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.premium-hero-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--ph-accent);
+  box-shadow: 0 0 14px var(--ph-accent);
+}
+
+.premium-hero-btn {
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.06));
+  color: rgba(255, 255, 255, 0.92);
+  transition: background 160ms ease, transform 160ms ease, border-color 160ms ease;
+}
+
+.premium-hero-btn:hover {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.08));
+  border-color: rgba(255, 255, 255, 0.16);
+  transform: translateY(-1px);
+}
+
+.premium-hero-btn--primary {
+  background: linear-gradient(135deg, var(--ph-accent), var(--ph-accent2));
+  color: #0b0b0f;
+  font-weight: 800;
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.premium-hero-btn--primary:hover {
+  background: linear-gradient(135deg, var(--ph-accent), rgba(255,255,255,0.22), var(--ph-accent2));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .premium-hero-card,
+  .premium-hero-btn {
+    transition: none !important;
+  }
+  .premium-hero-card::before,
+  .premium-hero-card::after {
+    animation: none !important;
+  }
+}
 
 /* Button base (works even without Tailwind) */
 .hud-btn {

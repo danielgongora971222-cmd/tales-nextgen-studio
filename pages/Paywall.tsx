@@ -25,6 +25,10 @@ function formatK(n: number) {
   return String(v);
 }
 
+function premiumVars(accent: string, accent2: string): React.CSSProperties {
+  return { ["--ph-accent" as any]: accent, ["--ph-accent2" as any]: accent2 } as React.CSSProperties;
+}
+
 export default function Paywall({
   onSubscribed,
   onContinueExploring,
@@ -134,14 +138,45 @@ export default function Paywall({
 
       {/* Hero cards */}
       <div className="grid lg:grid-cols-3 gap-4 mb-6">
-        <div className="rounded-3xl border border-white/10 bg-white/5 p-5">
-          <div className="text-sm font-semibold">Plan</div>
-          <div className="text-2xl font-extrabold mt-1">{heroPlanName}</div>
-          <div className="text-sm text-white/60 mt-2">Next renewal: {heroNext}</div>
-          <div className="mt-4">
+        <div
+          className="premium-hero-card p-5"
+          style={premiumVars("rgba(244, 197, 66, 0.55)", "rgba(240, 107, 87, 0.28)")}
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <div className="premium-hero-badge">
+                <span className="premium-hero-dot" aria-hidden="true" />
+                <span>Plan</span>
+              </div>
+
+              <div className="text-2xl font-extrabold mt-3 truncate">{heroPlanName}</div>
+              <div className="text-sm text-white/60 mt-2">Next renewal: {heroNext}</div>
+            </div>
+
+            <div className="premium-hero-icon" aria-hidden="true" title="Plan">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M6 2h12l4 8-10 12L2 10l4-8Z" />
+                <path d="M10 10 8 2" />
+                <path d="m14 10 2-8" />
+                <path d="M2 10h20" />
+              </svg>
+            </div>
+          </div>
+
+          <div className="mt-5">
             <button
               type="button"
-              className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-sm"
+              className="premium-hero-btn px-4 py-2 text-sm"
               onClick={() => setTab("plans")}
             >
               View plans
@@ -149,34 +184,93 @@ export default function Paywall({
           </div>
         </div>
 
-        <div className="rounded-3xl border border-white/10 bg-white/5 p-5">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <div className="text-sm font-semibold">Credits</div>
-              <div className="text-2xl font-extrabold mt-1">{formatK(availableCredits)}</div>
+        <div
+          className="premium-hero-card p-5"
+          style={premiumVars("rgba(111, 168, 255, 0.55)", "rgba(46, 229, 157, 0.32)")}
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <div className="premium-hero-badge">
+                <span className="premium-hero-dot" aria-hidden="true" />
+                <span>Credits</span>
+              </div>
+
+              <div className="text-2xl font-extrabold mt-3">{formatK(availableCredits)}</div>
               <div className="text-[12px] text-white/60 mt-2">
                 Plan {formatK(planCredits)} · Extra {formatK(topupCredits)} · Bonus {formatK(bonusCredits)}
               </div>
             </div>
+
             <button
               type="button"
-              className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10 text-xs"
+              className="premium-hero-btn px-3 py-1.5 text-xs"
               onClick={() => setTab("credits")}
+              title="Credit details"
             >
               Details
             </button>
           </div>
-        </div>
 
-        <div className="rounded-3xl border border-white/10 bg-white/5 p-5">
-          <div className="text-sm font-semibold">Quick actions</div>
-          <div className="text-sm text-white/60 mt-2">Buy extra credits or update your plan.</div>
-          <div className="mt-4 flex gap-2">
-            <button type="button" className="px-4 py-2 rounded-xl bg-white text-black font-bold" onClick={() => setTab("credits")}>
+          <div className="mt-5">
+            <button
+              type="button"
+              className="premium-hero-btn premium-hero-btn--primary px-4 py-2 text-sm"
+              onClick={() => setTab("credits")}
+            >
               Buy credits
             </button>
-            <button type="button" className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10" onClick={() => setTab("plans")}>
+          </div>
+        </div>
+
+        <div
+          className="premium-hero-card p-5"
+          style={premiumVars("rgba(123, 77, 255, 0.55)", "rgba(240, 107, 87, 0.30)")}
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <div className="premium-hero-badge">
+                <span className="premium-hero-dot" aria-hidden="true" />
+                <span>Quick actions</span>
+              </div>
+
+              <div className="text-sm text-white/65 mt-3">
+                Upgrade your plan or top up extra credits anytime.
+              </div>
+            </div>
+
+            <div className="premium-hero-icon" aria-hidden="true" title="Actions">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M12 6v6l4 2" />
+                <path d="M21 12a9 9 0 1 1-9-9 9 9 0 0 1 9 9Z" />
+              </svg>
+            </div>
+          </div>
+
+          <div className="mt-5 flex gap-2">
+            <button
+              type="button"
+              className="premium-hero-btn premium-hero-btn--primary px-4 py-2 text-sm"
+              onClick={() => setTab("plans")}
+            >
               Upgrade
+            </button>
+
+            <button
+              type="button"
+              className="premium-hero-btn px-4 py-2 text-sm"
+              onClick={() => setTab("credits")}
+            >
+              Extra credits
             </button>
           </div>
         </div>
