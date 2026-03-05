@@ -2,7 +2,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import styles from "./ImageGeneratorTool.module.css";
 import { generateImageBatch, type PromptReference, type ImageGenQuality } from "../../services/geminiService";
 import { MentionTextarea, type MentionItem } from "../../components/MentionTextarea";
-import { deleteAsset, listMyAssets, uploadUserAsset, downloadAssetToDisk } from "../../services/assetsApi";
+import {
+  deleteAsset,
+  listMyAssets,
+  listPurchasedAssets,
+  uploadUserAsset,
+  downloadAssetToDisk,
+} from "../../services/assetsApi";
 import { useAuth } from "../../contexts/AuthContext";
 import { supabase } from "../../services/supabaseClient";
 import { Asset, GeminiModel } from "../../types";
@@ -606,6 +612,9 @@ const ImageGeneratorTool: React.FC = () => {
 
   // "library": todas tus imágenes (generadas + subidas) para el picker y recipe
   const [myAssets, setMyAssets] = useState<Asset[]>([]);
+  const [purchasedAssets, setPurchasedAssets] = useState<Asset[]>([]);
+  const [refLibraryTab, setRefLibraryTab] = useState<"history" | "purchased">("history");
+  const [elementLibraryTab, setElementLibraryTab] = useState<"mine" | "purchased">("mine");
 
   const [prompt, setPrompt] = useState("");
   const [model, setModel] = useState<string>(GeminiModel.IMAGE);
@@ -676,14 +685,17 @@ useEffect(() => {
 
   const elementPickerCandidates = useMemo(() => {
     const q = (elementCreatePickerQuery || "").trim().toLowerCase();
-    const imgs = (myAssets || []).filter((a: any) => a?.type === "image" && a?.url);
+    const source = elementLibraryTab === "purchased" ? purchasedAssets : myAssets;
+    const imgs = (source || []).filter((a: any) => a?.type === "image" && a?.url);
+
     if (!q) return imgs;
+
     return imgs.filter((a: any) => {
       const n = String(a?.name || "").toLowerCase();
       const p = String(a?.prompt || "").toLowerCase();
       return n.includes(q) || p.includes(q);
     });
-  }, [myAssets, elementCreatePickerQuery]);
+  }, [elementLibraryTab, myAssets, purchasedAssets, elementCreatePickerQuery]);
 
   // Al abrir el picker de Library dentro de "Create Element":
   // hacemos scroll suave hasta el panel y reiniciamos el scroll interno arriba.
@@ -951,11 +963,16 @@ useEffect(() => {
   async function reloadHistory() {
     setIsLoadingHistory(true);
     try {
-      // Importante:
-      // - myAssets se usa como "biblioteca" para el picker y para reconstruir la receta (refs).
-      // - NO filtramos las imágenes subidas como referencia aquí, porque si no, la receta no puede
-      //   encontrar las miniaturas (characterAssetIds/backgroundAssetId) al abrir el viewer.
-      const assets = await listMyAssets({ type: "image", limit: 300 });
+      const [ownedRes, purchasedRes] = await Promise.allSettled([
+        listMyAssets({ type: "image", limit: 300 }),
+        listPurchasedAssets({ type: "image", limit: 300, fresh: true }),
+      ]);
+
+      if (ownedRes.status !== "fulfilled") {
+        throw ownedRes.reason;
+      }
+
+      const assets = ownedRes.value;
 
       const sorted = [...assets].sort((a: any, b: any) => {
         const ta = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
@@ -963,8 +980,20 @@ useEffect(() => {
         return tb - ta;
       });
 
-      // 1) librería completa (para picker + recipe)
+      // 1) librería propia (para picker + recipe)
       setMyAssets(sorted);
+
+      if (purchasedRes.status === "fulfilled") {
+        const purchasedSorted = [...purchasedRes.value].sort((a: any, b: any) => {
+          const ta = Number((a as any)?.acquiredAt || a?.createdAt || 0);
+          const tb = Number((b as any)?.acquiredAt || b?.createdAt || 0);
+          return tb - ta;
+        });
+        setPurchasedAssets(purchasedSorted);
+      } else {
+        console.warn("[purchased-assets] load failed:", purchasedRes.reason);
+        setPurchasedAssets([]);
+      }
 
       // 2) historial: SOLO generaciones de esta herramienta
       const onlyGenerated = sorted.filter(isGeneratedHistoryItem);
@@ -1619,8 +1648,12 @@ const promptReferences: PromptReference[] = useMemo(() => {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  const refLibraryAssets = useMemo(() => {
+    return refLibraryTab === "purchased" ? purchasedAssets : myAssets;
+  }, [refLibraryTab, purchasedAssets, myAssets]);
+
   const filteredPickerAssets = useMemo(() => {
-    const base = (myAssets || []).filter((a: any) => a?.type === "image" && a?.url);
+    const base = (refLibraryAssets || []).filter((a: any) => a?.type === "image" && a?.url);
     const q = pickerQuery.trim().toLowerCase();
     if (!q) return base;
 
@@ -1628,7 +1661,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
       const caption = removeStylePresetBlock(a.prompt || "").toLowerCase();
       return (a.name || "").toLowerCase().includes(q) || caption.includes(q);
     });
-  }, [myAssets, pickerQuery]);
+  }, [refLibraryAssets, pickerQuery]);
 
   const recipeStyleName = useMemo(() => {
     return getStyleNameFromPromptOrSelection({ prompt, selectedStyleId });
@@ -2407,9 +2440,26 @@ const promptReferences: PromptReference[] = useMemo(() => {
                         </button>
                       </div>
 
+                      <div className={styles.pickerTabs}>
+                        <button
+                          type="button"
+                          className={`${styles.smallBtnGhost} ${refLibraryTab === "history" ? styles.smallBtnGhostActive : ""}`}
+                          onClick={() => setRefLibraryTab("history")}
+                        >
+                          Your library
+                        </button>
+                        <button
+                          type="button"
+                          className={`${styles.smallBtnGhost} ${refLibraryTab === "purchased" ? styles.smallBtnGhostActive : ""}`}
+                          onClick={() => setRefLibraryTab("purchased")}
+                        >
+                          Purchased assets
+                        </button>
+                      </div>
+
                       <input
                         className={styles.search}
-                        placeholder="Search in your library..."
+                        placeholder={refLibraryTab === "purchased" ? "Search in purchased assets..." : "Search in your library..."}
                         value={pickerQuery}
                         onChange={(e) => setPickerQuery(e.target.value)}
                       />
@@ -2423,15 +2473,28 @@ const promptReferences: PromptReference[] = useMemo(() => {
                             onClick={() => {
                               setRefSlot(pickerSlot, a);
                               setPickerSlot(null);
-                              setPanel(null); // auto-close al seleccionar
+                              setPanel(null);
                             }}
                           >
                             <img src={a.url} alt={a.name} />
-                            <div className={styles.pickerTileCap}>
-                              {removeStylePresetBlock(a.prompt || "") || a.name}
+                            <div className={styles.pickerTileMeta}>
+                              <div className={styles.pickerTileCap}>
+                                {removeStylePresetBlock(a.prompt || "") || a.name}
+                              </div>
+                              {a.accessSource === "purchased" ? (
+                                <span className={styles.pickerTileBadge}>Purchased</span>
+                              ) : null}
                             </div>
                           </button>
                         ))}
+
+                        {filteredPickerAssets.length === 0 ? (
+                          <div className={styles.pickerEmpty}>
+                            {refLibraryTab === "purchased"
+                              ? "Aún no tienes assets comprados en Community Store."
+                              : "No images found in your library."}
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   )}
@@ -2784,9 +2847,26 @@ const promptReferences: PromptReference[] = useMemo(() => {
               {elementCreatePickerSlot !== null && (
                 <div ref={elementPickerRef} className={styles.elementPicker}>
                   <div className={styles.elementPickerTop}>
-                    <div className={styles.elementPickerTitle}>Pick from your library</div>
+                    <div className={styles.elementPickerTitle}>Pick from library</div>
                     <button type="button" className={styles.smallBtnGhost} onClick={() => setElementCreatePickerSlot(null)}>
                       Close
+                    </button>
+                  </div>
+
+                  <div className={styles.pickerTabs}>
+                    <button
+                      type="button"
+                      className={`${styles.smallBtnGhost} ${elementLibraryTab === "mine" ? styles.smallBtnGhostActive : ""}`}
+                      onClick={() => setElementLibraryTab("mine")}
+                    >
+                      Your library
+                    </button>
+                    <button
+                      type="button"
+                      className={`${styles.smallBtnGhost} ${elementLibraryTab === "purchased" ? styles.smallBtnGhostActive : ""}`}
+                      onClick={() => setElementLibraryTab("purchased")}
+                    >
+                      Purchased assets
                     </button>
                   </div>
 
@@ -2794,7 +2874,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
                     className={styles.search}
                     value={elementCreatePickerQuery}
                     onChange={(e) => setElementCreatePickerQuery(e.target.value)}
-                    placeholder="Search images..."
+                    placeholder={elementLibraryTab === "purchased" ? "Search purchased assets..." : "Search images..."}
                   />
 
                   <div ref={elementPickerAreaRef} className={styles.pickerArea}>
@@ -2812,12 +2892,21 @@ const promptReferences: PromptReference[] = useMemo(() => {
                           }}
                         >
                           <img src={a.url} alt={a.name || "asset"} />
-                          <div className={styles.pickerTileCap}>{a.name || "Untitled"}</div>
+                          <div className={styles.pickerTileMeta}>
+                            <div className={styles.pickerTileCap}>{a.name || "Untitled"}</div>
+                            {a.accessSource === "purchased" ? (
+                              <span className={styles.pickerTileBadge}>Purchased</span>
+                            ) : null}
+                          </div>
                         </button>
                       ))}
 
                       {elementPickerCandidates.length === 0 && (
-                        <div className={styles.elementPickerEmpty}>No images found</div>
+                        <div className={styles.pickerEmpty}>
+                          {elementLibraryTab === "purchased"
+                            ? "Aún no tienes assets comprados en Community Store."
+                            : "No images found."}
+                        </div>
                       )}
                     </div>
                   </div>

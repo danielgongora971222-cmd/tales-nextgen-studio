@@ -484,6 +484,49 @@ export default function CommunityStore({ onNavigate }: Props) {
 
 
 
+      {/* Filtros + búsqueda del feed */}
+      <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
+          {filters.map((f) => {
+            const active = feedFilter === f.key;
+            return (
+              <button
+                key={f.key}
+                type="button"
+                disabled={f.disabled}
+                className={
+                  "rounded-xl border px-3 py-2 text-xs font-semibold transition focus:outline-none focus:ring-2 focus:ring-white/25 " +
+                  (active
+                    ? "border-white/25 bg-white/15 text-white"
+                    : "border-white/10 bg-white/5 text-white/80 hover:border-white/20 hover:bg-white/10") +
+                  (f.disabled ? " opacity-50 cursor-not-allowed" : "")
+                }
+                onClick={() => {
+                  if (f.disabled) {
+                    setError("Inicia sesión para ver ‘Mi tienda’. ");
+                    return;
+                  }
+                  setError(null);
+                  setFeedFilter(f.key);
+                }}
+              >
+                {f.label}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="relative w-full md:w-[360px]">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/55" />
+          <input
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="Buscar por nombre o @creador…"
+            className="w-full rounded-2xl border border-white/10 bg-white/5 py-2 pl-10 pr-3 text-sm text-white/90 outline-none transition focus:border-white/25 focus:bg-white/10"
+          />
+        </div>
+      </div>
+
       {error ? <div className="mb-4 text-red-400">{error}</div> : null}
 
       {/* FEED: MISMO estilo del historial del ImageGeneratorTool (sin marcos / sin forzar aspect) */}
@@ -922,51 +965,6 @@ export default function CommunityStore({ onNavigate }: Props) {
                       </div>
                     </div>
                   </div>
-
-                  {/* Filtros + búsqueda */}
-                  <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <div className="flex flex-wrap items-center gap-2">
-                      {filters.map((f) => {
-                        const active = feedFilter === f.key;
-                        return (
-                          <button
-                            key={f.key}
-                            type="button"
-                            disabled={f.disabled}
-                            className={
-                              "rounded-xl border px-3 py-2 text-xs font-semibold transition focus:outline-none focus:ring-2 focus:ring-white/25 " +
-                              (active
-                                ? "border-white/25 bg-white/15 text-white"
-                                : "border-white/10 bg-white/5 text-white/80 hover:border-white/20 hover:bg-white/10") +
-                              (f.disabled ? " opacity-50 cursor-not-allowed" : "")
-                            }
-                            onClick={() => {
-                              if (f.disabled) {
-                                setError("Inicia sesión para ver ‘Mi tienda’. ");
-                                return;
-                              }
-                              setError(null);
-                              setFeedFilter(f.key);
-                            }}
-                          >
-                            {f.label}
-                          </button>
-                        );
-                      })}
-                    </div>
-
-                    <div className="relative w-full md:w-[360px]">
-                      <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/55" />
-                      <input
-                        value={searchInput}
-                        onChange={(e) => setSearchInput(e.target.value)}
-                        placeholder="Buscar por nombre o @creador…"
-                        className="w-full rounded-2xl border border-white/10 bg-white/5 py-2 pl-10 pr-3 text-sm text-white/90 outline-none transition focus:border-white/25 focus:bg-white/10"
-                      />
-                    </div>
-                  </div>
-
-                  {error ? <div style={{ marginTop: 10, color: "rgba(248, 113, 113, 0.95)" }}>{error}</div> : null}
                 </div>
               </div>
             ) : (

@@ -2919,7 +2919,9 @@ app.post("/api/ai/faceswap/insert", async (req, res, next) => {
   if (baseErr) throw httpError(500, "DB_ERROR", baseErr.message);
   if (!baseRow) throw httpError(404, "ASSET_NOT_FOUND", "Base asset no encontrado.");
   if (baseRow.type !== "image") throw httpError(400, "ASSET_NOT_IMAGE", "El baseAssetId no es una imagen.");
-  if (baseRow.owner_id !== user.id && !baseRow.is_public) {
+
+  const baseEntitled = await hasCommunityAssetEntitlement(baseAssetId, user.id);
+  if (baseRow.owner_id !== user.id && !baseRow.is_public && !baseEntitled) {
     throw httpError(403, "ASSET_FORBIDDEN", "No tienes acceso al baseAssetId.");
   }
 
@@ -2941,7 +2943,9 @@ app.post("/api/ai/faceswap/insert", async (req, res, next) => {
   if (donorErr) throw httpError(500, "DB_ERROR", donorErr.message);
   if (!donorRow) throw httpError(404, "ASSET_NOT_FOUND", "Donor element no encontrado.");
   if (donorRow.type !== "image") throw httpError(400, "ASSET_NOT_IMAGE", "El donorElementId no es una imagen.");
-  if (donorRow.owner_id !== user.id && !donorRow.is_public) {
+
+  const donorEntitled = await hasCommunityAssetEntitlement(donorElementId, user.id);
+  if (donorRow.owner_id !== user.id && !donorRow.is_public && !donorEntitled) {
     throw httpError(403, "ASSET_FORBIDDEN", "No tienes acceso al donorElementId.");
   }
 

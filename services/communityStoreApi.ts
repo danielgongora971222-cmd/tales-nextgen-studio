@@ -1,5 +1,6 @@
 import { supabase } from "./supabaseClient";
 import { apiUrl } from "./apiBase";
+import { invalidatePurchasedAssetsCache } from "./assetsApi";
 import type { Comment } from "../types";
 
 async function authHeaders(): Promise<Record<string, string>> {
@@ -163,6 +164,9 @@ export async function purchaseCommunityListing(listingId: string, referralCode?:
   // ✅ Compra OK: refrescar wallet para que los créditos se descuenten al instante en toda la app.
   const { emitWalletRefresh } = await import("./appEvents");
   emitWalletRefresh();
+
+  // ✅ limpia caché de assets comprados para que aparezcan al instante en tools/pickers
+  invalidatePurchasedAssetsCache();
 
   return { purchaseId: data.purchaseId, paidCredits: Number(data.paidCredits) || 0 };
 }
