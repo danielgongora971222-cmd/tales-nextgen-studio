@@ -201,6 +201,14 @@ export async function apiPostJson<T>(
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
+  // ✅ Idempotencia: misma key para TODOS los retries dentro de esta llamada
+  // (evita cobrar créditos dos veces si apiPostJson reintenta por 429 / errores de red)
+  const idem =
+    typeof crypto !== "undefined" && typeof (crypto as any).randomUUID === "function"
+      ? (crypto as any).randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  headers["x-idempotency-key"] = idem;
+
   const timeoutMs = opts?.timeoutMs ?? 10 * 60 * 1000; // 10 min por defecto
   const retries = opts?.retries ?? 2;
   const retryBaseDelayMs = opts?.retryBaseDelayMs ?? 900;

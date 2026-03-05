@@ -689,7 +689,7 @@ const isKling = selectedModelNorm.startsWith("kling-");
           modelNorm: selectedModelNorm,
           durationSeconds: dur,
           count: 1,
-          entryType: "gen_spend_video",
+          entryType: "ai_video_generate",
           refType: "ai_video",
           refId: null,
         });
@@ -697,7 +697,6 @@ const isKling = selectedModelNorm.startsWith("kling-");
         if (!spend.ok) {
           return res.status(402).json({ ok: false, error: spend.error });
         }
-
 
         let taskResponse = null;
         try {
@@ -1049,6 +1048,22 @@ const isKling = selectedModelNorm.startsWith("kling-");
         const blocked = await enforceKlingParallelLimit(res, user.id);
         if (blocked) return;
 
+        // ✅ Spend de créditos ANTES de crear la tarea (idempotente vía x-idempotency-key)
+        const spend = await spendVideoCreditsOrReject({
+          userId: user.id,
+          req,
+          modelNorm: selectedModelNorm,
+          durationSeconds: dur,
+          count: 1,
+          entryType: "ai_video_generate",
+          refType: "ai_video",
+          refId: null,
+        });
+
+        if (!spend.ok) {
+          return res.status(402).json({ ok: false, error: spend.error });
+        }
+
         let taskResponse = null;
         let taskType = "text2video";
 
@@ -1396,6 +1411,22 @@ const isKling = selectedModelNorm.startsWith("kling-");
         ...(negativePrompt ? { negative_prompt: negativePrompt } : {}),
       };
 
+      // ✅ Spend de créditos ANTES de crear la tarea (idempotente vía x-idempotency-key)
+      const spend = await spendVideoCreditsOrReject({
+        userId: user.id,
+        req,
+        modelNorm: selectedModelNorm,
+        durationSeconds: klingDuration,
+        count: 1,
+        entryType: "ai_video_generate",
+        refType: "ai_video",
+        refId: null,
+      });
+
+      if (!spend.ok) {
+        return res.status(402).json({ ok: false, error: spend.error });
+      }
+
       let taskResponse = null;
       let taskType = "text2video";
 
@@ -1676,6 +1707,22 @@ const isKling = selectedModelNorm.startsWith("kling-");
       );
     }
 
+    // ✅ Spend de créditos ANTES de ejecutar generación (idempotente vía x-idempotency-key)
+    const spend = await spendVideoCreditsOrReject({
+      userId: user.id,
+      req,
+      modelNorm: veoModel,
+      durationSeconds: dur,
+      count: requestedCount,
+      entryType: "ai_video_generate",
+      refType: "ai_video",
+      refId: null,
+    });
+
+    if (!spend.ok) {
+      return res.status(402).json({ ok: false, error: spend.error });
+    }
+
     // Ejecutar en modo síncrono (la UI de Veo no implementa el flujo async/jobToken)
     const falJson = await falQueueRun(endpointId, falInput);
 
@@ -1768,6 +1815,10 @@ const isKling = selectedModelNorm.startsWith("kling-");
 
         const { user, error } = await requireUser(req);
         if (error) return res.status(401).json({ ok: false, error });
+
+        // ✅ Requiere plan activo
+        const active = await ctx.billing.requireActiveSubscription(user.id);
+        if (active.error) return res.status(403).json({ ok: false, error: active.error });
 
         const rl = await checkUserRateLimit({
           userId: user.id,
@@ -2131,6 +2182,26 @@ const isKling = selectedModelNorm.startsWith("kling-");
               keep_original_sound: body.keepAudio !== false ? "yes" : "no",
             },
           ];
+        }
+
+        // ✅ Evita error 1303 (parallel task limit) antes de cobrar/llamar a Kling
+        const blocked = await enforceKlingParallelLimit(res, user.id);
+        if (blocked) return;
+
+        // ✅ Spend de créditos ANTES de crear la tarea (idempotente vía x-idempotency-key)
+        const costCredits = estimateVideoCostCredits({ modelNorm: model, durationSeconds: totalDur, isKling: true });
+
+        const spend = await ctx.billing.spendCredits({
+          userId: user.id,
+          amountCredits: costCredits,
+          entryType: "ai_video_edit",
+          refType: "ai_video",
+          refId: null,
+          idempotencyKey: ctx.billing.getIdempotencyKey(req),
+        });
+
+        if (!spend.ok) {
+          return res.status(402).json({ ok: false, error: spend.error });
         }
 
         let taskResponse = null;
