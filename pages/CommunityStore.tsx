@@ -9,7 +9,7 @@ import {
   listCommunityListingComments,
   createCommunityListingComment,
 } from "../services/communityStoreApi";
-import { Heart, MessageCircle, ShoppingCart, X, Loader2 } from "lucide-react";
+import { Heart, MessageCircle, ShoppingCart, X, Loader2, Send } from "lucide-react";
 import styles from "./tools/ImageGeneratorTool.module.css";
 
 interface Props {
@@ -113,12 +113,18 @@ export default function CommunityStore({ onNavigate }: Props) {
     setPreviewPalette(pickPreviewPalette());
 
     setActiveTab(tab || "overview");
-    setShowRecipe(true);
+
+    // ✅ por defecto: descripción (evita “Compra para ver receta” como vista inicial)
+    setShowRecipe(false);
+
     setRecipeAnimating(false);
 
     try {
       const item = await getCommunityListing(listingId);
       setSelected(item);
+
+      // ✅ si ya está comprado (o es tuyo) entonces sí: receta por defecto
+      setShowRecipe(Boolean(item?.purchasedByMe || item?.ownedByMe));
 
       // ✅ cargar comments 1 vez por apertura (en background)
       // evita duplicar llamadas (y evita pegarle al rate limiter)
@@ -300,9 +306,6 @@ export default function CommunityStore({ onNavigate }: Props) {
       <div className="flex items-center justify-between gap-3 mb-6">
         <div>
           <div className="text-2xl font-bold">Community Store</div>
-          <div className="text-white/60 text-sm mt-1">
-            Feed con preview sin recorte + likes/comentarios + compra → receta → reusar.
-          </div>
         </div>
 
         <button
@@ -328,6 +331,7 @@ export default function CommunityStore({ onNavigate }: Props) {
               role="button"
               tabIndex={0}
               className={styles.tile}
+              style={{ borderRadius: 22 }} // ✅ más redondeado
               onClick={() => openPreview(it.id, "overview")}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
@@ -357,43 +361,51 @@ export default function CommunityStore({ onNavigate }: Props) {
                 )
               ) : null}
 
-              {/* TOP (solo hover): seller + compras usando el mismo pill del tool */}
-              <div className={styles.tileActions} style={{ left: 10, right: 10, justifyContent: "space-between", pointerEvents: "none" }}>
+              {/* TOP (solo hover): seller + compras */}
+              <div
+                className={styles.tileActions}
+                style={{ left: 10, right: 10, justifyContent: "space-between", pointerEvents: "none" }}
+              >
                 <span className={styles.publicTag}>@{it.sellerUsername || "creator"}</span>
                 <span className={styles.publicTag}>{fmtInt(it.salesCount)} compras</span>
               </div>
 
-              {/* BOTTOM (solo hover): like + comentar + comprar */}
+              {/* CENTER (solo hover): likes + comentarios centrados */}
               <div
                 className={styles.tileActions}
-                style={{ top: "auto", bottom: 10, left: 10, right: 10, justifyContent: "space-between" }}
+                style={{ top: "50%", left: 0, right: 0, justifyContent: "center", gap: 12 }}
                 onClick={(e) => e.stopPropagation()}
               >
-                <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                  <button
-                    type="button"
-                    className={styles.ghostBtn}
-                    style={{ padding: "6px 10px", fontSize: 11, animation: "klingCtaGlow 1.15s ease-in-out infinite" }}
-                    title={liked ? "Quitar Like" : "Dar Like"}
-                    disabled={likeBusy}
-                    onClick={() => handleToggleLike(it.id)}
-                  >
-                    <Heart size={16} style={{ marginRight: 8 }} fill={liked ? "currentColor" : "none"} />
-                    {fmtInt(it.likesCount)}
-                  </button>
+                <button
+                  type="button"
+                  className={styles.ghostBtn}
+                  style={{ padding: "8px 12px", fontSize: 12, animation: "klingCtaGlow 1.15s ease-in-out infinite" }}
+                  title={liked ? "Quitar Like" : "Dar Like"}
+                  disabled={likeBusy}
+                  onClick={() => handleToggleLike(it.id)}
+                >
+                  <Heart size={18} style={{ marginRight: 8 }} fill={liked ? "currentColor" : "none"} />
+                  {fmtInt(it.likesCount)}
+                </button>
 
-                  <button
-                    type="button"
-                    className={styles.ghostBtn}
-                    style={{ padding: "6px 10px", fontSize: 11 }}
-                    title="Comentarios"
-                    onClick={() => openPreview(it.id, "comments")}
-                  >
-                    <MessageCircle size={16} style={{ marginRight: 8 }} />
-                    {fmtInt(it.commentsCount)}
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  className={styles.ghostBtn}
+                  style={{ padding: "8px 12px", fontSize: 12 }}
+                  title="Comentarios"
+                  onClick={() => openPreview(it.id, "comments")}
+                >
+                  <MessageCircle size={18} style={{ marginRight: 8 }} />
+                  {fmtInt(it.commentsCount)}
+                </button>
+              </div>
 
+              {/* BOTTOM (solo hover): precio + comprar (subido para no chocar con el nombre) */}
+              <div
+                className={styles.tileActions}
+                style={{ top: "auto", bottom: 64, left: 10, right: 10, justifyContent: "flex-end" }}
+                onClick={(e) => e.stopPropagation()}
+              >
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
                   <span className={styles.publicTag}>{fmtInt(it.priceCredits)} créditos</span>
                   <button
@@ -409,9 +421,14 @@ export default function CommunityStore({ onNavigate }: Props) {
                 </div>
               </div>
 
-              {/* caption (solo hover) */}
+              {/* Nombre (mismo lugar) */}
               <div className={styles.tileMeta}>
-                <span className={styles.tileCaption}>{it.name || "—"}</span>
+                <span
+                  className={styles.tileCaption}
+                  style={{ fontWeight: 900, color: "rgba(255,255,255,0.94)", textShadow: "0 6px 18px rgba(0,0,0,0.55)" }}
+                >
+                  {it.name || "—"}
+                </span>
               </div>
             </div>
           );
@@ -624,8 +641,15 @@ export default function CommunityStore({ onNavigate }: Props) {
                             outline: "none",
                           }}
                         />
-                        <button type="button" className={styles.generateBtn} onClick={handleCreateComment}>
-                          Enviar
+                        <button
+                          type="button"
+                          className={styles.generateBtn}
+                          style={{ width: 46, padding: 0, display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+                          onClick={handleCreateComment}
+                          title="Enviar comentario"
+                          aria-label="Enviar comentario"
+                        >
+                          <Send size={18} />
                         </button>
                       </div>
                     </div>
