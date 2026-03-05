@@ -61,6 +61,29 @@ export const ImageRequestSchema = z.object({
   verticalAngle: z.number().min(-30).max(90).optional(),
   zoom: z.number().min(0).max(10).optional(),
   loraScale: z.number().min(0).max(4).optional(),
+  imageSize: z
+    .union([
+      z.enum([
+        "square_hd",
+        "square",
+        "portrait_4_3",
+        "portrait_16_9",
+        "landscape_4_3",
+        "landscape_16_9",
+      ]),
+      z.object({
+        width: z.number().int().min(64).max(4096),
+        height: z.number().int().min(64).max(4096),
+      }),
+    ])
+    .optional(),
+  guidanceScale: z.number().min(1).max(20).optional(),
+  numInferenceSteps: z.number().int().min(1).max(50).optional(),
+  acceleration: z.enum(["none", "regular"]).optional(),
+  negativePrompt: z.string().max(8000).optional(),
+  seed: z.number().int().min(0).max(2147483647).optional(),
+  enableSafetyChecker: z.boolean().optional(),
+  outputFormat: z.enum(["png", "jpeg", "webp"]).optional(),
   sync: z.boolean().optional(),
   async: z.boolean().optional(),
 });

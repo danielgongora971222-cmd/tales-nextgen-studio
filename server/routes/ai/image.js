@@ -90,6 +90,14 @@ export function createAiImageRouter(ctx) {
         verticalAngle,
         zoom,
         loraScale,
+        imageSize,
+        guidanceScale,
+        numInferenceSteps,
+        acceleration,
+        negativePrompt,
+        seed,
+        enableSafetyChecker,
+        outputFormat,
         sync,
         async: asyncFlag,
       } = ImageRequestSchema.parse(req.body);
@@ -1141,6 +1149,16 @@ export function createAiImageRouter(ctx) {
       const v = typeof verticalAngle === "number" ? verticalAngle : 0;
       const z = typeof zoom === "number" ? zoom : 5;
       const ls = typeof loraScale === "number" ? loraScale : 1;
+      const gs = typeof guidanceScale === "number" ? guidanceScale : 4.5;
+      const steps = Number.isInteger(numInferenceSteps) ? numInferenceSteps : 28;
+      const accel = acceleration === "none" ? "none" : "regular";
+      const negative = typeof negativePrompt === "string" ? negativePrompt.trim() : "";
+      const imageSizeInput = imageSize && typeof imageSize === "object"
+        ? { width: imageSize.width, height: imageSize.height }
+        : imageSize;
+      const parsedSeed = Number.isInteger(seed) ? seed : undefined;
+      const safety = typeof enableSafetyChecker === "boolean" ? enableSafetyChecker : true;
+      const format = outputFormat || "png";
 
       const extraPrompt = typeof prompt === "string" && prompt.trim().length ? prompt.trim() : undefined;
 
@@ -1150,8 +1168,15 @@ export function createAiImageRouter(ctx) {
         vertical_angle: v,
         zoom: z,
         lora_scale: ls,
+        image_size: imageSizeInput,
+        guidance_scale: gs,
+        num_inference_steps: steps,
+        acceleration: accel,
+        negative_prompt: negative,
+        seed: parsedSeed,
+        enable_safety_checker: safety,
         additional_prompt: extraPrompt,
-        output_format: "png",
+        output_format: format,
         num_images: nRequested,
       };
 
@@ -1196,6 +1221,14 @@ export function createAiImageRouter(ctx) {
           verticalAngle: v,
           zoom: z,
           loraScale: ls,
+          imageSize: imageSizeInput || null,
+          guidanceScale: gs,
+          numInferenceSteps: steps,
+          acceleration: accel,
+          negativePrompt: negative || null,
+          seed: parsedSeed ?? null,
+          enableSafetyChecker: safety,
+          outputFormat: format,
           additionalPrompt: extraPrompt || null,
         };
 

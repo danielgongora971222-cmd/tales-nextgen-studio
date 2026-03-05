@@ -207,6 +207,21 @@ export type GenerateImageBatchOptions = {
   verticalAngle?: number;   // -30..90
   zoom?: number;            // 0..10
   loraScale?: number;       // 0..4
+  imageSize?:
+    | "square_hd"
+    | "square"
+    | "portrait_4_3"
+    | "portrait_16_9"
+    | "landscape_4_3"
+    | "landscape_16_9"
+    | { width: number; height: number };
+  guidanceScale?: number;      // 1..20
+  numInferenceSteps?: number;  // 1..50
+  acceleration?: "none" | "regular";
+  negativePrompt?: string;
+  seed?: number;
+  enableSafetyChecker?: boolean;
+  outputFormat?: "png" | "jpeg" | "webp";
 };
 
 export type GenerateImageBatchResult = {
@@ -239,11 +254,18 @@ export const generateImageBatch = async (
     verticalAngle: options?.verticalAngle,
     zoom: options?.zoom,
     loraScale: options?.loraScale,
+    imageSize: options?.imageSize,
+    guidanceScale: options?.guidanceScale,
+    numInferenceSteps: options?.numInferenceSteps,
+    acceleration: options?.acceleration,
+    negativePrompt: options?.negativePrompt,
+    seed: options?.seed,
+    enableSafetyChecker: options?.enableSafetyChecker,
+    outputFormat: options?.outputFormat,
 
     // Kling-only
     klingElementIds: options?.klingElementIds,
   });
-
   // ✅ Async (background job)
   if (res?.jobId) {
     const row = await waitImageJob(String(res.jobId));
