@@ -40,6 +40,24 @@ function fmtInt(n: any) {
   return Math.round(v).toLocaleString();
 }
 
+function renderWithMentions(text: string) {
+  const s = String(text || "");
+  if (!s) return null;
+  const parts = s.split(/(@[a-zA-Z0-9_][a-zA-Z0-9_-]{1,40})/g);
+  return parts.map((p, i) => {
+    const isMention = /^@[a-zA-Z0-9_][a-zA-Z0-9_-]{1,40}$/.test(p);
+    if (!isMention) return <React.Fragment key={i}>{p}</React.Fragment>;
+    return (
+      <span
+        key={i}
+        className="inline-flex items-center rounded-full bg-white/10 px-2 py-0.5 text-white/90 border border-white/10"
+      >
+        {p}
+      </span>
+    );
+  });
+}
+
 function safeJsonParse<T = any>(raw: string): T | null {
   try {
     return JSON.parse(raw) as T;
@@ -597,7 +615,9 @@ export default function CommunityStore({ onNavigate }: Props) {
                             </button>
                           )
                         ) : (
-                          <div className={styles.viewerRecipeValue}>{selected.description || "—"}</div>
+                          <div className={styles.viewerRecipeValue}>
+                            {selected.description ? renderWithMentions(selected.description) : "—"}
+                          </div>
                         )}
                       </div>
                     </div>

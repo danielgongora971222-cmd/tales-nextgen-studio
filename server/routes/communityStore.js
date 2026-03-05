@@ -48,17 +48,34 @@ const CreateListingSchema = z.object({
   previewAssetId: z.string().uuid(),
   name: z.preprocess((v) => (typeof v === "string" ? v.trim() : ""), z.string().min(3).max(80)),
   priceCredits: z.preprocess((v) => Number(v), z.number().int().min(1).max(1000000)),
-  description: z.preprocess((v) => (typeof v === "string" ? v.trim() : ""), z.string().max(800)).default(""),
+  // ✅ ahora es obligatoria y más larga (permite paso a paso / contexto)
+  description: z.preprocess(
+    (v) => (typeof v === "string" ? v.trim() : ""),
+    z.string().min(20, "La descripción es obligatoria (mínimo 20 caracteres).").max(2000, "Máximo 2000 caracteres.")
+  ),
   listingKind: z.enum(["single", "workflow"]).default("single"),
 });
 
-
-const UpdateListingSchema = z.object({
-  name: z.preprocess((v) => (v === undefined ? undefined : String(v).trim()), z.string().min(3).max(80)).optional(),
-  priceCredits: z.preprocess((v) => (v === undefined ? undefined : Number(v)), z.number().int().min(1).max(1000000)).optional(),
-  description: z.preprocess((v) => (v === undefined ? undefined : String(v).trim()), z.string().max(800)).optional(),
-  status: z.enum(["active", "unlisted", "deleted"]).optional(),
-});
+const UpdateListingSchema = z
+  .object({
+    name: z.preprocess((v) => (v === undefined ? undefined : String(v).trim()), z.string().min(3).max(80)).optional(),
+    priceCredits: z.preprocess((v) => (v === undefined ? undefined : Number(v)), z.number().int().min(1).max(1000000)).optional(),
+    description: z.preprocess((v) => (v === undefined ? undefined : String(v).trim()), z.string().max(2000)).optional(),
+    status: z.enum(["active", "unlisted", "deleted"]).optional(),
+  })
+  .superRefine((val, ctx) => {
+    // Si alguien intenta activar un listing, exigimos descripción no vacía
+    if (val?.status === "active") {
+      const d = typeof val.description === "string" ? val.description.trim() : "";
+      if (!d || d.length < 20) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["description"],
+          message: "La descripción es obligatoria para activar el listing (mínimo 20 caracteres).",
+        });
+      }
+    }
+  });
 
 
 const PurchaseSchema = z.object({
