@@ -29,6 +29,40 @@ function premiumVars(accent: string, accent2: string): React.CSSProperties {
   return { ["--ph-accent" as any]: accent, ["--ph-accent2" as any]: accent2 } as React.CSSProperties;
 }
 
+function planPeriodFactor(bp: any) {
+  const v = String(bp || "month").toLowerCase();
+  if (v === "week") return 4;
+  if (v === "year") return 12;
+  return 1;
+}
+
+function planPowerScore(p: any) {
+  const factor = planPeriodFactor(p?.billing_period);
+  const creditsEqMonth = Number(p?.plan_credits || 0) * factor;
+  const concurrency = Number(p?.max_concurrency || 2);
+  const features = (p?.can_sell ? 1 : 0) + (p?.can_referrals ? 1 : 0);
+  return creditsEqMonth * 1_000_000 + concurrency * 10_000 + features * 100 + Number(p?.price_cents || 0);
+}
+
+function topupPalette(credits: number): [string, string] {
+  // Psicología del color:
+  // - Azul: confianza/seguridad (packs pequeños)
+  // - Verde: valor/éxito (packs medios)
+  // - Morado: premium/creatividad (packs grandes)
+  // - Ámbar: urgencia/poder (packs mega)
+  if (credits <= 1500) return ["rgba(59,130,246,0.78)", "rgba(14,165,233,0.34)"];
+  if (credits <= 5000) return ["rgba(34,197,94,0.78)", "rgba(16,185,129,0.34)"];
+  if (credits <= 12000) return ["rgba(168,85,247,0.78)", "rgba(217,70,239,0.30)"];
+  return ["rgba(245,158,11,0.82)", "rgba(239,68,68,0.26)"];
+}
+
+function topupBadge(credits: number) {
+  if (credits <= 1500) return "Starter";
+  if (credits <= 5000) return "Popular";
+  if (credits <= 12000) return "Pro";
+  return "Mega";
+}
+
 export default function Paywall({
   onSubscribed,
   onContinueExploring,
@@ -39,7 +73,7 @@ export default function Paywall({
   const { wallet, refresh: refreshWallet } = useWallet();
 
   const [tab, setTab] = useState<TabKey>("plans");
-  const [period, setPeriod] = useState<"week" | "month">("week");
+  const [period, setPeriod] = useState<"month" | "year">("month");
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -90,10 +124,69 @@ export default function Paywall({
   const heroPlanName = sub?.planName || "Ninguno";
   const heroNext = sub?.currentPeriodEnd ? new Date(sub.currentPeriodEnd).toLocaleString() : "—";
 
+  const currentPlan = useMemo(() => {
+    if (!currentPlanSlug) return null;
+    return (plans || []).find((p) => p?.slug === currentPlanSlug) || null;
+  }, [plans, currentPlanSlug]);
+
+  const currentPlanPower = currentPlan ? planPowerScore(currentPlan) : null;
+
   const filteredPlans = useMemo(() => {
-    const want = period;
-    return (plans || []).filter((p) => (p.billing_period || "month") === want);
+    const list = plans || [];
+
+    const filtered =
+      period === "month"
+        ? list.filter((p) => {
+            const bp = String(p?.billing_period || "month").toLowerCase();
+            // ✅ El plan semanal (ej: basic_week) se muestra dentro de Monthly como opción de pago flexible.
+            return bp === "month" || bp === "week";
+          })
+        : list.filter((p) => String(p?.billing_period || "").toLowerCase() === "year");
+
+    return filtered.sort((a, b) => planPowerScore(a) - planPowerScore(b));
   }, [plans, period]);
+
+  const uniqueTopups = useMemo(() => {
+    const seen = new Set<string>();
+    const out: any[] = [];
+
+    for (const t of topups || []) {
+      const credits = Number(t?.credits_amount ?? t?.credits ?? 0);
+      const price = Number(t?.price_cents ?? 0);
+      const name = String(t?.name || "").trim().toLowerCase();
+      const key = `${credits}|${price}|${name}`;
+
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      out.push({ ...t, _credits: credits, _price_cents: price, _key: key });
+    }
+
+    out.sort(
+      (a, b) =>
+        Number(a._credits) - Number(b._credits) || Number(a._price_cents) - Number(b._price_cents)
+    );
+    return out;
+  }, [topups]);
+
+  const bestValueTopupKey = useMemo(() => {
+    let bestKey: string | null = null;
+    let bestRatio = -1;
+
+    for (const t of uniqueTopups) {
+      const credits = Number(t?._credits ?? 0);
+      const dollars = Number(t?._price_cents ?? 0) / 100;
+      if (!dollars) continue;
+
+      const ratio = credits / dollars;
+      if (ratio > bestRatio) {
+        bestRatio = ratio;
+        bestKey = String(t?._key || "");
+      }
+    }
+
+    return bestKey;
+  }, [uniqueTopups]);
 
   return (
     <div className="text-white">
@@ -292,17 +385,17 @@ export default function Paywall({
             <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 p-1">
               <button
                 type="button"
-                className={`px-4 py-2 rounded-full text-sm ${period === "week" ? "bg-white/15" : "bg-transparent hover:bg-white/10"}`}
-                onClick={() => setPeriod("week")}
-              >
-                Weekly
-              </button>
-              <button
-                type="button"
                 className={`px-4 py-2 rounded-full text-sm ${period === "month" ? "bg-white/15" : "bg-transparent hover:bg-white/10"}`}
                 onClick={() => setPeriod("month")}
               >
                 Monthly
+              </button>
+              <button
+                type="button"
+                className={`px-4 py-2 rounded-full text-sm ${period === "year" ? "bg-white/15" : "bg-transparent hover:bg-white/10"}`}
+                onClick={() => setPeriod("year")}
+              >
+                Yearly
               </button>
             </div>
           </div>
@@ -310,24 +403,48 @@ export default function Paywall({
           <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
             {filteredPlans.map((p) => {
               const isCurrent = currentPlanSlug && p.slug === currentPlanSlug;
+
+              const power = planPowerScore(p);
+              const isLower = currentPlanPower !== null && power < currentPlanPower;
+              const isHigher = currentPlanPower !== null && power > currentPlanPower;
+
               const price = moneyUSD(p.price_cents || 0);
-              const per = p.billing_period === "week" ? "/week" : "/month";
+              const per =
+                p.billing_period === "week" ? "/week" : p.billing_period === "year" ? "/year" : "/month";
+
+              const ctaLabel = isCurrent
+                ? "Current plan"
+                : currentPlanPower !== null
+                  ? isHigher
+                    ? "Upgrade"
+                    : "Not available"
+                  : "Subscribe";
+
+              const ctaDisabled = isCurrent || isLower;
 
               return (
                 <div
                   key={p.id}
-                  className={`rounded-3xl border p-5 bg-white/5 ${isCurrent ? "border-emerald-400/40 shadow-[0_0_24px_rgba(52,211,153,0.12)]" : "border-white/10"}`}
+                  className={`rounded-3xl border p-5 bg-white/5 ${
+                    isCurrent
+                      ? "border-emerald-400/40 shadow-[0_0_24px_rgba(52,211,153,0.12)]"
+                      : isLower
+                        ? "border-white/10 opacity-60"
+                        : "border-white/10"
+                  }`}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="text-lg font-extrabold">{p.name}</div>
                       <div className="text-sm text-white/60 mt-1">{p.slug}</div>
                     </div>
+
                     {isCurrent ? (
                       <span className="text-xs px-2 py-1 rounded-full bg-emerald-500/15 border border-emerald-400/30 text-emerald-200">Current</span>
+                    ) : isLower ? (
+                      <span className="text-xs px-2 py-1 rounded-full bg-white/10 border border-white/10 text-white/70">Locked</span>
                     ) : null}
                   </div>
-
                   <div className="mt-4 flex items-end gap-2">
                     <div className="text-3xl font-extrabold">{price}</div>
                     <div className="text-sm text-white/60 pb-1">{per}</div>
@@ -349,9 +466,11 @@ export default function Paywall({
                     <button
                       type="button"
                       className={`w-full px-4 py-3 rounded-2xl font-bold ${
-                        isCurrent ? "bg-white/10 border border-white/10 text-white/60 cursor-not-allowed" : "bg-white text-black"
+                        ctaDisabled
+                          ? "bg-white/10 border border-white/10 text-white/60 cursor-not-allowed"
+                          : "bg-white text-black hover:opacity-95"
                       }`}
-                      disabled={isCurrent}
+                      disabled={ctaDisabled}
                       onClick={() => {
                         setConfirm({
                           itemLabel: `Plan ${p.name}`,
@@ -367,13 +486,15 @@ export default function Paywall({
                         });
                       }}
                     >
-                      {isCurrent ? "Current plan" : "Subscribe"}
+                      {ctaLabel}
                     </button>
                   </div>
                 </div>
               );
             })}
-            {!filteredPlans.length ? <div className="text-white/60">No plans available for this billing period.</div> : null}
+            {!filteredPlans.length ? (
+              <div className="text-white/60">{period === "year" ? "Yearly plans coming soon." : "No plans available."}</div>
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -387,23 +508,54 @@ export default function Paywall({
           </div>
 
           <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-4">
-            {topups.map((t) => {
-              const price = moneyUSD(t.price_cents || 0);
-              const credits = Number(t.credits_amount || 0);
+            {uniqueTopups.map((t) => {
+              const credits = Number(t._credits ?? t.credits_amount ?? t.credits ?? 0);
+              const priceCents = Number(t._price_cents ?? t.price_cents ?? 0);
+              const price = moneyUSD(priceCents);
+
+              const key = String(
+                t._key ||
+                  t.id ||
+                  `${credits}|${priceCents}|${String(t.name || "").trim().toLowerCase()}`
+              );
+
+              const isBestValue = !!bestValueTopupKey && key === bestValueTopupKey;
+
+              const dollars = priceCents / 100;
+              const perDollar = dollars ? Math.round(credits / dollars) : 0;
+
+              const [accent, accent2] = topupPalette(credits);
+
               return (
-                <div key={t.id} className="rounded-3xl border border-white/10 bg-white/5 p-5">
-                  <div className="flex items-start justify-between">
-                    <div className="text-xl font-extrabold">{formatK(credits)}</div>
-                    <span className="text-xs text-white/60">credits</span>
+                <div key={key} className="premium-hero-card p-5" style={premiumVars(accent, accent2)}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="premium-hero-badge">
+                        <span className="premium-hero-dot" aria-hidden="true" />
+                        <span>{topupBadge(credits)}</span>
+                      </div>
+
+                      <div className="text-3xl font-extrabold mt-3">{formatK(credits)}</div>
+                      <div className="text-sm text-white/65 mt-1">credits</div>
+                      <div className="text-xs text-white/55 mt-2">{t.name}</div>
+                    </div>
+
+                    {isBestValue ? (
+                      <span className="text-xs px-2 py-1 rounded-full bg-emerald-500/15 border border-emerald-400/30 text-emerald-200">
+                        Best value
+                      </span>
+                    ) : null}
                   </div>
 
-                  <div className="text-sm text-white/60 mt-2">{t.name}</div>
+                  <div className="mt-5 flex items-end justify-between gap-3">
+                    <div>
+                      <div className="text-xl font-extrabold">{price}</div>
+                      <div className="text-xs text-white/60 mt-1">{perDollar} credits / $</div>
+                    </div>
 
-                  <div className="mt-5 flex items-center justify-between">
-                    <div className="text-lg font-bold">{price}</div>
                     <button
                       type="button"
-                      className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-sm"
+                      className="premium-hero-btn premium-hero-btn--primary px-4 py-2 text-sm"
                       onClick={() => {
                         setConfirm({
                           itemLabel: `Extra credits (${credits} credits)`,
@@ -425,7 +577,7 @@ export default function Paywall({
                 </div>
               );
             })}
-            {!topups.length ? <div className="text-white/60">No credit packs available.</div> : null}
+            {!uniqueTopups.length ? <div className="text-white/60">No credit packs available.</div> : null}
           </div>
         </div>
       ) : null}
