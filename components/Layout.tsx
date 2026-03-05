@@ -548,6 +548,34 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
 
       {/* ✅ 1NationUp Store (colapsa correctamente con la sidebar) */}
       <div className={`${sidebarOpen ? "px-4" : "px-3"} pb-4`}>
+        <div className={`flex ${sidebarOpen ? "justify-end" : "justify-center"} mb-2`}>
+          <button
+            type="button"
+            onClick={() => {
+              window.localStorage.setItem("tales_profile_focus", "profile");
+              onNavigate(AppRoute.PROFILE);
+            }}
+            className="w-10 h-10 grid place-items-center rounded-xl bg-white/5 hover:bg-white/10 border border-white/10"
+            title="Settings"
+            aria-label="Settings"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M12 15.5A3.5 3.5 0 1 0 12 8.5a3.5 3.5 0 0 0 0 7z" />
+              <path d="M19.4 15a7.8 7.8 0 0 0 .1-1 7.8 7.8 0 0 0-.1-1l2-1.5-2-3.5-2.4 1a7.5 7.5 0 0 0-1.7-1l-.4-2.6H9.1L8.7 7a7.5 7.5 0 0 0-1.7 1l-2.4-1-2 3.5 2 1.5a7.8 7.8 0 0 0-.1 1 7.8 7.8 0 0 0 .1 1l-2 1.5 2 3.5 2.4-1a7.5 7.5 0 0 0 1.7 1l.4 2.6h5.8l.4-2.6a7.5 7.5 0 0 0 1.7-1l2.4 1 2-3.5-2-1.5z" />
+            </svg>
+          </button>
+        </div>
+
         <button
           onClick={() => onNavigate(AppRoute.STORE)}
           className={`w-full flex items-center rounded-xl oneNation-sidebarPremium ${
@@ -583,8 +611,8 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
         <div className="p-3 border-t border-white/10">
             <button
               onClick={() => {
-                window.localStorage.setItem("tales_profile_focus", "billing");
-                onNavigate(AppRoute.PROFILE);
+                window.localStorage.setItem("tales_account_tab", "plans");
+                onNavigate(AppRoute.PAYWALL);
               }}
               className={`w-full rounded-xl bg-white/5 hover:bg-white/10 transition-colors ${sidebarOpen ? "p-3" : "p-2"}`}
               title="Manage plans and extra credits"

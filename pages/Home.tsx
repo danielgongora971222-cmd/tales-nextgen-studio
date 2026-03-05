@@ -537,8 +537,8 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
                 className={styles.heroCreditsButton}
                 onClick={(e) => {
                   e.stopPropagation();
-                  window.localStorage.setItem("tales_profile_focus", "billing");
-                  onNavigate(AppRoute.PROFILE);
+                  window.localStorage.setItem("tales_account_tab", "plans");
+                  onNavigate(AppRoute.PAYWALL);
                 }}
               >
                 Manage plans and extra credits
