@@ -158,6 +158,13 @@ export default function SellListingModal({ open, asset, onClose }: SellListingMo
       invalidateMyAssetsCache(asset.type);
       onClose();
     } catch (e: any) {
+      const code = e?.code ? String(e.code) : "";
+
+      if (code === "PLAN_REQUIRED_PRO" || code === "NO_ACTIVE_PLAN") {
+        onClose();
+        return;
+      }
+
       setError(e?.message || "No se pudo guardar el listing.");
     } finally {
       setBusy(false);

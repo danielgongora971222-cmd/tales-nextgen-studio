@@ -111,13 +111,23 @@ const AppContent: React.FC = () => {
 useEffect(() => {
   const onOpenSell = (ev: any) => {
     const asset = (ev?.detail?.asset || null) as Asset | null;
+    const hasExistingListing = Boolean((asset as any)?.communityListing?.id);
+
+    // Si no tiene listing todavía y no tiene permiso seller, no abrimos el modal de venta:
+    // abrimos directo el modal de planes.
+    if (!hasExistingListing && !subscription?.canSell) {
+      setPlanRequiredMessage("Para publicar y vender en Community Store necesitas un plan Pro o superior activo.");
+      setPlanRequiredOpen(true);
+      return;
+    }
+
     setSellAsset(asset);
     setSellOpen(true);
   };
 
   window.addEventListener("tales:open-sell", onOpenSell as any);
   return () => window.removeEventListener("tales:open-sell", onOpenSell as any);
-}, []);
+}, [subscription?.canSell]);
 
 useEffect(() => {
   const handler = (ev: any) => {

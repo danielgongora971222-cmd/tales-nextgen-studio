@@ -468,6 +468,15 @@ export function createCommunityStoreRouter(ctx) {
       return err(res, 400, "BAD_REQUEST", e?.message || "Payload inválido.");
     }
 
+    // Si intenta reactivar/publicar, vuelve a exigir plan seller
+    if (body.status === "active") {
+      const active = await billing.getActiveSubscription(user.id);
+      if (active.error) return err(res, 500, active.error.code, active.error.message, active.error.details);
+      if (!active.subscription || !active.subscription.canSell) {
+        return err(res, 403, "PLAN_REQUIRED_PRO", "Necesitas plan Pro o superior para publicar y vender.");
+      }
+    }
+
     const patch = {};
     if (body.name != null) patch.name = body.name;
     if (body.priceCredits != null) patch.price_credits = body.priceCredits;

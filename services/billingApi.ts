@@ -73,11 +73,14 @@ export async function mockTopup(productId: string) {
   return data;
 }
 
-export async function mockCancel() {
+export async function mockCancel(opts?: { wipeGenerationCredits?: boolean }) {
   const headers = await authHeaders({ "x-idempotency-key": crypto.randomUUID() });
   const data = await request("/api/billing/mock/cancel", {
     method: "POST",
     headers,
+    body: JSON.stringify({
+      wipeGenerationCredits: opts?.wipeGenerationCredits === true,
+    }),
   });
   emitWalletRefresh();
   return data;

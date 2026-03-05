@@ -196,13 +196,19 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
     }
   }
 
-  async function cancelSubscription() {
-    const ok = window.confirm("Esto cancelará tu plan activo de inmediato. Tus créditos de generación y earnings se conservarán, pero no podrás usar créditos de generación sin plan activo, tus listings públicos se ocultarán si pierdes Pro+ y tus códigos de referido dejarán de funcionar si pierdes Partner+. ¿Deseas continuar?");
+  async function cancelSubscription(opts?: { wipeGenerationCredits?: boolean }) {
+    const wipeGenerationCredits = opts?.wipeGenerationCredits === true;
+
+    const ok = window.confirm(
+      wipeGenerationCredits
+        ? "Esto cancelará tu plan activo de inmediato y borrará tus créditos de generación (plan, topup y bonus). Tus earnings no se borran, pero seguirán bloqueados hasta volver a un plan elegible. ¿Deseas continuar?"
+        : "Esto cancelará tu plan activo de inmediato. Tus créditos de generación y earnings se conservarán, pero no podrás usar créditos de generación sin plan activo, tus listings públicos se ocultarán si pierdes Pro+ y tus códigos de referido dejarán de funcionar si pierdes Partner+. ¿Deseas continuar?"
+    );
     if (!ok) return;
 
     setErr("");
     try {
-      await mockCancel();
+      await mockCancel({ wipeGenerationCredits });
       emitWalletRefresh();
       await refreshWallet();
       setSub((await billingMe()) || null);
@@ -443,15 +449,31 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
 
             <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4">
               <div className="text-sm font-semibold text-red-200">Danger zone</div>
-              <div className="text-xs text-red-200/70 mt-1">Cancel a subscription</div>
+              <div className="text-xs text-red-200/70 mt-1">
+                Pruebas de cancelación con o sin wipe de créditos de generación.
+              </div>
 
-              <button
-                type="button"
-                className="mt-3 px-4 py-2 rounded-xl bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 text-sm"
-                onClick={() => void cancelSubscription()}
-              >
-                Cancel subscription
-              </button>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="px-4 py-2 rounded-xl bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 text-sm"
+                  onClick={() => void cancelSubscription({ wipeGenerationCredits: false })}
+                >
+                  Cancel subscription (keep credits)
+                </button>
+
+                <button
+                  type="button"
+                  className="px-4 py-2 rounded-xl bg-red-600/25 hover:bg-red-600/35 border border-red-500/40 text-sm"
+                  onClick={() => void cancelSubscription({ wipeGenerationCredits: true })}
+                >
+                  Cancel + wipe generation credits
+                </button>
+              </div>
+
+              <div className="text-[11px] text-red-100/70 mt-3">
+                El wipe borra solo créditos de generación: plan, topup y bonus. Los earnings no se borran aquí.
+              </div>
             </div>
           </div>
         </div>

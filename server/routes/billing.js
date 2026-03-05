@@ -214,15 +214,17 @@ export function createBillingRouter(ctx) {
     return res.json({ ok: true, creditsAdded: Number(row?.credits_added) || 0 });
   });
 
-  // POST /api/billing/mock/cancel
+  // POST /api/billing/mock/cancel { wipeGenerationCredits?: boolean }
   router.post("/billing/mock/cancel", async (req, res) => {
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
 
     const idem = getIdempotencyKey(req);
+    const wipeGenerationCredits = req.body?.wipeGenerationCredits === true;
 
-    const { data, error: cErr } = await supabaseAdmin.rpc("billing_cancel_subscription_only", {
+    const { data, error: cErr } = await supabaseAdmin.rpc("billing_cancel_subscription", {
       p_user_id: user.id,
+      p_wipe_generation_credits: wipeGenerationCredits,
       p_idempotency_key: `cancel:${idem}`,
     });
 
@@ -235,10 +237,11 @@ export function createBillingRouter(ctx) {
     const row = Array.isArray(data) ? data[0] : null;
     return res.json({
       ok: true,
-      retained: {
-        plan: Number(row?.retained_plan) || 0,
-        topup: Number(row?.retained_topup) || 0,
-        bonus: Number(row?.retained_bonus) || 0,
+      wipeGenerationCredits: Boolean(row?.wipe_generation_credits),
+      balances: {
+        plan: Number(row?.plan_credits) || 0,
+        topup: Number(row?.topup_credits) || 0,
+        bonus: Number(row?.bonus_credits) || 0,
       },
     });
   });

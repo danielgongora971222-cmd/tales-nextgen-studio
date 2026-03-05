@@ -1,6 +1,7 @@
 import { supabase } from "./supabaseClient";
 import { apiUrl } from "./apiBase";
 import { invalidatePurchasedAssetsCache } from "./assetsApi";
+import { emitPlanRequired } from "./appEvents";
 import type { Comment } from "../types";
 
 async function authHeaders(): Promise<Record<string, string>> {
@@ -96,7 +97,21 @@ export async function createCommunityListingFromAsset(input: {
   const data = parseJsonOrThrow(raw);
 
   if (!resp.ok || data?.ok === false) {
-    throw new Error(data?.error?.message || `Create listing failed (${resp.status})`);
+    const msg = data?.error?.message || `Create listing failed (${resp.status})`;
+    const code = data?.error?.code;
+    const details = data?.error?.details || null;
+
+    if (code === "PLAN_REQUIRED_PRO" || code === "NO_ACTIVE_PLAN") {
+      emitPlanRequired({
+        code: String(code),
+        message: msg || "Para publicar y vender en Community Store necesitas un plan Pro o superior activo.",
+      });
+    }
+
+    const err: any = new Error(msg);
+    err.code = code;
+    err.details = details;
+    throw err;
   }
 
   return { listingId: String(data.listingId), reused: Boolean(data.reused) };
@@ -121,7 +136,21 @@ export async function updateCommunityListing(
   const data = parseJsonOrThrow(raw);
 
   if (!resp.ok || data?.ok === false) {
-    throw new Error(data?.error?.message || `Update listing failed (${resp.status})`);
+    const msg = data?.error?.message || `Update listing failed (${resp.status})`;
+    const code = data?.error?.code;
+    const details = data?.error?.details || null;
+
+    if (code === "PLAN_REQUIRED_PRO" || code === "NO_ACTIVE_PLAN") {
+      emitPlanRequired({
+        code: String(code),
+        message: msg || "Para publicar y vender en Community Store necesitas un plan Pro o superior activo.",
+      });
+    }
+
+    const err: any = new Error(msg);
+    err.code = code;
+    err.details = details;
+    throw err;
   }
 
   return { ok: true };
