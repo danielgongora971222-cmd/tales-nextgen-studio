@@ -10,6 +10,22 @@ export function createBillingRouter(ctx) {
     return res.status(status).json({ ok: false, error: { code, message, details: details || null } });
   }
 
+  function planPeriodFactor(bp) {
+    const v = String(bp || "month").toLowerCase();
+    if (v === "week") return 4;
+    if (v === "year") return 12;
+    return 1;
+  }
+
+  function planPowerScore(plan) {
+    const factor = planPeriodFactor(plan?.billing_period);
+    const creditsEqMonth =
+      (Number(plan?.plan_credits || 0) + Number(plan?.bonus_credits || 0)) * factor;
+    const concurrency = Number(plan?.max_concurrency || 2);
+    const features = (plan?.can_sell ? 1 : 0) + (plan?.can_referrals ? 1 : 0);
+    return creditsEqMonth * 1_000_000 + concurrency * 10_000 + features * 100 + Number(plan?.price_cents || 0);
+  }
+
   // GET /api/billing/me -> plan activo (o null)
   router.get("/billing/me", async (req, res) => {
     const { user, error } = await requireUser(req);
@@ -59,15 +75,42 @@ export function createBillingRouter(ctx) {
       });
     }
 
-    const { data: plan, error: pErr } = await supabaseAdmin
+  const { data: plan, error: pErr } = await supabaseAdmin
       .from("billing_plans")
-      .select("id, slug, billing_period")
+      .select("id, slug, billing_period, price_cents, plan_credits, bonus_credits, max_concurrency, can_sell, can_referrals")
       .eq("slug", planSlug)
       .eq("is_active", true)
       .maybeSingle();
 
     if (pErr) return err(res, 500, "DB_QUERY_FAILED", pErr.message);
     if (!plan?.id) return err(res, 404, "PLAN_NOT_FOUND", "Plan no existe o está inactivo.");
+
+    const current = await getActiveSubscription(user.id);
+    if (current.error) return err(res, 500, current.error.code, current.error.message, current.error.details);
+
+    if (current.subscription?.planId) {
+      const { data: currentPlan, error: cpErr } = await supabaseAdmin
+        .from("billing_plans")
+        .select("id, slug, billing_period, price_cents, plan_credits, bonus_credits, max_concurrency, can_sell, can_referrals")
+        .eq("id", current.subscription.planId)
+        .eq("is_active", true)
+        .maybeSingle();
+
+      if (cpErr) return err(res, 500, "DB_QUERY_FAILED", cpErr.message);
+
+      if (currentPlan?.id && planPowerScore(plan) < planPowerScore(currentPlan)) {
+        return err(
+          res,
+          403,
+          "DOWNGRADE_REQUIRES_CANCEL",
+          "Tienes un plan activo superior. Para bajar de plan primero debes cancelar tu suscripción y luego comprar el plan menor.",
+          {
+            currentPlanSlug: currentPlan.slug,
+            requestedPlanSlug: plan.slug,
+          }
+        );
+      }
+    }
 
     // Validación temprana del código (si viene)
     // Reglas:

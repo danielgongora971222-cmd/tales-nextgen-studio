@@ -39,7 +39,7 @@ function planPeriodFactor(bp: any) {
 
 function planPowerScore(p: any) {
   const factor = planPeriodFactor(p?.billing_period);
-  const creditsEqMonth = Number(p?.plan_credits || 0) * factor;
+  const creditsEqMonth = (Number(p?.plan_credits || 0) + Number(p?.bonus_credits || 0)) * factor;
   const concurrency = Number(p?.max_concurrency || 2);
   const features = (p?.can_sell ? 1 : 0) + (p?.can_referrals ? 1 : 0);
   return creditsEqMonth * 1_000_000 + concurrency * 10_000 + features * 100 + Number(p?.price_cents || 0);
@@ -736,10 +736,10 @@ export default function Paywall({
                 : currentPlanPower !== null
                   ? isHigher
                     ? "Mejorar plan"
-                    : "Cambiar a este plan"
+                    : "No disponible"
                   : "Suscribirme";
 
-              const ctaDisabled = isCurrent;
+              const ctaDisabled = isCurrent || isLower;
 
               const factor = planPeriodFactor(p.billing_period);
               const creditsEqMonth = Number(p.plan_credits || 0) * factor;
@@ -753,6 +753,7 @@ export default function Paywall({
                   key={p.id}
                   className={[
                     "premium-hero-card plan-tier-card p-5 transition-transform duration-200 group",
+                    isLower ? "plan-tier-card--locked" : "",
                     isCurrent ? "plan-tier-card--current" : "",
                   ]
                     .filter(Boolean)
@@ -765,7 +766,7 @@ export default function Paywall({
                         <span className="plan-tier-pill">{mk.badge}</span>
                         {showBest ? <span className="plan-tier-pill plan-tier-pill--best">Mejor valor</span> : null}
                         {isCurrent ? <span className="plan-tier-pill plan-tier-pill--current">Actual</span> : null}
-                        {isLower ? <span className="plan-tier-pill">Cambio de plan</span> : null}
+                        {isLower ? <span className="plan-tier-pill">Bloqueado</span> : null}
                       </div>
 
                       <div className="text-2xl font-extrabold mt-3">{p.name}</div>
@@ -901,9 +902,9 @@ export default function Paywall({
                       </div>
                     ) : null}
 
-                    {isLower ? (
+                    {ctaDisabled && isLower ? (
                       <div className="text-[11px] text-white/55 mt-2 text-center">
-                        Si bajas de plan, perderás de inmediato los privilegios que ese nuevo plan no incluya: ventas públicas ocultas, referidos pausados y gestión de earnings bloqueada hasta volver al plan requerido.
+                        Para bajar de plan, primero debes cancelar tu suscripción actual y luego comprar el plan menor.
                       </div>
                     ) : null}
                   </div>
