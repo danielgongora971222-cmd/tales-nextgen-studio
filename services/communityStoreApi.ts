@@ -155,6 +155,10 @@ export async function purchaseCommunityListing(listingId: string, referralCode?:
     throw err;
   }
 
+  // ✅ Compra OK: refrescar wallet para que los créditos se descuenten al instante en toda la app.
+  const { emitWalletRefresh } = await import("./appEvents");
+  emitWalletRefresh();
+
   return { purchaseId: data.purchaseId, paidCredits: Number(data.paidCredits) || 0 };
 }
 

@@ -39,7 +39,7 @@ export default function Paywall({
   const { wallet, refresh: refreshWallet } = useWallet();
 
   const [tab, setTab] = useState<TabKey>("plans");
-  const [period, setPeriod] = useState<"month" | "year">("month");
+  const [period, setPeriod] = useState<"week" | "month">("week");
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -49,12 +49,6 @@ export default function Paywall({
   const [topups, setTopups] = useState<any[]>([]);
 
   const [confirm, setConfirm] = useState<ConfirmState>(null);
-
-  const [acceptTerms, setAcceptTerms] = useState(false);
-  const [acceptPrivacy, setAcceptPrivacy] = useState(false);
-  const [acceptAutopay, setAcceptAutopay] = useState(false);
-
-  const canPurchase = acceptTerms && acceptPrivacy && acceptAutopay;
 
   const availableCredits = Number(wallet?.generationCredits ?? 0);
   const planCredits = Number(wallet?.gen_plan_credits ?? 0);
@@ -91,17 +85,13 @@ export default function Paywall({
     setLoading(false);
   }
 
-  async function ensureLegal() {
-    if (!canPurchase) throw new Error("Debes aceptar términos, privacidad y auto-renovación para continuar.");
-    await acceptLegal({ termsVersion: TERMS_VERSION, privacyVersion: PRIVACY_VERSION, autopayVersion: AUTOPAY_VERSION });
-  }
 
   const currentPlanSlug = sub?.planSlug || null;
   const heroPlanName = sub?.planName || "Ninguno";
   const heroNext = sub?.currentPeriodEnd ? new Date(sub.currentPeriodEnd).toLocaleString() : "—";
 
   const filteredPlans = useMemo(() => {
-    const want = period === "year" ? "year" : "month";
+    const want = period;
     return (plans || []).filter((p) => (p.billing_period || "month") === want);
   }, [plans, period]);
 
@@ -124,13 +114,6 @@ export default function Paywall({
             </button>
           ) : null}
 
-          <button
-            type="button"
-            className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10"
-            onClick={loadAll}
-          >
-            Refresh
-          </button>
         </div>
       </div>
 
@@ -276,30 +259,6 @@ export default function Paywall({
         </div>
       </div>
 
-      {/* Legal acceptance */}
-      <div className="rounded-2xl border border-white/10 bg-black/30 p-4 mb-6">
-        <div className="text-sm font-semibold mb-3">Legal & payments</div>
-
-        <div className="grid md:grid-cols-3 gap-3 text-sm text-white/80">
-          <label className="flex items-start gap-2">
-            <input type="checkbox" className="mt-1" checked={acceptTerms} onChange={(e) => setAcceptTerms(e.target.checked)} />
-            <span>I accept the Terms (v{TERMS_VERSION}).</span>
-          </label>
-
-          <label className="flex items-start gap-2">
-            <input type="checkbox" className="mt-1" checked={acceptPrivacy} onChange={(e) => setAcceptPrivacy(e.target.checked)} />
-            <span>I accept the Privacy Policy (v{PRIVACY_VERSION}).</span>
-          </label>
-
-          <label className="flex items-start gap-2">
-            <input type="checkbox" className="mt-1" checked={acceptAutopay} onChange={(e) => setAcceptAutopay(e.target.checked)} />
-            <span>I accept auto-renewal for subscriptions (v{AUTOPAY_VERSION}).</span>
-          </label>
-        </div>
-
-        {!canPurchase ? <div className="text-xs text-white/55 mt-3">Debes aceptar los 3 puntos para poder comprar.</div> : null}
-      </div>
-
       {/* Tabs */}
       <div className="flex items-center gap-6 border-b border-white/10 mb-6">
         <button
@@ -333,10 +292,10 @@ export default function Paywall({
             <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 p-1">
               <button
                 type="button"
-                className={`px-4 py-2 rounded-full text-sm ${period === "year" ? "bg-white/15" : "bg-transparent hover:bg-white/10"}`}
-                onClick={() => setPeriod("year")}
+                className={`px-4 py-2 rounded-full text-sm ${period === "week" ? "bg-white/15" : "bg-transparent hover:bg-white/10"}`}
+                onClick={() => setPeriod("week")}
               >
-                Yearly
+                Weekly
               </button>
               <button
                 type="button"
@@ -352,7 +311,7 @@ export default function Paywall({
             {filteredPlans.map((p) => {
               const isCurrent = currentPlanSlug && p.slug === currentPlanSlug;
               const price = moneyUSD(p.price_cents || 0);
-              const per = p.billing_period === "year" ? "/year" : "/month";
+              const per = p.billing_period === "week" ? "/week" : "/month";
 
               return (
                 <div
@@ -391,15 +350,15 @@ export default function Paywall({
                       type="button"
                       className={`w-full px-4 py-3 rounded-2xl font-bold ${
                         isCurrent ? "bg-white/10 border border-white/10 text-white/60 cursor-not-allowed" : "bg-white text-black"
-                      } ${!canPurchase && !isCurrent ? "opacity-60" : ""}`}
-                      disabled={isCurrent || !canPurchase}
+                      }`}
+                      disabled={isCurrent}
                       onClick={() => {
                         setConfirm({
                           itemLabel: `Plan ${p.name}`,
                           amountLabel: `${price} ${per}`,
                           note: "Suscripción recurrente hasta cancelación.",
                           action: async () => {
-                            await ensureLegal();
+                            await acceptLegal({ termsVersion: TERMS_VERSION, privacyVersion: PRIVACY_VERSION, autopayVersion: AUTOPAY_VERSION });
                             await mockSubscribe(p.slug);
                             await refreshWallet();
                             await loadAll();
@@ -444,15 +403,14 @@ export default function Paywall({
                     <div className="text-lg font-bold">{price}</div>
                     <button
                       type="button"
-                      className={`px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-sm ${!canPurchase ? "opacity-60" : ""}`}
-                      disabled={!canPurchase}
+                      className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-sm"
                       onClick={() => {
                         setConfirm({
                           itemLabel: `Extra credits (${credits} credits)`,
                           amountLabel: price,
                           note: "Compra puntual. Requiere plan activo.",
                           action: async () => {
-                            await ensureLegal();
+                            await acceptLegal({ termsVersion: TERMS_VERSION, privacyVersion: PRIVACY_VERSION, autopayVersion: AUTOPAY_VERSION });
                             await mockTopup(t.id);
                             await refreshWallet();
                             await loadAll();
