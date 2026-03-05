@@ -2,6 +2,8 @@ import React, { createContext, useContext, useEffect, useState } from "react";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 import { User as AppUser } from "../types";
 import { supabase } from "../services/supabaseClient";
+import { profileMe } from "../services/profileApi";
+import { EVENT_PROFILE_REFRESH } from "../services/appEvents";
 
 // ✅ Prefetch para “calentar” caches (assets + elements)
 import { listMyAssets } from "../services/assetsApi";
@@ -29,9 +31,11 @@ function toAppUser(u: SupabaseUser): AppUser {
   const username =
     usernameRaw || (u.email ? u.email.split("@")[0] : "user");
 
-  const avatarUrl = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(
-    username
-  )}`;
+  const avatarFromMeta = meta.avatar_url ? String(meta.avatar_url) : "";
+
+  const avatarUrl =
+    avatarFromMeta ||
+    `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(username)}`;
 
   return { id: u.id, username, avatarUrl };
 }
@@ -64,6 +68,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       sub.subscription.unsubscribe();
     };
   }, []);
+
+  // ✅ Hidrata avatar firmado (y displayName) desde backend cuando exista session
+  // - Evita depender de URLs firmadas guardadas en user_metadata
+  // - Se refresca también cuando emitimos EVENT_PROFILE_REFRESH
+  useEffect(() => {
+    if (!user?.id) return;
+
+    let cancelled = false;
+
+    const run = async () => {
+      try {
+        const p = await profileMe();
+        if (cancelled) return;
+
+        setUser((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            username: p.displayName || prev.username,
+            avatarUrl: p.avatarUrl || prev.avatarUrl,
+          };
+        });
+      } catch {
+        // Silencio: si backend no está listo, mantenemos fallback (dicebear)
+      }
+    };
+
+    run();
+
+    const handler = () => run();
+    window.addEventListener(EVENT_PROFILE_REFRESH, handler as any);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener(EVENT_PROFILE_REFRESH, handler as any);
+    };
+  }, [user?.id]);
 
     // ✅ Prefetch en background tras login: calienta caches para tools/pickers
   useEffect(() => {

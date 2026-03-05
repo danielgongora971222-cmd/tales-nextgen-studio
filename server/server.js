@@ -53,6 +53,7 @@ import { createReferralsRouter } from "./routes/referrals.js";
 import { FalFinalizeSchema } from "./schemas/index.js";
 import { assertJobLimits } from "./lib/jobLimits.js";
 import { createLegalRouter } from "./routes/legal.js";
+import { createProfileRouter } from "./routes/profile.js";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
@@ -415,6 +416,14 @@ app.use(
   createLegalRouter({
     supabaseAdmin,
     requireUser,
+  })
+);
+
+app.use(
+  "/api",
+  createProfileRouter({
+    requireUser,
+    signStoragePath,
   })
 );
 

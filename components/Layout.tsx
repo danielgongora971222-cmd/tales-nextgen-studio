@@ -581,11 +581,14 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
       </div>
 
         <div className="p-3 border-t border-white/10">
-          <button
-            onClick={() => onNavigate(AppRoute.PROFILE)}
-            className={`w-full rounded-xl bg-white/5 hover:bg-white/10 transition-colors ${sidebarOpen ? "p-3" : "p-2"}`}
-            title="Manage plans and extra credits"
-          >
+            <button
+              onClick={() => {
+                window.localStorage.setItem("tales_profile_focus", "billing");
+                onNavigate(AppRoute.PROFILE);
+              }}
+              className={`w-full rounded-xl bg-white/5 hover:bg-white/10 transition-colors ${sidebarOpen ? "p-3" : "p-2"}`}
+              title="Manage plans and extra credits"
+            >
             {sidebarOpen ? (
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3 min-w-0">
