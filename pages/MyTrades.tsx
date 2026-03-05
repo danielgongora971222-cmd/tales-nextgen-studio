@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { AppRoute } from "../types";
-import { getWalletMe } from "../services/walletApi";
+import { getWalletMe, listMyCashouts, requestCashout, transferEarningsToGeneration } from "../services/walletApi";
 import { getMyReferralCodes, getMyReferralSummary } from "../services/referralsApi";
 import { getBuyerPurchases, getSellerListings } from "../services/tradesApi";
+import EarningsActionsModal from "@/components/EarningsActionsModal";
 
 interface Props {
   onNavigate: (route: AppRoute) => void;
@@ -12,6 +13,13 @@ export default function MyTrades({ onNavigate }: Props) {
   const [tab, setTab] = useState<"buyer" | "seller" | "referrals">("buyer");
   const [wallet, setWallet] = useState<any | null>(null);
   const [subscription, setSubscription] = useState<any | null>(null);
+  const [cashoutConfig, setCashoutConfig] = useState<any | null>(null);
+
+  const [cashouts, setCashouts] = useState<any[]>([]);
+  const [cashoutsLoading, setCashoutsLoading] = useState(false);
+  const [cashoutsError, setCashoutsError] = useState<string | null>(null);
+
+  const [earningsModalOpen, setEarningsModalOpen] = useState(false);
 
   const [codes, setCodes] = useState<any[]>([]);
   const [refSummary, setRefSummary] = useState<any | null>(null);
@@ -53,11 +61,54 @@ export default function MyTrades({ onNavigate }: Props) {
         const r = await getWalletMe();
         setWallet(r.wallet);
         setSubscription(r.subscription);
+        setCashoutConfig((r as any).cashoutConfig || null);
+
+        // cashouts list (no bloquea)
+        try {
+          setCashoutsLoading(true);
+          setCashoutsError(null);
+          const c = await listMyCashouts({ limit: 12, offset: 0 });
+          setCashouts(Array.isArray(c?.items) ? c.items : []);
+        } catch (e: any) {
+          setCashouts([]);
+          setCashoutsError(e?.message || "No se pudieron cargar cashouts.");
+        } finally {
+          setCashoutsLoading(false);
+        }
       } catch (e: any) {
         setError(e?.message || "No se pudo cargar wallet.");
       }
     })();
   }, []);
+
+  async function refreshWalletAndCashouts() {
+  const r = await getWalletMe();
+  setWallet(r.wallet);
+  setSubscription(r.subscription);
+  setCashoutConfig((r as any).cashoutConfig || null);
+
+  try {
+    setCashoutsLoading(true);
+    setCashoutsError(null);
+    const c = await listMyCashouts({ limit: 12, offset: 0 });
+    setCashouts(Array.isArray(c?.items) ? c.items : []);
+  } catch (e: any) {
+    setCashouts([]);
+    setCashoutsError(e?.message || "No se pudieron cargar cashouts.");
+  } finally {
+    setCashoutsLoading(false);
+  }
+}
+
+async function handleTransfer(amountCredits: number) {
+  await transferEarningsToGeneration(amountCredits);
+  await refreshWalletAndCashouts();
+}
+
+async function handleCashout(args: { amountCredits: number; payoutMethod: { kind: string; handle: string; note?: string } }) {
+  await requestCashout(args.amountCredits, args.payoutMethod);
+  await refreshWalletAndCashouts();
+}
 
   useEffect(() => {
     if (tab !== "referrals") return;
@@ -156,25 +207,106 @@ export default function MyTrades({ onNavigate }: Props) {
         </button>
       </div>
 
-      {wallet ? (
-        <div className="rounded-2xl border border-white/10 bg-black/30 p-4 mb-6">
+    {wallet ? (
+      <div className="rounded-2xl border border-white/10 bg-black/30 p-4 mb-6">
+        <div className="flex items-center justify-between gap-3">
           <div className="text-sm text-white/70">Wallet</div>
-          <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
-            <div className="rounded-xl bg-black/40 border border-white/10 p-3">
-              <div className="text-white/60 text-xs">Créditos</div>
-              <div className="text-xl font-bold">{wallet.generationCredits}</div>
-            </div>
-            <div className="rounded-xl bg-black/40 border border-white/10 p-3">
-              <div className="text-white/60 text-xs">Earnings (pending)</div>
-              <div className="text-xl font-bold">{wallet.earnings_pending_credits}</div>
-            </div>
-            <div className="rounded-xl bg-black/40 border border-white/10 p-3">
-              <div className="text-white/60 text-xs">Earnings (matured)</div>
-              <div className="text-xl font-bold">{wallet.earnings_matured_credits}</div>
-            </div>
+          <button
+            type="button"
+            className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-xs"
+            onClick={() => setEarningsModalOpen(true)}
+          >
+            Gestionar earnings
+          </button>
+        </div>
+
+        <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+          <div className="rounded-xl bg-black/40 border border-white/10 p-3">
+            <div className="text-white/60 text-xs">Créditos</div>
+            <div className="text-xl font-bold">{wallet.generationCredits}</div>
+          </div>
+
+          <div className="rounded-xl bg-black/40 border border-white/10 p-3">
+            <div className="text-white/60 text-xs">Earnings (pending)</div>
+            <div className="text-xl font-bold">{wallet.earnings_pending_credits}</div>
+            <div className="text-[11px] text-white/50 mt-1">No disponibles aún.</div>
+          </div>
+
+          <div
+            className="rounded-xl bg-black/40 border border-white/10 p-3 cursor-pointer hover:bg-black/50"
+            role="button"
+            tabIndex={0}
+            onClick={() => setEarningsModalOpen(true)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                setEarningsModalOpen(true);
+              }
+            }}
+            title="Click para transferir a créditos o solicitar cash out"
+          >
+            <div className="text-white/60 text-xs">Earnings (available)</div>
+            <div className="text-xl font-bold">{wallet.earnings_matured_credits}</div>
+            <div className="text-[11px] text-white/50 mt-1">Click para transferir o cash out.</div>
           </div>
         </div>
-      ) : null}
+
+        {/* Cashouts list */}
+        <div className="mt-4 rounded-xl border border-white/10 bg-black/40 p-3">
+          <div className="text-sm font-semibold">Cashouts</div>
+          {cashoutsLoading ? (
+            <div className="text-white/60 text-sm mt-2">Cargando...</div>
+          ) : cashoutsError ? (
+            <div className="text-red-300 text-sm mt-2">{cashoutsError}</div>
+          ) : cashouts.length === 0 ? (
+            <div className="text-white/60 text-sm mt-2">Aún no has solicitado cashouts.</div>
+          ) : (
+            <div className="mt-2 overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-white/60">
+                    <th className="text-left py-2 pr-3">Fecha</th>
+                    <th className="text-left py-2 pr-3">Status</th>
+                    <th className="text-left py-2 pr-3">Credits</th>
+                    <th className="text-left py-2 pr-3">Net USD</th>
+                    <th className="text-left py-2 pr-3">Método</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cashouts.map((c) => (
+                    <tr key={c.id} className="border-t border-white/10">
+                      <td className="py-2 pr-3 text-white/80">{new Date(c.createdAt).toLocaleString()}</td>
+                      <td className="py-2 pr-3">
+                        <span className="px-2 py-1 rounded-lg bg-white/10">{c.status}</span>
+                      </td>
+                      <td className="py-2 pr-3 text-white/80">{c.amountCredits}</td>
+                      <td className="py-2 pr-3 text-white/80">
+                        {(() => {
+                          const v = (Number(c.netUsdMicros || 0) || 0) / 1_000_000;
+                          return `$${v.toFixed(2)}`;
+                        })()}
+                      </td>
+                      <td className="py-2 pr-3 text-white/60">
+                        {c?.payoutMethod?.kind ? String(c.payoutMethod.kind) : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    ) : null}
+
+    <EarningsActionsModal
+      open={earningsModalOpen}
+      availableCredits={Number(wallet?.earnings_matured_credits) || 0}
+      cashoutConfig={cashoutConfig}
+      onClose={() => setEarningsModalOpen(false)}
+      onTransfer={handleTransfer}
+      onCashout={handleCashout}
+    />
 
       <div className="flex gap-2 mb-4">
         <button
