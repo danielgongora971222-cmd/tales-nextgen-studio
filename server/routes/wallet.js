@@ -82,6 +82,12 @@ export function createWalletRouter(ctx) {
     });
   });
 
+  function toMillis(value) {
+    if (!value) return null;
+    const t = new Date(value).getTime();
+    return Number.isFinite(t) ? t : null;
+  }
+
   function normalizeWalletRow(row) {
     const gen_plan_credits = Number(row?.gen_plan_credits) || 0;
     const gen_topup_credits = Number(row?.gen_topup_credits) || 0;
@@ -247,6 +253,153 @@ export function createWalletRouter(ctx) {
 
     return res.json({
       ok: true,
+      items,
+      nextOffset: offset + items.length,
+      hasMore: items.length === limit,
+    });
+  });
+
+  router.get("/wallet/earnings/history", async (req, res) => {
+    const { user, error } = await requireUser(req);
+    if (error) return res.status(401).json({ ok: false, error });
+
+    const bucket = req.query.bucket === "available" ? "available" : req.query.bucket === "pending" ? "pending" : null;
+    if (!bucket) {
+      return err(res, 400, "BAD_REQUEST", "bucket debe ser pending o available.");
+    }
+
+    const limit = Math.min(100, Math.max(1, Math.trunc(Number(req.query.limit || 20))));
+    const offset = Math.min(1_000_000, Math.max(0, Math.trunc(Number(req.query.offset || 0))));
+    const entryTypes = bucket === "pending" ? ["sale_pending", "referral_reward_pending"] : ["sale_matured", "referral_reward_matured"];
+
+    const { data: ledgerRows, error: ledgerErr } = await supabaseAdmin
+      .from("wallet_ledger")
+      .select("id, entry_type, amount_credits, ref_type, ref_id, created_at")
+      .eq("user_id", user.id)
+      .in("entry_type", entryTypes)
+      .order("created_at", { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (ledgerErr) return err(res, 500, "DB_QUERY_FAILED", ledgerErr.message);
+
+    const rows = Array.isArray(ledgerRows) ? ledgerRows : [];
+
+    const communityPurchaseIds = [...new Set(rows.filter((r) => r.ref_type === "community_purchase" && r.ref_id).map((r) => r.ref_id))];
+    const billingReferralIds = [...new Set(rows.filter((r) => r.ref_type === "billing_referral" && r.ref_id).map((r) => r.ref_id))];
+
+    let purchaseRows = [];
+    if (communityPurchaseIds.length > 0) {
+      const { data, error: qErr } = await supabaseAdmin
+        .from("community_purchases")
+        .select("id, listing_id, referral_code_id, created_at, matures_at, is_matured")
+        .in("id", communityPurchaseIds);
+      if (qErr) return err(res, 500, "DB_QUERY_FAILED", qErr.message);
+      purchaseRows = Array.isArray(data) ? data : [];
+    }
+
+    let billingRows = [];
+    if (billingReferralIds.length > 0) {
+      const { data, error: qErr } = await supabaseAdmin
+        .from("billing_referrals")
+        .select("id, referral_code_snapshot, referred_username_snapshot, plan_slug_snapshot, created_at, matures_at, is_matured")
+        .in("id", billingReferralIds);
+      if (qErr) return err(res, 500, "DB_QUERY_FAILED", qErr.message);
+      billingRows = Array.isArray(data) ? data : [];
+    }
+
+    const listingIds = [...new Set(purchaseRows.map((r) => r.listing_id).filter(Boolean))];
+    const referralCodeIds = [...new Set(purchaseRows.map((r) => r.referral_code_id).filter(Boolean))];
+
+    let listingRows = [];
+    if (listingIds.length > 0) {
+      const { data, error: qErr } = await supabaseAdmin
+        .from("community_listings")
+        .select("id, name, description")
+        .in("id", listingIds);
+      if (qErr) return err(res, 500, "DB_QUERY_FAILED", qErr.message);
+      listingRows = Array.isArray(data) ? data : [];
+    }
+
+    let referralCodeRows = [];
+    if (referralCodeIds.length > 0) {
+      const { data, error: qErr } = await supabaseAdmin
+        .from("community_referral_codes")
+        .select("id, code")
+        .in("id", referralCodeIds);
+      if (qErr) return err(res, 500, "DB_QUERY_FAILED", qErr.message);
+      referralCodeRows = Array.isArray(data) ? data : [];
+    }
+
+    const purchaseById = new Map((purchaseRows || []).map((r) => [r.id, r]));
+    const billingById = new Map((billingRows || []).map((r) => [r.id, r]));
+    const listingById = new Map((listingRows || []).map((r) => [r.id, r]));
+    const referralCodeById = new Map((referralCodeRows || []).map((r) => [r.id, r]));
+
+    const items = rows.map((row) => {
+      const base = {
+        id: row.id,
+        entryType: row.entry_type,
+        bucket,
+        amountCredits: Number(row.amount_credits) || 0,
+        sourceKind: "other",
+        sourceLabel: "Ingreso",
+        sourceName: null,
+        sourceCode: null,
+        planSlug: null,
+        referredUsername: null,
+        createdAt: toMillis(row.created_at),
+        availableAt: null,
+        ledgerCreatedAt: toMillis(row.created_at),
+      };
+
+      if (row.ref_type === "community_purchase") {
+        const purchase = purchaseById.get(row.ref_id) || null;
+        const listing = purchase?.listing_id ? listingById.get(purchase.listing_id) || null : null;
+        const referralCode = purchase?.referral_code_id ? referralCodeById.get(purchase.referral_code_id) || null : null;
+
+        if (row.entry_type === "sale_pending" || row.entry_type === "sale_matured") {
+          return {
+            ...base,
+            sourceKind: "sale",
+            sourceLabel: "Venta de creación",
+            sourceName: listing?.name || listing?.description || "Creación sin nombre",
+            createdAt: toMillis(purchase?.created_at) ?? base.createdAt,
+            availableAt: toMillis(purchase?.matures_at),
+          };
+        }
+
+        return {
+          ...base,
+          sourceKind: "referral",
+          sourceLabel: "Referido por venta",
+          sourceName: listing?.name || "Compra con referido",
+          sourceCode: referralCode?.code || null,
+          createdAt: toMillis(purchase?.created_at) ?? base.createdAt,
+          availableAt: toMillis(purchase?.matures_at),
+        };
+      }
+
+      if (row.ref_type === "billing_referral") {
+        const referral = billingById.get(row.ref_id) || null;
+        return {
+          ...base,
+          sourceKind: "referral",
+          sourceLabel: "Referido de plan",
+          sourceName: referral?.plan_slug_snapshot || "Plan",
+          sourceCode: referral?.referral_code_snapshot || null,
+          referredUsername: referral?.referred_username_snapshot || null,
+          planSlug: referral?.plan_slug_snapshot || null,
+          createdAt: toMillis(referral?.created_at) ?? base.createdAt,
+          availableAt: toMillis(referral?.matures_at),
+        };
+      }
+
+      return base;
+    });
+
+    return res.json({
+      ok: true,
+      bucket,
       items,
       nextOffset: offset + items.length,
       hasMore: items.length === limit,

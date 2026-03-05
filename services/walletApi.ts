@@ -133,3 +133,37 @@ export async function listMyCashouts(params?: { limit?: number; offset?: number 
 
   return data;
 }
+
+export async function listEarningsHistory(
+  bucket: "pending" | "available",
+  params?: { limit?: number; offset?: number }
+) {
+  const headers = await authHeaders();
+  const limit = params?.limit ?? 20;
+  const offset = params?.offset ?? 0;
+
+  const resp = await fetch(
+    apiUrl(
+      `/api/wallet/earnings/history?bucket=${encodeURIComponent(bucket)}&limit=${encodeURIComponent(String(limit))}&offset=${encodeURIComponent(String(offset))}`
+    ),
+    { method: "GET", headers }
+  );
+
+  const raw = await resp.text();
+  const data = parseJsonOrThrow(raw);
+
+  if (!resp.ok || data?.ok === false) {
+    const code = data?.error?.code;
+    const msg = data?.error?.message || `HTTP ${resp.status}`;
+    const err: any = new Error(msg);
+    err.code = code;
+    err.details = data?.error?.details || null;
+    throw err;
+  }
+
+  return {
+    items: Array.isArray(data.items) ? data.items : [],
+    nextOffset: Number(data.nextOffset) || 0,
+    hasMore: Boolean(data.hasMore),
+  };
+}

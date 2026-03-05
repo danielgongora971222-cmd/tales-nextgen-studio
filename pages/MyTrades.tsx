@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { AppRoute } from "../types";
-import { getWalletMe, listMyCashouts, requestCashout, transferEarningsToGeneration } from "../services/walletApi";
+import { getWalletMe, listMyCashouts, listEarningsHistory, requestCashout, transferEarningsToGeneration } from "../services/walletApi";
 import { getMyReferralCodes, getMyReferralSummary } from "../services/referralsApi";
 import { getBuyerPurchases, getSellerListings } from "../services/tradesApi";
 import EarningsActionsModal from "@/components/EarningsActionsModal";
+import EarningsHistoryModal from "@/components/EarningsHistoryModal";
 
 interface Props {
   onNavigate: (route: AppRoute) => void;
@@ -20,6 +21,13 @@ export default function MyTrades({ onNavigate }: Props) {
   const [cashoutsError, setCashoutsError] = useState<string | null>(null);
 
   const [earningsModalOpen, setEarningsModalOpen] = useState(false);
+  const [historyModalOpen, setHistoryModalOpen] = useState(false);
+  const [historyBucket, setHistoryBucket] = useState<"pending" | "available">("pending");
+  const [historyItems, setHistoryItems] = useState<any[]>([]);
+  const [historyOffset, setHistoryOffset] = useState(0);
+  const [historyHasMore, setHistoryHasMore] = useState(true);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
 
   const [codes, setCodes] = useState<any[]>([]);
   const [refSummary, setRefSummary] = useState<any | null>(null);
@@ -124,6 +132,35 @@ async function handleCashout(args: { amountCredits: number; payoutMethod: { kind
 
   await requestCashout(args.amountCredits, args.payoutMethod);
   await refreshWalletAndCashouts();
+}
+
+async function loadHistory(bucket: "pending" | "available", mode: "reset" | "more") {
+  try {
+    setHistoryLoading(true);
+    setHistoryError(null);
+
+    const nextOffset = mode === "reset" ? 0 : historyOffset;
+    const res = await listEarningsHistory(bucket, { limit: 12, offset: nextOffset });
+
+    setHistoryItems((prev) => (mode === "reset" ? res.items : [...prev, ...res.items]));
+    setHistoryOffset(res.nextOffset);
+    setHistoryHasMore(res.hasMore);
+  } catch (e: any) {
+    if (mode === "reset") setHistoryItems([]);
+    setHistoryError(e?.message || "No se pudo cargar el historial de earnings.");
+  } finally {
+    setHistoryLoading(false);
+  }
+}
+
+async function openHistory(bucket: "pending" | "available") {
+  setHistoryBucket(bucket);
+  setHistoryModalOpen(true);
+  setHistoryItems([]);
+  setHistoryOffset(0);
+  setHistoryHasMore(true);
+  setHistoryError(null);
+  await loadHistory(bucket, "reset");
 }
   useEffect(() => {
     if (tab !== "referrals") return;
@@ -247,13 +284,22 @@ async function handleCashout(args: { amountCredits: number; payoutMethod: { kind
           </div>
 
           <div className="rounded-xl bg-black/40 border border-white/10 p-3">
-            <div className="text-white/60 text-xs">Earnings (pending)</div>
-            <div className="text-xl font-bold">{wallet.earnings_pending_credits}</div>
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-white/60 text-xs">Earnings (pending)</div>
+              <button
+                type="button"
+                className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/15 text-[11px]"
+                onClick={() => openHistory("pending")}
+              >
+                Historial
+              </button>
+            </div>
+            <div className="text-xl font-bold mt-1">{wallet.earnings_pending_credits}</div>
             <div className="text-[11px] text-white/50 mt-1">No disponibles aún.</div>
           </div>
 
           <div
-            className={`rounded-xl bg-black/40 border border-white/10 p-3 ${canManageEarnings ? "cursor-pointer hover:bg-black/50" : "opacity-70 cursor-not-allowed"}`}
+            className={`rounded-xl bg-black/40 border border-white/10 p-3 ${canManageEarnings ? "cursor-pointer hover:bg-black/50" : "opacity-70"}`}
             role={canManageEarnings ? "button" : undefined}
             tabIndex={canManageEarnings ? 0 : -1}
             onClick={() => {
@@ -269,8 +315,20 @@ async function handleCashout(args: { amountCredits: number; payoutMethod: { kind
             }}
             title={canManageEarnings ? "Click para transferir a créditos o solicitar cash out" : "Necesitas plan Pro o superior activo para gestionar earnings"}
           >
-            <div className="text-white/60 text-xs">Earnings (available)</div>
-            <div className="text-xl font-bold">{wallet.earnings_matured_credits}</div>
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-white/60 text-xs">Earnings (available)</div>
+              <button
+                type="button"
+                className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/15 text-[11px]"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openHistory("available");
+                }}
+              >
+                Historial
+              </button>
+            </div>
+            <div className="text-xl font-bold mt-1">{wallet.earnings_matured_credits}</div>
             <div className="text-[11px] text-white/50 mt-1">
               {canManageEarnings ? "Click para transferir o cash out." : "Bloqueados hasta volver a Pro o superior."}
             </div>
@@ -338,6 +396,17 @@ async function handleCashout(args: { amountCredits: number; payoutMethod: { kind
       onClose={() => setEarningsModalOpen(false)}
       onTransfer={handleTransfer}
       onCashout={handleCashout}
+    />
+
+    <EarningsHistoryModal
+      open={historyModalOpen}
+      bucket={historyBucket}
+      items={historyItems}
+      loading={historyLoading}
+      error={historyError}
+      hasMore={historyHasMore}
+      onClose={() => setHistoryModalOpen(false)}
+      onLoadMore={() => loadHistory(historyBucket, "more")}
     />
 
       <div className="flex gap-2 mb-4">
