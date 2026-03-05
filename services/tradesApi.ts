@@ -58,3 +58,25 @@ export async function getSellerListings(opts?: { limit?: number; offset?: number
     hasMore: Boolean(data.hasMore),
   };
 }
+
+export async function getTradesDashboard(range: "7d" | "30d" | "90d" | "all" = "30d") {
+  const headers = await authHeaders();
+  const resp = await fetch(apiUrl(`/api/trades/dashboard?range=${encodeURIComponent(range)}`), { method: "GET", headers });
+  const raw = await resp.text();
+  const data = parseJsonOrThrow(raw);
+
+  if (!resp.ok || data?.ok === false) {
+    throw new Error(data?.error?.message || `Trades dashboard failed (${resp.status})`);
+  }
+
+  return {
+    range: data.range || range,
+    summary: data.summary || {},
+    timeline: Array.isArray(data.timeline) ? data.timeline : [],
+    listings: Array.isArray(data.listings) ? data.listings : [],
+    top: data.top || { bestSeller: null, mostLiked: null, mostCommented: null },
+    recentEvents: Array.isArray(data.recentEvents) ? data.recentEvents : [],
+    referralCodesPerformance: Array.isArray(data.referralCodesPerformance) ? data.referralCodesPerformance : [],
+    cashoutsSummary: data.cashoutsSummary || { count: 0, totalCredits: 0, totalNetUsdMicros: 0, lastCashoutAt: null },
+  };
+}
