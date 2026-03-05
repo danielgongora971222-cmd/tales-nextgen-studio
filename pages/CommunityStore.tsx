@@ -10,6 +10,7 @@ import {
   createCommunityListingComment,
 } from "../services/communityStoreApi";
 import { Heart, MessageCircle, ShoppingCart, X, Loader2 } from "lucide-react";
+import styles from "./tools/ImageGeneratorTool.module.css";
 
 interface Props {
   onNavigate: (route: AppRoute) => void;
@@ -17,6 +18,21 @@ interface Props {
 
 const PREFILL_KEY = "tales.prefill.imageGenerator";
 const PREFILL_EVENT = "tales:prefill-image-generator";
+
+type PreviewPalette = { sand: string; sandDim: string; burgundy: string; burgundyGlow: string };
+
+const PREVIEW_PALETTES: PreviewPalette[] = [
+  { sand: "#F1E194", sandDim: "rgba(241, 225, 148, 0.50)", burgundy: "#5B0E14", burgundyGlow: "rgba(91, 14, 20, 0.60)" },
+  { sand: "#A7F3D0", sandDim: "rgba(167, 243, 208, 0.45)", burgundy: "#0F766E", burgundyGlow: "rgba(15, 118, 110, 0.55)" },
+  { sand: "#93C5FD", sandDim: "rgba(147, 197, 253, 0.45)", burgundy: "#4F46E5", burgundyGlow: "rgba(79, 70, 229, 0.55)" },
+  { sand: "#FCA5A5", sandDim: "rgba(252, 165, 165, 0.45)", burgundy: "#BE123C", burgundyGlow: "rgba(190, 18, 60, 0.55)" },
+  { sand: "#FDE68A", sandDim: "rgba(253, 230, 138, 0.45)", burgundy: "#B45309", burgundyGlow: "rgba(180, 83, 9, 0.55)" },
+  { sand: "#E9D5FF", sandDim: "rgba(233, 213, 255, 0.45)", burgundy: "#7C3AED", burgundyGlow: "rgba(124, 58, 237, 0.55)" },
+];
+
+function pickPreviewPalette(): PreviewPalette {
+  return PREVIEW_PALETTES[Math.floor(Math.random() * PREVIEW_PALETTES.length)];
+}
 
 function fmtInt(n: any) {
   const v = Number(n);
@@ -41,6 +57,8 @@ export default function CommunityStore({ onNavigate }: Props) {
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selected, setSelected] = useState<any | null>(null);
+
+  const [previewPalette, setPreviewPalette] = useState<PreviewPalette>(() => pickPreviewPalette());
 
   const [busyLikeById, setBusyLikeById] = useState<Record<string, boolean>>({});
   const [busyPurchase, setBusyPurchase] = useState<boolean>(false);
@@ -91,6 +109,9 @@ export default function CommunityStore({ onNavigate }: Props) {
     setCommentText("");
     setError(null);
 
+    // ✅ paleta aleatoria por preview
+    setPreviewPalette(pickPreviewPalette());
+
     setActiveTab(tab || "overview");
     setShowRecipe(true);
     setRecipeAnimating(false);
@@ -99,9 +120,9 @@ export default function CommunityStore({ onNavigate }: Props) {
       const item = await getCommunityListing(listingId);
       setSelected(item);
 
-      if (tab === "comments") {
-        await loadComments(listingId, true);
-      }
+      // ✅ cargar comments 1 vez por apertura (en background)
+      // evita duplicar llamadas (y evita pegarle al rate limiter)
+      void loadComments(listingId, true);
     } catch (e: any) {
       setError(e?.message || "No se pudo cargar el listing.");
     }
@@ -295,8 +316,8 @@ export default function CommunityStore({ onNavigate }: Props) {
 
       {error ? <div className="mb-4 text-red-400">{error}</div> : null}
 
-      {/* GRID estilo "History": tiles respetan aspect real (NO object-cover) */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+      {/* FEED: MISMO estilo del historial del ImageGeneratorTool (sin marcos / sin forzar aspect) */}
+      <div className={styles.grid}>
         {items.map((it) => {
           const liked = Boolean(it.likedByMe);
           const likeBusy = Boolean(busyLikeById[it.id]);
@@ -304,118 +325,94 @@ export default function CommunityStore({ onNavigate }: Props) {
           return (
             <div
               key={it.id}
-              className="group relative rounded-2xl overflow-hidden bg-black/25 border border-white/10 hover:border-white/20 hover:bg-black/35 transition shadow-[0_18px_44px_rgba(0,0,0,0.45)]"
+              role="button"
+              tabIndex={0}
+              className={styles.tile}
+              onClick={() => openPreview(it.id, "overview")}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  openPreview(it.id, "overview");
+                }
+              }}
+              title="Click para ver"
             >
-              {/* Clickable media */}
-              <button
-                type="button"
-                className="block w-full text-left"
-                onClick={() => openPreview(it.id, "overview")}
-                title="Abrir preview"
+              {it.previewUrl ? (
+                it.mediaTag === "video" ? (
+                  <video
+                    className={styles.tileImg}
+                    src={it.previewUrl}
+                    muted
+                    playsInline
+                    preload="metadata"
+                  />
+                ) : (
+                  <img
+                    className={styles.tileImg}
+                    src={it.previewUrl}
+                    alt={it.name || "preview"}
+                    loading="lazy"
+                    decoding="async"
+                  />
+                )
+              ) : null}
+
+              {/* TOP (solo hover): seller + compras usando el mismo pill del tool */}
+              <div className={styles.tileActions} style={{ left: 10, right: 10, justifyContent: "space-between", pointerEvents: "none" }}>
+                <span className={styles.publicTag}>@{it.sellerUsername || "creator"}</span>
+                <span className={styles.publicTag}>{fmtInt(it.salesCount)} compras</span>
+              </div>
+
+              {/* BOTTOM (solo hover): like + comentar + comprar */}
+              <div
+                className={styles.tileActions}
+                style={{ top: "auto", bottom: 10, left: 10, right: 10, justifyContent: "space-between" }}
+                onClick={(e) => e.stopPropagation()}
               >
-                <div className="relative">
-                  {/* TOP overlay: seller + compras */}
-                  <div className="absolute top-0 left-0 right-0 z-10 p-3 pointer-events-none">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="px-2 py-1 rounded-full bg-black/55 border border-white/10 text-[11px] text-white/90 backdrop-blur">
-                        @{it.sellerUsername || "creator"}
-                      </div>
-                      <div className="px-2 py-1 rounded-full bg-black/55 border border-white/10 text-[11px] text-white/90 backdrop-blur">
-                        {fmtInt(it.salesCount)} compras
-                      </div>
-                    </div>
-                  </div>
+                <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                  <button
+                    type="button"
+                    className={styles.ghostBtn}
+                    style={{ padding: "6px 10px", fontSize: 11, animation: "klingCtaGlow 1.15s ease-in-out infinite" }}
+                    title={liked ? "Quitar Like" : "Dar Like"}
+                    disabled={likeBusy}
+                    onClick={() => handleToggleLike(it.id)}
+                  >
+                    <Heart size={16} style={{ marginRight: 8 }} fill={liked ? "currentColor" : "none"} />
+                    {fmtInt(it.likesCount)}
+                  </button>
 
-                  {/* media */}
-                  <div className="bg-black/30">
-                    {it.previewUrl ? (
-                      it.mediaTag === "video" ? (
-                        <video
-                          src={it.previewUrl}
-                          className="w-full h-auto block"
-                          muted
-                          playsInline
-                          preload="metadata"
-                        />
-                      ) : (
-                        <img src={it.previewUrl} alt="" className="w-full h-auto block" />
-                      )
-                    ) : (
-                      <div className="w-full h-[220px]" />
-                    )}
-                  </div>
-
-                  {/* HOVER overlay: like/comment + BUY CTA */}
-                  <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent" />
-
-                    {/* bottom actions */}
-                    <div className="absolute left-0 right-0 bottom-0 p-3 z-10">
-                      <div className="flex items-end justify-between gap-3">
-                        {/* like + comments */}
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            disabled={likeBusy}
-                            className="inline-flex items-center gap-2 px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 transition disabled:opacity-60"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleToggleLike(it.id);
-                            }}
-                            title="Like"
-                          >
-                            <Heart
-                              size={18}
-                              className={`text-white ${liked ? "opacity-100" : "opacity-80"} group-hover:animate-pulse`}
-                              fill={liked ? "currentColor" : "none"}
-                            />
-                            <span className="text-xs text-white/90 tabular-nums">{fmtInt(it.likesCount)}</span>
-                          </button>
-
-                          <button
-                            type="button"
-                            className="inline-flex items-center gap-2 px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 transition"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openPreview(it.id, "comments");
-                            }}
-                            title="Comentarios"
-                          >
-                            <MessageCircle size={18} className="text-white/90" />
-                            <span className="text-xs text-white/90 tabular-nums">{fmtInt(it.commentsCount)}</span>
-                          </button>
-                        </div>
-
-                        {/* buy CTA */}
-                        <div className="flex flex-col items-end gap-2">
-                          <div className="px-2 py-1 rounded-full bg-black/55 border border-white/10 text-[11px] text-white/90 backdrop-blur">
-                            {fmtInt(it.priceCredits)} créditos
-                          </div>
-
-                          <button
-                            type="button"
-                            className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white text-black hover:bg-white/90 transition font-semibold"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openPreview(it.id, "overview");
-                            }}
-                            title="Comprar"
-                          >
-                            <ShoppingCart size={18} />
-                            Comprar
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* name + short desc */}
-                      <div className="mt-3">
-                        <div className="text-sm font-semibold text-white line-clamp-1">{it.name || "Sin nombre"}</div>
-                        <div className="text-xs text-white/70 line-clamp-2 mt-1">{it.description || ""}</div>
-                      </div>
-                    </div>
-                  </div>
+                  <button
+                    type="button"
+                    className={styles.ghostBtn}
+                    style={{ padding: "6px 10px", fontSize: 11 }}
+                    title="Comentarios"
+                    onClick={() => openPreview(it.id, "comments")}
+                  >
+                    <MessageCircle size={16} style={{ marginRight: 8 }} />
+                    {fmtInt(it.commentsCount)}
+                  </button>
                 </div>
-              </button>
+
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+                  <span className={styles.publicTag}>{fmtInt(it.priceCredits)} créditos</span>
+                  <button
+                    type="button"
+                    className={styles.generateBtn}
+                    style={{ height: 36, padding: "0 14px", fontSize: 11 }}
+                    onClick={() => openPreview(it.id, "overview")}
+                    title="Abrir preview para comprar"
+                  >
+                    <ShoppingCart size={16} style={{ marginRight: 8 }} />
+                    Comprar
+                  </button>
+                </div>
+              </div>
+
+              {/* caption (solo hover) */}
+              <div className={styles.tileMeta}>
+                <span className={styles.tileCaption}>{it.name || "—"}</span>
+              </div>
             </div>
           );
         })}
@@ -434,292 +431,211 @@ export default function CommunityStore({ onNavigate }: Props) {
         </div>
       ) : null}
 
-      {/* MODAL PREVIEW */}
+      {/* MODAL PREVIEW (reusa el viewer del ImageGeneratorTool: sin marco + object-contain) */}
       {selectedId ? (
-        <div className="fixed inset-0 z-[5500] bg-black/80 backdrop-blur-sm p-4 flex items-center justify-center">
+        <div className={styles.viewerBackdrop}>
           <div
             ref={modalRef}
             tabIndex={-1}
-            className="w-full max-w-5xl rounded-2xl border border-white/10 bg-[#070707] overflow-hidden outline-none"
+            className={styles.viewer}
+            style={
+              {
+                ["--sand" as any]: previewPalette.sand,
+                ["--sand-dim" as any]: previewPalette.sandDim,
+                ["--burgundy" as any]: previewPalette.burgundy,
+                ["--burgundy-glow" as any]: previewPalette.burgundyGlow,
+              } as React.CSSProperties
+            }
           >
-            <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-white/10">
-              <div className="min-w-0">
-                <div className="text-sm text-white/70">Preview</div>
-                <div className="text-lg font-semibold text-white truncate">{selectedTitle}</div>
+            <div className={styles.viewerTop}>
+              <div style={{ minWidth: 0 }}>
+                <div className={styles.viewerTitle}>Community Store</div>
+                <div style={{ fontSize: 16, fontWeight: 900, color: "rgba(255,255,255,0.95)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {selected?.name || "Sin nombre"}
+                </div>
               </div>
-              <button
-                type="button"
-                className="p-2 rounded-lg bg-white/10 hover:bg-white/15 transition"
-                onClick={closePreview}
-                title="Cerrar"
-              >
-                <X size={18} />
-              </button>
+
+              <div className={styles.viewerTopActions}>
+                <button type="button" className={styles.iconBtn} title="Cerrar" onClick={closePreview}>
+                  <X size={18} />
+                </button>
+              </div>
             </div>
 
             {selected ? (
-              <div className="grid grid-cols-1 lg:grid-cols-[1.15fr_0.85fr] gap-0">
-                {/* LEFT: image/video, sin crop */}
-                <div className="bg-black/40 border-b lg:border-b-0 lg:border-r border-white/10">
-                  <div className="flex items-center justify-center p-4">
-                    {selectedPreviewUrl ? (
-                      selected.mediaTag === "video" ? (
-                        <video
-                          src={selectedPreviewUrl}
-                          className="max-h-[72vh] w-auto max-w-full rounded-xl border border-white/10"
-                          controls
-                          playsInline
-                        />
-                      ) : (
-                        <img
-                          src={selectedPreviewUrl}
-                          alt=""
-                          className="max-h-[72vh] w-auto max-w-full rounded-xl border border-white/10 object-contain"
-                        />
-                      )
+              <div className={styles.viewerBody}>
+                {/* Imagen/Video: sin marco, ajusta sin recortar */}
+                <div className={styles.viewerImageWrap}>
+                  {selected.previewUrl ? (
+                    selected.mediaTag === "video" ? (
+                      <video src={selected.previewUrl} className={styles.viewerImage} style={{ boxShadow: "none" }} controls playsInline />
                     ) : (
-                      <div className="w-full h-[420px]" />
-                    )}
-                  </div>
+                      <img src={selected.previewUrl} alt="" className={styles.viewerImage} style={{ boxShadow: "none" }} />
+                    )
+                  ) : null}
                 </div>
 
-                {/* RIGHT: info + actions */}
-                <div className="p-4">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-sm text-white/80">
-                      @{selected.sellerUsername} · {fmtInt(selected.salesCount)} compras
-                    </div>
-                    <div className="text-sm text-white/80 tabular-nums">
-                      ❤ {fmtInt(selected.likesCount)} · 💬 {fmtInt(selected.commentsCount)}
-                    </div>
-                  </div>
-
-                  <div className="mt-3 flex items-end justify-between gap-3">
-                    <div>
-                      <div className="text-white/60 text-xs">Precio</div>
-                      <div className="text-2xl font-extrabold text-white">{fmtInt(selected.priceCredits)} créditos</div>
-                    </div>
-
-                    {!selected.ownedByMe && !selected.purchasedByMe ? (
-                      <button
-                        type="button"
-                        disabled={busyPurchase}
-                        className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white text-black hover:bg-white/90 transition font-semibold disabled:opacity-60"
-                        onClick={handleBuy}
-                      >
-                        {busyPurchase ? <Loader2 className="animate-spin" size={18} /> : <ShoppingCart size={18} />}
-                        {busyPurchase ? "Comprando..." : "Comprar"}
-                      </button>
-                    ) : null}
-                  </div>
-
-                  {/* Tabs */}
-                  <div className="mt-4 flex gap-2">
-                    <button
-                      type="button"
-                      className={`px-3 py-1.5 rounded-lg border transition text-sm ${
-                        activeTab === "overview" ? "bg-white text-black border-white" : "bg-white/5 border-white/10 hover:bg-white/10"
-                      }`}
-                      onClick={() => setActiveTab("overview")}
-                    >
-                      Descripción
-                    </button>
-
-                    <button
-                      type="button"
-                      className={`px-3 py-1.5 rounded-lg border transition text-sm ${
-                        activeTab === "comments" ? "bg-white text-black border-white" : "bg-white/5 border-white/10 hover:bg-white/10"
-                      }`}
-                      onClick={async () => {
-                        setActiveTab("comments");
-                        await loadComments(selected.id, true);
-                      }}
-                    >
-                      Comentarios
-                    </button>
-
-                    <button
-                      type="button"
-                      className={`px-3 py-1.5 rounded-lg border transition text-sm ${
-                        activeTab === "recipe" ? "bg-white text-black border-white" : "bg-white/5 border-white/10 hover:bg-white/10"
-                      }`}
-                      onClick={handleViewRecipe}
-                      disabled={!selected.purchasedByMe && !selected.ownedByMe}
-                      title={!selected.purchasedByMe && !selected.ownedByMe ? "Compra para ver la receta" : "Ver receta"}
-                    >
-                      Receta
-                    </button>
-                  </div>
-
-                  {/* CONTENT */}
-                  {activeTab === "overview" ? (
-                    <div className="mt-4">
-                      <div className="text-sm text-white/70">Descripción</div>
-                      <div className="mt-2 text-white/90 text-sm leading-relaxed whitespace-pre-wrap">
-                        {selected.description || "—"}
+                {/* Panel derecho: módulos separados (glass) */}
+                <div className={styles.viewerRecipe}>
+                  <div className={styles.recipeGrid}>
+                    {/* Módulo 1: vendedor + métricas */}
+                    <div className={styles.recipeItemWide}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <span className={styles.publicTag}>@{selected.sellerUsername}</span>
+                          <span className={styles.publicTag}>{fmtInt(selected.salesCount)} compras</span>
+                        </div>
+                        <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "rgba(255,255,255,0.85)" }}>
+                          ❤ {fmtInt(selected.likesCount)} · 💬 {fmtInt(selected.commentsCount)}
+                        </div>
                       </div>
                     </div>
-                  ) : null}
 
-                  {activeTab === "comments" ? (
-                    <div className="mt-4">
-                      <div className="flex items-center justify-between">
-                        <div className="text-sm text-white/70">Comentarios</div>
-                        <div className="text-xs text-white/60 tabular-nums">{fmtInt(commentsCount)}</div>
+                    {/* Módulo 2: comprar + like + receta */}
+                    <div className={styles.recipeItemWide}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                        <div>
+                          <div className={styles.viewerRecipeLabel}>Precio</div>
+                          <div style={{ fontSize: 22, fontWeight: 900, color: "rgba(255,255,255,0.96)" }}>
+                            {fmtInt(selected.priceCredits)} créditos
+                          </div>
+                        </div>
+
+                        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                          <button
+                            type="button"
+                            className={`${styles.iconBtn} ${styles.iconBtnHeart} ${selected.likedByMe ? styles.iconBtnHeartActive : ""}`}
+                            style={{ animation: "klingCtaGlow 1.15s ease-in-out infinite" }}
+                            title={selected.likedByMe ? "Quitar Like" : "Dar Like"}
+                            disabled={Boolean(busyLikeById[selected.id])}
+                            onClick={() => handleToggleLike(selected.id)}
+                          >
+                            <Heart size={18} fill={selected.likedByMe ? "currentColor" : "none"} />
+                          </button>
+
+                          {!selected.ownedByMe && !selected.purchasedByMe ? (
+                            <button type="button" className={styles.generateBtn} disabled={busyPurchase} onClick={handleBuy}>
+                              {busyPurchase ? <Loader2 size={18} className={styles.spin} /> : <ShoppingCart size={18} />}
+                              {busyPurchase ? "Comprando..." : "Comprar"}
+                            </button>
+                          ) : (
+                            <span className={styles.publicTag}>Comprado</span>
+                          )}
+
+                          <button
+                            type="button"
+                            className={styles.ghostBtn}
+                            onClick={handleViewRecipe}
+                            disabled={!selected.purchasedByMe && !selected.ownedByMe}
+                            title={!selected.purchasedByMe && !selected.ownedByMe ? "Compra para ver receta" : "Ver receta"}
+                          >
+                            Ver receta
+                          </button>
+
+                          {recipePack?.recipe ? (
+                            <button type="button" className={styles.generateBtn} onClick={handleReuseRecipe} title="Abrir Image Generator con todo listo">
+                              Reusar receta
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Módulo 3: descripción ↔ receta (toggle + transición) */}
+                    <div className={styles.recipeItemWide}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                        <div className={styles.viewerRecipeTitle}>{showRecipe ? "Receta" : "Descripción"}</div>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <button type="button" className={styles.ghostBtn} onClick={() => setShowRecipe(false)}>Descripción</button>
+                          <button type="button" className={styles.ghostBtn} onClick={() => setShowRecipe(true)}>Receta</button>
+                        </div>
                       </div>
 
-                      <div className="mt-3 space-y-2 max-h-[260px] overflow-auto pr-1">
+                      <div style={{ marginTop: 12, animation: recipeAnimating ? "popIn 0.22s var(--ease-smooth)" : undefined }}>
+                        {showRecipe ? (
+                          !selected.purchasedByMe && !selected.ownedByMe ? (
+                            <div className={styles.viewerRecipeValue}>Compra para ver la receta.</div>
+                          ) : recipePack?.recipe ? (
+                            <>
+                              <div className={styles.viewerRecipeLabel}>Resumen</div>
+                              <div className={styles.viewerRecipeValue}>
+                                Tool: {recipePack.recipe?.sourceAsset?.tool || "—"}{"\n"}
+                                Modelo: {recipePack.recipe?.sourceAsset?.meta?.model || "—"}{"\n"}
+                                Aspect: {recipePack.recipe?.sourceAsset?.meta?.aspectRatio || "—"} · Quality: {recipePack.recipe?.sourceAsset?.meta?.quality || "—"} · Count: {recipePack.recipe?.sourceAsset?.meta?.count || "—"}
+                              </div>
+
+                              <div className={styles.viewerRecipeLabel}>Prompt</div>
+                              <div className={styles.viewerRecipeValue}>{recipePack.recipe?.sourceAsset?.prompt || "—"}</div>
+
+                              <div className={styles.viewerRecipeLabel}>Referencias</div>
+                              <div className={styles.viewerRecipeValue}>
+                                {Array.isArray(recipePack.resolvedAssets) && recipePack.resolvedAssets.length
+                                  ? recipePack.resolvedAssets.map((r: any) => `${r.role} ${r.token || ""} (${String(r.assetId).slice(0, 10)})`).join("\n")
+                                  : "—"}
+                              </div>
+                            </>
+                          ) : (
+                            <button type="button" className={styles.generateBtn} onClick={handleViewRecipe}>
+                              Cargar receta
+                            </button>
+                          )
+                        ) : (
+                          <div className={styles.viewerRecipeValue}>{selected.description || "—"}</div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Módulo 4: comentarios (separado) */}
+                    <div className={styles.recipeItemWide}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                        <div className={styles.viewerRecipeTitle}>Comentarios</div>
+                        <div className={styles.viewerRecipeLabel}>{fmtInt(commentsCount)}</div>
+                      </div>
+
+                      <div style={{ marginTop: 12, maxHeight: 260, overflow: "auto" }}>
                         {commentsLoading ? (
-                          <div className="text-white/60 text-sm">Cargando…</div>
+                          <div className={styles.viewerRecipeValue}>Cargando…</div>
                         ) : comments.length === 0 ? (
-                          <div className="text-white/60 text-sm">Aún no hay comentarios.</div>
+                          <div className={styles.viewerRecipeValue}>Aún no hay comentarios.</div>
                         ) : (
                           comments.map((c) => (
-                            <div key={c.id} className="rounded-xl border border-white/10 bg-white/5 p-3">
-                              <div className="flex items-center justify-between gap-2">
-                                <div className="text-xs text-white/80">@{c.username}</div>
-                                <div className="text-[11px] text-white/50 tabular-nums">
-                                  {c.timestamp ? new Date(c.timestamp).toLocaleString() : ""}
-                                </div>
+                            <div key={c.id} style={{ marginBottom: 10 }}>
+                              <div className={styles.viewerRecipeLabel}>
+                                @{c.username} · {c.timestamp ? new Date(c.timestamp).toLocaleString() : ""}
                               </div>
-                              <div className="mt-2 text-sm text-white/90 whitespace-pre-wrap">{c.text}</div>
+                              <div className={styles.viewerRecipeValue}>{c.text}</div>
                             </div>
                           ))
                         )}
                       </div>
 
-                      <div className="mt-3 flex gap-2">
+                      <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
                         <input
                           value={commentText}
                           onChange={(e) => setCommentText(e.target.value)}
-                          className="flex-1 px-3 py-2 rounded-xl bg-black/40 border border-white/10 focus:outline-none focus:ring-2 focus:ring-white/20 text-sm"
                           placeholder="Escribe un comentario…"
+                          style={{
+                            flex: 1,
+                            padding: "10px 12px",
+                            borderRadius: 14,
+                            border: "1px solid rgba(255,255,255,0.10)",
+                            background: "rgba(0,0,0,0.25)",
+                            color: "rgba(255,255,255,0.92)",
+                            outline: "none",
+                          }}
                         />
-                        <button
-                          type="button"
-                          className="px-4 py-2 rounded-xl bg-white text-black hover:bg-white/90 transition font-semibold"
-                          onClick={handleCreateComment}
-                        >
+                        <button type="button" className={styles.generateBtn} onClick={handleCreateComment}>
                           Enviar
                         </button>
                       </div>
                     </div>
-                  ) : null}
+                  </div>
 
-                  {activeTab === "recipe" ? (
-                    <div className="mt-4">
-                      {!selected.purchasedByMe && !selected.ownedByMe ? (
-                        <div className="text-sm text-white/60">Compra para ver la receta.</div>
-                      ) : recipePack?.recipe ? (
-                        <div className={`transition-all duration-300 ${recipeAnimating ? "opacity-50 translate-y-1" : "opacity-100 translate-y-0"}`}>
-                          {/* toggle Descripción/Receta (post compra) */}
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="text-sm text-white/70">Contenido</div>
-                            <div className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                className={`px-3 py-1.5 rounded-lg border transition text-sm ${
-                                  showRecipe ? "bg-white text-black border-white" : "bg-white/5 border-white/10 hover:bg-white/10"
-                                }`}
-                                onClick={() => setShowRecipe(true)}
-                              >
-                                Receta
-                              </button>
-                              <button
-                                type="button"
-                                className={`px-3 py-1.5 rounded-lg border transition text-sm ${
-                                  !showRecipe ? "bg-white text-black border-white" : "bg-white/5 border-white/10 hover:bg-white/10"
-                                }`}
-                                onClick={() => setShowRecipe(false)}
-                              >
-                                Descripción
-                              </button>
-                            </div>
-                          </div>
-
-                          {showRecipe ? (
-                            <div className="mt-3 space-y-3">
-                              <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-                                <div className="text-xs text-white/60">Resumen receta</div>
-                                <div className="mt-1 text-sm text-white/90">
-                                  Tool: <span className="font-semibold">{recipePack.recipe?.sourceAsset?.tool || "—"}</span>
-                                </div>
-                                <div className="mt-1 text-sm text-white/90">
-                                  Modelo: <span className="font-semibold">{recipePack.recipe?.sourceAsset?.meta?.model || "—"}</span>
-                                </div>
-                                <div className="mt-1 text-sm text-white/90">
-                                  Aspect: <span className="font-semibold">{recipePack.recipe?.sourceAsset?.meta?.aspectRatio || "—"}</span> ·
-                                  Quality: <span className="font-semibold">{recipePack.recipe?.sourceAsset?.meta?.quality || "—"}</span> ·
-                                  Count: <span className="font-semibold">{recipePack.recipe?.sourceAsset?.meta?.count || "—"}</span>
-                                </div>
-                              </div>
-
-                              <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-                                <div className="text-xs text-white/60 mb-2">Prompt</div>
-                                <div className="text-sm text-white/90 whitespace-pre-wrap">
-                                  {recipePack.recipe?.sourceAsset?.prompt || "—"}
-                                </div>
-                              </div>
-
-                              <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-                                <div className="text-xs text-white/60 mb-2">Referencias incluidas</div>
-                                <div className="text-sm text-white/90">
-                                  {Array.isArray(recipePack.resolvedAssets) && recipePack.resolvedAssets.length > 0
-                                    ? recipePack.resolvedAssets.map((r: any) => (
-                                        <div key={r.assetId} className="flex items-center justify-between gap-2 py-1">
-                                          <div className="text-white/90">
-                                            {r.role} <span className="text-white/50">({r.token || "no-token"})</span>
-                                          </div>
-                                          <div className="text-white/60 text-xs tabular-nums">{String(r.assetId).slice(0, 8)}</div>
-                                        </div>
-                                      ))
-                                    : "—"}
-                                </div>
-                              </div>
-
-                              <div className="flex items-center gap-2">
-                                <button
-                                  type="button"
-                                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white text-black hover:bg-white/90 transition font-semibold"
-                                  onClick={handleReuseRecipe}
-                                  title="Abrir Image Generator con todo seteado"
-                                >
-                                  Reusar receta
-                                </button>
-                              </div>
-
-                              <div className="rounded-xl border border-white/10 bg-black/40 p-3">
-                                <div className="text-xs text-white/60 mb-2">Recipe JSON completo</div>
-                                <pre className="text-xs text-white/80 overflow-auto max-h-[220px]">
-{JSON.stringify(recipePack.recipe, null, 2)}
-                                </pre>
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="mt-3 text-white/90 text-sm whitespace-pre-wrap">
-                              {selected.description || "—"}
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="mt-3">
-                          <button
-                            type="button"
-                            className="px-4 py-2 rounded-xl bg-white text-black hover:bg-white/90 transition font-semibold"
-                            onClick={handleViewRecipe}
-                          >
-                            Ver receta
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  ) : null}
-
-                  {error ? <div className="mt-3 text-red-400 text-sm">{error}</div> : null}
+                  {error ? <div style={{ marginTop: 10, color: "rgba(248, 113, 113, 0.95)" }}>{error}</div> : null}
                 </div>
               </div>
             ) : (
-              <div className="p-5 text-white/70">Cargando...</div>
+              <div style={{ padding: 18, color: "rgba(255,255,255,0.70)" }}>Cargando...</div>
             )}
           </div>
         </div>

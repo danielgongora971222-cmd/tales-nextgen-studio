@@ -506,11 +506,11 @@ export function createCommunityStoreRouter(ctx) {
     const rl = await checkUserRateLimit({
       userId: user?.id || "anon",
       scope: "listing_comments_list",
-      limit: 120,
-      windowSeconds: 60,
+      windowMs: 60 * 1000,
+      max: 120,
     });
 
-    if (!rl.allowed) {
+    if (!rl.ok) {
       return err(res, 429, "RATE_LIMITED", "Demasiadas solicitudes. Espera un momento.", {
         retryAfterSeconds: rl.retryAfterSeconds,
       });
@@ -581,11 +581,11 @@ export function createCommunityStoreRouter(ctx) {
     const rl = await checkUserRateLimit({
       userId: user.id,
       scope: "listing_comment_create",
-      limit: 8,
-      windowSeconds: 30,
+      windowMs: 30 * 1000,
+      max: 8,
     });
 
-    if (!rl.allowed) {
+    if (!rl.ok) {
       return err(res, 429, "RATE_LIMITED", "Demasiados comentarios. Espera y vuelve a intentar.", {
         retryAfterSeconds: rl.retryAfterSeconds,
       });
