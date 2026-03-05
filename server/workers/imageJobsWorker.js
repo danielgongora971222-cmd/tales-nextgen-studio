@@ -837,14 +837,6 @@ async function runImageGenerateTask({ userId, params }) {
     verticalAngle,
     zoom,
     loraScale,
-    imageSize,
-    guidanceScale,
-    numInferenceSteps,
-    acceleration,
-    negativePrompt,
-    seed,
-    enableSafetyChecker,
-    outputFormat,
   } = parsed;
 
   const selectedModel = String(model || "");
@@ -1403,28 +1395,14 @@ async function runImageGenerateTask({ userId, params }) {
       throw httpError(400, "QWEN_NEEDS_REFERENCE", "Qwen Multiple Angles necesita 1 imagen de referencia.");
     }
 
-    const imageSizeInput = imageSize && typeof imageSize === "object"
-      ? { width: imageSize.width, height: imageSize.height }
-      : imageSize;
-    const parsedSeed = Number.isInteger(seed) ? seed : undefined;
-    const safety = typeof enableSafetyChecker === "boolean" ? enableSafetyChecker : true;
-    const format = outputFormat || "png";
-
     const falInput = {
       image_urls: [refUrls[0]],
       horizontal_angle: Number.isFinite(horizontalAngle) ? horizontalAngle : 0,
       vertical_angle: Number.isFinite(verticalAngle) ? verticalAngle : 0,
       zoom: Number.isFinite(zoom) ? zoom : 5,
       lora_scale: Number.isFinite(loraScale) ? loraScale : 1,
-      image_size: imageSizeInput,
-      guidance_scale: Number.isFinite(guidanceScale) ? guidanceScale : 4.5,
-      num_inference_steps: Number.isInteger(numInferenceSteps) ? numInferenceSteps : 28,
-      acceleration: acceleration === "none" ? "none" : "regular",
-      negative_prompt: String(negativePrompt || "").trim(),
-      seed: parsedSeed,
-      enable_safety_checker: safety,
       additional_prompt: String(prompt || "").trim() || undefined,
-      output_format: format,
+      output_format: "png",
       num_images: nRequested,
     };
 
@@ -1455,20 +1433,7 @@ async function runImageGenerateTask({ userId, params }) {
         model: selectedModel,
         count: nRequested,
         prompt,
-        camera: {
-          horizontalAngle,
-          verticalAngle,
-          zoom,
-          loraScale,
-          imageSize: imageSizeInput || null,
-          guidanceScale: Number.isFinite(guidanceScale) ? guidanceScale : 4.5,
-          numInferenceSteps: Number.isInteger(numInferenceSteps) ? numInferenceSteps : 28,
-          acceleration: acceleration === "none" ? "none" : "regular",
-          negativePrompt: String(negativePrompt || "").trim() || null,
-          seed: parsedSeed ?? null,
-          enableSafetyChecker: safety,
-          outputFormat: format,
-        },
+        camera: { horizontalAngle, verticalAngle, zoom, loraScale },
         characterAssetIds: Array.isArray(characterAssetIds) ? characterAssetIds : [],
         styleAssetId: styleAssetId || null,
         backgroundAssetId: backgroundAssetId || null,
