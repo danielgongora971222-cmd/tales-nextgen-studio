@@ -119,9 +119,22 @@ export function createCommunityStoreRouter(ctx) {
     const limit = clampInt(req.query.limit, 1, 48, 12);
     const offset = clampInt(req.query.offset, 0, 1_000_000, 0);
 
-    const sort = typeof req.query.sort === "string" ? req.query.sort : "recent";
+    let sort = typeof req.query.sort === "string" ? req.query.sort : "recent";
     const media = typeof req.query.media === "string" ? req.query.media : "all";
     const seller = typeof req.query.seller === "string" ? req.query.seller.trim() : "";
+    const qSearchRaw = typeof req.query.q === "string" ? req.query.q.trim() : "";
+    const qSearch = qSearchRaw ? qSearchRaw.slice(0, 80).replace(/,/g, " ") : "";
+    const mine = String(req.query.mine || "").toLowerCase() === "1" || String(req.query.mine || "").toLowerCase() === "true";
+
+    // Usuario (si existe) - se usa para filtros "mine" y likedByMe
+    const { user } = await maybeUserFromReq(req, supabaseAdmin);
+
+    // Aliases de sort (para UI)
+    if (sort === "hot") sort = "top_liked";
+    if (sort === "newer") sort = "recent";
+    if (sort === "older") sort = "oldest";
+    if (sort === "most_commented") sort = "top_commented";
+    if (sort === "best_seller") sort = "top_sold";
 
     let q = supabaseAdmin
       .from("community_listings")
@@ -129,6 +142,11 @@ export function createCommunityStoreRouter(ctx) {
         "id, name, seller_id, seller_username_snapshot, seller_verified_snapshot, listing_kind, media_tag, price_credits, description, status, preview_asset_id, created_at, likes_count, comments_count, sales_count"
       )
       .eq("status", "active");
+
+    if (mine) {
+      if (!user?.id) return err(res, 401, "AUTH_REQUIRED", "Necesitas iniciar sesión para ver tus listings.");
+      q = q.eq("seller_id", user.id);
+    }
 
     if (media === "image" || media === "video" || media === "workflow") {
       q = q.eq("media_tag", media);
@@ -138,10 +156,20 @@ export function createCommunityStoreRouter(ctx) {
       q = q.ilike("seller_username_snapshot", `%${seller}%`);
     }
 
+    if (qSearch) {
+      // Buscar por nombre del listing o por @creador
+      const term = qSearch.startsWith("@") ? qSearch.slice(1) : qSearch;
+      q = q.or(`name.ilike.%${term}%,seller_username_snapshot.ilike.%${term}%`);
+    }
+
     if (sort === "top_liked") {
       q = q.order("likes_count", { ascending: false }).order("created_at", { ascending: false });
     } else if (sort === "top_sold") {
       q = q.order("sales_count", { ascending: false }).order("created_at", { ascending: false });
+    } else if (sort === "top_commented") {
+      q = q.order("comments_count", { ascending: false }).order("created_at", { ascending: false });
+    } else if (sort === "oldest") {
+      q = q.order("created_at", { ascending: true });
     } else {
       q = q.order("created_at", { ascending: false });
     }
@@ -153,8 +181,6 @@ export function createCommunityStoreRouter(ctx) {
 
     const rows = data || [];
     const listingIds = rows.map((r) => r.id).filter(Boolean);
-
-    const { user } = await maybeUserFromReq(req, supabaseAdmin);
 
     const likedSet = new Set();
     if (user?.id && listingIds.length > 0) {

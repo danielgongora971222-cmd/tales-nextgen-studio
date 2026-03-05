@@ -22,9 +22,11 @@ function parseJsonOrThrow(text: string): any {
 export async function listCommunityListings(opts?: {
   limit?: number;
   offset?: number;
-  sort?: "recent" | "top_liked" | "top_sold";
+  sort?: "recent" | "oldest" | "top_liked" | "top_sold" | "top_commented";
   media?: "all" | "image" | "video" | "workflow";
   seller?: string;
+  q?: string;
+  mine?: boolean;
 }) {
   const headers = await authHeaders();
 
@@ -34,6 +36,8 @@ export async function listCommunityListings(opts?: {
   if (opts?.sort) params.set("sort", opts.sort);
   if (opts?.media) params.set("media", opts.media);
   if (opts?.seller) params.set("seller", opts.seller);
+  if (opts?.q) params.set("q", opts.q);
+  if (opts?.mine) params.set("mine", "1");
 
   const resp = await fetch(apiUrl(`/api/community-store/listings?${params.toString()}`), {
     method: "GET",

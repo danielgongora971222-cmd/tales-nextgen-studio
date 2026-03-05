@@ -323,8 +323,11 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
             onClick={() => onNavigate(AppRoute.COMMUNITY_STORE)}
             icon={
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M3 7h6l2 2h10v10a2 2 0 0 1-2 2H3V7z" />
-                <path d="M3 7V5a2 2 0 0 1 2-2h5l2 2h9" />
+                {/* Store icon */}
+                <path d="M4 7V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v2" />
+                <path d="M3 7h18l-1 4H4L3 7z" />
+                <path d="M4 11v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9" />
+                <path d="M9 21v-6h6v6" />
               </svg>
             }
           />

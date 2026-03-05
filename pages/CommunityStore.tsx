@@ -3,14 +3,17 @@ import { AppRoute } from "../types";
 import {
   listCommunityListings,
   getCommunityListing,
+  updateCommunityListing,
+  deleteCommunityListing,
   purchaseCommunityListing,
   getCommunityListingRecipe,
   toggleCommunityListingLike,
   listCommunityListingComments,
   createCommunityListingComment,
 } from "../services/communityStoreApi";
-import { Heart, MessageCircle, ShoppingCart, X, Loader2, Send, ArrowRightLeft } from "lucide-react";
+import { Heart, MessageCircle, ShoppingCart, X, Loader2, Send, ArrowRightLeft, Pencil, Trash2, Search } from "lucide-react";
 import styles from "./tools/ImageGeneratorTool.module.css";
+import { useAuth } from "../contexts/AuthContext";
 
 interface Props {
   onNavigate: (route: AppRoute) => void;
@@ -67,11 +70,28 @@ function safeJsonParse<T = any>(raw: string): T | null {
 }
 
 export default function CommunityStore({ onNavigate }: Props) {
+  const { user } = useAuth();
+
   const [items, setItems] = useState<any[]>([]);
   const [offset, setOffset] = useState<number>(0);
   const [hasMore, setHasMore] = useState<boolean>(true);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+
+  type FeedFilter = "hot" | "newer" | "older" | "most_commented" | "best_seller" | "my_shop";
+  const [feedFilter, setFeedFilter] = useState<FeedFilter>("hot");
+
+  const filters: { key: FeedFilter; label: string; disabled?: boolean }[] = [
+    { key: "hot", label: "Hot" },
+    { key: "newer", label: "Newer" },
+    { key: "older", label: "Older" },
+    { key: "most_commented", label: "Más comentados" },
+    { key: "best_seller", label: "Best seller" },
+    { key: "my_shop", label: "Mi tienda", disabled: !user },
+  ];
+
+  const [searchInput, setSearchInput] = useState<string>("");
+  const [searchQuery, setSearchQuery] = useState<string>("");
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selected, setSelected] = useState<any | null>(null);
@@ -91,8 +111,21 @@ export default function CommunityStore({ onNavigate }: Props) {
   const [commentsCount, setCommentsCount] = useState<number>(0);
   const [commentsLoading, setCommentsLoading] = useState<boolean>(false);
   const [commentText, setCommentText] = useState<string>("");
+  const [editOpen, setEditOpen] = useState<boolean>(false);
+  const [editName, setEditName] = useState<string>("");
+  const [editPrice, setEditPrice] = useState<number>(1);
+  const [editDesc, setEditDesc] = useState<string>("");
+  const [editBusy, setEditBusy] = useState<boolean>(false);
+  const [editError, setEditError] = useState<string | null>(null);
 
   const modalRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      setSearchQuery((searchInput || "").trim());
+    }, 250);
+    return () => window.clearTimeout(t);
+  }, [searchInput]);
 
   async function loadMore(reset = false) {
     if (loading) return;
@@ -100,11 +133,28 @@ export default function CommunityStore({ onNavigate }: Props) {
     setError(null);
 
     try {
+      const mine = feedFilter === "my_shop";
+
+      const sort =
+        feedFilter === "hot"
+          ? "top_liked"
+          : feedFilter === "newer"
+          ? "recent"
+          : feedFilter === "older"
+          ? "oldest"
+          : feedFilter === "most_commented"
+          ? "top_commented"
+          : feedFilter === "best_seller"
+          ? "top_sold"
+          : "recent";
+
       const page = await listCommunityListings({
         limit: 12,
         offset: reset ? 0 : offset,
-        sort: "recent",
+        sort,
         media: "all",
+        q: searchQuery || undefined,
+        mine,
       });
 
       const next = reset ? page.items : [...items, ...page.items];
@@ -164,6 +214,84 @@ export default function CommunityStore({ onNavigate }: Props) {
     setCommentsCount(0);
     setCommentText("");
     setError(null);
+
+    setEditOpen(false);
+    setEditError(null);
+  }
+
+  function openEdit() {
+    if (!selected?.ownedByMe) return;
+    setEditName(String(selected?.name || "").trim());
+    setEditPrice(Number(selected?.priceCredits) || 1);
+    setEditDesc(String(selected?.description || "").trim());
+    setEditError(null);
+    setEditOpen(true);
+  }
+
+  function closeEdit() {
+    setEditOpen(false);
+    setEditError(null);
+  }
+
+  async function handleSaveEdit() {
+    if (!selected?.id) return;
+    if (editBusy) return;
+
+    const name = (editName || "").trim();
+    const description = (editDesc || "").trim();
+    const priceCredits = Math.max(1, Math.floor(Number(editPrice) || 1));
+
+    if (name.length < 3) {
+      setEditError("El nombre debe tener al menos 3 caracteres.");
+      return;
+    }
+    if (description.length < 20) {
+      setEditError("La descripción debe tener al menos 20 caracteres.");
+      return;
+    }
+
+    setEditBusy(true);
+    setEditError(null);
+
+    try {
+      await updateCommunityListing(selected.id, { name, priceCredits, description });
+
+      // Refrescar detalle
+      const fresh = await getCommunityListing(selected.id);
+      setSelected(fresh);
+
+      // Refrescar item en feed (nombre/precio/descripción)
+      setItems((prev) =>
+        prev.map((it) =>
+          it.id === selected.id
+            ? { ...it, name: fresh.name, priceCredits: fresh.priceCredits, description: fresh.description }
+            : it
+        )
+      );
+
+      setEditOpen(false);
+    } catch (e: any) {
+      setEditError(e?.message || "No se pudo guardar los cambios.");
+    } finally {
+      setEditBusy(false);
+    }
+  }
+
+  async function handleDeleteSelected() {
+    if (!selected?.id) return;
+    if (!selected?.ownedByMe) return;
+
+    const ok = window.confirm("¿Eliminar esta creación del Community Store?\n\nEsta acción la quitará del store.");
+    if (!ok) return;
+
+    setError(null);
+    try {
+      await deleteCommunityListing(selected.id);
+      await closePreview();
+      await loadMore(true);
+    } catch (e: any) {
+      setError(e?.message || "No se pudo eliminar.");
+    }
   }
 
   async function handleToggleLike(listingId: string) {
@@ -305,8 +433,12 @@ export default function CommunityStore({ onNavigate }: Props) {
   const selectedTitle = useMemo(() => selected?.name || "Sin nombre", [selected]);
 
   useEffect(() => {
-    loadMore(true);
-  }, []);
+    // reset visual cuando cambian filtros/búsqueda
+    setItems([]);
+    setOffset(0);
+    setHasMore(true);
+    void loadMore(true);
+  }, [feedFilter, searchQuery]);
 
   // Cerrar modal con ESC
   useEffect(() => {
@@ -349,6 +481,8 @@ export default function CommunityStore({ onNavigate }: Props) {
           <span className="relative">Ir a My Trades</span>
         </button>
       </div>
+
+
 
       {error ? <div className="mb-4 text-red-400">{error}</div> : null}
 
@@ -494,6 +628,7 @@ export default function CommunityStore({ onNavigate }: Props) {
                 ["--sand-dim" as any]: previewPalette.sandDim,
                 ["--burgundy" as any]: previewPalette.burgundy,
                 ["--burgundy-glow" as any]: previewPalette.burgundyGlow,
+                position: "relative",
               } as React.CSSProperties
             }
           >
@@ -506,11 +641,101 @@ export default function CommunityStore({ onNavigate }: Props) {
               </div>
 
               <div className={styles.viewerTopActions}>
+                {selected?.ownedByMe ? (
+                  <>
+                    <button type="button" className={styles.iconBtn} title="Editar" onClick={openEdit}>
+                      <Pencil size={18} />
+                    </button>
+                    <button type="button" className={styles.iconBtn} title="Eliminar" onClick={handleDeleteSelected}>
+                      <Trash2 size={18} />
+                    </button>
+                  </>
+                ) : null}
                 <button type="button" className={styles.iconBtn} title="Cerrar" onClick={closePreview}>
                   <X size={18} />
                 </button>
               </div>
             </div>
+
+            {editOpen ? (
+              <div
+                role="dialog"
+                aria-modal="true"
+                className="absolute inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+                onClick={closeEdit}
+              >
+                <div
+                  className="w-full max-w-xl rounded-2xl border border-white/10 bg-black/80 p-5 text-white backdrop-blur"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-lg font-extrabold">Editar publicación</div>
+                      <div className="mt-1 text-xs text-white/60">Solo tú (dueño) puedes editar o eliminar.</div>
+                    </div>
+                    <button type="button" className={styles.iconBtn} title="Cerrar" onClick={closeEdit}>
+                      <X size={18} />
+                    </button>
+                  </div>
+
+                  <div className="mt-4 grid gap-3">
+                    <label className="grid gap-1">
+                      <span className="text-xs font-semibold text-white/70">Nombre</span>
+                      <input
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/90 outline-none focus:border-white/25 focus:bg-white/10"
+                        placeholder="Ej: Cinematic Portrait Pack"
+                      />
+                    </label>
+
+                    <label className="grid gap-1">
+                      <span className="text-xs font-semibold text-white/70">Precio (créditos)</span>
+                      <input
+                        type="number"
+                        value={editPrice}
+                        min={1}
+                        step={1}
+                        onChange={(e) => setEditPrice(Number(e.target.value))}
+                        className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/90 outline-none focus:border-white/25 focus:bg-white/10"
+                      />
+                    </label>
+
+                    <label className="grid gap-1">
+                      <span className="text-xs font-semibold text-white/70">Descripción (mín. 20 caracteres)</span>
+                      <textarea
+                        value={editDesc}
+                        onChange={(e) => setEditDesc(e.target.value)}
+                        rows={6}
+                        className="resize-none rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/90 outline-none focus:border-white/25 focus:bg-white/10"
+                        placeholder="Explica el preset/receta: pasos, tips, resultados esperados…"
+                      />
+                    </label>
+
+                    {editError ? <div className="text-sm text-red-300">{editError}</div> : null}
+
+                    <div className="mt-2 flex items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white/80 hover:border-white/20 hover:bg-white/10"
+                        onClick={closeEdit}
+                        disabled={editBusy}
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-xl border border-white/10 bg-white px-4 py-2 text-sm font-extrabold text-black disabled:opacity-60"
+                        onClick={handleSaveEdit}
+                        disabled={editBusy}
+                      >
+                        {editBusy ? "Guardando…" : "Guardar"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : null}
 
             {selected ? (
               <div className={styles.viewerBody}>
@@ -687,6 +912,49 @@ export default function CommunityStore({ onNavigate }: Props) {
                           <Send size={18} />
                         </button>
                       </div>
+                    </div>
+                  </div>
+
+                  {/* Filtros + búsqueda */}
+                  <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {filters.map((f) => {
+                        const active = feedFilter === f.key;
+                        return (
+                          <button
+                            key={f.key}
+                            type="button"
+                            disabled={f.disabled}
+                            className={
+                              "rounded-xl border px-3 py-2 text-xs font-semibold transition focus:outline-none focus:ring-2 focus:ring-white/25 " +
+                              (active
+                                ? "border-white/25 bg-white/15 text-white"
+                                : "border-white/10 bg-white/5 text-white/80 hover:border-white/20 hover:bg-white/10") +
+                              (f.disabled ? " opacity-50 cursor-not-allowed" : "")
+                            }
+                            onClick={() => {
+                              if (f.disabled) {
+                                setError("Inicia sesión para ver ‘Mi tienda’. ");
+                                return;
+                              }
+                              setError(null);
+                              setFeedFilter(f.key);
+                            }}
+                          >
+                            {f.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <div className="relative w-full md:w-[360px]">
+                      <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/55" />
+                      <input
+                        value={searchInput}
+                        onChange={(e) => setSearchInput(e.target.value)}
+                        placeholder="Buscar por nombre o @creador…"
+                        className="w-full rounded-2xl border border-white/10 bg-white/5 py-2 pl-10 pr-3 text-sm text-white/90 outline-none transition focus:border-white/25 focus:bg-white/10"
+                      />
                     </div>
                   </div>
 
