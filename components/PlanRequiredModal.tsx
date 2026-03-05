@@ -52,7 +52,7 @@ export default function PlanRequiredModal({
             className="flex-1 px-4 py-3 rounded-xl bg-white text-black font-bold hover:scale-[1.01] transition"
             onClick={onGoPlans}
           >
-            Ver planes
+            Ir a Perfil y Créditos
           </button>
 
           <button

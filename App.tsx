@@ -250,16 +250,8 @@ useEffect(() => {
         return <MyCreations />;
 
       case AppRoute.PAYWALL:
-        return (
-          <Paywall
-            onSubscribed={async () => {
-              const sub = await billingMe();
-              setSubscription(sub || null);
-              setRoute(AppRoute.HOME);
-            }}
-            onContinueExploring={() => setRoute(AppRoute.HOME)}
-          />
-        );
+        // Unificado: compras de planes/créditos se manejan en Perfil y Créditos
+        return <Profile onNavigate={(r) => { setStorePrefill({ asset: null }); setRoute(r); }} />;
 
       case AppRoute.PROFILE:
         return <Profile onNavigate={(r) => { setStorePrefill({ asset: null }); setRoute(r); }} />;
@@ -376,7 +368,7 @@ useEffect(() => {
         onClose={() => setPlanRequiredOpen(false)}
         onGoPlans={() => {
           setPlanRequiredOpen(false);
-          setRoute(AppRoute.PAYWALL);
+          setRoute(AppRoute.PROFILE);
         }}
       />
       </WalletProvider>

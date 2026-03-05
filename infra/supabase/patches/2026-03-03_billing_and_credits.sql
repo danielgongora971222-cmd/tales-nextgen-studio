@@ -468,7 +468,7 @@ $$;
 -- seed planes si no existen
 insert into public.billing_plans(slug, name, billing_period, price_cents, plan_credits, bonus_credits, can_sell)
 values
-  ('basic_week', 'Básico', 'week', 799, 900, 0, false),
+  ('basic_week', 'Básico', 'week', 799, 1, 0, false),
   ('standard_month', 'Standard', 'month', 1799, 4000, 0, false),
   ('pro_month', 'Pro', 'month', 2799, 7000, 0, true),
   ('partner_month', 'Partner', 'month', 4799, 12000, 0, true),

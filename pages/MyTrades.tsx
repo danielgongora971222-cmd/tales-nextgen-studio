@@ -263,9 +263,9 @@ export default function MyTrades({ onNavigate }: Props) {
             <button
               type="button"
               className="mt-4 px-4 py-2 rounded-lg bg-white text-black font-semibold"
-              onClick={() => onNavigate(AppRoute.PAYWALL)}
+              onClick={() => onNavigate(AppRoute.PROFILE)}
             >
-              Upgrade plan
+              Ir a Perfil y Créditos
             </button>
           </div>
         ) : (
@@ -321,9 +321,9 @@ export default function MyTrades({ onNavigate }: Props) {
             <button
               type="button"
               className="mt-4 px-4 py-2 rounded-lg bg-white text-black font-semibold"
-              onClick={() => onNavigate(AppRoute.PAYWALL)}
+              onClick={() => onNavigate(AppRoute.PROFILE)}
             >
-              Upgrade plan
+              Ir a Perfil y Créditos
             </button>
           </div>
         ) : (

@@ -5,6 +5,7 @@ import { listMyAssets } from "../services/assetsApi";
 import { supabase } from "../services/supabaseClient";
 import { apiUrl } from "../services/apiBase";
 import OneNationUpIcon from "../components/brand/OneNationUpIcon";
+import ConfirmDollarPurchaseModal from "@/components/ConfirmDollarPurchaseModal";
 
 // --- CONFIGURACIÓN DE PRODUCTOS ---
 const SIZES = [
@@ -252,6 +253,10 @@ export default function StoreNewUI({ onNavigate, onRequestUpscale, prefill }: St
   const [formData, setFormData] = useState({ name: '', email: '', phone: '', method: 'shipping', address: '', apt: '', city: '', state: '', zip: '', notes: '' });
   const [orderCode, setOrderCode] = useState<string>('');
   const [submitError, setSubmitError] = useState<string>('');
+
+  // Confirmación requerida para compras en USD
+  const [confirmPayOpen, setConfirmPayOpen] = useState(false);
+  const [confirmPayInfo, setConfirmPayInfo] = useState<{ itemLabel: string; amountLabel: string; note?: string | null; action: () => Promise<void> } | null>(null);
 
 // Manejar subida de imagen
 function is4K(d: { w: number; h: number } | null): boolean {
@@ -706,119 +711,146 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
     return;
   }
 
-  setActiveStep('PROCESSING');
+  
 
-  try {
-    // 1) token supabase para Authorization Bearer (tu backend lo exige)
-    const { data: sessionData } = await supabase.auth.getSession();
-    const token = sessionData.session?.access_token;
-    if (!token) {
-      setSubmitError('Debes iniciar sesión para comprar.');
-      setActiveStep('CHECKOUT');
-      return;
-    }
+  // Confirmación previa (compra en USD)
+  const shippingCostPreview = formData.method === 'pickup' ? 0 : 15;
+  const smartFillAddonPreview = 0;
+  const basePricePreview = Number((selectedSize as any).basePrice || 0);
+  const totalPreview = basePricePreview + shippingCostPreview + smartFillAddonPreview;
 
-    // 2) calcular fitMode (si confirmaste recorte -> "crop", si no -> "perfect")
-    const fitMode = finalCrop ? 'crop' : 'perfect';
+  const itemLabel = `Pedido 1NationUp (${String((selectedMaterial as any)?.label || 'Material')} · ${String((selectedSize as any)?.label || (selectedSize as any)?.id || 'Tamaño')})`;
+  const amountLabel = `$${Number(totalPreview).toFixed(2)} USD`;
+  const note =
+    formData.method === 'pickup'
+      ? 'Retiro (pickup). El total mostrado incluye cualquier cargo aplicable.'
+      : 'El total mostrado incluye envío estimado.';
 
-    // 3) costos (copiados del Store actual del repo)
-    const shippingCost = formData.method === 'pickup' ? 0 : 15;
-    const smartFillAddon = 0; // esta UI no usa smart_fill aún
-    const basePrice = Number(selectedSize.basePrice || 0);
-    const total = basePrice + shippingCost + smartFillAddon;
+  setConfirmPayInfo({
+    itemLabel,
+    amountLabel,
+    note,
+    action: async () => {
+      setSubmitError('');
+      setActiveStep('PROCESSING');
 
-    if (!selectedMaterial || !selectedSize) {
-      setSubmitError("Falta seleccionar material y tamaño antes de pagar.");
-      return;
-    }
+      try {
+        // Validaciones (por si cambió estado desde que abrimos la confirmación)
+        if (!is4kOk) throw new Error('Tu imagen debe ser 4K mínimo (3840×2160). Usa otra imagen o escala con IA.');
+        if (!asset) throw new Error('No se encontró el archivo subido. Vuelve a subir la imagen.');
+        if (!selectedMaterial || !selectedSize) throw new Error('Falta seleccionar material y tamaño.');
+        if (!finalCrop) throw new Error('No se detectó un encuadre confirmado. Vuelve al paso 3 y confirma el recorte.');
 
-    if (!selectedMaterial.label) {
-      setSubmitError("Material inválido: falta label.");
-      return;
-    }
+        const email = String(formData.email || '').trim();
+        const phone = String(formData.phone || '').trim();
+        if (!email.includes('@') || !email.includes('.')) throw new Error('Email inválido. Revisa el correo.');
+        const onlyDigits = phone.replace(/\D/g, '');
+        if (onlyDigits.length < 10) throw new Error('Teléfono inválido. Debe tener al menos 10 dígitos.');
 
-    // 4) armar payload EXACTO que espera el backend (StoreOrderSchema)
-    const payload: any = {
-      assetId: asset.id,
-      assetUrl: asset.url,
-      assetName: asset.name,
+        // 1) token supabase para Authorization Bearer (tu backend lo exige)
+        const { data: sessionData } = await supabase.auth.getSession();
+        const token = sessionData.session?.access_token;
+        if (!token) throw new Error('Debes iniciar sesión para comprar.');
 
-      imageDims: dims ? { w: dims.w, h: dims.h } : null,
-      require4k: true,
+        // 2) calcular fitMode (si confirmaste recorte -> "crop", si no -> "perfect")
+        const fitMode = finalCrop ? 'crop' : 'perfect';
 
-      material: selectedMaterial.id,              // "metal" | "acrylic" | "canvas" | "paper"
-      materialLabel: selectedMaterial.label,      // texto
+        // 3) costos
+        const shippingCost = formData.method === 'pickup' ? 0 : 15;
+        const smartFillAddon = 0; // esta UI no usa smart_fill aún
+        const basePrice = Number((selectedSize as any).basePrice || 0);
+        const total = basePrice + shippingCost + smartFillAddon;
 
-      size: {
-        id: selectedSize.id,
-        wIn: Number(selectedSize.w),
-        hIn: Number(selectedSize.h),
-        label: selectedSize.label,
-      },
+        if (!(selectedMaterial as any)?.label) throw new Error('Material inválido: falta label.');
 
-      fitMode,
-      crop: null,
-      cropNormalized: finalCrop ? finalCrop : null,
-      // Enviamos el recorte SOLO si no es demasiado pesado (para no romper el request).
-      // 8MB es seguro bajo tu límite server (25mb) incluso con el resto del payload.
-      croppedImageDataUrl:
-        croppedDataUrl && approxDataUrlBytes(croppedDataUrl) <= 8 * 1024 * 1024
-          ? croppedDataUrl
-          : undefined,
+        // 4) armar payload EXACTO que espera el backend (StoreOrderSchema)
+        const payload: any = {
+          assetId: asset.id,
+          assetUrl: asset.url,
+          assetName: asset.name,
 
-      pricing: {
-        basePrice,
-        shipping: shippingCost,
-        smartFillAddon,
-        total,
-      },
+          imageDims: dims ? { w: dims.w, h: dims.h } : null,
+          require4k: true,
 
-      delivery: {
-        method: formData.method === 'pickup' ? 'pickup' : 'ship',
-        customerName: String(formData.name || '').trim(),
-        email,
-        phone,
+          material: (selectedMaterial as any).id,
+          materialLabel: (selectedMaterial as any).label,
 
-        address1: formData.method === 'pickup'
-          ? null
-          : String(formData.address || '').trim() + (formData.apt ? ` Apt ${String(formData.apt).trim()}` : ''),
-        city: formData.method === 'pickup' ? null : String(formData.city || '').trim(),
-        state: formData.method === 'pickup' ? null : String(formData.state || '').trim(),
-        zip: formData.method === 'pickup' ? null : String(formData.zip || '').trim(),
-      },
+          size: {
+            id: (selectedSize as any).id,
+            wIn: Number((selectedSize as any).w),
+            hIn: Number((selectedSize as any).h),
+            label: (selectedSize as any).label,
+          },
 
-      notes: String(formData.notes || '').trim(),
-      flags: {},
-    };
+          fitMode,
+          crop: null,
+          cropNormalized: finalCrop ? finalCrop : null,
+          croppedImageDataUrl:
+            croppedDataUrl && approxDataUrlBytes(croppedDataUrl) <= 8 * 1024 * 1024 ? croppedDataUrl : undefined,
 
-    // 5) POST real
-    const resp = await fetch(apiUrl('/api/store/order'), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-      },
-      body: JSON.stringify(payload),
-    });
+          pricing: {
+            basePrice,
+            shipping: shippingCost,
+            smartFillAddon,
+            total,
+          },
 
-    const text = await resp.text();
-    let data: any = null;
-    try { data = JSON.parse(text); } catch { data = null; }
+          delivery: {
+            method: formData.method === 'pickup' ? 'pickup' : 'ship',
+            customerName: String(formData.name || '').trim(),
+            email,
+            phone,
 
-    if (!resp.ok || !data?.ok) {
-      const msg = data?.error?.message || `Error al crear orden (HTTP ${resp.status})`;
-      setSubmitError(msg);
-      setActiveStep('CHECKOUT');
-      return;
-    }
+            address1:
+              formData.method === 'pickup'
+                ? null
+                : String(formData.address || '').trim() + (formData.apt ? ` Apt ${String(formData.apt).trim()}` : ''),
+            city: formData.method === 'pickup' ? null : String(formData.city || '').trim(),
+            state: formData.method === 'pickup' ? null : String(formData.state || '').trim(),
+            zip: formData.method === 'pickup' ? null : String(formData.zip || '').trim(),
+          },
 
-    // 6) éxito real
-    setOrderCode(String(data.orderId || ''));
-    setActiveStep('SUCCESS');
-  } catch (err: any) {
-    setSubmitError(err?.message || 'Error inesperado al procesar el pedido.');
-    setActiveStep('CHECKOUT');
-  }
+          notes: String(formData.notes || '').trim(),
+          flags: {},
+        };
+
+        // 5) POST real
+        const resp = await fetch(apiUrl('/api/store/order'), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(payload),
+        });
+
+        const text = await resp.text();
+        let data: any = null;
+        try {
+          data = JSON.parse(text);
+        } catch {
+          data = null;
+        }
+
+        if (!resp.ok || !data?.ok) {
+          const msg = data?.error?.message || `Error al crear orden (HTTP ${resp.status})`;
+          throw new Error(msg);
+        }
+
+        // 6) éxito real
+        setOrderCode(String(data.orderId || ''));
+        setActiveStep('SUCCESS');
+      } catch (err: any) {
+        const msg = err?.message || 'Error inesperado al procesar el pedido.';
+        setSubmitError(msg);
+        setActiveStep('CHECKOUT');
+        throw new Error(msg);
+      }
+    },
+  });
+
+  setConfirmPayOpen(true);
+  return;
 };
   // --- COMPONENTES VISUALES DINÁMICOS DEL LADO IZQUIERDO ---
 
@@ -1572,6 +1604,20 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
   return (
     <div className="min-h-screen bg-[#050505] font-sans text-white overflow-hidden flex flex-col relative">
       <ParticleBackground />
+      <ConfirmDollarPurchaseModal
+        open={confirmPayOpen}
+        itemLabel={confirmPayInfo?.itemLabel || ""}
+        amountLabel={confirmPayInfo?.amountLabel || ""}
+        note={confirmPayInfo?.note || null}
+        onClose={() => {
+          setConfirmPayOpen(false);
+          setConfirmPayInfo(null);
+        }}
+        onConfirm={async () => {
+          if (!confirmPayInfo) return;
+          await confirmPayInfo.action();
+        }}
+      />
       
       <header className="relative z-10 p-5 lg:px-8 flex justify-between items-center border-b border-white/5 bg-black/40 backdrop-blur-md">
         <div className="flex items-center space-x-3">
