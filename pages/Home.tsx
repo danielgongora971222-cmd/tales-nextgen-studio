@@ -286,7 +286,7 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
     return modelId.replace(/[-_]/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase());
   }
 
-    useEffect(() => {
+  useEffect(() => {
     const btn = oneNationBtnRef.current;
     const canvas = oneNationCanvasRef.current;
     if (!btn || !canvas) return;
@@ -297,7 +297,7 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const colors = ['#7EAAED', '#DFB142', '#DE6C53', '#7D45A9']; // exactamente como el TXT :contentReference[oaicite:5]{index=5}
+        const colors = ['#7EAAED', '#DFB142', '#DE6C53', '#7D45A9']; // paleta 1NationUp
     let particles: Array<{
       x: number; y: number;
       vx: number; vy: number;
@@ -315,7 +315,7 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
       canvas.height = Math.max(1, Math.floor(h));
 
       particles = [];
-      const count = Math.max(18, Math.floor((canvas.width * canvas.height) / 4000)); // similar al TXT :contentReference[oaicite:6]{index=6}
+            const count = Math.max(18, Math.floor((canvas.width * canvas.height) / 4000)); // densidad de partículas
       for (let i = 0; i < count; i++) {
         particles.push({
           x: Math.random() * canvas.width,
@@ -333,7 +333,7 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
     const drawLines = () => {
       const isHovered = oneNationHoverRef.current;
       const mouse = oneNationMouseRef.current;
-      const connectionDistance = isHovered ? 110 : 80;
+      const connectionDistance = isHovered ? 110 : 94;
 
       for (let i = 0; i < particles.length; i++) {
         for (let j = i + 1; j < particles.length; j++) {
@@ -344,7 +344,7 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
           if (dist < connectionDistance) {
             ctx.beginPath();
             let opacity = 1 - (dist / connectionDistance);
-            opacity *= isHovered ? 0.6 : 0.2;
+            opacity *= isHovered ? 0.6 : 0.34;
             ctx.strokeStyle = `rgba(180, 200, 255, ${opacity})`;
             ctx.lineWidth = 1;
             ctx.moveTo(particles[i].x, particles[i].y);
@@ -422,7 +422,7 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
         ctx.fillStyle = p.color;
-        ctx.globalAlpha = isHovered ? 0.8 : 0.5;
+        ctx.globalAlpha = isHovered ? 0.85 : 0.64;
         ctx.fill();
         ctx.globalAlpha = 1.0;
       }
