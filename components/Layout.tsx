@@ -71,7 +71,7 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
   const [videoFlyoutTop, setVideoFlyoutTop] = useState<number | null>(null);
   const [myCreationsFlyoutTop, setMyCreationsFlyoutTop] = useState<number | null>(null);
   const { user, logout } = useAuth();
-  const { wallet, refresh: refreshWallet } = useWallet();
+  const { wallet, subscription, refresh: refreshWallet } = useWallet();
 
   const sidebarRef = useRef<HTMLElement | null>(null);
   const imageMenuTimer = useRef<number | null>(null);
@@ -116,6 +116,13 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
     { key: 'audio', label: 'Audio' },
     { key: 'extras', label: 'Extras' }
   ];
+
+  const activePlanName = subscription?.plan_name ? String(subscription.plan_name) : "Ninguno";
+  const availableCredits = Number(wallet?.generationCredits ?? 0);
+  const lowCredits = availableCredits <= 1000;
+  const creditsPulseClass = lowCredits
+    ? "bg-red-500 shadow-[0_0_14px_rgba(239,68,68,0.55)]"
+    : "bg-emerald-400 shadow-[0_0_14px_rgba(52,211,153,0.45)]";
 
   // Auto-collapse sidebar when clicking outside (matches your mock)
   useEffect(() => {
@@ -268,36 +275,6 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
             </svg>
           </button>
         </div>
-
-        {sidebarOpen ? (
-          <div className="px-4 pb-2">
-            <div className="rounded-2xl border border-white/10 bg-black/30 p-3">
-              <div className="text-xs text-white/60">Credits</div>
-              <div className="text-2xl font-bold leading-tight">{wallet?.generationCredits ?? "—"}</div>
-              <div className="text-[11px] text-white/50 mt-1">
-                Plan {wallet?.gen_plan_credits ?? 0} · Extra {wallet?.gen_topup_credits ?? 0} · Bonus {wallet?.gen_bonus_credits ?? 0}
-              </div>
-
-              <div className="mt-3 flex gap-2">
-                <button
-                  type="button"
-                  className="flex-1 px-3 py-2 rounded-lg bg-white text-black text-xs font-semibold"
-                  onClick={() => onNavigate(AppRoute.PROFILE)}
-                >
-                  Buy credits
-                </button>
-                <button
-                  type="button"
-                  className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-xs"
-                  onClick={refreshWallet}
-                  title="Refresh wallet"
-                >
-                  ↻
-                </button>
-              </div>
-            </div>
-          </div>
-        ) : null}
 
         <nav className="flex-1 px-4 space-y-2 py-4 overflow-y-auto overflow-x-hidden custom-scrollbar">
           <NavItem
@@ -603,26 +580,43 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
         </button>
       </div>
 
-        <div className="p-4 border-t border-white/10">
-          <div className={`rounded-xl p-4 transition-all hud-panel hud-panel--soft hud-noise ${sidebarOpen ? 'opacity-100' : 'opacity-0 hidden'}`}>
-            <button
-              onClick={() => onNavigate(AppRoute.PROFILE)}
-              className="w-full text-left rounded-lg p-2 bg-white/5 hover:bg-white/10 transition-colors"
-              title="Abrir Perfil y Créditos"
-            >
-              <div className="flex items-center gap-3">
-                <img src={user?.avatarUrl} alt="User" className="w-8 h-8 rounded-full border border-white/30" />
-                <div className="overflow-hidden">
-                  <p className="text-xs font-bold text-white truncate">{user?.username || 'Guest'}</p>
-                  <p className="text-[10px] text-gray-400">Plan & Créditos</p>
+        <div className="p-3 border-t border-white/10">
+          <button
+            onClick={() => onNavigate(AppRoute.PROFILE)}
+            className={`w-full rounded-xl bg-white/5 hover:bg-white/10 transition-colors ${sidebarOpen ? "p-3" : "p-2"}`}
+            title="Manage plans and extra credits"
+          >
+            {sidebarOpen ? (
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <img src={user?.avatarUrl} alt="User" className="w-8 h-8 rounded-full border border-white/30 shrink-0" />
+                  <div className="overflow-hidden min-w-0">
+                    <p className="text-xs font-bold text-white truncate">{user?.username || "Guest"}</p>
+                    <p className="text-[10px] text-gray-400 truncate">Plan: {activePlanName}</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className={`w-2.5 h-2.5 rounded-full animate-pulse ${creditsPulseClass}`} aria-hidden="true" />
+                  <span className="text-sm font-extrabold text-white">{availableCredits}</span>
                 </div>
               </div>
-            </button>
+            ) : (
+              <div className="flex items-center justify-center gap-2">
+                <span className={`w-2.5 h-2.5 rounded-full animate-pulse ${creditsPulseClass}`} aria-hidden="true" />
+                <span className="text-sm font-extrabold text-white">{availableCredits}</span>
+              </div>
+            )}
+          </button>
 
-            <button onClick={logout} className="w-full text-xs bg-white/10 hover:bg-white/20 py-1.5 rounded transition-colors text-gray-300 mt-3">
+          {sidebarOpen ? (
+            <button
+              onClick={logout}
+              className="w-full text-xs bg-white/10 hover:bg-white/20 py-1.5 rounded transition-colors text-gray-300 mt-3"
+            >
               Log Out
             </button>
-          </div>
+          ) : null}
         </div>
       </aside>
 

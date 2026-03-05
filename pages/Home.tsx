@@ -3,6 +3,7 @@ import { AppRoute, Asset, Comment } from '../types';
 import { listPublicAssets } from '../services/assetsApi';
 import { toggleLike, listComments, createComment } from '../services/socialApi';
 import { useAuth } from '../contexts/AuthContext';
+import { useWallet } from "../contexts/WalletContext";
 import styles from './Home.module.css';
 import generatorStyles from './tools/ImageGeneratorTool.module.css';
 import OneNationUpIcon from "@/components/brand/OneNationUpIcon";
@@ -14,6 +15,7 @@ interface HomeProps {
 
 const Home: React.FC<HomeProps> = ({ onNavigate }) => {
   const { user } = useAuth();
+  const { wallet, subscription } = useWallet();
   const [feed, setFeed] = useState<Asset[]>([]);
   const [commentText, setCommentText] = useState<{[key:string]: string}>({}); // Map assetId -> text
   const [viewer, setViewer] = useState<Asset | null>(null);
@@ -498,18 +500,48 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
           <div className={styles.oneNationBottomBorder} aria-hidden="true" />
         </button>
 
-        <div className={`${styles.heroCard} ${styles.heroCardCredits}`}>
+        <div
+          className={`${styles.heroCard} ${styles.heroCardCredits}`}
+          role="button"
+          tabIndex={0}
+          onClick={() => {
+            window.localStorage.setItem("tales_profile_focus", "profile");
+            onNavigate(AppRoute.PROFILE);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              window.localStorage.setItem("tales_profile_focus", "profile");
+              onNavigate(AppRoute.PROFILE);
+            }
+          }}
+        >
           <div className={styles.heroContent}>
             <span className={styles.heroEyebrow}>WELCOME</span>
-            <h2 className={styles.heroTitle}>{user?.username || 'Creator'}</h2>
-            <p className={styles.heroCopy}>Track your available credits and upgrade when you need more power.</p>
+            <h2 className={styles.heroTitle}>{user?.username || "Creator"}</h2>
+            <p className={styles.heroCopy}>
+              Plan activo: <strong className={styles.heroInlineStrong}>{subscription?.plan_name || "Ninguno"}</strong>
+            </p>
+
             <div className={styles.heroCreditsRow}>
               <div>
                 <div className={styles.heroCreditsLabel}>Credits</div>
-                <div className={styles.heroCreditsValue}>0</div>
+                <div className={styles.heroCreditsValue}>{wallet?.generationCredits ?? 0}</div>
+                <div className={styles.heroCreditsBreakdown}>
+                  Plan {wallet?.gen_plan_credits ?? 0} · Extra {wallet?.gen_topup_credits ?? 0} · Bonus {wallet?.gen_bonus_credits ?? 0}
+                </div>
               </div>
-              <button type="button" className={styles.heroCreditsButton}>
-                Get More Credits
+
+              <button
+                type="button"
+                className={styles.heroCreditsButton}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  window.localStorage.setItem("tales_profile_focus", "billing");
+                  onNavigate(AppRoute.PROFILE);
+                }}
+              >
+                Manage plans and extra credits
               </button>
             </div>
           </div>
