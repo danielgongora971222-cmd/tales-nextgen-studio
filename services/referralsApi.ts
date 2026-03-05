@@ -61,3 +61,46 @@ export async function getMyReferralSummary(): Promise<{
     },
   };
 }
+
+export async function validateReferralCode(code: string): Promise<{
+  valid: boolean;
+  eligible: boolean;
+  reason: string | null;
+  code: string | null;
+  variant: string | null;
+  buyerDiscountPct: number;
+  refRewardPct: number;
+  ownerPlanSlug: string | null;
+  ownerPlanName: string | null;
+}> {
+  const headers = await authHeaders();
+  const clean = code ? code.trim().toUpperCase() : "";
+
+  if (!clean) {
+    return {
+      valid: false,
+      eligible: false,
+      reason: "EMPTY",
+      code: null,
+      variant: null,
+      buyerDiscountPct: 0,
+      refRewardPct: 0,
+      ownerPlanSlug: null,
+      ownerPlanName: null,
+    };
+  }
+
+  const data = await request(`/api/referrals/validate?code=${encodeURIComponent(clean)}`, { method: "GET", headers });
+
+  return {
+    valid: data.valid === true,
+    eligible: data.eligible === true,
+    reason: data.reason ? String(data.reason) : null,
+    code: data.code ? String(data.code) : null,
+    variant: data.variant ? String(data.variant) : null,
+    buyerDiscountPct: Number(data.buyerDiscountPct) || 0,
+    refRewardPct: Number(data.refRewardPct) || 0,
+    ownerPlanSlug: data.ownerPlanSlug ? String(data.ownerPlanSlug) : null,
+    ownerPlanName: data.ownerPlanName ? String(data.ownerPlanName) : null,
+  };
+}

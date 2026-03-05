@@ -15,7 +15,30 @@ async function ensureOneCode(supabaseAdmin, ownerId, variant, buyerDiscountPct, 
     .limit(1)
     .maybeSingle();
 
-  if (existing?.id) return existing;
+  if (existing?.id) {
+    const needsFix =
+      Number(existing.buyer_discount_pct) !== Number(buyerDiscountPct) ||
+      Number(existing.ref_reward_pct) !== Number(refRewardPct) ||
+      existing.is_active !== true;
+
+    if (needsFix) {
+      const { data: upd, error: uErr } = await supabaseAdmin
+        .from("community_referral_codes")
+        .update({
+          buyer_discount_pct: buyerDiscountPct,
+          ref_reward_pct: refRewardPct,
+          is_active: true,
+        })
+        .eq("id", existing.id)
+        .select("id, code, variant, buyer_discount_pct, ref_reward_pct, is_active")
+        .limit(1)
+        .maybeSingle();
+
+      if (!uErr && upd?.id) return upd;
+    }
+
+    return existing;
+  }
 
   for (let i = 0; i < 7; i++) {
     const code = makeCode(prefix);
@@ -104,6 +127,98 @@ export function createReferralsRouter(ctx) {
     return { ok: true, subscription: sub, error: null };
   }
 
+    // GET /api/referrals/validate?code=XXXX
+  // - valid: existe + activo + no-self
+  // - eligible: el dueño del código tiene un plan activo con can_referrals=true
+  router.get("/referrals/validate", async (req, res) => {
+    const { user, error } = await requireUser(req);
+    if (error) return res.status(401).json({ ok: false, error });
+
+    const raw = req.query?.code ? String(req.query.code) : "";
+    const code = raw ? raw.trim().toUpperCase() : "";
+
+    if (!code) {
+      return res.json({
+        ok: true,
+        valid: false,
+        eligible: false,
+        reason: "EMPTY",
+        code: null,
+        variant: null,
+        buyerDiscountPct: 0,
+        refRewardPct: 0,
+        ownerPlanSlug: null,
+        ownerPlanName: null,
+      });
+    }
+
+    const { data: rc, error: rcErr } = await supabaseAdmin
+      .from("community_referral_codes")
+      .select("id, code, variant, owner_id, buyer_discount_pct, ref_reward_pct, is_active")
+      .eq("code", code)
+      .eq("is_active", true)
+      .maybeSingle();
+
+    if (rcErr) return err(res, 500, "DB_QUERY_FAILED", rcErr.message);
+
+    if (!rc?.id) {
+      return res.json({
+        ok: true,
+        valid: false,
+        eligible: false,
+        reason: "NOT_FOUND",
+        code: null,
+        variant: null,
+        buyerDiscountPct: 0,
+        refRewardPct: 0,
+        ownerPlanSlug: null,
+        ownerPlanName: null,
+      });
+    }
+
+    if (rc.owner_id === user.id) {
+      return res.json({
+        ok: true,
+        valid: false,
+        eligible: false,
+        reason: "SELF",
+        code: rc.code,
+        variant: rc.variant,
+        buyerDiscountPct: Number(rc.buyer_discount_pct) || 0,
+        refRewardPct: Number(rc.ref_reward_pct) || 0,
+        ownerPlanSlug: null,
+        ownerPlanName: null,
+      });
+    }
+
+    // ✅ Elegibilidad: el dueño del código debe tener un plan Partner/Business activo (canReferrals=true)
+    let eligible = false;
+    let ownerPlanSlug = null;
+    let ownerPlanName = null;
+
+    try {
+      const r = await billing.getActiveSubscription(rc.owner_id);
+      ownerPlanSlug = r?.subscription?.planSlug || null;
+      ownerPlanName = r?.subscription?.planName || null;
+      eligible = !!r?.subscription?.canReferrals;
+    } catch {
+      eligible = false;
+    }
+
+    return res.json({
+      ok: true,
+      valid: true,
+      eligible,
+      reason: eligible ? null : "OWNER_NOT_ELIGIBLE",
+      code: rc.code,
+      variant: rc.variant,
+      buyerDiscountPct: Number(rc.buyer_discount_pct) || 0,
+      refRewardPct: Number(rc.ref_reward_pct) || 0,
+      ownerPlanSlug,
+      ownerPlanName,
+    });
+  });
+
   router.get("/referrals/me", async (req, res) => {
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
@@ -111,9 +226,9 @@ export function createReferralsRouter(ctx) {
     const access = await requireReferralAccess(user.id);
     if (!access.ok) return res.status(403).json({ ok: false, error: access.error });
 
-    const a = await ensureOneCode(supabaseAdmin, user.id, "A", 20, 0, "TNG20-");
-    const b = await ensureOneCode(supabaseAdmin, user.id, "B", 10, 10, "TNG10-");
-    const c = await ensureOneCode(supabaseAdmin, user.id, "C", 0, 20, "TNG00-");
+    const a = await ensureOneCode(supabaseAdmin, user.id, "A", 15, 5, "TNG15-");
+    const b = await ensureOneCode(supabaseAdmin, user.id, "B", 5, 15, "TNG05-");
+    const c = await ensureOneCode(supabaseAdmin, user.id, "C", 10, 10, "TNG10-");
 
     if (!a || !b || !c) return err(res, 500, "CODES_CREATE_FAILED", "No se pudieron asegurar tus 3 códigos.");
 

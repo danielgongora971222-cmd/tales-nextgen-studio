@@ -283,6 +283,254 @@ body::before {
   }
 }
 
+/* ===============================
+   Paywall — Plan Tier Cards + Referral Panel
+================================ */
+
+/* Plan cards re-use Premium Hero Card glow, but with a denser “textured” background */
+.plan-tier-card {
+  border-radius: 28px;
+
+  background:
+    radial-gradient(900px 340px at 12% 0%, rgba(255, 255, 255, 0.08), transparent 70%),
+    radial-gradient(520px 280px at 85% 18%, var(--ph-accent2) 0%, transparent 65%),
+    radial-gradient(760px 360px at 70% 110%, var(--ph-accent) 0%, transparent 62%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(0, 0, 0, 0.78)),
+    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.05) 0 2px, transparent 2px 9px);
+
+  transform-style: preserve-3d;
+}
+
+.plan-tier-card:hover {
+  transform: translateY(-4px) scale(1.01);
+}
+
+.plan-tier-card--locked {
+  opacity: 0.62;
+  filter: grayscale(0.25) saturate(0.9);
+}
+
+.plan-tier-card--current {
+  box-shadow:
+    0 0 0 1px rgba(52, 211, 153, 0.28),
+    0 26px 64px rgba(0, 0, 0, 0.66);
+}
+
+.plan-tier-pill {
+  font-size: 11px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.30);
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.plan-tier-pill--best {
+  background: rgba(16, 185, 129, 0.18);
+  border-color: rgba(52, 211, 153, 0.35);
+  color: rgba(167, 243, 208, 0.98);
+  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.08);
+}
+
+.plan-tier-pill--current {
+  background: rgba(52, 211, 153, 0.16);
+  border-color: rgba(52, 211, 153, 0.35);
+  color: rgba(167, 243, 208, 0.98);
+}
+
+.plan-tier-metric {
+  min-width: 110px;
+  padding: 12px 12px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(10px);
+}
+
+.plan-tier-features {
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(0, 0, 0, 0.26);
+  padding: 14px 14px;
+}
+
+.plan-tier-li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.plan-tier-li--soft {
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.plan-tier-check {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.22);
+  position: relative;
+  flex: 0 0 auto;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.04);
+}
+
+.plan-tier-check::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 4px;
+  width: 5px;
+  height: 8px;
+  border-right: 2px solid rgba(255, 255, 255, 0.86);
+  border-bottom: 2px solid rgba(255, 255, 255, 0.86);
+  transform: rotate(40deg);
+  opacity: 0.9;
+}
+
+.plan-tier-note {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(0, 0, 0, 0.20);
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.plan-tier-note::after {
+  content: "";
+  position: absolute;
+  inset: 5px;
+  border-radius: 999px;
+  background: radial-gradient(circle at 30% 30%, var(--ph-accent) 0%, transparent 70%);
+  opacity: 0.9;
+}
+
+/* Referral panel */
+.referral-panel {
+  position: relative;
+  overflow: hidden;
+
+  border-radius: 26px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+
+  background:
+    radial-gradient(1100px 420px at 0% 0%, rgba(255, 255, 255, 0.06), transparent 66%),
+    radial-gradient(680px 320px at 100% 30%, rgba(16, 185, 129, 0.16), transparent 60%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(0, 0, 0, 0.70)),
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.04) 0 2px, transparent 2px 10px);
+
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.54);
+  backdrop-filter: blur(14px);
+
+  padding: 18px 18px;
+}
+
+.referral-panel__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.35);
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.referral-panel__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(16, 185, 129, 0.86);
+  box-shadow: 0 0 16px rgba(16, 185, 129, 0.42);
+}
+
+.referral-applied-pill {
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.32);
+  padding: 10px 12px;
+  text-align: right;
+  min-width: 160px;
+}
+
+.referral-input {
+  position: relative;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.referral-input__field {
+  width: 100%;
+  padding: 12px 12px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.95);
+  outline: none;
+  border: none;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.referral-input__field::placeholder {
+  color: rgba(255, 255, 255, 0.32);
+  font-weight: 600;
+}
+
+.referral-input__shine {
+  content: "";
+  position: absolute;
+  inset: -80px -120px auto auto;
+  width: 260px;
+  height: 260px;
+  background: radial-gradient(circle at center, rgba(16, 185, 129, 0.22) 0%, transparent 62%);
+  filter: blur(14px);
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+.referral-btn {
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.06));
+  color: rgba(255, 255, 255, 0.92);
+  padding: 10px 14px;
+  font-weight: 800;
+  transition: transform 160ms ease, background 160ms ease, border-color 160ms ease, opacity 160ms ease;
+}
+
+.referral-btn:hover {
+  transform: translateY(-1px);
+  border-color: rgba(255, 255, 255, 0.16);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.08));
+}
+
+.referral-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.referral-btn--primary {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.92), rgba(14, 165, 233, 0.36));
+  color: #071014;
+}
+
+.referral-btn--primary:hover {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.92), rgba(255, 255, 255, 0.22), rgba(14, 165, 233, 0.36));
+}
+
+.referral-savings {
+  border-radius: 18px;
+  border: 1px solid rgba(16, 185, 129, 0.28);
+  background: rgba(16, 185, 129, 0.12);
+  padding: 12px 12px;
+}
+
 /* Button base (works even without Tailwind) */
 .hud-btn {
   border: 1px solid rgba(241,225,148,0.18);

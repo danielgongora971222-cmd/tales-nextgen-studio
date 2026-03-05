@@ -70,6 +70,10 @@ export function createBillingRouter(ctx) {
     if (!plan?.id) return err(res, 404, "PLAN_NOT_FOUND", "Plan no existe o está inactivo.");
 
     // Validación temprana del código (si viene)
+    // Reglas:
+    // - Debe existir y estar activo
+    // - No puede ser del mismo usuario
+    // - El dueño debe tener un plan activo con can_referrals=true (Partner/Business)
     if (referralCode) {
       const { data: rc, error: rcErr } = await supabaseAdmin
         .from("community_referral_codes")
@@ -82,6 +86,19 @@ export function createBillingRouter(ctx) {
       if (!rc?.id) return err(res, 400, "INVALID_REFERRAL_CODE", "El código de referido no es válido o está inactivo.");
       if (rc.owner_id === user.id) {
         return err(res, 400, "INVALID_REFERRAL_CODE", "No puedes usar tu propio código de referido.");
+      }
+
+      const owner = await getActiveSubscription(rc.owner_id);
+      if (owner?.error) return err(res, 500, owner.error.code, owner.error.message, owner.error.details);
+
+      if (!owner?.subscription || !owner.subscription.canReferrals) {
+        return err(
+          res,
+          400,
+          "REFERRAL_OWNER_NOT_ELIGIBLE",
+          "El dueño de este código no tiene un plan Partner/Business activo. Pídele que renueve su plan o usa otro código.",
+          { ownerPlan: owner?.subscription?.planSlug || null }
+        );
       }
     }
 
