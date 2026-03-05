@@ -1028,20 +1028,67 @@ useEffect(() => {
     reusePromptFromAsset(fake);
 
     // 2) aplicar referencias reales desde resolvedAssets (para NO depender de ids en myAssets)
+    //    Soporta token exacto Y fallback por role/orden.
+    const normalizedResolved = resolvedAssets.filter(
+      (r: any) => r?.assetId && r?.url
+    );
+
     const byToken = new Map<string, any>();
-    for (const r of resolvedAssets) {
+    for (const r of normalizedResolved) {
       if (r?.token) byToken.set(String(r.token), r);
     }
 
-    const mk = (r: any, label: string): Asset | null => {
-      if (!r?.assetId || !r?.url) return null;
-      return makeTempAsset({ assetId: String(r.assetId), url: String(r.url) }, p || "", String(user?.id || "")) as Asset;
+    const rolePools = {
+      character: normalizedResolved.filter((r: any) => String(r?.role || "") === "character"),
+      background: normalizedResolved.filter((r: any) => String(r?.role || "") === "background"),
+      element: normalizedResolved.filter((r: any) => String(r?.role || "") === "element"),
+      style: normalizedResolved.filter((r: any) => String(r?.role || "") === "style"),
     };
 
-    const c1 = mk(byToken.get("@img1") || byToken.get("@reference1"), "char1");
-    const c2 = mk(byToken.get("@img2") || byToken.get("@reference2"), "char2");
-    const c3 = mk(byToken.get("@img3") || byToken.get("@reference3"), "char3");
-    const bg = mk(byToken.get("@bg") || byToken.get("@background"), "background");
+    const assignedIds = new Set<string>();
+
+    const takeUnique = (r: any | null | undefined) => {
+      if (!r?.assetId) return null;
+      const id = String(r.assetId);
+      if (assignedIds.has(id)) return null;
+      assignedIds.add(id);
+      return r;
+    };
+
+    const takeFromRole = (role: keyof typeof rolePools) => {
+      const arr = rolePools[role];
+      while (arr.length > 0) {
+        const next = arr.shift();
+        if (!next?.assetId) continue;
+        const id = String(next.assetId);
+        if (assignedIds.has(id)) continue;
+        assignedIds.add(id);
+        return next;
+      }
+      return null;
+    };
+
+    const mk = (r: any): Asset | null => {
+      if (!r?.assetId || !r?.url) return null;
+      return makeTempAsset(
+        { assetId: String(r.assetId), url: String(r.url) },
+        p || "",
+        String(user?.id || "")
+      ) as Asset;
+    };
+
+    const c1 = mk(
+      takeUnique(byToken.get("@img1") || byToken.get("@reference1")) || takeFromRole("character")
+    );
+    const c2 = mk(
+      takeUnique(byToken.get("@img2") || byToken.get("@reference2")) || takeFromRole("character")
+    );
+    const c3 = mk(
+      takeUnique(byToken.get("@img3") || byToken.get("@reference3")) || takeFromRole("character")
+    );
+    const bg = mk(
+      takeUnique(byToken.get("@bg") || byToken.get("@background")) || takeFromRole("background")
+    );
 
     setRefs({
       char1: c1,
@@ -1051,16 +1098,27 @@ useEffect(() => {
     });
 
     // 3) elements extra (hasta 5) como library temporal
-    const elementRefs = resolvedAssets.filter((r: any) => String(r?.role || "") === "element" && r?.assetId && r?.url);
-    const extEls: ElementItem[] = elementRefs.slice(0, 5).map((r: any, idx: number) => ({
+    const remainingElementRefs = normalizedResolved.filter(
+      (r: any) =>
+        String(r?.role || "") === "element" &&
+        r?.assetId &&
+        r?.url &&
+        !assignedIds.has(String(r.assetId))
+    );
+
+    const extEls: ElementItem[] = remainingElementRefs.slice(0, 5).map((r: any, idx: number) => ({
       id: String(r.assetId),
-      name: typeof r?.token === "string" && r.token.startsWith("@") ? r.token.slice(1) : `Element_${idx + 1}`,
+      name:
+        typeof r?.token === "string" && r.token.startsWith("@")
+          ? r.token.slice(1)
+          : `Element_${idx + 1}`,
       createdAt: Date.now(),
       url: String(r.url),
     }));
 
     setExternalElements(extEls);
     setSelectedElementAssetIds(extEls.map((x) => x.id));
+
 
     // limpiar payload para que no se reaplique
     prefillAppliedRef.current = true;

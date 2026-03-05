@@ -567,25 +567,33 @@ export default function CommunityStore({ onNavigate }: Props) {
                 </button>
               </div>
 
-              {/* BOTTOM (solo hover): precio + comprar (subido para no chocar con el nombre) */}
+              {/* BOTTOM RIGHT (solo hover): precio encima + comprar anclado abajo a la derecha */}
               <div
                 className={styles.tileActions}
-                style={{ top: "auto", bottom: 64, left: 10, right: 10, justifyContent: "flex-end" }}
+                style={{
+                  top: "auto",
+                  bottom: 12,
+                  right: 12,
+                  left: "auto",
+                  flexDirection: "column",
+                  alignItems: "flex-end",
+                  justifyContent: "flex-end",
+                  gap: 6,
+                }}
                 onClick={(e) => e.stopPropagation()}
               >
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-                  <span className={styles.publicTag}>{fmtInt(it.priceCredits)} créditos</span>
-                  <button
-                    type="button"
-                    className={styles.generateBtn}
-                    style={{ height: 36, padding: "0 14px", fontSize: 11 }}
-                    onClick={() => openPreview(it.id, "overview")}
-                    title="Abrir preview para comprar"
-                  >
-                    <ShoppingCart size={16} style={{ marginRight: 8 }} />
-                    Comprar
-                  </button>
-                </div>
+                <span className={styles.publicTag}>{fmtInt(it.priceCredits)} créditos</span>
+
+                <button
+                  type="button"
+                  className={styles.generateBtn}
+                  style={{ height: 36, padding: "0 14px", fontSize: 11 }}
+                  onClick={() => openPreview(it.id, "overview")}
+                  title="Abrir preview para comprar"
+                >
+                  <ShoppingCart size={16} style={{ marginRight: 8 }} />
+                  Comprar
+                </button>
               </div>
 
               {/* Nombre (mismo lugar) */}

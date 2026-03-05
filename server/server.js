@@ -1423,6 +1423,24 @@ async function bflSampleToDataUrl(sampleUrl) {
   return `data:${ct};base64,${buf.toString("base64")}`;
 }
 
+async function hasCommunityAssetEntitlement(assetId, userId) {
+  if (!assetId || !userId) return false;
+
+  const { data, error } = await supabaseAdmin
+    .from("community_asset_entitlements")
+    .select("asset_id")
+    .eq("asset_id", assetId)
+    .eq("user_id", userId)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw httpError(500, "ASSET_ACCESS_CHECK_FAILED", error.message);
+  }
+
+  return Boolean(data?.asset_id);
+}
+
 async function assetIdToInlinePart(assetId, userId) {
   const { data, error } = await supabaseAdmin
     .from("assets")
@@ -1432,9 +1450,12 @@ async function assetIdToInlinePart(assetId, userId) {
 
   if (error) apiError(500, "DB_ERROR", error.message);
   if (!data) apiError(404, "ASSET_NOT_FOUND", `Asset ${assetId} no existe.`);
-  if (data.owner_id !== userId && !data.is_public) {
+
+  const entitled = await hasCommunityAssetEntitlement(assetId, userId);
+  if (data.owner_id !== userId && !data.is_public && !entitled) {
     apiError(403, "ASSET_FORBIDDEN", `No tienes acceso al asset ${assetId}.`);
   }
+
   if (data.type !== "image") {
     apiError(400, "ASSET_NOT_IMAGE", `El asset ${assetId} no es una imagen.`);
   }
@@ -1457,7 +1478,6 @@ async function assetIdToImageObject(assetId, userId) {
   };
 }
 
-
 async function assetIdToSignedUrl(assetId, userId, expiresInSeconds = 600) {
   const { data, error } = await supabaseAdmin
     .from("assets")
@@ -1468,7 +1488,9 @@ async function assetIdToSignedUrl(assetId, userId, expiresInSeconds = 600) {
   if (error || !data) throw httpError(404, "ASSET_NOT_FOUND", "Asset not found");
 
   const isOwner = data.owner_id === userId;
-  if (!isOwner && !data.is_public) {
+  const entitled = await hasCommunityAssetEntitlement(assetId, userId);
+
+  if (!isOwner && !data.is_public && !entitled) {
     throw httpError(403, "FORBIDDEN", "You do not have access to this asset");
   }
 

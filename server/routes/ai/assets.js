@@ -54,6 +54,24 @@ export function createAssetsRouter(ctx) {
   // ===============================
   // Social helpers (likes/comments)
   // ===============================
+  async function hasCommunityAssetEntitlement(assetId, userId) {
+    if (!assetId || !userId) return false;
+
+    const { data, error } = await supabaseAdmin
+      .from("community_asset_entitlements")
+      .select("asset_id")
+      .eq("asset_id", assetId)
+      .eq("user_id", userId)
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(error.message || "No se pudo verificar el acceso al asset.");
+    }
+
+    return Boolean(data?.asset_id);
+  }
+
   async function getAssetAccessRow(assetId) {
     const { data, error } = await supabaseAdmin
       .from("assets")
@@ -70,8 +88,11 @@ export function createAssetsRouter(ctx) {
     return { row: data, error: null };
   }
 
-  function canAccessAsset(row, userId) {
-    return !!row && (row.is_public === true || row.owner_id === userId);
+  async function canAccessAsset(row, userId) {
+    if (!row) return false;
+    if (row.is_public === true) return true;
+    if (row.owner_id === userId) return true;
+    return await hasCommunityAssetEntitlement(row.id, userId);
   }
 
   // --- PASTE START ---
@@ -199,7 +220,11 @@ router.delete("/assets/:id", async (req, res) => {
       });
     }
 
-    const allowed = row.owner_id === user.id || row.is_public === true;
+    const allowed =
+      row.owner_id === user.id ||
+      row.is_public === true ||
+      (await hasCommunityAssetEntitlement(row.id, user.id));
+
     if (!allowed) {
       return res.status(403).json({
         ok: false,
@@ -415,7 +440,7 @@ router.post("/assets/:id/like", async (req, res) => {
 
   const { row: assetRow, error: assetErr } = await getAssetAccessRow(assetId);
   if (assetErr) return res.status(assetErr.code === "NOT_FOUND" ? 404 : 500).json({ ok: false, error: assetErr });
-  if (!canAccessAsset(assetRow, user.id)) {
+  if (!(await canAccessAsset(assetRow, user.id))) {
     return res.status(403).json({ ok: false, error: { code: "FORBIDDEN", message: "No tienes acceso a este asset." } });
   }
 
@@ -489,7 +514,7 @@ router.get("/assets/:id/comments", async (req, res) => {
 
   const { row: assetRow, error: assetErr } = await getAssetAccessRow(assetId);
   if (assetErr) return res.status(assetErr.code === "NOT_FOUND" ? 404 : 500).json({ ok: false, error: assetErr });
-  if (!canAccessAsset(assetRow, user.id)) {
+  if (!(await canAccessAsset(assetRow, user.id))) {
     return res.status(403).json({ ok: false, error: { code: "FORBIDDEN", message: "No tienes acceso a este asset." } });
   }
 
@@ -595,7 +620,7 @@ router.post("/assets/:assetId/comments/:commentId/report", async (req, res) => {
 
   const { row: assetRow, error: assetErr } = await getAssetAccessRow(assetId);
   if (assetErr) return res.status(assetErr.code === "NOT_FOUND" ? 404 : 500).json({ ok: false, error: assetErr });
-  if (!canAccessAsset(assetRow, user.id)) {
+  if (!(await canAccessAsset(assetRow, user.id))) {
     return res.status(403).json({ ok: false, error: { code: "FORBIDDEN", message: "No tienes acceso a este asset." } });
   }
 
@@ -645,7 +670,7 @@ router.post("/assets/:id/comments", async (req, res) => {
 
   const { row: assetRow, error: assetErr } = await getAssetAccessRow(assetId);
   if (assetErr) return res.status(assetErr.code === "NOT_FOUND" ? 404 : 500).json({ ok: false, error: assetErr });
-  if (!canAccessAsset(assetRow, user.id)) {
+  if (!(await canAccessAsset(assetRow, user.id))) {
     return res.status(403).json({ ok: false, error: { code: "FORBIDDEN", message: "No tienes acceso a este asset." } });
   }
 

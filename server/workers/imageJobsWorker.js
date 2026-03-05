@@ -495,7 +495,7 @@ async function bflSampleToDataUrl(sampleUrl) {
 async function getAssetRowOrThrow(assetId) {
   const { data, error } = await supabaseAdmin
     .from("assets")
-    .select("id, owner_id, is_public, type, storage_path, name, prompt, meta")
+    .select("id, owner_id, is_public, storage_path, type")
     .eq("id", assetId)
     .maybeSingle();
 
@@ -504,23 +504,45 @@ async function getAssetRowOrThrow(assetId) {
   return data;
 }
 
-function assertAssetReadable(row, requesterId) {
+async function hasCommunityAssetEntitlement(assetId, requesterId) {
+  if (!assetId || !requesterId) return false;
+
+  const { data, error } = await supabaseAdmin
+    .from("community_asset_entitlements")
+    .select("asset_id")
+    .eq("asset_id", assetId)
+    .eq("user_id", requesterId)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw httpError(500, "ASSET_ACCESS_CHECK_FAILED", error.message, { assetId, requesterId });
+  }
+
+  return Boolean(data?.asset_id);
+}
+
+async function assertAssetReadable(row, requesterId) {
   if (!row) throw httpError(404, "ASSET_NOT_FOUND", "Asset no encontrado.");
   if (row.owner_id === requesterId) return;
   if (row.is_public) return;
+
+  const entitled = await hasCommunityAssetEntitlement(row.id, requesterId);
+  if (entitled) return;
+
   throw httpError(403, "ASSET_FORBIDDEN", "No tienes permisos para acceder a ese asset.");
 }
 
 async function assetIdToSignedUrl(assetId, requesterId, expiresSeconds = 600) {
   const row = await getAssetRowOrThrow(assetId);
-  assertAssetReadable(row, requesterId);
+  await assertAssetReadable(row, requesterId);
   if (!row.storage_path) throw httpError(500, "ASSET_NO_STORAGE_PATH", "Asset sin storage_path.", { assetId });
   return await signStoragePath(row.storage_path, expiresSeconds);
 }
 
 async function assetIdToInlinePart(assetId, requesterId) {
   const row = await getAssetRowOrThrow(assetId);
-  assertAssetReadable(row, requesterId);
+  await assertAssetReadable(row, requesterId);
   if (!row.storage_path) throw httpError(500, "ASSET_NO_STORAGE_PATH", "Asset sin storage_path.", { assetId });
   const { buffer, mimeType } = await downloadStoragePath(row.storage_path);
   return {
@@ -533,7 +555,7 @@ async function assetIdToInlinePart(assetId, requesterId) {
 
 async function assetIdToImageFile(assetId, requesterId) {
   const row = await getAssetRowOrThrow(assetId);
-  assertAssetReadable(row, requesterId);
+  await assertAssetReadable(row, requesterId);
   if (!row.storage_path) throw httpError(500, "ASSET_NO_STORAGE_PATH", "Asset sin storage_path.", { assetId });
   const { buffer, mimeType } = await downloadStoragePath(row.storage_path);
   const filename = `${row.id}.${(mimeType || "image/png").split("/")[1] || "png"}`;

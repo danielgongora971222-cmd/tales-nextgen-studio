@@ -108,17 +108,36 @@ async function falQueueResult(responseUrl) {
   return falFetchJson(responseUrl, { method: "GET" });
 }
 
+async function hasCommunityAssetEntitlement(assetId, userId) {
+  if (!assetId || !userId) return false;
+
+  const { data, error } = await supabaseAdmin
+    .from("community_asset_entitlements")
+    .select("asset_id")
+    .eq("asset_id", assetId)
+    .eq("user_id", userId)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw new Error("ASSET_ACCESS_CHECK_FAILED");
+  return Boolean(data?.asset_id);
+}
+
 async function assetIdToSignedUrl(assetId, ownerId, ttlSeconds) {
   if (!assetId) return null;
 
   const { data, error } = await supabaseAdmin
     .from("assets")
-    .select("id, owner_id, storage_path")
+    .select("id, owner_id, is_public, storage_path")
     .eq("id", assetId)
     .single();
 
   if (error || !data) throw new Error("ASSET_NOT_FOUND");
-  if (String(data.owner_id) !== String(ownerId)) throw new Error("ASSET_NOT_OWNED");
+
+  const entitled = await hasCommunityAssetEntitlement(assetId, ownerId);
+  if (String(data.owner_id) !== String(ownerId) && data.is_public !== true && !entitled) {
+    throw new Error("ASSET_NOT_OWNED");
+  }
 
   return signStoragePath(data.storage_path, ttlSeconds);
 }
