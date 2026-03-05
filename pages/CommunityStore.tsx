@@ -9,7 +9,7 @@ import {
   listCommunityListingComments,
   createCommunityListingComment,
 } from "../services/communityStoreApi";
-import { Heart, MessageCircle, ShoppingCart, X, Loader2, Send } from "lucide-react";
+import { Heart, MessageCircle, ShoppingCart, X, Loader2, Send, ArrowRightLeft } from "lucide-react";
 import styles from "./tools/ImageGeneratorTool.module.css";
 
 interface Props {
@@ -322,16 +322,31 @@ export default function CommunityStore({ onNavigate }: Props) {
   return (
     <div className="p-6 text-white">
       <div className="flex items-center justify-between gap-3 mb-6">
-        <div>
-          <div className="text-2xl font-bold">Community Store</div>
+        <div className="flex items-center gap-3">
+          <div className="relative grid h-11 w-11 place-items-center overflow-hidden rounded-2xl border border-white/10 bg-white/5 shadow-[0_14px_34px_rgba(0,0,0,0.45)]">
+            <div className="absolute inset-0 bg-gradient-to-br from-white/10 via-transparent to-white/10" aria-hidden="true" />
+            <ShoppingCart className="relative h-5 w-5 text-white/90" />
+          </div>
+
+          <div>
+            <div className="text-3xl font-extrabold tracking-tight leading-none">
+              <span className="bg-gradient-to-r from-white via-white/70 to-white bg-clip-text text-transparent">Community</span>{" "}
+              <span className="text-white/90">Store</span>
+            </div>
+            <div className="mt-1 text-xs text-white/60">
+              Presets y recetas listas para reusar, comprar o inspirarte.
+            </div>
+          </div>
         </div>
 
         <button
           type="button"
-          className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/15 transition"
+          className="group relative inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white/90 shadow-[0_12px_30px_rgba(0,0,0,0.45)] transition hover:border-white/20 hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-white/30"
           onClick={() => onNavigate(AppRoute.MY_TRADES)}
         >
-          Ir a My Trades
+          <span className="absolute inset-0 rounded-xl bg-gradient-to-r from-white/10 via-transparent to-white/10 opacity-0 transition group-hover:opacity-100" aria-hidden="true" />
+          <ArrowRightLeft className="relative h-4 w-4" />
+          <span className="relative">Ir a My Trades</span>
         </button>
       </div>
 

@@ -447,3 +447,318 @@
 .heroCardVideo:hover .oneNationBottomBorder {
   opacity: 1;
 }
+
+/* ===============================
+   Reference-style Hero Cards
+   - Basado en el layout de 1NationUp (logo + overlay + acción en hover)
+   - Con paletas por tema (gold / mono)
+================================ */
+
+.heroCardRefBase {
+  background: linear-gradient(145deg, rgba(15,15,15,0.9) 0%, rgba(5,5,5,0.95) 100%);
+  box-shadow: 0 10px 40px rgba(0,0,0,0.8), inset 0 1px 1px rgba(255,255,255,0.05);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255,255,255,0.05);
+
+  transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1),
+              box-shadow 0.5s cubic-bezier(0.4, 0, 0.2, 1),
+              border-color 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.heroCardRefBase:hover {
+  transform: translateY(-8px) scale(1.02);
+  box-shadow:
+    0 20px 50px -10px color-mix(in srgb, var(--ref-accent-4) 40%, transparent),
+    0 0 20px color-mix(in srgb, var(--ref-accent-1) 22%, transparent),
+    inset 0 1px 2px rgba(255,255,255,0.15);
+  border-color: color-mix(in srgb, var(--ref-accent-1) 30%, rgba(255,255,255,0.05));
+}
+
+.heroCardRefBase::before,
+.heroCardRefBase::after {
+  content: none !important;
+}
+
+.refHeroCard {
+  font-family: "Outfit", var(--hud-font);
+  padding: 0;
+  align-items: stretch;
+}
+
+.refCanvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.82;
+  transition: opacity 0.5s ease;
+}
+
+.heroCardRefBase:hover .refCanvas {
+  opacity: 1;
+}
+
+.refOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    rgba(0,0,0,var(--ref-overlay-left, 0.72)) 0%,
+    rgba(0,0,0,var(--ref-overlay-right, 0.22)) 100%
+  );
+}
+
+.refLogoBadge {
+  position: absolute;
+  top: clamp(6px, 1.6vw, 14px);
+  left: clamp(14px, 2.2vw, 22px);
+  z-index: 12;
+
+  width: clamp(44px, 6vw, 56px);
+  height: clamp(44px, 6vw, 56px);
+
+  display: grid;
+  place-items: center;
+
+  border-radius: 16px;
+  background: rgba(10, 10, 14, 0.72);
+  border: 1px solid rgba(255,255,255,0.10);
+  box-shadow:
+    inset 0 0 18px rgba(255,255,255,0.04),
+    0 0 18px color-mix(in srgb, var(--ref-accent-1) 18%, transparent);
+
+  overflow: hidden;
+  padding: 6px;
+
+  transition: transform 0.5s ease, box-shadow 0.5s ease, border-color 0.5s ease;
+}
+
+.heroCardRefBase:hover .refLogoBadge {
+  transform: translateY(-1px) scale(1.05) rotate(1.5deg);
+  border-color: color-mix(in srgb, var(--ref-accent-1) 32%, rgba(255,255,255,0.10));
+  box-shadow:
+    inset 0 0 22px rgba(255,255,255,0.05),
+    0 0 28px color-mix(in srgb, var(--ref-accent-1) 22%, transparent);
+}
+
+.refLogoFallback {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+
+  font-weight: 800;
+  font-size: 16px;
+  letter-spacing: -0.04em;
+  text-transform: uppercase;
+
+  color: rgba(255,255,255,0.88);
+  opacity: 0.55;
+}
+
+.refLogo {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  border-radius: 10px;
+  object-fit: contain;
+  display: block;
+}
+
+.refFront {
+  position: relative;
+  z-index: 10;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+
+  padding-left: clamp(18px, 4vw, 48px);
+  padding-right: clamp(18px, 4vw, 48px);
+
+  padding-top: clamp(64px, 9vw, 88px);
+  padding-bottom: clamp(18px, 4vw, 34px);
+}
+
+.refTextWrap {
+  min-width: 0;
+  max-width: 100%;
+  transform: translateX(0);
+  transition: transform 0.5s ease;
+}
+
+.heroCardRefBase:hover .refTextWrap {
+  transform: translateX(8px);
+}
+
+.refKicker {
+  font-size: clamp(11px, 1.4vw, 14px);
+  color: rgba(156, 163, 175, 1);
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  margin: 0 0 6px 0;
+  opacity: 0.82;
+  transition: opacity 0.3s ease;
+}
+
+.heroCardRefBase:hover .refKicker {
+  opacity: 1;
+}
+
+.refTitle {
+  margin: 0;
+  font-size: clamp(22px, 4.2vw, 48px);
+  line-height: 1.05;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+
+  overflow-wrap: normal;
+  word-break: normal;
+
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+
+  max-width: 100%;
+}
+
+.refGradientText {
+  background: linear-gradient(
+    to right,
+    var(--ref-accent-1),
+    var(--ref-accent-2),
+    var(--ref-accent-3),
+    var(--ref-accent-4),
+    var(--ref-accent-1)
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  background-size: 220% auto;
+  animation: refGradientShift 4s linear infinite;
+  white-space: nowrap;
+}
+
+@keyframes refGradientShift {
+  0% { background-position: 0% center; }
+  100% { background-position: 220% center; }
+}
+
+.refTitleWhite {
+  color: var(--ref-title-white, #ffffff);
+  filter: drop-shadow(0 0 12px rgba(0,0,0,0.35));
+  margin-left: 8px;
+  white-space: nowrap;
+}
+
+.refMetaLine {
+  margin-top: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: rgba(255,255,255,0.72);
+  max-width: 56ch;
+}
+
+.refActionRow {
+  margin-top: clamp(10px, 2.2vw, 16px);
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+
+  font-size: clamp(12px, 1.6vw, 14px);
+  font-weight: 500;
+
+  color: var(--ref-action-color, rgba(147, 197, 253, 1));
+  opacity: 0;
+  transform: translateX(-16px);
+  transition: all 0.5s ease;
+
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.heroCardRefBase:hover .refActionRow {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.refArrow {
+  width: 20px;
+  height: 20px;
+}
+
+.heroCardRefBase:hover .refArrow {
+  animation: refArrowPulse 1s ease-in-out infinite;
+}
+
+@keyframes refArrowPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.06); }
+}
+
+.refBottomBorder {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 2px;
+
+  background: linear-gradient(
+    to right,
+    transparent,
+    color-mix(in srgb, var(--ref-accent-1) 90%, transparent),
+    color-mix(in srgb, var(--ref-accent-2) 80%, transparent),
+    color-mix(in srgb, var(--ref-accent-3) 80%, transparent),
+    color-mix(in srgb, var(--ref-accent-4) 90%, transparent),
+    transparent
+  );
+
+  opacity: 0;
+  transition: opacity 0.7s ease;
+}
+
+.heroCardRefBase:hover .refBottomBorder {
+  opacity: 1;
+}
+
+.designsTheme {
+  --ref-accent-1: #FDE68A;
+  --ref-accent-2: #DFB142;
+  --ref-accent-3: #B45309;
+  --ref-accent-4: #FFF2C2;
+
+  --ref-action-color: rgba(253, 230, 138, 1);
+  --ref-title-white: #ffffff;
+
+  --ref-overlay-left: 0.72;
+  --ref-overlay-right: 0.18;
+}
+
+.monoTheme {
+  --ref-accent-1: #FFFFFF;
+  --ref-accent-2: #E5E7EB;
+  --ref-accent-3: #9CA3AF;
+  --ref-accent-4: #F9FAFB;
+
+  --ref-action-color: rgba(255,255,255,0.88);
+  --ref-title-white: rgba(255,255,255,0.96);
+
+  --ref-overlay-left: 0.78;
+  --ref-overlay-right: 0.22;
+}
+
+.monoTheme .heroCreditsButton {
+  background: rgba(255,255,255,0.08);
+  border-color: rgba(255,255,255,0.16);
+}
+
+.monoTheme .heroCreditsButton:hover {
+  background: rgba(255,255,255,0.14);
+  border-color: rgba(255,255,255,0.26);
+}

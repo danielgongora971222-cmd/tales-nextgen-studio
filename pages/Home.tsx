@@ -13,6 +13,171 @@ interface HomeProps {
   onNavigate: (route: AppRoute) => void;
 }
 
+type ConstellationEffectOptions = {
+  btn: HTMLElement | null;
+  canvas: HTMLCanvasElement | null;
+  hoverRef: React.MutableRefObject<boolean>;
+  mouseRef: React.MutableRefObject<{ x: number; y: number }>;
+  colors: string[];
+  lineRgb: string; // ejemplo: "180, 200, 255"
+};
+
+function setupConstellationEffect(opts: ConstellationEffectOptions) {
+  const { btn, canvas, hoverRef, mouseRef, colors, lineRgb } = opts;
+
+  if (!btn || !canvas) return () => {};
+
+  const prefersReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+  if (prefersReducedMotion) return () => {};
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return () => {};
+
+  let particles: Array<{
+    x: number; y: number;
+    vx: number; vy: number;
+    baseRadius: number; radius: number;
+    color: string;
+    phase: number;
+  }> = [];
+
+  let raf = 0;
+
+  const resize = () => {
+    const w = btn.offsetWidth;
+    const h = btn.offsetHeight;
+    canvas.width = Math.max(1, Math.floor(w));
+    canvas.height = Math.max(1, Math.floor(h));
+
+    particles = [];
+    const count = Math.max(18, Math.floor((canvas.width * canvas.height) / 4000));
+    for (let i = 0; i < count; i++) {
+      particles.push({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        vx: (Math.random() - 0.5) * 0.5,
+        vy: (Math.random() - 0.5) * 0.5,
+        baseRadius: Math.random() * 1.5 + 0.5,
+        radius: 1,
+        color: colors[Math.floor(Math.random() * colors.length)],
+        phase: Math.random() * Math.PI * 2
+      });
+    }
+  };
+
+  const drawLines = () => {
+    const isHovered = hoverRef.current;
+    const mouse = mouseRef.current;
+    const connectionDistance = isHovered ? 110 : 80;
+
+    for (let i = 0; i < particles.length; i++) {
+      for (let j = i + 1; j < particles.length; j++) {
+        const dx = particles[i].x - particles[j].x;
+        const dy = particles[i].y - particles[j].y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (dist < connectionDistance) {
+          ctx.beginPath();
+          let opacity = 1 - (dist / connectionDistance);
+          opacity *= isHovered ? 0.6 : 0.2;
+          ctx.strokeStyle = `rgba(${lineRgb}, ${opacity})`;
+          ctx.lineWidth = 1;
+          ctx.moveTo(particles[i].x, particles[i].y);
+          ctx.lineTo(particles[j].x, particles[j].y);
+          ctx.stroke();
+        }
+      }
+
+      if (isHovered) {
+        const mdx = particles[i].x - mouse.x;
+        const mdy = particles[i].y - mouse.y;
+        const mdist = Math.sqrt(mdx * mdx + mdy * mdy);
+
+        if (mdist < 120) {
+          ctx.beginPath();
+          const mOpacity = 1 - (mdist / 120);
+          ctx.strokeStyle = particles[i].color;
+          ctx.globalAlpha = mOpacity * 0.8;
+          ctx.lineWidth = 1.5;
+          ctx.moveTo(particles[i].x, particles[i].y);
+          ctx.lineTo(mouse.x, mouse.y);
+          ctx.stroke();
+          ctx.globalAlpha = 1.0;
+        }
+      }
+    }
+  };
+
+  const tick = () => {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const isHovered = hoverRef.current;
+    const mouse = mouseRef.current;
+
+    for (const p of particles) {
+      p.x += p.vx;
+      p.y += p.vy;
+
+      if (p.x < 0 || p.x > canvas.width) p.vx *= -1;
+      if (p.y < 0 || p.y > canvas.height) p.vy *= -1;
+
+      p.phase += 0.02;
+      p.radius = p.baseRadius + Math.sin(p.phase) * 0.5;
+
+      if (isHovered) {
+        const dx = mouse.x - p.x;
+        const dy = mouse.y - p.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const interactionRadius = 100;
+
+        if (dist > 0.001 && dist < interactionRadius) {
+          const fx = dx / dist;
+          const fy = dy / dist;
+          const force = (interactionRadius - dist) / interactionRadius;
+
+          p.vx += fx * force * 0.02;
+          p.vy += fy * force * 0.02;
+
+          const maxSpeed = 1.5;
+          const sp = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+          if (sp > maxSpeed) {
+            p.vx = (p.vx / sp) * maxSpeed;
+            p.vy = (p.vy / sp) * maxSpeed;
+          }
+
+          p.radius = p.baseRadius + (force * 1.5);
+        }
+      } else {
+        p.vx *= 0.99;
+        p.vy *= 0.99;
+        if (Math.abs(p.vx) < 0.1) p.vx += (Math.random() - 0.5) * 0.05;
+        if (Math.abs(p.vy) < 0.1) p.vy += (Math.random() - 0.5) * 0.05;
+      }
+
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+      ctx.fillStyle = p.color;
+      ctx.globalAlpha = isHovered ? 0.8 : 0.5;
+      ctx.fill();
+      ctx.globalAlpha = 1.0;
+    }
+
+    drawLines();
+    raf = requestAnimationFrame(tick);
+  };
+
+  const onResize = () => resize();
+
+  resize();
+  raf = requestAnimationFrame(tick);
+  window.addEventListener("resize", onResize);
+
+  return () => {
+    cancelAnimationFrame(raf);
+    window.removeEventListener("resize", onResize);
+  };
+}
+
 const Home: React.FC<HomeProps> = ({ onNavigate }) => {
   const { user } = useAuth();
   const { wallet, subscription } = useWallet();
@@ -56,6 +221,16 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
   const oneNationCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const oneNationHoverRef = useRef<boolean>(false);
   const oneNationMouseRef = useRef<{ x: number; y: number }>({ x: -1000, y: -1000 });
+
+  const designsBtnRef = useRef<HTMLButtonElement | null>(null);
+  const designsCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const designsHoverRef = useRef<boolean>(false);
+  const designsMouseRef = useRef<{ x: number; y: number }>({ x: -1000, y: -1000 });
+
+  const creatorBtnRef = useRef<HTMLDivElement | null>(null);
+  const creatorCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const creatorHoverRef = useRef<boolean>(false);
+  const creatorMouseRef = useRef<{ x: number; y: number }>({ x: -1000, y: -1000 });
 
   const validateComment = (raw: string) => {
     const text = (raw || "").trim();
@@ -269,6 +444,28 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
   }, []);
 
   useEffect(() => {
+    return setupConstellationEffect({
+      btn: designsBtnRef.current,
+      canvas: designsCanvasRef.current,
+      hoverRef: designsHoverRef,
+      mouseRef: designsMouseRef,
+      colors: ["#FDE68A", "#DFB142", "#B45309", "#FFF2C2"],
+      lineRgb: "255, 235, 170"
+    });
+  }, []);
+
+  useEffect(() => {
+    return setupConstellationEffect({
+      btn: creatorBtnRef.current,
+      canvas: creatorCanvasRef.current,
+      hoverRef: creatorHoverRef,
+      mouseRef: creatorMouseRef,
+      colors: ["#FFFFFF", "#E5E7EB", "#9CA3AF", "#F9FAFB"],
+      lineRgb: "255, 255, 255"
+    });
+  }, []);
+
+  useEffect(() => {
     loadFeed();
   }, []);
 
@@ -433,16 +630,58 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
       {/* Hero Section */}
       <section className={styles.heroGrid}>
         <button
+          ref={designsBtnRef}
           type="button"
           onClick={() => onNavigate(AppRoute.TOOL_GENERATOR)}
-          className={`${styles.heroCard} ${styles.heroCardImage}`}
+          className={`${styles.heroCard} ${styles.heroCardRefBase} ${styles.refHeroCard} ${styles.designsTheme}`}
+          onMouseEnter={() => { designsHoverRef.current = true; }}
+          onMouseLeave={() => {
+            designsHoverRef.current = false;
+            designsMouseRef.current = { x: -1000, y: -1000 };
+          }}
+          onMouseMove={(e) => {
+            const rect = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
+            designsMouseRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+          }}
         >
-          <div className={styles.heroContent}>
-            <span className={styles.heroEyebrow}>GENERAL IMAGE GENERATOR</span>
-            <h2 className={styles.heroTitle}>Create Images</h2>
-            <p className={styles.heroCopy}>Launch your next visual with cinematic presets and community-ready output.</p>
-            <span className={styles.heroCta}>Open Image Generator</span>
+          <canvas ref={designsCanvasRef} className={styles.refCanvas} />
+          <div className={styles.refOverlay} aria-hidden="true" />
+
+          <div className={styles.refLogoBadge} aria-hidden="true">
+            <span className={styles.refLogoFallback}>D</span>
+            <img
+              src="/brands/designs/logo.png"
+              alt="Designs Logo"
+              className={styles.refLogo}
+              loading="lazy"
+              decoding="async"
+              onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+            />
           </div>
+
+          <div className={styles.refFront}>
+            <div className={styles.refTextWrap}>
+              <h2 className={styles.refKicker}>Crea con</h2>
+
+              <h1 className={styles.refTitle}>
+                <span className={styles.refGradientText}>Designs</span>
+                <span className={styles.refTitleWhite}>Studio</span>
+              </h1>
+
+              <div className={styles.refMetaLine}>
+                Generador de imágenes con presets cinematográficos y controles avanzados para resultados más consistentes.
+              </div>
+
+              <div className={styles.refActionRow}>
+                <span>Abrir Image Generator</span>
+                <svg className={styles.refArrow} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 8l4 4m0 0l-4 4m4-4H3"></path>
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          <div className={styles.refBottomBorder} aria-hidden="true" />
         </button>
 
         <button
@@ -501,7 +740,8 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
         </button>
 
         <div
-          className={`${styles.heroCard} ${styles.heroCardCredits}`}
+          ref={creatorBtnRef}
+          className={`${styles.heroCard} ${styles.heroCardRefBase} ${styles.refHeroCard} ${styles.monoTheme}`}
           role="button"
           tabIndex={0}
           onClick={() => {
@@ -515,36 +755,77 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
               onNavigate(AppRoute.PROFILE);
             }
           }}
+          onMouseEnter={() => { creatorHoverRef.current = true; }}
+          onMouseLeave={() => {
+            creatorHoverRef.current = false;
+            creatorMouseRef.current = { x: -1000, y: -1000 };
+          }}
+          onMouseMove={(e) => {
+            const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+            creatorMouseRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+          }}
         >
-          <div className={styles.heroContent}>
-            <span className={styles.heroEyebrow}>WELCOME</span>
-            <h2 className={styles.heroTitle}>{user?.username || "Creator"}</h2>
-            <p className={styles.heroCopy}>
-              Plan activo: <strong className={styles.heroInlineStrong}>{subscription?.plan_name || "Ninguno"}</strong>
-            </p>
+          <canvas ref={creatorCanvasRef} className={styles.refCanvas} />
+          <div className={styles.refOverlay} aria-hidden="true" />
 
-            <div className={styles.heroCreditsRow}>
-              <div>
-                <div className={styles.heroCreditsLabel}>Credits</div>
-                <div className={styles.heroCreditsValue}>{wallet?.generationCredits ?? 0}</div>
-                <div className={styles.heroCreditsBreakdown}>
-                  Plan {wallet?.gen_plan_credits ?? 0} · Extra {wallet?.gen_topup_credits ?? 0} · Bonus {wallet?.gen_bonus_credits ?? 0}
-                </div>
+          <div className={styles.refLogoBadge} aria-hidden="true">
+            <span className={styles.refLogoFallback}>C</span>
+            <img
+              src="/brands/creator-hub/logo.png"
+              alt="Creator Hub Logo"
+              className={styles.refLogo}
+              loading="lazy"
+              decoding="async"
+              onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+            />
+          </div>
+
+          <div className={styles.refFront}>
+            <div className={styles.refTextWrap}>
+              <h2 className={styles.refKicker}>Tu</h2>
+
+              <h1 className={styles.refTitle}>
+                <span className={styles.refGradientText}>Creator</span>
+                <span className={styles.refTitleWhite}>Hub</span>
+              </h1>
+
+              <div className={styles.refMetaLine}>
+                {user?.username || "Creator"} · Plan activo:{" "}
+                <strong className={styles.heroInlineStrong}>{subscription?.plan_name || "Ninguno"}</strong>
               </div>
 
-              <button
-                type="button"
-                className={styles.heroCreditsButton}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  window.localStorage.setItem("tales_account_tab", "plans");
-                  onNavigate(AppRoute.PAYWALL);
-                }}
-              >
-                Manage plans and extra credits
-              </button>
+              <div className={styles.heroCreditsRow}>
+                <div>
+                  <div className={styles.heroCreditsLabel}>Credits</div>
+                  <div className={styles.heroCreditsValue}>{wallet?.generationCredits ?? 0}</div>
+                  <div className={styles.heroCreditsBreakdown}>
+                    Plan {wallet?.gen_plan_credits ?? 0} · Extra {wallet?.gen_topup_credits ?? 0} · Bonus {wallet?.gen_bonus_credits ?? 0}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  className={styles.heroCreditsButton}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    window.localStorage.setItem("tales_account_tab", "plans");
+                    onNavigate(AppRoute.PAYWALL);
+                  }}
+                >
+                  Manage plans and extra credits
+                </button>
+              </div>
+
+              <div className={styles.refActionRow}>
+                <span>Ir a tu perfil</span>
+                <svg className={styles.refArrow} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 8l4 4m0 0l-4 4m4-4H3"></path>
+                </svg>
+              </div>
             </div>
           </div>
+
+          <div className={styles.refBottomBorder} aria-hidden="true" />
         </div>
       </section>
 
