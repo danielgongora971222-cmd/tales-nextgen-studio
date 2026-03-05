@@ -68,6 +68,9 @@ export interface Asset {
   // Social & Privacy
   ownerId: string;
   isPublic: boolean;
+  accessSource?: "owned" | "purchased" | "public";
+  acquiredAt?: number;
+  sourceListingId?: string | null;
 
   // Community Store (si este asset está en venta)
   communityListing?: {

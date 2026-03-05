@@ -279,7 +279,8 @@ router.delete("/assets/:id", async (req, res) => {
   // ===============================
   router.get("/assets", async (req, res) => {
   // 1) exigir login
-  const scope = typeof req.query.scope === "string" ? req.query.scope : "my";
+  const rawScope = typeof req.query.scope === "string" ? req.query.scope : "my";
+  const scope = rawScope === "public" || rawScope === "purchased" ? rawScope : "my";
   const { user, error } = await requireUser(req);
   if (error) return res.status(401).json({ ok: false, error });
 
@@ -288,37 +289,102 @@ router.delete("/assets/:id", async (req, res) => {
   const limitRaw = typeof req.query.limit === "string" ? parseInt(req.query.limit, 10) : 50;
   const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 500) : 50;
 
-  // 3) pedir assets del usuario a la DB (incluye contadores sociales)
-  let q = supabaseAdmin
-    .from("assets")
-    .select("id, url, storage_path, type, name, prompt, created_at, owner_id, is_public, meta, likes_count, comments_count")
-    .order("created_at", { ascending: false })
-    .limit(limit);
+    // 3) pedir assets del usuario a la DB (incluye contadores sociales)
+    let rows = [];
+    const acquiredMetaByAssetId = new Map();
 
-  if (scope === "public") {
-    q = q.eq("is_public", true);
-  } else {
-    q = q.eq("owner_id", user.id);
-  }
+    if (scope === "purchased") {
+      const entitlementFetchLimit = Math.min(Math.max(limit * 8, limit), 2000);
 
-  if (type) q = q.eq("type", type);
+      const { data: entitlementRows, error: entErr } = await supabaseAdmin
+        .from("community_asset_entitlements")
+        .select("asset_id, listing_id, created_at")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(entitlementFetchLimit);
 
-  const { data, error: dbErr } = await q;
+      if (entErr) {
+        console.error("[DB_QUERY_FAILED]", entErr);
+        return res.status(500).json({
+          ok: false,
+          error: { code: "DB_QUERY_FAILED", message: entErr.message },
+        });
+      }
 
-  if (dbErr) {
-    console.error("[DB_QUERY_FAILED]", dbErr);
-    return res.status(500).json({
-      ok: false,
-      error: { code: "DB_QUERY_FAILED", message: dbErr.message },
-    });
-  }
+      const entitledAssetIds = [];
+      const seenAssetIds = new Set();
 
-  const rows = data || [];
+      for (const row of entitlementRows || []) {
+        const assetId = typeof row?.asset_id === "string" ? row.asset_id : "";
+        if (!assetId || seenAssetIds.has(assetId)) continue;
+
+        seenAssetIds.add(assetId);
+        entitledAssetIds.push(assetId);
+        acquiredMetaByAssetId.set(assetId, {
+          acquiredAt: row?.created_at ? new Date(row.created_at).getTime() : Date.now(),
+          listingId: typeof row?.listing_id === "string" ? row.listing_id : null,
+        });
+      }
+
+      if (entitledAssetIds.length > 0) {
+        let purchasedQ = supabaseAdmin
+          .from("assets")
+          .select("id, url, storage_path, type, name, prompt, created_at, owner_id, is_public, meta, likes_count, comments_count")
+          .in("id", entitledAssetIds);
+
+        if (type) purchasedQ = purchasedQ.eq("type", type);
+
+        const { data: purchasedRows, error: purchasedErr } = await purchasedQ;
+
+        if (purchasedErr) {
+          console.error("[DB_QUERY_FAILED]", purchasedErr);
+          return res.status(500).json({
+            ok: false,
+            error: { code: "DB_QUERY_FAILED", message: purchasedErr.message },
+          });
+        }
+
+        rows = (purchasedRows || [])
+          .filter((row) => String(row?.owner_id || "") !== String(user.id))
+          .sort((a, b) => {
+            const ta = Number(acquiredMetaByAssetId.get(a.id)?.acquiredAt || 0);
+            const tb = Number(acquiredMetaByAssetId.get(b.id)?.acquiredAt || 0);
+            return tb - ta;
+          })
+          .slice(0, limit);
+      }
+    } else {
+      let q = supabaseAdmin
+        .from("assets")
+        .select("id, url, storage_path, type, name, prompt, created_at, owner_id, is_public, meta, likes_count, comments_count")
+        .order("created_at", { ascending: false })
+        .limit(limit);
+
+      if (scope === "public") {
+        q = q.eq("is_public", true);
+      } else {
+        q = q.eq("owner_id", user.id);
+      }
+
+      if (type) q = q.eq("type", type);
+
+      const { data, error: dbErr } = await q;
+
+      if (dbErr) {
+        console.error("[DB_QUERY_FAILED]", dbErr);
+        return res.status(500).json({
+          ok: false,
+          error: { code: "DB_QUERY_FAILED", message: dbErr.message },
+        });
+      }
+
+      rows = data || [];
+    }
   const assetIds = rows.map((r) => r.id).filter(Boolean);
 
   // 3.5) Community Store listing por asset (solo para scope=my)
   const listingByAssetId = new Map();
-  if (scope !== "public" && assetIds.length > 0) {
+  if (scope === "my" && assetIds.length > 0) {
     const { data: listingRows, error: lErr } = await supabaseAdmin
       .from("community_listings")
       .select("id, name, preview_asset_id, status, price_credits, description")
@@ -401,19 +467,23 @@ router.delete("/assets/:id", async (req, res) => {
       const comments = previewByAsset.get(row.id) || [];
 
       const communityListing = listingByAssetId.get(row.id) || null;
+      const acquiredMeta = acquiredMetaByAssetId.get(row.id) || null;
 
       return {
         id: row.id,
         url,
         type: row.type === "video" ? "video" : "image",
         name: row.name || `Generation ${String(row.id).slice(0, 4)}`,
-        prompt: scope === "public" ? undefined : (row.prompt || undefined),
-        meta: scope === "public" ? null : (row.meta ?? null),
+        prompt: scope === "my" ? (row.prompt || undefined) : undefined,
+        meta: scope === "my" ? (row.meta ?? null) : null,
         createdAt,
         ownerId: row.owner_id,
         isPublic: !!row.is_public,
 
         communityListing,
+        accessSource: scope === "public" ? "public" : scope === "purchased" ? "purchased" : "owned",
+        acquiredAt: acquiredMeta?.acquiredAt || null,
+        sourceListingId: acquiredMeta?.listingId || null,
 
         likedByMe,
         likesCount,

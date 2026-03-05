@@ -16,6 +16,14 @@ function mapRowToAsset(row: any): Asset {
         ? (isNaN(new Date(createdRaw).getTime()) ? Date.now() : new Date(createdRaw).getTime())
         : Date.now();
 
+  const acquiredRaw = (row as any).acquiredAt ?? (row as any).acquired_at;
+  const acquiredAt =
+    typeof acquiredRaw === "number"
+      ? (acquiredRaw < 1e12 ? acquiredRaw * 1000 : acquiredRaw)
+      : typeof acquiredRaw === "string"
+        ? (isNaN(new Date(acquiredRaw).getTime()) ? undefined : new Date(acquiredRaw).getTime())
+        : undefined;
+
   const ownerId = String(row.ownerId ?? row.owner_id ?? row.userId ?? row.user_id ?? "");
 
   const isPublic = !!(row.isPublic ?? row.is_public ?? row.public ?? row.is_public_asset);
@@ -39,6 +47,9 @@ function mapRowToAsset(row: any): Asset {
     meta: (row as any).meta ?? (row as any).metadata ?? undefined,
     ownerId,
     isPublic,
+    accessSource: (row as any).accessSource ?? (row as any).access_source ?? "owned",
+    acquiredAt,
+    sourceListingId: (row as any).sourceListingId ?? (row as any).source_listing_id ?? null,
 
     communityListing: (row as any).communityListing ?? (row as any).community_listing ?? null,
 
@@ -76,6 +87,7 @@ const ASSETS_CACHE_TTL_MS = 10 * 60 * 1000; // 10 min (reduce recargas entre too
 
 const myAssetsCache = new Map<string, AssetsCacheEntry>();
 const publicAssetsCache = new Map<string, AssetsCacheEntry>();
+const purchasedAssetsCache = new Map<string, AssetsCacheEntry>();
 
 function cacheKeyFor(type?: "image" | "video") {
   return type ? `type:${type}` : "type:all";
@@ -93,6 +105,11 @@ export function invalidateMyAssetsCache(type?: "image" | "video") {
 export function invalidatePublicAssetsCache(type?: "image" | "video") {
   if (type) publicAssetsCache.delete(cacheKeyFor(type));
   else publicAssetsCache.clear();
+}
+
+export function invalidatePurchasedAssetsCache(type?: "image" | "video") {
+  if (type) purchasedAssetsCache.delete(cacheKeyFor(type));
+  else purchasedAssetsCache.clear();
 }
 
 function sliceByLimit(items: Asset[], limit?: number) {
@@ -193,6 +210,44 @@ async function fetchPublicAssetsNoCache(opts?: { type?: "image" | "video"; limit
     .filter((a) => !isInternalAsset(a));
 }
 
+async function fetchPurchasedAssetsNoCache(opts?: { type?: "image" | "video"; limit?: number }): Promise<Asset[]> {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const token = sessionData.session?.access_token;
+
+  const params = new URLSearchParams();
+  params.set("scope", "purchased");
+  if (opts?.type) params.set("type", opts.type);
+  if (opts?.limit) params.set("limit", String(opts.limit));
+
+  const url = apiUrl(`/api/assets?${params.toString()}`);
+
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const resp = await fetch(url, { method: "GET", headers });
+
+  const text = await resp.text();
+  let data: any;
+
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error(
+      `El backend devolvió HTML/texto en vez de JSON en listPurchasedAssets. Inicio: ${text.slice(0, 60)}`
+    );
+  }
+
+  if (!resp.ok || data?.ok === false) {
+    const e = data?.error;
+    throw new Error(e?.message || `Request failed: ${resp.status}`);
+  }
+
+  return (Array.isArray(data.items) ? data.items : [])
+    .map(mapRowToAsset)
+    .filter((a) => a.url)
+    .filter((a) => !isInternalAsset(a));
+}
+
 
 
 export async function listMyAssets(opts?: { type?: "image" | "video"; limit?: number; fresh?: boolean }): Promise<Asset[]> {
@@ -278,6 +333,48 @@ export async function listPublicAssets(opts?: { type?: "image" | "video"; limit?
   } catch (e) {
     delete entry.inFlight;
     publicAssetsCache.set(key, entry);
+    throw e;
+  }
+}
+
+export async function listPurchasedAssets(opts?: { type?: "image" | "video"; limit?: number; fresh?: boolean }): Promise<Asset[]> {
+  const key = cacheKeyFor(opts?.type);
+  const limit = opts?.limit;
+
+  if (!opts?.fresh) {
+    const existing = purchasedAssetsCache.get(key);
+
+    if (existing && !shouldRefetch(existing, limit)) {
+      return sliceByLimit(existing.items, limit);
+    }
+
+    if (existing?.inFlight) {
+      const items = await existing.inFlight;
+      return sliceByLimit(items, limit);
+    }
+  }
+
+  const entry: AssetsCacheEntry = purchasedAssetsCache.get(key) || {
+    ts: 0,
+    fetchedLimit: null,
+    items: [],
+  };
+
+  const inFlight = fetchPurchasedAssetsNoCache({ type: opts?.type, limit: opts?.limit });
+  entry.inFlight = inFlight;
+  purchasedAssetsCache.set(key, entry);
+
+  try {
+    const items = await inFlight;
+    entry.ts = Date.now();
+    entry.fetchedLimit = typeof limit === "number" && Number.isFinite(limit) && limit > 0 ? limit : null;
+    entry.items = items;
+    delete entry.inFlight;
+    purchasedAssetsCache.set(key, entry);
+    return sliceByLimit(items, limit);
+  } catch (e) {
+    delete entry.inFlight;
+    purchasedAssetsCache.set(key, entry);
     throw e;
   }
 }
