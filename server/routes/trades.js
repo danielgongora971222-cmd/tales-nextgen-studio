@@ -18,121 +18,104 @@ function asNumber(value) {
   return Number.isFinite(n) ? n : 0;
 }
 
-function normalizeRange(raw) {
-  const value = String(raw || "30d").toLowerCase();
-  return ["7d", "30d", "90d", "all"].includes(value) ? value : "30d";
+function normalizeRange(raw, fallback = "30d") {
+  const value = String(raw || fallback).toLowerCase();
+  return ["7d", "30d", "90d", "all"].includes(value) ? value : fallback;
 }
 
-function getSinceIso(range) {
-  if (range === "all") return null;
-  const days = range === "7d" ? 7 : range === "90d" ? 90 : 30;
-  const d = new Date();
-  d.setUTCHours(0, 0, 0, 0);
-  d.setUTCDate(d.getUTCDate() - (days - 1));
-  return d.toISOString();
+function normalizeCompare(raw) {
+  const value = String(raw || "previous").toLowerCase();
+  return ["none", "previous", "7d", "30d", "90d", "all"].includes(value) ? value : "previous";
 }
 
-function bucketKeyFor(range, ts) {
+function startOfUtcDay(ts = Date.now()) {
   const d = new Date(ts);
-  if (range === "all") {
-    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
-  }
-  return d.toISOString().slice(0, 10);
+  d.setUTCHours(0, 0, 0, 0);
+  return d.getTime();
 }
 
-function bucketLabelFor(range, key) {
-  if (range === "all") {
-    const [year, month] = String(key).split("-");
-    const d = new Date(Date.UTC(Number(year), Number(month) - 1, 1));
-    return d.toLocaleDateString("en-US", { month: "short", year: "2-digit", timeZone: "UTC" });
-  }
-
-  const d = new Date(`${key}T00:00:00.000Z`);
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+function daysForRange(range) {
+  if (range === "7d") return 7;
+  if (range === "90d") return 90;
+  if (range === "30d") return 30;
+  return null;
 }
 
-function buildTimeline(range, events) {
-  const buckets = [];
-  const bucketMap = new Map();
-
+function buildCurrentWindow(range) {
   if (range === "all") {
-    const timestamps = events.map((e) => e.ts).filter(Boolean).sort((a, b) => a - b);
-    if (timestamps.length > 0) {
-      const first = new Date(timestamps[0]);
-      const last = new Date();
-      let cursor = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth(), 1));
-      const limit = 60;
-      let count = 0;
-
-      while (cursor.getTime() <= last.getTime() && count < limit) {
-        const key = `${cursor.getUTCFullYear()}-${String(cursor.getUTCMonth() + 1).padStart(2, "0")}`;
-        const row = {
-          key,
-          label: bucketLabelFor("all", key),
-          salesNetCredits: 0,
-          referralCredits: 0,
-          totalCredits: 0,
-          pendingCredits: 0,
-          confirmedCredits: 0,
-          salesCount: 0,
-          referralCount: 0,
-        };
-        buckets.push(row);
-        bucketMap.set(key, row);
-        cursor = new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, 1));
-        count += 1;
-      }
-    }
-  } else {
-    const days = range === "7d" ? 7 : range === "90d" ? 90 : 30;
-    const cursor = new Date();
-    cursor.setUTCHours(0, 0, 0, 0);
-    cursor.setUTCDate(cursor.getUTCDate() - (days - 1));
-
-    for (let i = 0; i < days; i += 1) {
-      const d = new Date(cursor);
-      d.setUTCDate(cursor.getUTCDate() + i);
-      const key = d.toISOString().slice(0, 10);
-      const row = {
-        key,
-        label: bucketLabelFor(range, key),
-        salesNetCredits: 0,
-        referralCredits: 0,
-        totalCredits: 0,
-        pendingCredits: 0,
-        confirmedCredits: 0,
-        salesCount: 0,
-        referralCount: 0,
-      };
-      buckets.push(row);
-      bucketMap.set(key, row);
-    }
+    return { key: "all", label: "All time", startMs: null, endMs: null, startIso: null, endIso: null };
   }
 
-  for (const event of events) {
-    if (!event?.ts) continue;
-    const key = bucketKeyFor(range, event.ts);
-    const row = bucketMap.get(key);
-    if (!row) continue;
+  const days = daysForRange(range) || 30;
+  const endMs = startOfUtcDay(Date.now()) + (24 * 60 * 60 * 1000) - 1;
+  const startMs = startOfUtcDay(Date.now()) - (days - 1) * 24 * 60 * 60 * 1000;
 
-    if (event.kind === "sale") {
-      row.salesNetCredits += asNumber(event.credits);
-      row.salesCount += 1;
-    } else {
-      row.referralCredits += asNumber(event.credits);
-      row.referralCount += 1;
-    }
+  return {
+    key: range,
+    label: range.toUpperCase(),
+    startMs,
+    endMs,
+    startIso: new Date(startMs).toISOString(),
+    endIso: new Date(endMs).toISOString(),
+  };
+}
 
-    row.totalCredits += asNumber(event.credits);
+function buildCompareWindow(compare, currentRange) {
+  if (compare === "none") return null;
 
-    if (event.isMatured) {
-      row.confirmedCredits += asNumber(event.credits);
-    } else {
-      row.pendingCredits += asNumber(event.credits);
-    }
+  if (compare === "previous") {
+    if (currentRange === "all") return null;
+
+    const current = buildCurrentWindow(currentRange);
+    const days = daysForRange(currentRange) || 30;
+    const endMs = current.startMs - 1;
+    const startMs = startOfUtcDay(endMs) - (days - 1) * 24 * 60 * 60 * 1000;
+
+    return {
+      key: "previous",
+      label: `Previous ${currentRange.toUpperCase()}`,
+      startMs,
+      endMs,
+      startIso: new Date(startMs).toISOString(),
+      endIso: new Date(endMs).toISOString(),
+    };
   }
 
-  return buckets;
+  return buildCurrentWindow(normalizeRange(compare, "30d"));
+}
+
+function isInWindow(ts, window) {
+  if (!window || window.startMs == null || window.endMs == null) return true;
+  if (!ts) return false;
+  return ts >= window.startMs && ts <= window.endMs;
+}
+
+function makeSummary() {
+  return {
+    salesCount: 0,
+    netSalesCredits: 0,
+    pendingCredits: 0,
+    confirmedCredits: 0,
+    likesCount: 0,
+    commentsCount: 0,
+    marketplaceReferralCount: 0,
+    marketplaceReferralCredits: 0,
+    planReferralCount: 0,
+    planReferralCredits: 0,
+    totalReferralCredits: 0,
+  };
+}
+
+function safePctDelta(current, compare) {
+  const c = asNumber(current);
+  const p = asNumber(compare);
+
+  if (p <= 0) {
+    if (c <= 0) return 0;
+    return 100;
+  }
+
+  return ((c - p) / p) * 100;
 }
 
 export function createTradesRouter(ctx) {
@@ -283,10 +266,12 @@ export function createTradesRouter(ctx) {
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
 
-    const range = normalizeRange(req.query.range);
-    const sinceIso = getSinceIso(range);
+    const range = normalizeRange(req.query.range, "30d");
+    const compare = normalizeCompare(req.query.compare);
+    const currentWindow = buildCurrentWindow(range);
+    const compareWindow = buildCompareWindow(compare, range);
 
-    const listingsQuery = supabaseAdmin
+    const { data: listingRows, error: listingsErr } = await supabaseAdmin
       .from("community_listings")
       .select("id, name, status, listing_kind, media_tag, price_credits, description, preview_asset_id, created_at, likes_count, comments_count, sales_count")
       .eq("seller_id", user.id)
@@ -294,327 +279,299 @@ export function createTradesRouter(ctx) {
       .order("created_at", { ascending: false })
       .range(0, 4999);
 
-    let sellerSalesQuery = supabaseAdmin
-      .from("community_purchases")
-      .select("id, listing_id, paid_credits, seller_net_credits, referral_code_id, created_at, matures_at, is_matured")
-      .eq("seller_id", user.id)
-      .eq("status", "completed")
-      .order("created_at", { ascending: false })
-      .range(0, 4999);
+    if (listingsErr) return err(res, 500, "DB_QUERY_FAILED", listingsErr.message);
 
-    let marketplaceReferralsQuery = supabaseAdmin
-      .from("community_purchases")
-      .select("id, listing_id, paid_credits, referral_code_id, referral_reward_credits, created_at, matures_at, is_matured")
-      .eq("referrer_id", user.id)
-      .eq("status", "completed")
-      .order("created_at", { ascending: false })
-      .range(0, 4999);
+    const listings = Array.isArray(listingRows) ? listingRows : [];
+    const listingIds = listings.map((row) => row.id).filter(Boolean);
+    const previewMap = await resolveAssetPreviewMap(listings.map((row) => row.preview_asset_id));
 
-    let planReferralsQuery = supabaseAdmin
-      .from("billing_referrals")
-      .select("id, referral_code_id, referral_code_snapshot, referred_username_snapshot, plan_slug_snapshot, referrer_reward_credits, created_at, matures_at, is_matured")
-      .eq("referrer_id", user.id)
-      .order("created_at", { ascending: false })
-      .range(0, 4999);
+    let salesRows = [];
+    let likesRows = [];
+    let commentsRows = [];
+    let marketplaceReferralRows = [];
+    let planReferralRows = [];
 
-    let cashoutsQuery = supabaseAdmin
-      .from("wallet_cashout_requests")
-      .select("id, status, amount_credits, net_usd_micros, created_at")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false })
-      .range(0, 4999);
+    if (listingIds.length > 0) {
+      const [salesResp, likesResp, commentsResp] = await Promise.all([
+        supabaseAdmin
+          .from("community_purchases")
+          .select("id, listing_id, paid_credits, seller_net_credits, created_at, matures_at, is_matured")
+          .eq("seller_id", user.id)
+          .eq("status", "completed")
+          .order("created_at", { ascending: false })
+          .range(0, 4999),
+        supabaseAdmin
+          .from("community_listing_likes")
+          .select("id, listing_id, created_at")
+          .in("listing_id", listingIds)
+          .order("created_at", { ascending: false })
+          .range(0, 4999),
+        supabaseAdmin
+          .from("community_listing_comments")
+          .select("id, listing_id, created_at, is_shadowed")
+          .in("listing_id", listingIds)
+          .eq("is_shadowed", false)
+          .order("created_at", { ascending: false })
+          .range(0, 4999),
+      ]);
 
-    if (sinceIso) {
-      sellerSalesQuery = sellerSalesQuery.gte("created_at", sinceIso);
-      marketplaceReferralsQuery = marketplaceReferralsQuery.gte("created_at", sinceIso);
-      planReferralsQuery = planReferralsQuery.gte("created_at", sinceIso);
-      cashoutsQuery = cashoutsQuery.gte("created_at", sinceIso);
+      if (salesResp.error) return err(res, 500, "DB_QUERY_FAILED", salesResp.error.message);
+      if (likesResp.error) return err(res, 500, "DB_QUERY_FAILED", likesResp.error.message);
+      if (commentsResp.error) return err(res, 500, "DB_QUERY_FAILED", commentsResp.error.message);
+
+      salesRows = Array.isArray(salesResp.data) ? salesResp.data : [];
+      likesRows = Array.isArray(likesResp.data) ? likesResp.data : [];
+      commentsRows = Array.isArray(commentsResp.data) ? commentsResp.data : [];
     }
 
-    const codesQuery = supabaseAdmin
-      .from("community_referral_codes")
-      .select("id, code, variant, buyer_discount_pct, ref_reward_pct, is_active")
-      .eq("owner_id", user.id)
-      .order("created_at", { ascending: true })
-      .range(0, 99);
-
-    const [
-      { data: listingRows, error: listingsErr },
-      { data: sellerSalesRows, error: sellerSalesErr },
-      { data: marketplaceReferralRows, error: marketplaceRefErr },
-      { data: planReferralRows, error: planRefErr },
-      { data: cashoutRows, error: cashoutsErr },
-      { data: codeRows, error: codesErr },
-    ] = await Promise.all([
-      listingsQuery,
-      sellerSalesQuery,
-      marketplaceReferralsQuery,
-      planReferralsQuery,
-      cashoutsQuery,
-      codesQuery,
+    const [marketResp, planResp] = await Promise.all([
+      supabaseAdmin
+        .from("community_purchases")
+        .select("id, listing_id, paid_credits, referral_reward_credits, created_at, matures_at, is_matured")
+        .eq("referrer_id", user.id)
+        .eq("status", "completed")
+        .order("created_at", { ascending: false })
+        .range(0, 4999),
+      supabaseAdmin
+        .from("billing_referrals")
+        .select("id, referrer_reward_credits, created_at, matures_at, is_matured")
+        .eq("referrer_id", user.id)
+        .order("created_at", { ascending: false })
+        .range(0, 4999),
     ]);
 
-    if (listingsErr) return err(res, 500, "DB_QUERY_FAILED", listingsErr.message);
-    if (sellerSalesErr) return err(res, 500, "DB_QUERY_FAILED", sellerSalesErr.message);
-    if (marketplaceRefErr) return err(res, 500, "DB_QUERY_FAILED", marketplaceRefErr.message);
-    if (planRefErr) return err(res, 500, "DB_QUERY_FAILED", planRefErr.message);
-    if (cashoutsErr) return err(res, 500, "DB_QUERY_FAILED", cashoutsErr.message);
-    if (codesErr) return err(res, 500, "DB_QUERY_FAILED", codesErr.message);
+    if (marketResp.error) return err(res, 500, "DB_QUERY_FAILED", marketResp.error.message);
 
-    const sellerListings = Array.isArray(listingRows) ? listingRows : [];
-    const sellerSales = Array.isArray(sellerSalesRows) ? sellerSalesRows : [];
-    const marketplaceReferrals = Array.isArray(marketplaceReferralRows) ? marketplaceReferralRows : [];
-    const planReferrals = Array.isArray(planReferralRows) ? planReferralRows : [];
-    const cashouts = Array.isArray(cashoutRows) ? cashoutRows : [];
-    const codes = Array.isArray(codeRows) ? codeRows : [];
-
-    const extraListingIds = [...new Set(marketplaceReferrals.map((r) => r.listing_id).filter(Boolean))]
-      .filter((id) => !sellerListings.some((row) => row.id === id));
-
-    let extraListings = [];
-    if (extraListingIds.length > 0) {
-      const { data, error: extraErr } = await supabaseAdmin
-        .from("community_listings")
-        .select("id, name, status, listing_kind, media_tag, price_credits, description, preview_asset_id, created_at, likes_count, comments_count, sales_count")
-        .in("id", extraListingIds);
-
-      if (extraErr) return err(res, 500, "DB_QUERY_FAILED", extraErr.message);
-      extraListings = Array.isArray(data) ? data : [];
+    if (planResp.error) {
+      const msg = String(planResp.error.message || "").toLowerCase();
+      const code = String(planResp.error.code || "");
+      const missing = code === "42P01" || msg.includes("does not exist") || msg.includes("relation");
+      if (!missing) return err(res, 500, "DB_QUERY_FAILED", planResp.error.message);
     }
 
-    const allListings = [...sellerListings, ...extraListings];
-    const previewMap = await resolveAssetPreviewMap(allListings.map((r) => r.preview_asset_id));
+    marketplaceReferralRows = Array.isArray(marketResp.data) ? marketResp.data : [];
+    planReferralRows = Array.isArray(planResp.data) ? planResp.data : [];
 
-    const listingById = new Map();
-    for (const row of allListings) {
-      listingById.set(row.id, {
+    const currentSummary = makeSummary();
+    const compareSummary = makeSummary();
+    const listingMap = new Map();
+
+    for (const row of listings) {
+      listingMap.set(row.id, {
         id: row.id,
         name: row.name || "Untitled creation",
         status: row.status || "active",
         listingKind: row.listing_kind || "single",
-        mediaTag: row.media_tag || "image",
+        mediaTag: row.media_tag || "other",
         priceCredits: asNumber(row.price_credits),
         description: row.description || "",
         previewUrl: row.preview_asset_id ? previewMap.get(row.preview_asset_id) || null : null,
         createdAt: toMillis(row.created_at) || Date.now(),
-        likesCount: asNumber(row.likes_count),
-        commentsCount: asNumber(row.comments_count),
-        salesCount: asNumber(row.sales_count),
-        grossSalesCredits: 0,
-        netSalesCredits: 0,
-        pendingCredits: 0,
-        confirmedCredits: 0,
-        rangeSalesCount: 0,
+        lifetimeSalesCount: asNumber(row.sales_count),
+        lifetimeLikesCount: asNumber(row.likes_count),
+        lifetimeCommentsCount: asNumber(row.comments_count),
+        currentSalesCount: 0,
+        currentNetSalesCredits: 0,
+        currentPendingCredits: 0,
+        currentConfirmedCredits: 0,
+        currentLikesCount: 0,
+        currentCommentsCount: 0,
+        compareSalesCount: 0,
+        compareNetSalesCredits: 0,
+        compareLikesCount: 0,
+        compareCommentsCount: 0,
         lastSaleAt: null,
       });
     }
 
-    const codeById = new Map();
-    const codePerformanceMap = new Map();
-    for (const row of codes) {
-      const base = {
-        code: row.code,
-        variant: row.variant || null,
-        buyerDiscountPct: asNumber(row.buyer_discount_pct),
-        refRewardPct: asNumber(row.ref_reward_pct),
-        isActive: row.is_active !== false,
-        marketplaceReferralCount: 0,
-        marketplaceReferralCredits: 0,
-        marketplaceSalesVolumeCredits: 0,
-        planReferralCount: 0,
-        planReferralCredits: 0,
-        totalCredits: 0,
-      };
-      codeById.set(row.id, base);
-      codePerformanceMap.set(row.code, { ...base });
-    }
-
-    const eventStream = [];
-
-    for (const row of sellerSales) {
-      const item = listingById.get(row.listing_id);
+    for (const row of salesRows) {
+      const item = listingMap.get(row.listing_id);
       if (!item) continue;
 
-      const netCredits = asNumber(row.seller_net_credits);
-      item.grossSalesCredits += asNumber(row.paid_credits);
-      item.netSalesCredits += netCredits;
-      item.rangeSalesCount += 1;
-      item.lastSaleAt = Math.max(item.lastSaleAt || 0, toMillis(row.created_at) || 0);
-      if (row.is_matured) item.confirmedCredits += netCredits;
-      else item.pendingCredits += netCredits;
+      const ts = toMillis(row.created_at);
+      const credits = asNumber(row.seller_net_credits);
+      item.lastSaleAt = Math.max(item.lastSaleAt || 0, ts || 0);
 
-      eventStream.push({
-        id: `sale_${row.id}`,
-        kind: "sale",
-        ts: toMillis(row.created_at),
-        credits: netCredits,
-        isMatured: Boolean(row.is_matured),
-        availableAt: toMillis(row.matures_at),
-        title: item.name,
-        subtitle: "Creation sale",
-        code: null,
-      });
+      if (isInWindow(ts, currentWindow)) {
+        item.currentSalesCount += 1;
+        item.currentNetSalesCredits += credits;
+        if (row.is_matured) item.currentConfirmedCredits += credits;
+        else item.currentPendingCredits += credits;
+
+        currentSummary.salesCount += 1;
+        currentSummary.netSalesCredits += credits;
+        if (row.is_matured) currentSummary.confirmedCredits += credits;
+        else currentSummary.pendingCredits += credits;
+      }
+
+      if (compareWindow && isInWindow(ts, compareWindow)) {
+        item.compareSalesCount += 1;
+        item.compareNetSalesCredits += credits;
+
+        compareSummary.salesCount += 1;
+        compareSummary.netSalesCredits += credits;
+        if (row.is_matured) compareSummary.confirmedCredits += credits;
+        else compareSummary.pendingCredits += credits;
+      }
     }
 
-    for (const row of marketplaceReferrals) {
+    for (const row of likesRows) {
+      const item = listingMap.get(row.listing_id);
+      if (!item) continue;
+
+      const ts = toMillis(row.created_at);
+      if (isInWindow(ts, currentWindow)) {
+        item.currentLikesCount += 1;
+        currentSummary.likesCount += 1;
+      }
+      if (compareWindow && isInWindow(ts, compareWindow)) {
+        item.compareLikesCount += 1;
+        compareSummary.likesCount += 1;
+      }
+    }
+
+    for (const row of commentsRows) {
+      const item = listingMap.get(row.listing_id);
+      if (!item) continue;
+
+      const ts = toMillis(row.created_at);
+      if (isInWindow(ts, currentWindow)) {
+        item.currentCommentsCount += 1;
+        currentSummary.commentsCount += 1;
+      }
+      if (compareWindow && isInWindow(ts, compareWindow)) {
+        item.compareCommentsCount += 1;
+        compareSummary.commentsCount += 1;
+      }
+    }
+
+    for (const row of marketplaceReferralRows) {
+      const ts = toMillis(row.created_at);
       const credits = asNumber(row.referral_reward_credits);
-      const listing = listingById.get(row.listing_id) || null;
-      const codeRow = row.referral_code_id ? codeById.get(row.referral_code_id) || null : null;
-      const code = codeRow?.code || null;
 
-      if (code) {
-        const agg = codePerformanceMap.get(code) || {
-          code,
-          variant: codeRow?.variant || null,
-          buyerDiscountPct: asNumber(codeRow?.buyerDiscountPct),
-          refRewardPct: asNumber(codeRow?.refRewardPct),
-          isActive: codeRow?.isActive !== false,
-          marketplaceReferralCount: 0,
-          marketplaceReferralCredits: 0,
-          marketplaceSalesVolumeCredits: 0,
-          planReferralCount: 0,
-          planReferralCredits: 0,
-          totalCredits: 0,
-        };
-        agg.marketplaceReferralCount += 1;
-        agg.marketplaceReferralCredits += credits;
-        agg.marketplaceSalesVolumeCredits += asNumber(row.paid_credits);
-        agg.totalCredits += credits;
-        codePerformanceMap.set(code, agg);
+      if (isInWindow(ts, currentWindow)) {
+        currentSummary.marketplaceReferralCount += 1;
+        currentSummary.marketplaceReferralCredits += credits;
       }
-
-      eventStream.push({
-        id: `market_ref_${row.id}`,
-        kind: "referral",
-        ts: toMillis(row.created_at),
-        credits,
-        isMatured: Boolean(row.is_matured),
-        availableAt: toMillis(row.matures_at),
-        title: listing?.name || "Referred marketplace sale",
-        subtitle: code ? `Code ${code}` : "Marketplace referral",
-        code,
-      });
+      if (compareWindow && isInWindow(ts, compareWindow)) {
+        compareSummary.marketplaceReferralCount += 1;
+        compareSummary.marketplaceReferralCredits += credits;
+      }
     }
 
-    for (const row of planReferrals) {
+    for (const row of planReferralRows) {
+      const ts = toMillis(row.created_at);
       const credits = asNumber(row.referrer_reward_credits);
-      const codeFromId = row.referral_code_id ? codeById.get(row.referral_code_id) || null : null;
-      const code = row.referral_code_snapshot || codeFromId?.code || null;
 
-      if (code) {
-        const agg = codePerformanceMap.get(code) || {
-          code,
-          variant: codeFromId?.variant || null,
-          buyerDiscountPct: asNumber(codeFromId?.buyerDiscountPct),
-          refRewardPct: asNumber(codeFromId?.refRewardPct),
-          isActive: codeFromId?.isActive !== false,
-          marketplaceReferralCount: 0,
-          marketplaceReferralCredits: 0,
-          marketplaceSalesVolumeCredits: 0,
-          planReferralCount: 0,
-          planReferralCredits: 0,
-          totalCredits: 0,
-        };
-        agg.planReferralCount += 1;
-        agg.planReferralCredits += credits;
-        agg.totalCredits += credits;
-        codePerformanceMap.set(code, agg);
+      if (isInWindow(ts, currentWindow)) {
+        currentSummary.planReferralCount += 1;
+        currentSummary.planReferralCredits += credits;
       }
-
-      eventStream.push({
-        id: `plan_ref_${row.id}`,
-        kind: "referral",
-        ts: toMillis(row.created_at),
-        credits,
-        isMatured: Boolean(row.is_matured),
-        availableAt: toMillis(row.matures_at),
-        title: row.plan_slug_snapshot ? `Plan ${row.plan_slug_snapshot}` : "Plan referral",
-        subtitle: row.referred_username_snapshot
-          ? `${row.referred_username_snapshot}${code ? ` · Code ${code}` : ""}`
-          : code
-            ? `Code ${code}`
-            : "Plan referral",
-        code,
-      });
+      if (compareWindow && isInWindow(ts, compareWindow)) {
+        compareSummary.planReferralCount += 1;
+        compareSummary.planReferralCredits += credits;
+      }
     }
 
-    const listings = [...listingById.values()]
-      .filter((item) => sellerListings.some((row) => row.id === item.id))
-      .sort((a, b) => {
-        const diff = b.netSalesCredits - a.netSalesCredits;
-        if (diff !== 0) return diff;
-        return b.likesCount - a.likesCount;
-      });
+    currentSummary.totalReferralCredits = currentSummary.marketplaceReferralCredits + currentSummary.planReferralCredits;
+    compareSummary.totalReferralCredits = compareSummary.marketplaceReferralCredits + compareSummary.planReferralCredits;
 
-    const summary = {
-      listingsCount: listings.length,
-      activeListingsCount: listings.filter((item) => item.status === "active").length,
-      salesCount: sellerSales.length,
-      grossSalesCredits: sellerSales.reduce((sum, row) => sum + asNumber(row.paid_credits), 0),
-      netSalesCredits: sellerSales.reduce((sum, row) => sum + asNumber(row.seller_net_credits), 0),
-      marketplaceReferralCount: marketplaceReferrals.length,
-      marketplaceReferralCredits: marketplaceReferrals.reduce((sum, row) => sum + asNumber(row.referral_reward_credits), 0),
-      planReferralCount: planReferrals.length,
-      planReferralCredits: planReferrals.reduce((sum, row) => sum + asNumber(row.referrer_reward_credits), 0),
-      totalReferralCredits:
-        marketplaceReferrals.reduce((sum, row) => sum + asNumber(row.referral_reward_credits), 0) +
-        planReferrals.reduce((sum, row) => sum + asNumber(row.referrer_reward_credits), 0),
-      totalCreditsGenerated:
-        sellerSales.reduce((sum, row) => sum + asNumber(row.seller_net_credits), 0) +
-        marketplaceReferrals.reduce((sum, row) => sum + asNumber(row.referral_reward_credits), 0) +
-        planReferrals.reduce((sum, row) => sum + asNumber(row.referrer_reward_credits), 0),
-      pendingCredits:
-        sellerSales.filter((row) => !row.is_matured).reduce((sum, row) => sum + asNumber(row.seller_net_credits), 0) +
-        marketplaceReferrals.filter((row) => !row.is_matured).reduce((sum, row) => sum + asNumber(row.referral_reward_credits), 0) +
-        planReferrals.filter((row) => !row.is_matured).reduce((sum, row) => sum + asNumber(row.referrer_reward_credits), 0),
-      confirmedCredits:
-        sellerSales.filter((row) => !!row.is_matured).reduce((sum, row) => sum + asNumber(row.seller_net_credits), 0) +
-        marketplaceReferrals.filter((row) => !!row.is_matured).reduce((sum, row) => sum + asNumber(row.referral_reward_credits), 0) +
-        planReferrals.filter((row) => !!row.is_matured).reduce((sum, row) => sum + asNumber(row.referrer_reward_credits), 0),
-      avgNetCreditsPerSale: sellerSales.length > 0
-        ? sellerSales.reduce((sum, row) => sum + asNumber(row.seller_net_credits), 0) / sellerSales.length
-        : 0,
-    };
+    const listingItems = [...listingMap.values()].map((item) => ({
+      ...item,
+      salesDeltaPct: safePctDelta(item.currentSalesCount, item.compareSalesCount),
+      revenueDeltaPct: safePctDelta(item.currentNetSalesCredits, item.compareNetSalesCredits),
+      likesDeltaPct: safePctDelta(item.currentLikesCount, item.compareLikesCount),
+      commentsDeltaPct: safePctDelta(item.currentCommentsCount, item.compareCommentsCount),
+    }));
 
-    const timeline = buildTimeline(range, eventStream);
-    const referralCodesPerformance = [...codePerformanceMap.values()].sort((a, b) => b.totalCredits - a.totalCredits);
+    const alerts = [];
 
-    const recentEvents = eventStream
-      .sort((a, b) => (b.ts || 0) - (a.ts || 0))
-      .slice(0, 12)
-      .map((item) => ({
-        id: item.id,
-        eventType: item.kind,
-        createdAt: item.ts,
-        availableAt: item.availableAt,
-        credits: item.credits,
-        isMatured: item.isMatured,
-        title: item.title,
-        subtitle: item.subtitle,
-        code: item.code,
-      }));
+    for (const item of listingItems) {
+      if (item.status !== "active") {
+        alerts.push({
+          id: `inactive_${item.id}`,
+          type: "listing_inactive",
+          severity: "medium",
+          listingId: item.id,
+          listingName: item.name,
+          title: "Listing no activo",
+          message: `${item.name} no está activo y ahora mismo no puede captar nuevas ventas orgánicas.`,
+        });
+      }
 
-    const cashoutsSummary = {
-      count: cashouts.length,
-      totalCredits: cashouts.reduce((sum, row) => sum + asNumber(row.amount_credits), 0),
-      totalNetUsdMicros: cashouts.reduce((sum, row) => sum + asNumber(row.net_usd_micros), 0),
-      lastCashoutAt: cashouts[0]?.created_at ? toMillis(cashouts[0].created_at) : null,
-    };
+      if (compareWindow) {
+        if (item.compareSalesCount >= 2 && item.currentSalesCount === 0) {
+          alerts.push({
+            id: `sales_drop_${item.id}`,
+            type: "sales_dropoff",
+            severity: "high",
+            listingId: item.id,
+            listingName: item.name,
+            title: "Caída fuerte en ventas",
+            message: `${item.name} vendía ${item.compareSalesCount} veces en la ventana de comparación y ahora no registra ventas.`,
+          });
+        }
+
+        if (item.compareLikesCount >= 4 && item.currentLikesCount <= Math.floor(item.compareLikesCount * 0.5)) {
+          alerts.push({
+            id: `likes_drop_${item.id}`,
+            type: "likes_cooling",
+            severity: "medium",
+            listingId: item.id,
+            listingName: item.name,
+            title: "Menor atracción social",
+            message: `${item.name} cayó de ${item.compareLikesCount} likes a ${item.currentLikesCount} en la ventana actual.`,
+          });
+        }
+
+        if (item.compareCommentsCount >= 2 && item.currentCommentsCount === 0) {
+          alerts.push({
+            id: `comments_drop_${item.id}`,
+            type: "comments_cooling",
+            severity: "low",
+            listingId: item.id,
+            listingName: item.name,
+            title: "La conversación se frenó",
+            message: `${item.name} tenía conversación en la ventana comparativa y ahora no registra comentarios.`,
+          });
+        }
+      }
+
+      if ((item.currentLikesCount >= 6 || item.currentCommentsCount >= 3) && item.currentSalesCount === 0) {
+        alerts.push({
+          id: `engaged_no_sales_${item.id}`,
+          type: "engaged_no_sales",
+          severity: "medium",
+          listingId: item.id,
+          listingName: item.name,
+          title: "Interés sin conversión",
+          message: `${item.name} está generando interacción, pero no convirtió en ventas dentro del rango actual.`,
+        });
+      }
+    }
+
+    alerts.sort((a, b) => {
+      const score = { high: 3, medium: 2, low: 1 };
+      return (score[b.severity] || 0) - (score[a.severity] || 0);
+    });
 
     return res.json({
       ok: true,
       range,
-      summary,
-      timeline,
-      listings,
-      top: {
-        bestSeller: listings[0] || null,
-        mostLiked: [...listings].sort((a, b) => b.likesCount - a.likesCount)[0] || null,
-        mostCommented: [...listings].sort((a, b) => b.commentsCount - a.commentsCount)[0] || null,
+      compare,
+      currentWindow,
+      compareWindow,
+      summary: currentSummary,
+      compareSummary,
+      deltas: {
+        salesCountPct: safePctDelta(currentSummary.salesCount, compareSummary.salesCount),
+        netSalesCreditsPct: safePctDelta(currentSummary.netSalesCredits, compareSummary.netSalesCredits),
+        likesCountPct: safePctDelta(currentSummary.likesCount, compareSummary.likesCount),
+        commentsCountPct: safePctDelta(currentSummary.commentsCount, compareSummary.commentsCount),
+        totalReferralCreditsPct: safePctDelta(currentSummary.totalReferralCredits, compareSummary.totalReferralCredits),
       },
-      recentEvents,
-      referralCodesPerformance,
-      cashoutsSummary,
+      listings: listingItems,
+      alerts: alerts.slice(0, 12),
     });
   });
 

@@ -1,16 +1,18 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  Activity,
+  AlertTriangle,
+  ArrowDownRight,
   BarChart3,
   Clock3,
-  CreditCard,
-  Crown,
-  DollarSign,
-  Lock,
-  ShoppingBag,
+  Download,
+  Filter,
+  Heart,
+  Image as ImageIcon,
+  MessageSquare,
+  PlayCircle,
+  RefreshCw,
   Sparkles,
-  Star,
-  Ticket,
+  TrendingDown,
   TrendingUp,
   Wallet,
 } from "lucide-react";
@@ -21,23 +23,20 @@ import { getBuyerPurchases, getTradesDashboard } from "../services/tradesApi";
 import EarningsActionsModal from "@/components/EarningsActionsModal";
 import EarningsHistoryModal from "@/components/EarningsHistoryModal";
 
-type RangeKey = "7d" | "30d" | "90d" | "all";
-type DisplayUnit = "credits" | "usd";
-type ScreenTab = "overview" | "sales" | "referrals" | "purchases";
-
 interface Props {
   onNavigate: (route: AppRoute) => void;
 }
 
-const RANGE_OPTIONS: { key: RangeKey; label: string }[] = [
-  { key: "7d", label: "7D" },
-  { key: "30d", label: "30D" },
-  { key: "90d", label: "90D" },
-  { key: "all", label: "ALL" },
-];
+type DisplayUnit = "credits" | "usd";
+type SellerRange = "7d" | "30d" | "90d" | "all";
+type SellerCompare = "none" | "previous" | "7d" | "30d" | "90d" | "all";
+type SellerSort = "revenue_desc" | "sales_desc" | "likes_desc" | "comments_desc" | "latest_sale_desc" | "traction_drop_desc";
+type SellerMediaFilter = "all" | "image" | "video" | "other";
+
+const PREFS_KEY = "tales.myTrades.analyticsPrefs.v2";
 
 function numberCompact(value: number) {
-  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 1, notation: "compact" }).format(value || 0);
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 1, notation: "compact" }).format(Number(value) || 0);
 }
 
 function creditsToUsd(credits: number, usdMicrosPerCredit: number) {
@@ -59,159 +58,54 @@ function formatDateTime(value?: number | null) {
   return new Date(value).toLocaleString();
 }
 
-function TabButton({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      className={`px-4 py-2 rounded-2xl border text-sm transition-all ${
-        active
-          ? "border-white/25 bg-white text-black shadow-[0_10px_30px_rgba(255,255,255,0.14)]"
-          : "border-white/10 bg-white/[0.04] text-white/70 hover:bg-white/[0.08] hover:text-white"
-      }`}
-      onClick={onClick}
-    >
-      {label}
-    </button>
-  );
+function csvEscape(value: unknown) {
+  const text = value == null ? "" : String(value);
+  if (/[",\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+  return text;
 }
 
-function MetricCard({
-  icon,
-  title,
-  value,
-  subtitle,
-  accent,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  value: string;
-  subtitle: string;
-  accent: string;
-}) {
-  return (
-    <div
-      className="premium-hero-card relative overflow-hidden p-4"
-      style={{ ["--ph-accent" as any]: accent, ["--ph-accent2" as any]: "rgba(255,255,255,0.20)" }}
-    >
-      <div className="relative z-[1] flex items-start justify-between gap-3">
-        <div>
-          <div className="text-[11px] uppercase tracking-[0.24em] text-white/45">{title}</div>
-          <div className="mt-3 text-3xl font-semibold tracking-tight text-white">{value}</div>
-          <div className="mt-2 text-sm text-white/62">{subtitle}</div>
-        </div>
-        <div className="w-11 h-11 rounded-2xl border border-white/10 bg-black/35 backdrop-blur-md flex items-center justify-center text-white/90">
-          {icon}
-        </div>
-      </div>
-    </div>
-  );
+function downloadCsv(filename: string, rows: Record<string, unknown>[]) {
+  if (!rows.length) return;
+  const headers = Object.keys(rows[0]);
+  const lines = [headers.join(",")];
+  for (const row of rows) {
+    lines.push(headers.map((key) => csvEscape(row[key])).join(","));
+  }
+  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
-function TimelineChart({
-  points,
-  usdMicrosPerCredit,
-  unit,
-}: {
-  points: any[];
-  usdMicrosPerCredit: number;
-  unit: DisplayUnit;
-}) {
-  const maxValue = Math.max(1, ...points.map((p) => Number(p.totalCredits) || 0));
-
-  return (
-    <div className="rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.06),rgba(0,0,0,0.72))] p-5 shadow-[0_22px_60px_rgba(0,0,0,0.45)]">
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
-        <div>
-          <div className="text-[11px] uppercase tracking-[0.24em] text-white/45">Revenue timeline</div>
-          <div className="mt-2 text-xl font-semibold">Sales + referrals across the selected window</div>
-        </div>
-        <div className="flex items-center gap-3 text-xs text-white/55">
-          <span className="inline-flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full bg-sky-300" /> Sales</span>
-          <span className="inline-flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full bg-fuchsia-300" /> Referrals</span>
-        </div>
-      </div>
-
-      {points.length === 0 ? (
-        <div className="rounded-2xl border border-white/10 bg-black/30 p-6 text-white/55">
-          Todavía no hay movimiento suficiente para construir la línea temporal.
-        </div>
-      ) : (
-        <div className="overflow-x-auto pb-2">
-          <div className="flex items-end gap-2 h-64 min-w-max">
-            {points.map((point) => {
-              const sales = Number(point.salesNetCredits) || 0;
-              const referrals = Number(point.referralCredits) || 0;
-              const salesPct = Math.max(4, (sales / maxValue) * 100);
-              const referralPct = referrals > 0 ? Math.max(4, (referrals / maxValue) * 100) : 0;
-              const total = Number(point.totalCredits) || 0;
-              const label = unit === "usd"
-                ? `$${creditsToUsd(total, usdMicrosPerCredit).toFixed(2)}`
-                : `${total} cr`;
-
-              return (
-                <div key={point.key} className="group relative h-full w-9 sm:w-10 flex flex-col justify-end">
-                  <div className="absolute -top-12 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-xl border border-white/10 bg-black/80 px-3 py-1.5 text-[11px] text-white/85 opacity-0 pointer-events-none transition-opacity group-hover:opacity-100">
-                    <div className="font-semibold">{point.label}</div>
-                    <div>{label}</div>
-                  </div>
-
-                  <div className="relative h-full rounded-[20px] border border-white/8 bg-white/[0.03] overflow-hidden">
-                    <div className="absolute inset-0 flex flex-col justify-end">
-                      {referralPct > 0 ? (
-                        <div
-                          className="w-full bg-[linear-gradient(180deg,rgba(232,121,249,0.95),rgba(168,85,247,0.75))]"
-                          style={{ height: `${referralPct}%` }}
-                        />
-                      ) : null}
-                      <div
-                        className="w-full bg-[linear-gradient(180deg,rgba(125,211,252,0.96),rgba(59,130,246,0.72))]"
-                        style={{ height: `${salesPct}%` }}
-                      />
-                    </div>
-                  </div>
-                  <div className="mt-2 text-center text-[10px] uppercase tracking-[0.16em] text-white/35 truncate">{point.label}</div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-    </div>
-  );
+function deltaTone(value: number) {
+  if (value > 0.01) return "text-emerald-300";
+  if (value < -0.01) return "text-rose-300";
+  return "text-white/55";
 }
 
-function SpotlightCard({ title, item, metric }: { title: string; item: any | null; metric: string }) {
-  return (
-    <div className="premium-hero-card p-4" style={{ ["--ph-accent" as any]: "rgba(111,168,255,0.48)", ["--ph-accent2" as any]: "rgba(240,107,87,0.26)" }}>
-      <div className="relative z-[1] flex items-start gap-4">
-        <div className="w-20 h-20 rounded-2xl overflow-hidden border border-white/10 bg-white/[0.04] shrink-0">
-          {item?.previewUrl ? <img src={item.previewUrl} className="w-full h-full object-cover" alt={item?.name || title} /> : null}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="text-[11px] uppercase tracking-[0.22em] text-white/45">{title}</div>
-          <div className="mt-2 text-lg font-semibold truncate">{item?.name || "Sin actividad suficiente"}</div>
-          <div className="mt-1 text-sm text-white/58 line-clamp-2">{item?.description || "Cuando haya más señal comercial o social, aparecerá aquí."}</div>
-          <div className="mt-3 inline-flex items-center rounded-full border border-white/10 bg-white/[0.06] px-3 py-1 text-xs text-white/82">
-            {metric}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+function deltaPrefix(value: number) {
+  return value > 0 ? "+" : "";
+}
+
+function readPrefs() {
+  try {
+    const raw = window.localStorage.getItem(PREFS_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
 }
 
 export default function MyTrades({ onNavigate }: Props) {
-  const [tab, setTab] = useState<ScreenTab>("overview");
-  const [range, setRange] = useState<RangeKey>("30d");
-  const [displayUnit, setDisplayUnit] = useState<DisplayUnit>("credits");
-
+  const [tab, setTab] = useState<"buyer" | "seller" | "referrals">("buyer");
   const [wallet, setWallet] = useState<any | null>(null);
   const [subscription, setSubscription] = useState<any | null>(null);
   const [cashoutConfig, setCashoutConfig] = useState<any | null>(null);
-
-  const [dashboard, setDashboard] = useState<any | null>(null);
-  const [dashboardLoading, setDashboardLoading] = useState(false);
-  const [dashboardError, setDashboardError] = useState<string | null>(null);
 
   const [cashouts, setCashouts] = useState<any[]>([]);
   const [cashoutsLoading, setCashoutsLoading] = useState(false);
@@ -230,86 +124,103 @@ export default function MyTrades({ onNavigate }: Props) {
   const [refSummary, setRefSummary] = useState<any | null>(null);
   const [refLoading, setRefLoading] = useState(false);
 
+  const [error, setError] = useState<string | null>(null);
+
   const [buyerItems, setBuyerItems] = useState<any[]>([]);
   const [buyerOffset, setBuyerOffset] = useState(0);
   const [buyerHasMore, setBuyerHasMore] = useState(true);
   const [buyerLoading, setBuyerLoading] = useState(false);
 
-  const [error, setError] = useState<string | null>(null);
+  const [sellerDashboard, setSellerDashboard] = useState<any | null>(null);
+  const [sellerDashboardLoading, setSellerDashboardLoading] = useState(false);
+  const [sellerDashboardError, setSellerDashboardError] = useState<string | null>(null);
+
+  const [displayUnit, setDisplayUnit] = useState<DisplayUnit>("credits");
+  const [sellerRange, setSellerRange] = useState<SellerRange>("30d");
+  const [sellerCompare, setSellerCompare] = useState<SellerCompare>("previous");
+  const [sellerMediaFilter, setSellerMediaFilter] = useState<SellerMediaFilter>("all");
+  const [sellerSort, setSellerSort] = useState<SellerSort>("revenue_desc");
 
   const canSell = !!subscription?.can_sell;
   const canReferrals = !!subscription?.can_referrals;
   const canManageEarnings = !!subscription?.can_sell;
+
+  const referralGateText = useMemo(() => {
+    if (!subscription) {
+      return "Para obtener tus códigos de Referidos/Afiliados necesitas un plan activo Partner o superior. Si cancelas, no renuevas o bajas de nivel, tus códigos dejan de funcionar automáticamente hasta volver a Partner o superior.";
+    }
+    return "Tu plan actual no incluye Referidos/Afiliados. Tus códigos quedan pausados y dejan de funcionar hasta volver a Partner o superior.";
+  }, [subscription]);
+
+  const sellerGateText = useMemo(() => {
+    if (!subscription) {
+      return "Para vender en Community Store necesitas un plan Pro o superior activo. Si cancelas, no renuevas o bajas de nivel, tus listings públicos se ocultan automáticamente hasta volver a Pro o superior.";
+    }
+    return "Tu plan actual no incluye Seller. Tus listings públicos quedan ocultos automáticamente y tus earnings de ventas quedan bloqueados hasta volver a Pro o superior.";
+  }, [subscription]);
+
+  const earningsGateText = useMemo(() => {
+    if (!subscription) {
+      return "Tus earnings y créditos de ventas se conservan, pero no puedes gestionarlos sin un plan Pro o superior activo.";
+    }
+    return "Tus earnings y créditos de ventas están retenidos. Vuelve a Pro o superior para transferirlos o solicitar cash out.";
+  }, [subscription]);
 
   const usdMicrosPerCredit = Number(cashoutConfig?.usdMicrosPerCredit) || 4990;
   const feeBps = Number(cashoutConfig?.feeBps) || 3700;
   const grossUsdPerCredit = usdMicrosPerCredit / 1_000_000;
   const netUsdPerCredit = grossUsdPerCredit * (1 - feeBps / 10000);
 
-  const referralGateText = useMemo(() => {
-    if (!subscription) {
-      return "Referral Engine requiere un plan Partner o superior activo. Si cancelas o bajas de nivel, tus códigos se pausan automáticamente hasta reactivar un plan compatible.";
-    }
-    return "Tu plan actual no incluye Referral Engine. Tus códigos quedan pausados y dejan de funcionar hasta volver a Partner o superior.";
-  }, [subscription]);
-
-  const sellerGateText = useMemo(() => {
-    if (!subscription) {
-      return "Sales Studio requiere un plan Pro o superior activo. Tus listings públicos se ocultan automáticamente si sales del plan.";
-    }
-    return "Tu plan actual no incluye Sales Studio. Tus listings públicos quedan ocultos y la gestión de earnings se bloquea hasta volver a Pro o superior.";
-  }, [subscription]);
-
-  const earningsGateText = useMemo(() => {
-    if (!subscription) {
-      return "Tus earnings se conservan, pero no puedes moverlos ni solicitar cash-out sin un plan Pro o superior activo.";
-    }
-    return "Tus earnings están retenidos. Vuelve a Pro o superior para transferirlos a créditos o solicitar cash-out.";
-  }, [subscription]);
-
   useEffect(() => {
-    loadWalletAndCashouts();
+    const prefs = readPrefs();
+    if (!prefs) return;
+    if (prefs.displayUnit === "credits" || prefs.displayUnit === "usd") setDisplayUnit(prefs.displayUnit);
+    if (["7d", "30d", "90d", "all"].includes(prefs.sellerRange)) setSellerRange(prefs.sellerRange);
+    if (["none", "previous", "7d", "30d", "90d", "all"].includes(prefs.sellerCompare)) setSellerCompare(prefs.sellerCompare);
+    if (["all", "image", "video", "other"].includes(prefs.sellerMediaFilter)) setSellerMediaFilter(prefs.sellerMediaFilter);
+    if (["revenue_desc", "sales_desc", "likes_desc", "comments_desc", "latest_sale_desc", "traction_drop_desc"].includes(prefs.sellerSort)) setSellerSort(prefs.sellerSort);
   }, []);
 
   useEffect(() => {
-    loadDashboard(range);
-  }, [range]);
+    try {
+      window.localStorage.setItem(
+        PREFS_KEY,
+        JSON.stringify({ displayUnit, sellerRange, sellerCompare, sellerMediaFilter, sellerSort })
+      );
+    } catch {}
+  }, [displayUnit, sellerRange, sellerCompare, sellerMediaFilter, sellerSort]);
 
   useEffect(() => {
-    if (tab !== "referrals" || !canReferrals) return;
-
     (async () => {
-      setRefLoading(true);
       try {
-        const [c, s] = await Promise.all([getMyReferralCodes(), getMyReferralSummary()]);
-        setCodes(c);
-        setRefSummary(s);
+        setError(null);
+        const r = await getWalletMe();
+        setWallet(r.wallet);
+        setSubscription(r.subscription);
+        setCashoutConfig((r as any).cashoutConfig || null);
+
+        try {
+          setCashoutsLoading(true);
+          setCashoutsError(null);
+          const c = await listMyCashouts({ limit: 12, offset: 0 });
+          setCashouts(Array.isArray(c?.items) ? c.items : []);
+        } catch (e: any) {
+          setCashouts([]);
+          setCashoutsError(e?.message || "No se pudieron cargar cashouts.");
+        } finally {
+          setCashoutsLoading(false);
+        }
       } catch (e: any) {
-        setCodes([]);
-        setRefSummary(null);
-        setError(e?.message || "No se pudo cargar Referral Engine.");
-      } finally {
-        setRefLoading(false);
+        setError(e?.message || "No se pudo cargar wallet.");
       }
     })();
-  }, [tab, canReferrals]);
+  }, []);
 
-  useEffect(() => {
-    if (tab === "purchases" && buyerItems.length === 0) {
-      loadBuyer("reset");
-    }
-  }, [tab]);
-
-  async function loadWalletAndCashouts() {
-    try {
-      setError(null);
-      const r = await getWalletMe();
-      setWallet(r.wallet);
-      setSubscription(r.subscription);
-      setCashoutConfig((r as any).cashoutConfig || null);
-    } catch (e: any) {
-      setError(e?.message || "No se pudo cargar wallet.");
-    }
+  async function refreshWalletAndCashouts() {
+    const r = await getWalletMe();
+    setWallet(r.wallet);
+    setSubscription(r.subscription);
+    setCashoutConfig((r as any).cashoutConfig || null);
 
     try {
       setCashoutsLoading(true);
@@ -324,42 +235,34 @@ export default function MyTrades({ onNavigate }: Props) {
     }
   }
 
-  async function loadDashboard(nextRange: RangeKey) {
-    try {
-      setDashboardLoading(true);
-      setDashboardError(null);
-      const res = await getTradesDashboard(nextRange);
-      setDashboard(res);
-    } catch (e: any) {
-      setDashboard(null);
-      setDashboardError(e?.message || "No se pudo cargar Trade Intelligence.");
-    } finally {
-      setDashboardLoading(false);
-    }
-  }
-
-  async function refreshFinance() {
-    await Promise.all([loadWalletAndCashouts(), loadDashboard(range)]);
-  }
-
   async function handleTransfer(amountCredits: number) {
-    if (!canManageEarnings) throw new Error("Necesitas plan Pro o superior activo para gestionar earnings.");
+    if (!canManageEarnings) {
+      throw new Error("Necesitas plan Pro o superior activo para gestionar earnings.");
+    }
+
     await transferEarningsToGeneration(amountCredits);
-    await refreshFinance();
+    await refreshWalletAndCashouts();
+    if (tab === "seller" && canSell) await loadSellerDashboard();
   }
 
   async function handleCashout(args: { amountCredits: number; payoutMethod: { kind: string; handle: string; note?: string } }) {
-    if (!canManageEarnings) throw new Error("Necesitas plan Pro o superior activo para gestionar earnings.");
+    if (!canManageEarnings) {
+      throw new Error("Necesitas plan Pro o superior activo para gestionar earnings.");
+    }
+
     await requestCashout(args.amountCredits, args.payoutMethod);
-    await refreshFinance();
+    await refreshWalletAndCashouts();
+    if (tab === "seller" && canSell) await loadSellerDashboard();
   }
 
   async function loadHistory(bucket: "pending" | "available", mode: "reset" | "more") {
     try {
       setHistoryLoading(true);
       setHistoryError(null);
+
       const nextOffset = mode === "reset" ? 0 : historyOffset;
       const res = await listEarningsHistory(bucket, { limit: 12, offset: nextOffset });
+
       setHistoryItems((prev) => (mode === "reset" ? res.items : [...prev, ...res.items]));
       setHistoryOffset(res.nextOffset);
       setHistoryHasMore(res.hasMore);
@@ -381,291 +284,270 @@ export default function MyTrades({ onNavigate }: Props) {
     await loadHistory(bucket, "reset");
   }
 
+  useEffect(() => {
+    if (tab !== "referrals") return;
+
+    if (!canReferrals) {
+      setCodes([]);
+      setRefSummary(null);
+      setRefLoading(false);
+      return;
+    }
+
+    (async () => {
+      setError(null);
+      setRefLoading(true);
+      try {
+        const [c, s] = await Promise.all([getMyReferralCodes(), getMyReferralSummary()]);
+        setCodes(c);
+        setRefSummary(s);
+      } catch (e: any) {
+        const code = e?.code ? String(e.code) : "";
+        if (code === "PLAN_UPGRADE_REQUIRED" || code === "NO_ACTIVE_PLAN") {
+          setError(null);
+        } else {
+          setError(e?.message || "No se pudieron cargar tus referidos.");
+        }
+        setCodes([]);
+        setRefSummary(null);
+      } finally {
+        setRefLoading(false);
+      }
+    })();
+  }, [tab, canReferrals]);
+
+  useEffect(() => {
+    if (tab === "buyer" && buyerItems.length === 0) loadBuyer("reset");
+    if (tab === "seller" && canSell) loadSellerDashboard();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, canSell, sellerRange, sellerCompare]);
+
   async function loadBuyer(mode: "reset" | "more") {
     try {
-      setBuyerLoading(true);
       setError(null);
+      setBuyerLoading(true);
+
       const nextOffset = mode === "reset" ? 0 : buyerOffset;
       const res = await getBuyerPurchases({ limit: 12, offset: nextOffset });
+
       setBuyerItems((prev) => (mode === "reset" ? res.items : [...prev, ...res.items]));
       setBuyerOffset(res.nextOffset);
       setBuyerHasMore(res.hasMore);
     } catch (e: any) {
-      setError(e?.message || "No se pudo cargar purchases.");
+      setError(e?.message || "No se pudo cargar compras.");
     } finally {
       setBuyerLoading(false);
     }
   }
 
-  const summary = dashboard?.summary || {};
-  const listings = Array.isArray(dashboard?.listings) ? dashboard.listings : [];
-  const timeline = Array.isArray(dashboard?.timeline) ? dashboard.timeline : [];
-  const recentEvents = Array.isArray(dashboard?.recentEvents) ? dashboard.recentEvents : [];
-  const codePerformance = Array.isArray(dashboard?.referralCodesPerformance) ? dashboard.referralCodesPerformance : [];
-  const top = dashboard?.top || {};
+  async function loadSellerDashboard() {
+    try {
+      setSellerDashboardLoading(true);
+      setSellerDashboardError(null);
+      const data = await getTradesDashboard(sellerRange, sellerCompare);
+      setSellerDashboard(data);
+    } catch (e: any) {
+      setSellerDashboard(null);
+      setSellerDashboardError(e?.message || "No se pudo cargar Trade Intelligence.");
+    } finally {
+      setSellerDashboardLoading(false);
+    }
+  }
 
-  const walletPending = Number(wallet?.earnings_pending_credits) || 0;
-  const walletAvailable = Number(wallet?.earnings_matured_credits) || 0;
-  const rangeRevenue = Number(summary.totalCreditsGenerated) || 0;
+  const sellerSummary = sellerDashboard?.summary || {};
+  const sellerCompareSummary = sellerDashboard?.compareSummary || {};
+  const sellerDeltas = sellerDashboard?.deltas || {};
+  const alerts = Array.isArray(sellerDashboard?.alerts) ? sellerDashboard.alerts : [];
+
+  const filteredSellerListings = useMemo(() => {
+    const raw = Array.isArray(sellerDashboard?.listings) ? sellerDashboard.listings : [];
+    const filtered = raw.filter((item: any) => {
+      if (sellerMediaFilter === "all") return true;
+      if (sellerMediaFilter === "other") return item.mediaTag !== "image" && item.mediaTag !== "video";
+      return item.mediaTag === sellerMediaFilter;
+    });
+
+    return [...filtered].sort((a: any, b: any) => {
+      if (sellerSort === "sales_desc") return (b.currentSalesCount || 0) - (a.currentSalesCount || 0);
+      if (sellerSort === "likes_desc") return (b.currentLikesCount || 0) - (a.currentLikesCount || 0);
+      if (sellerSort === "comments_desc") return (b.currentCommentsCount || 0) - (a.currentCommentsCount || 0);
+      if (sellerSort === "latest_sale_desc") return (b.lastSaleAt || 0) - (a.lastSaleAt || 0);
+      if (sellerSort === "traction_drop_desc") return (a.revenueDeltaPct || 0) - (b.revenueDeltaPct || 0);
+      return (b.currentNetSalesCredits || 0) - (a.currentNetSalesCredits || 0);
+    });
+  }, [sellerDashboard, sellerMediaFilter, sellerSort]);
+
+  function exportSellerCsv() {
+    if (!filteredSellerListings.length) return;
+    downloadCsv(
+      `my-trades-seller-${sellerRange}.csv`,
+      filteredSellerListings.map((item: any) => ({
+        listing_name: item.name,
+        status: item.status,
+        media_type: item.mediaTag,
+        listing_kind: item.listingKind,
+        price_credits: item.priceCredits,
+        current_sales_count: item.currentSalesCount,
+        current_net_sales_credits: item.currentNetSalesCredits,
+        current_pending_credits: item.currentPendingCredits,
+        current_confirmed_credits: item.currentConfirmedCredits,
+        compare_sales_count: item.compareSalesCount,
+        compare_net_sales_credits: item.compareNetSalesCredits,
+        current_likes: item.currentLikesCount,
+        compare_likes: item.compareLikesCount,
+        current_comments: item.currentCommentsCount,
+        compare_comments: item.compareCommentsCount,
+        revenue_delta_pct: Number(item.revenueDeltaPct || 0).toFixed(2),
+        last_sale_at: item.lastSaleAt ? new Date(item.lastSaleAt).toISOString() : "",
+      }))
+    );
+  }
 
   return (
-    <div className="p-4 md:p-6 text-white space-y-6">
-      <div
-        className="premium-hero-card overflow-hidden p-5 md:p-6"
-        style={{ ["--ph-accent" as any]: "rgba(111,168,255,0.42)", ["--ph-accent2" as any]: "rgba(240,107,87,0.28)" }}
-      >
-        <div className="relative z-[1] flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-          <div className="max-w-4xl">
-            <div className="premium-hero-badge"><span className="premium-hero-dot" /> My Trades · Revenue Intelligence</div>
-            <div className="mt-4 flex flex-wrap items-center gap-3">
-              <h1 className="text-3xl md:text-5xl font-semibold tracking-tight">Una cabina de control real para tus ventas, referidos y payout.</h1>
+    <div className="p-6 text-white space-y-6">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-2xl font-bold">My Trades</div>
+          <div className="text-white/60 text-sm mt-1">Compras · Ventas · Referidos · Trade intelligence</div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className={`px-3 py-2 rounded-lg border border-white/10 ${displayUnit === "credits" ? "bg-white text-black" : "bg-black/30 text-white"}`}
+            onClick={() => setDisplayUnit("credits")}
+          >
+            Credits
+          </button>
+          <button
+            type="button"
+            className={`px-3 py-2 rounded-lg border border-white/10 ${displayUnit === "usd" ? "bg-white text-black" : "bg-black/30 text-white"}`}
+            onClick={() => setDisplayUnit("usd")}
+          >
+            USD ref.
+          </button>
+          <button
+            type="button"
+            className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/15"
+            onClick={() => onNavigate(AppRoute.COMMUNITY_STORE)}
+          >
+            Ir a Community Store
+          </button>
+        </div>
+      </div>
+
+      {wallet ? (
+        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+          <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
+            <div>
+              <div className="text-sm text-white/70">Wallet</div>
+              <div className="text-[12px] text-white/50 mt-1">
+                1 credit ≈ ${grossUsdPerCredit.toFixed(4)} ref. · Net cash-out ≈ ${netUsdPerCredit.toFixed(4)} por credit · Fee {(feeBps / 100).toFixed(0)}%
+              </div>
             </div>
-            <p className="mt-4 max-w-3xl text-sm md:text-base text-white/68 leading-7">
-              Aquí vas a detectar qué creación vende más, cuál genera más conversación, cuánto produce cada pieza por separado,
-              cuánto genera tu portfolio en grupo y qué parte de tu crecimiento viene de referral engine.
-            </p>
-            <div className="mt-5 flex flex-wrap gap-3 text-xs text-white/62">
-              <span className="rounded-full border border-white/10 bg-white/[0.05] px-3 py-1.5">Plan: {subscription?.plan_name || "No active plan"}</span>
-              <span className="rounded-full border border-white/10 bg-white/[0.05] px-3 py-1.5">1 credit ≈ ${grossUsdPerCredit.toFixed(4)} ref.</span>
-              <span className="rounded-full border border-white/10 bg-white/[0.05] px-3 py-1.5">Net cash-out ≈ ${netUsdPerCredit.toFixed(4)} / credit</span>
-              <span className="rounded-full border border-white/10 bg-white/[0.05] px-3 py-1.5">Fee: {(feeBps / 100).toFixed(0)}%</span>
-            </div>
+            <button
+              type="button"
+              className={`px-3 py-2 rounded-lg text-xs ${canManageEarnings ? "bg-white/10 hover:bg-white/15" : "bg-white/5 text-white/40 cursor-not-allowed"}`}
+              onClick={() => {
+                if (!canManageEarnings) return;
+                setEarningsModalOpen(true);
+              }}
+              disabled={!canManageEarnings}
+              title={canManageEarnings ? "Gestionar earnings" : "Necesitas plan Pro o superior activo para gestionar earnings"}
+            >
+              Gestionar earnings
+            </button>
           </div>
 
-          <div className="flex flex-col gap-3 w-full xl:w-auto xl:min-w-[360px]">
-            <div className="flex flex-wrap gap-2 justify-start xl:justify-end">
-              {RANGE_OPTIONS.map((option) => (
+          <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+            <div className="rounded-xl bg-black/40 border border-white/10 p-3">
+              <div className="text-white/60 text-xs">Créditos de generación</div>
+              <div className="text-xl font-bold">{wallet.generationCredits}</div>
+              <div className="text-[11px] text-white/50 mt-1">Siempre se muestran en credits.</div>
+            </div>
+
+            <div className="rounded-xl bg-black/40 border border-white/10 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-white/60 text-xs">Earnings (pending)</div>
                 <button
-                  key={option.key}
                   type="button"
-                  className={`px-3 py-2 rounded-2xl border text-sm transition-all ${
-                    range === option.key
-                      ? "border-white/25 bg-white text-black"
-                      : "border-white/10 bg-white/[0.04] text-white/72 hover:bg-white/[0.08]"
-                  }`}
-                  onClick={() => setRange(option.key)}
+                  className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/15 text-[11px]"
+                  onClick={() => openHistory("pending")}
                 >
-                  {option.label}
+                  Historial
                 </button>
-              ))}
+              </div>
+              <div className="text-xl font-bold mt-1">{formatPrimaryValue(wallet.earnings_pending_credits, displayUnit, usdMicrosPerCredit)}</div>
+              <div className="text-[11px] text-white/50 mt-1">{formatSecondaryValue(wallet.earnings_pending_credits, displayUnit, usdMicrosPerCredit)} · No disponibles aún.</div>
             </div>
 
-            <div className="flex flex-wrap gap-2 justify-start xl:justify-end">
-              <button
-                type="button"
-                className={`px-3 py-2 rounded-2xl border text-sm ${displayUnit === "credits" ? "border-white/25 bg-white text-black" : "border-white/10 bg-white/[0.04] text-white/72"}`}
-                onClick={() => setDisplayUnit("credits")}
-              >
-                Mostrar en credits
-              </button>
-              <button
-                type="button"
-                className={`px-3 py-2 rounded-2xl border text-sm ${displayUnit === "usd" ? "border-white/25 bg-white text-black" : "border-white/10 bg-white/[0.04] text-white/72"}`}
-                onClick={() => setDisplayUnit("usd")}
-              >
-                Mostrar en USD ref.
-              </button>
-            </div>
-
-            <div className="flex flex-wrap gap-2 justify-start xl:justify-end">
-              <button type="button" className="premium-hero-btn px-4 py-2.5" onClick={() => onNavigate(AppRoute.COMMUNITY_STORE)}>
-                Abrir Community Store
-              </button>
-              <button
-                type="button"
-                className={`premium-hero-btn px-4 py-2.5 ${!canManageEarnings ? "opacity-60 cursor-not-allowed" : ""}`}
-                onClick={() => {
-                  if (!canManageEarnings) return;
+            <div
+              className={`rounded-xl bg-black/40 border border-white/10 p-3 ${canManageEarnings ? "cursor-pointer hover:bg-black/50" : "opacity-70"}`}
+              role={canManageEarnings ? "button" : undefined}
+              tabIndex={canManageEarnings ? 0 : -1}
+              onClick={() => {
+                if (!canManageEarnings) return;
+                setEarningsModalOpen(true);
+              }}
+              onKeyDown={(e) => {
+                if (!canManageEarnings) return;
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
                   setEarningsModalOpen(true);
-                }}
-              >
-                Gestionar earnings
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-        <MetricCard
-          icon={<Wallet className="w-5 h-5" />}
-          title="Available balance"
-          value={formatPrimaryValue(walletAvailable, displayUnit, usdMicrosPerCredit)}
-          subtitle={`${formatSecondaryValue(walletAvailable, displayUnit, usdMicrosPerCredit)} listos para transfer o cash-out`}
-          accent="rgba(111,168,255,0.54)"
-        />
-        <MetricCard
-          icon={<Clock3 className="w-5 h-5" />}
-          title="Pending pipeline"
-          value={formatPrimaryValue(walletPending, displayUnit, usdMicrosPerCredit)}
-          subtitle={`${formatSecondaryValue(walletPending, displayUnit, usdMicrosPerCredit)} aún en maduración`}
-          accent="rgba(244,197,66,0.54)"
-        />
-        <MetricCard
-          icon={<TrendingUp className="w-5 h-5" />}
-          title={`Revenue ${range.toUpperCase()}`}
-          value={formatPrimaryValue(rangeRevenue, displayUnit, usdMicrosPerCredit)}
-          subtitle={`${summary.salesCount || 0} sales · ${(summary.marketplaceReferralCount || 0) + (summary.planReferralCount || 0)} referrals`}
-          accent="rgba(240,107,87,0.52)"
-        />
-        <MetricCard
-          icon={<DollarSign className="w-5 h-5" />}
-          title="Net cash-out reference"
-          value={`$${(walletAvailable * netUsdPerCredit).toFixed(2)}`}
-          subtitle={`sobre ${walletAvailable} credits disponibles al fee actual`}
-          accent="rgba(123,77,255,0.52)"
-        />
-      </div>
-
-      <div className="rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.06),rgba(0,0,0,0.72))] p-4 md:p-5 shadow-[0_20px_60px_rgba(0,0,0,0.42)]">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-          <div className="flex flex-wrap gap-2">
-            <TabButton active={tab === "overview"} label="Overview" onClick={() => setTab("overview")} />
-            <TabButton active={tab === "sales"} label="Sales Studio" onClick={() => setTab("sales")} />
-            <TabButton active={tab === "referrals"} label="Referral Engine" onClick={() => setTab("referrals")} />
-            <TabButton active={tab === "purchases"} label="Purchases" onClick={() => setTab("purchases")} />
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <button type="button" className="px-3 py-2 rounded-2xl border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] text-sm" onClick={() => openHistory("pending")}>Pending history</button>
-            <button type="button" className="px-3 py-2 rounded-2xl border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] text-sm" onClick={() => openHistory("available")}>Available history</button>
-          </div>
-        </div>
-      </div>
-
-      {error ? <div className="rounded-2xl border border-red-400/20 bg-red-500/10 p-4 text-red-200">{error}</div> : null}
-      {dashboardError ? <div className="rounded-2xl border border-red-400/20 bg-red-500/10 p-4 text-red-200">{dashboardError}</div> : null}
-      {!canManageEarnings ? <div className="rounded-2xl border border-amber-300/20 bg-amber-500/10 p-4 text-amber-100">{earningsGateText}</div> : null}
-      {dashboardLoading && !dashboard ? <div className="rounded-2xl border border-white/10 bg-black/30 p-5 text-white/60">Cargando Trade Intelligence...</div> : null}
-
-      {tab === "overview" ? (
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 xl:grid-cols-[1.5fr_1fr] gap-6">
-            <TimelineChart points={timeline} usdMicrosPerCredit={usdMicrosPerCredit} unit={displayUnit} />
-
-            <div className="space-y-4">
-              <div className="rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.06),rgba(0,0,0,0.72))] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.42)]">
-                <div className="text-[11px] uppercase tracking-[0.24em] text-white/45">Portfolio mix</div>
-                <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                  <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                    <div className="text-white/55">Sales revenue</div>
-                    <div className="mt-2 text-2xl font-semibold">{formatPrimaryValue(Number(summary.netSalesCredits) || 0, displayUnit, usdMicrosPerCredit)}</div>
-                  </div>
-                  <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                    <div className="text-white/55">Referral revenue</div>
-                    <div className="mt-2 text-2xl font-semibold">{formatPrimaryValue(Number(summary.totalReferralCredits) || 0, displayUnit, usdMicrosPerCredit)}</div>
-                  </div>
-                  <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                    <div className="text-white/55">Active listings</div>
-                    <div className="mt-2 text-2xl font-semibold">{summary.activeListingsCount || 0}</div>
-                  </div>
-                  <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                    <div className="text-white/55">Avg per sale</div>
-                    <div className="mt-2 text-2xl font-semibold">{formatPrimaryValue(Number(summary.avgNetCreditsPerSale) || 0, displayUnit, usdMicrosPerCredit)}</div>
-                  </div>
-                </div>
+                }
+              }}
+              title={canManageEarnings ? "Click para transferir a créditos o solicitar cash out" : "Necesitas plan Pro o superior activo para gestionar earnings"}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-white/60 text-xs">Earnings (available)</div>
+                <button
+                  type="button"
+                  className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/15 text-[11px]"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openHistory("available");
+                  }}
+                >
+                  Historial
+                </button>
               </div>
-
-              <div className="rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.06),rgba(0,0,0,0.72))] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.42)]">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="text-[11px] uppercase tracking-[0.24em] text-white/45">Cash-out intelligence</div>
-                    <div className="mt-2 text-lg font-semibold">Tu histórico de retiros y ritmo de salida</div>
-                  </div>
-                  <CreditCard className="w-5 h-5 text-white/70" />
-                </div>
-                <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
-                  <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                    <div className="text-white/55">Cashouts</div>
-                    <div className="mt-2 text-2xl font-semibold">{dashboard?.cashoutsSummary?.count || 0}</div>
-                  </div>
-                  <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                    <div className="text-white/55">Credits out</div>
-                    <div className="mt-2 text-2xl font-semibold">{dashboard?.cashoutsSummary?.totalCredits || 0}</div>
-                  </div>
-                  <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                    <div className="text-white/55">Net USD</div>
-                    <div className="mt-2 text-2xl font-semibold">${(((dashboard?.cashoutsSummary?.totalNetUsdMicros || 0) as number) / 1_000_000).toFixed(2)}</div>
-                  </div>
-                </div>
+              <div className="text-xl font-bold mt-1">{formatPrimaryValue(wallet.earnings_matured_credits, displayUnit, usdMicrosPerCredit)}</div>
+              <div className="text-[11px] text-white/50 mt-1">
+                {formatSecondaryValue(wallet.earnings_matured_credits, displayUnit, usdMicrosPerCredit)} · {canManageEarnings ? "Click para transferir o cash out." : "Bloqueados hasta volver a Pro o superior."}
               </div>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-            <SpotlightCard title="Best seller" item={top.bestSeller || null} metric={`${top.bestSeller?.rangeSalesCount || 0} sales · ${formatPrimaryValue(top.bestSeller?.netSalesCredits || 0, displayUnit, usdMicrosPerCredit)}`} />
-            <SpotlightCard title="Most liked" item={top.mostLiked || null} metric={`${top.mostLiked?.likesCount || 0} likes`} />
-            <SpotlightCard title="Most commented" item={top.mostCommented || null} metric={`${top.mostCommented?.commentsCount || 0} comments`} />
-          </div>
+          {!canManageEarnings ? <div className="mt-3 text-[12px] text-amber-200/90">{earningsGateText}</div> : null}
 
-          <div className="rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.06),rgba(0,0,0,0.72))] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.42)]">
-            <div className="flex items-center justify-between gap-3 mb-4">
-              <div>
-                <div className="text-[11px] uppercase tracking-[0.24em] text-white/45">Live tape</div>
-                <div className="mt-2 text-lg font-semibold">Actividad reciente que mueve tu cashflow</div>
-              </div>
-              <Activity className="w-5 h-5 text-white/70" />
-            </div>
-            {recentEvents.length === 0 ? (
-              <div className="rounded-2xl border border-white/10 bg-black/30 p-5 text-white/55">Todavía no hay eventos recientes para mostrar.</div>
-            ) : (
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-                {recentEvents.map((event: any) => (
-                  <div key={event.id} className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="text-sm font-semibold">{event.title}</div>
-                        <div className="mt-1 text-xs text-white/58">{event.subtitle}</div>
-                      </div>
-                      <div className="rounded-full border border-white/10 bg-white/[0.05] px-3 py-1 text-xs font-medium">
-                        {formatPrimaryValue(event.credits, displayUnit, usdMicrosPerCredit)}
-                      </div>
-                    </div>
-                    <div className="mt-3 flex flex-wrap gap-3 text-xs text-white/55">
-                      <span>{formatDateTime(event.createdAt)}</span>
-                      <span>{event.isMatured ? "Confirmed" : `Available ${formatDateTime(event.availableAt)}`}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.06),rgba(0,0,0,0.72))] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.42)]">
-            <div className="flex items-center justify-between gap-3 mb-4">
-              <div>
-                <div className="text-[11px] uppercase tracking-[0.24em] text-white/45">Recent cashouts</div>
-                <div className="mt-2 text-lg font-semibold">Tus solicitudes de salida más recientes</div>
-              </div>
-              <CreditCard className="w-5 h-5 text-white/70" />
-            </div>
-
+          <div className="mt-4 rounded-xl border border-white/10 bg-black/40 p-3">
+            <div className="text-sm font-semibold">Cashouts</div>
             {cashoutsLoading ? (
-              <div className="text-white/60">Cargando cashouts...</div>
+              <div className="text-white/60 text-sm mt-2">Cargando...</div>
             ) : cashoutsError ? (
-              <div className="rounded-2xl border border-red-400/20 bg-red-500/10 p-4 text-red-200">{cashoutsError}</div>
+              <div className="text-red-300 text-sm mt-2">{cashoutsError}</div>
             ) : cashouts.length === 0 ? (
-              <div className="rounded-2xl border border-white/10 bg-black/30 p-4 text-white/60">Aún no has solicitado cashouts.</div>
+              <div className="text-white/60 text-sm mt-2">Aún no has solicitado cashouts.</div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+              <div className="mt-2 overflow-x-auto">
+                <table className="w-full text-xs">
                   <thead>
-                    <tr className="text-white/45 border-b border-white/10">
-                      <th className="text-left py-3 pr-4">Fecha</th>
-                      <th className="text-left py-3 pr-4">Status</th>
-                      <th className="text-left py-3 pr-4">Credits</th>
-                      <th className="text-left py-3 pr-4">Net USD</th>
-                      <th className="text-left py-3 pr-4">Método</th>
+                    <tr className="text-white/60">
+                      <th className="text-left py-2 pr-3">Fecha</th>
+                      <th className="text-left py-2 pr-3">Status</th>
+                      <th className="text-left py-2 pr-3">Credits</th>
+                      <th className="text-left py-2 pr-3">Net USD</th>
+                      <th className="text-left py-2 pr-3">Método</th>
                     </tr>
                   </thead>
                   <tbody>
                     {cashouts.map((c) => (
-                      <tr key={c.id} className="border-b border-white/5">
-                        <td className="py-3 pr-4 text-white/82">{new Date(c.createdAt).toLocaleString()}</td>
-                        <td className="py-3 pr-4"><span className="px-3 py-1 rounded-full border border-white/10 bg-white/[0.05] text-xs">{c.status}</span></td>
-                        <td className="py-3 pr-4 text-white/82">{c.amountCredits}</td>
-                        <td className="py-3 pr-4 text-white/82">${((Number(c.netUsdMicros || 0) || 0) / 1_000_000).toFixed(2)}</td>
-                        <td className="py-3 pr-4 text-white/58">{c?.payoutMethod?.kind ? String(c.payoutMethod.kind) : "—"}</td>
+                      <tr key={c.id} className="border-t border-white/10">
+                        <td className="py-2 pr-3 text-white/80">{new Date(c.createdAt).toLocaleString()}</td>
+                        <td className="py-2 pr-3"><span className="px-2 py-1 rounded-lg bg-white/10">{c.status}</span></td>
+                        <td className="py-2 pr-3 text-white/80">{c.amountCredits}</td>
+                        <td className="py-2 pr-3 text-white/80">${(((Number(c.netUsdMicros || 0) || 0) / 1_000_000)).toFixed(2)}</td>
+                        <td className="py-2 pr-3 text-white/60">{c?.payoutMethod?.kind ? String(c.payoutMethod.kind) : "—"}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -676,231 +558,9 @@ export default function MyTrades({ onNavigate }: Props) {
         </div>
       ) : null}
 
-      {tab === "sales" ? (
-        !canSell ? (
-          <div className="rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.06),rgba(0,0,0,0.72))] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.42)]">
-            <div className="flex items-start gap-4">
-              <div className="w-12 h-12 rounded-2xl border border-white/10 bg-white/[0.05] flex items-center justify-center"><Lock className="w-5 h-5" /></div>
-              <div>
-                <div className="text-xl font-semibold">Sales Studio locked</div>
-                <div className="mt-2 text-white/68 max-w-3xl">{sellerGateText}</div>
-                <button type="button" className="mt-4 premium-hero-btn px-4 py-2.5" onClick={() => onNavigate(AppRoute.PROFILE)}>Ir a Perfil y Créditos</button>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-              <MetricCard icon={<ShoppingBag className="w-5 h-5" />} title="Gross sales" value={formatPrimaryValue(Number(summary.grossSalesCredits) || 0, displayUnit, usdMicrosPerCredit)} subtitle="volumen total vendido en el rango" accent="rgba(111,168,255,0.5)" />
-              <MetricCard icon={<Wallet className="w-5 h-5" />} title="Net creator revenue" value={formatPrimaryValue(Number(summary.netSalesCredits) || 0, displayUnit, usdMicrosPerCredit)} subtitle="lo que realmente entró a tus earnings" accent="rgba(240,107,87,0.5)" />
-              <MetricCard icon={<Sparkles className="w-5 h-5" />} title="Average order" value={formatPrimaryValue(Number(summary.avgNetCreditsPerSale) || 0, displayUnit, usdMicrosPerCredit)} subtitle="net promedio por venta" accent="rgba(123,77,255,0.48)" />
-              <MetricCard icon={<BarChart3 className="w-5 h-5" />} title="Published listings" value={String(summary.listingsCount || 0)} subtitle={`${summary.activeListingsCount || 0} activas ahora mismo`} accent="rgba(244,197,66,0.5)" />
-            </div>
-
-            {listings.length === 0 ? (
-              <div className="rounded-2xl border border-white/10 bg-black/30 p-5 text-white/60">Todavía no tienes listings con señal suficiente en el rango actual.</div>
-            ) : (
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                {listings.map((item: any, index: number) => (
-                  <div key={item.id} className="premium-hero-card p-4" style={{ ["--ph-accent" as any]: "rgba(111,168,255,0.44)", ["--ph-accent2" as any]: "rgba(123,77,255,0.24)" }}>
-                    <div className="relative z-[1] flex gap-4">
-                      <div className="w-28 h-28 rounded-[22px] overflow-hidden border border-white/10 bg-black/40 shrink-0">
-                        {item.previewUrl ? <img src={item.previewUrl} className="w-full h-full object-cover" alt={item.name} /> : null}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div>
-                            <div className="text-[11px] uppercase tracking-[0.22em] text-white/45">Rank #{index + 1}</div>
-                            <div className="mt-2 text-lg font-semibold truncate">{item.name}</div>
-                          </div>
-                          <div className="rounded-full border border-white/10 bg-white/[0.05] px-3 py-1 text-xs">{item.status}</div>
-                        </div>
-                        <div className="mt-2 text-sm text-white/62 line-clamp-2">{item.description || "Sin descripción cargada."}</div>
-                        <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                          <div className="rounded-2xl border border-white/10 bg-black/30 p-3">
-                            <div className="text-white/50 text-[11px] uppercase tracking-[0.18em]">Revenue</div>
-                            <div className="mt-1 font-semibold">{formatPrimaryValue(item.netSalesCredits, displayUnit, usdMicrosPerCredit)}</div>
-                          </div>
-                          <div className="rounded-2xl border border-white/10 bg-black/30 p-3">
-                            <div className="text-white/50 text-[11px] uppercase tracking-[0.18em]">Sales</div>
-                            <div className="mt-1 font-semibold">{item.rangeSalesCount}</div>
-                          </div>
-                          <div className="rounded-2xl border border-white/10 bg-black/30 p-3">
-                            <div className="text-white/50 text-[11px] uppercase tracking-[0.18em]">Likes / comments</div>
-                            <div className="mt-1 font-semibold">{item.likesCount} / {item.commentsCount}</div>
-                          </div>
-                          <div className="rounded-2xl border border-white/10 bg-black/30 p-3">
-                            <div className="text-white/50 text-[11px] uppercase tracking-[0.18em]">Pending / confirmed</div>
-                            <div className="mt-1 font-semibold">{item.pendingCredits} / {item.confirmedCredits}</div>
-                          </div>
-                        </div>
-                        <div className="mt-3 flex flex-wrap gap-3 text-xs text-white/55">
-                          <span>Price {item.priceCredits} credits</span>
-                          <span>{formatDateTime(item.lastSaleAt || item.createdAt)}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )
-      ) : null}
-
-      {tab === "referrals" ? (
-        !canReferrals ? (
-          <div className="rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.06),rgba(0,0,0,0.72))] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.42)]">
-            <div className="flex items-start gap-4">
-              <div className="w-12 h-12 rounded-2xl border border-white/10 bg-white/[0.05] flex items-center justify-center"><Lock className="w-5 h-5" /></div>
-              <div>
-                <div className="text-xl font-semibold">Referral Engine locked</div>
-                <div className="mt-2 text-white/68 max-w-3xl">{referralGateText}</div>
-                <button type="button" className="mt-4 premium-hero-btn px-4 py-2.5" onClick={() => onNavigate(AppRoute.PROFILE)}>Ir a Perfil y Créditos</button>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-              <MetricCard icon={<Ticket className="w-5 h-5" />} title="Marketplace referrals" value={formatPrimaryValue(Number(summary.marketplaceReferralCredits) || 0, displayUnit, usdMicrosPerCredit)} subtitle={`${summary.marketplaceReferralCount || 0} conversiones en store`} accent="rgba(111,168,255,0.5)" />
-              <MetricCard icon={<Crown className="w-5 h-5" />} title="Plan referrals" value={formatPrimaryValue(Number(summary.planReferralCredits) || 0, displayUnit, usdMicrosPerCredit)} subtitle={`${summary.planReferralCount || 0} altas de plan`} accent="rgba(240,107,87,0.52)" />
-              <MetricCard icon={<TrendingUp className="w-5 h-5" />} title="Total referral revenue" value={formatPrimaryValue(Number(summary.totalReferralCredits) || 0, displayUnit, usdMicrosPerCredit)} subtitle="suma de store + plan referrals" accent="rgba(123,77,255,0.5)" />
-              <MetricCard icon={<Star className="w-5 h-5" />} title="Buyer bonus delivered" value={String(refSummary?.totals?.totalBuyerBonusCredits || 0)} subtitle="valor entregado a compradores con tus códigos" accent="rgba(244,197,66,0.5)" />
-            </div>
-
-            <div className="rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.06),rgba(0,0,0,0.72))] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.42)]">
-              <div className="flex items-center justify-between gap-3 mb-4">
-                <div>
-                  <div className="text-[11px] uppercase tracking-[0.24em] text-white/45">Codes rack</div>
-                  <div className="mt-2 text-lg font-semibold">Tus códigos y su rendimiento real</div>
-                </div>
-                <Ticket className="w-5 h-5 text-white/70" />
-              </div>
-
-              {refLoading ? (
-                <div className="text-white/60">Cargando Referral Engine...</div>
-              ) : codes.length === 0 ? (
-                <div className="rounded-2xl border border-white/10 bg-black/30 p-4 text-white/60">No se pudieron cargar tus códigos.</div>
-              ) : (
-                <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-                  {codes.map((code: any) => {
-                    const perf = codePerformance.find((item: any) => item.code === code.code) || null;
-                    return (
-                      <div key={code.id} className="premium-hero-card p-4" style={{ ["--ph-accent" as any]: "rgba(244,197,66,0.52)", ["--ph-accent2" as any]: "rgba(111,168,255,0.28)" }}>
-                        <div className="relative z-[1]">
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="text-[11px] uppercase tracking-[0.22em] text-white/45">Code {code.variant}</div>
-                            <div className="rounded-full border border-white/10 bg-white/[0.05] px-3 py-1 text-xs">{perf?.isActive === false ? "Paused" : "Active"}</div>
-                          </div>
-                          <div className="mt-3 text-lg font-mono break-all">{code.code}</div>
-                          <div className="mt-3 text-sm text-white/62">Buyer discount {code.buyerDiscountPct}% · Reward {code.refRewardPct}%</div>
-                          <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                            <div className="rounded-2xl border border-white/10 bg-black/30 p-3">
-                              <div className="text-white/50 text-[11px] uppercase tracking-[0.18em]">Credits</div>
-                              <div className="mt-1 font-semibold">{formatPrimaryValue(perf?.totalCredits || 0, displayUnit, usdMicrosPerCredit)}</div>
-                            </div>
-                            <div className="rounded-2xl border border-white/10 bg-black/30 p-3">
-                              <div className="text-white/50 text-[11px] uppercase tracking-[0.18em]">Conversions</div>
-                              <div className="mt-1 font-semibold">{(perf?.marketplaceReferralCount || 0) + (perf?.planReferralCount || 0)}</div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            <div className="rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.06),rgba(0,0,0,0.72))] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.42)]">
-              <div className="flex items-center justify-between gap-3 mb-4">
-                <div>
-                  <div className="text-[11px] uppercase tracking-[0.24em] text-white/45">Code leaderboard</div>
-                  <div className="mt-2 text-lg font-semibold">Qué código convierte mejor y qué línea te deja más retorno</div>
-                </div>
-                <BarChart3 className="w-5 h-5 text-white/70" />
-              </div>
-              {codePerformance.length === 0 ? (
-                <div className="rounded-2xl border border-white/10 bg-black/30 p-4 text-white/60">Todavía no hay rendimiento suficiente por código en el rango actual.</div>
-              ) : (
-                <div className="space-y-3">
-                  {codePerformance.map((item: any) => (
-                    <div key={item.code} className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div>
-                          <div className="text-sm font-semibold">{item.code}</div>
-                          <div className="mt-1 text-xs text-white/55">Store {item.marketplaceReferralCount} · Plans {item.planReferralCount} · Sales volume {item.marketplaceSalesVolumeCredits} cr</div>
-                        </div>
-                        <div className="rounded-full border border-white/10 bg-white/[0.05] px-3 py-1 text-xs">{formatPrimaryValue(item.totalCredits, displayUnit, usdMicrosPerCredit)}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        )
-      ) : null}
-
-      {tab === "purchases" ? (
-        <div className="rounded-[28px] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.06),rgba(0,0,0,0.72))] p-5 shadow-[0_20px_60px_rgba(0,0,0,0.42)]">
-          <div className="flex items-center justify-between gap-3 mb-4">
-            <div>
-              <div className="text-[11px] uppercase tracking-[0.24em] text-white/45">Purchase vault</div>
-              <div className="mt-2 text-lg font-semibold">Tus adquisiciones en Community Store</div>
-            </div>
-            <ShoppingBag className="w-5 h-5 text-white/70" />
-          </div>
-
-          {buyerLoading && buyerItems.length === 0 ? (
-            <div className="text-white/60">Cargando purchases...</div>
-          ) : buyerItems.length === 0 ? (
-            <div className="rounded-2xl border border-white/10 bg-black/30 p-5 text-white/55">Todavía no has comprado creaciones.</div>
-          ) : (
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-              {buyerItems.map((item: any) => (
-                <div key={item.id} className="premium-hero-card p-4" style={{ ["--ph-accent" as any]: "rgba(111,168,255,0.42)", ["--ph-accent2" as any]: "rgba(244,197,66,0.24)" }}>
-                  <div className="relative z-[1] flex gap-4">
-                    <div className="w-28 h-28 rounded-[22px] overflow-hidden border border-white/10 bg-black/40 shrink-0">
-                      {item.previewUrl ? <img src={item.previewUrl} className="w-full h-full object-cover" alt={item.listingName || item.sellerUsername} /> : null}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[11px] uppercase tracking-[0.22em] text-white/45">Purchased creation</div>
-                      <div className="mt-2 text-lg font-semibold truncate">{item.listingName || item.sellerUsername}</div>
-                      <div className="mt-1 text-sm text-white/62 line-clamp-2">{item.listingDescription}</div>
-                      <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                        <div className="rounded-2xl border border-white/10 bg-black/30 p-3">
-                          <div className="text-white/50 text-[11px] uppercase tracking-[0.18em]">Paid</div>
-                          <div className="mt-1 font-semibold">{item.paidCredits} credits</div>
-                        </div>
-                        <div className="rounded-2xl border border-white/10 bg-black/30 p-3">
-                          <div className="text-white/50 text-[11px] uppercase tracking-[0.18em]">Seller</div>
-                          <div className="mt-1 font-semibold truncate">{item.sellerUsername}</div>
-                        </div>
-                      </div>
-                      <div className="mt-3 flex flex-wrap gap-3 text-xs text-white/55">
-                        <span>{formatDateTime(item.createdAt)}</span>
-                        <span>{item.isMatured ? "Confirmed" : `Pending until ${new Date(item.maturesAt).toLocaleDateString()}`}</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {buyerHasMore ? (
-            <button type="button" className="mt-4 premium-hero-btn px-4 py-2.5" onClick={() => loadBuyer("more")} disabled={buyerLoading}>
-              {buyerLoading ? "Cargando..." : "Cargar más"}
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-
       <EarningsActionsModal
         open={earningsModalOpen && canManageEarnings}
-        availableCredits={walletAvailable}
+        availableCredits={Number(wallet?.earnings_matured_credits) || 0}
         cashoutConfig={cashoutConfig}
         onClose={() => setEarningsModalOpen(false)}
         onTransfer={handleTransfer}
@@ -914,12 +574,394 @@ export default function MyTrades({ onNavigate }: Props) {
         loading={historyLoading}
         error={historyError}
         hasMore={historyHasMore}
-        displayUnit={displayUnit}
-        usdMicrosPerCredit={usdMicrosPerCredit}
-        feeBps={feeBps}
         onClose={() => setHistoryModalOpen(false)}
         onLoadMore={() => loadHistory(historyBucket, "more")}
       />
+
+      <div className="flex gap-2">
+        <button
+          type="button"
+          className={`px-4 py-2 rounded-lg border border-white/10 ${tab === "buyer" ? "bg-white text-black" : "bg-black/30 text-white"}`}
+          onClick={() => setTab("buyer")}
+        >
+          Buyer
+        </button>
+        <button
+          type="button"
+          className={`px-4 py-2 rounded-lg border border-white/10 ${tab === "seller" ? "bg-white text-black" : "bg-black/30 text-white"}`}
+          onClick={() => setTab("seller")}
+        >
+          Seller Studio
+        </button>
+        <button
+          type="button"
+          className={`px-4 py-2 rounded-lg border border-white/10 ${tab === "referrals" ? "bg-white text-black" : "bg-black/30 text-white"}`}
+          onClick={() => setTab("referrals")}
+        >
+          Referral Engine
+        </button>
+      </div>
+
+      {error ? <div className="text-red-400">{error}</div> : null}
+
+      {tab === "buyer" ? (
+        <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+          <div className="text-sm font-semibold mb-3">Tus compras</div>
+
+          {buyerLoading && buyerItems.length === 0 ? (
+            <div className="text-white/60">Cargando...</div>
+          ) : buyerItems.length === 0 ? (
+            <div className="text-white/60">Aún no tienes compras.</div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {buyerItems.map((it) => (
+                <div key={it.id} className="rounded-xl border border-white/10 bg-black/40 p-3 flex gap-3">
+                  <div className="w-20 h-20 rounded-lg overflow-hidden border border-white/10 bg-black/50 shrink-0">
+                    {it.previewUrl ? <img src={it.previewUrl} className="w-full h-full object-cover" /> : null}
+                  </div>
+
+                  <div className="flex-1">
+                    <div className="text-sm font-semibold">{it.listingName || it.sellerUsername}</div>
+                    <div className="text-xs text-white/60 mt-1 line-clamp-2">{it.listingDescription}</div>
+                    <div className="text-xs text-white/60 mt-2">Pagaste <b className="text-white">{it.paidCredits}</b> credits · Price {it.listingPriceCredits}</div>
+                    <div className="text-[11px] text-white/50 mt-1">{new Date(it.createdAt).toLocaleString()}</div>
+                    <div className="text-[11px] mt-1">
+                      {it.isMatured ? <span className="text-green-300">Matured</span> : <span className="text-yellow-300">Pending until {new Date(it.maturesAt).toLocaleDateString()}</span>}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {buyerHasMore ? (
+            <button type="button" className="mt-4 px-4 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-sm" onClick={() => loadBuyer("more")} disabled={buyerLoading}>
+              {buyerLoading ? "Cargando..." : "Cargar más"}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {tab === "seller" ? (
+        !canSell ? (
+          <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+            <div className="text-sm font-semibold mb-2">Desbloquea Seller</div>
+            <div className="text-white/70 text-sm">{sellerGateText}</div>
+            <button type="button" className="mt-4 px-4 py-2 rounded-lg bg-white text-black font-semibold" onClick={() => onNavigate(AppRoute.PROFILE)}>
+              Ir a Perfil y Créditos
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="premium-hero-card p-4" style={{ ["--ph-accent" as any]: "rgba(111,168,255,0.45)", ["--ph-accent2" as any]: "rgba(240,107,87,0.24)" }}>
+              <div className="relative z-[1] space-y-4">
+                <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-4">
+                  <div>
+                    <div className="premium-hero-badge"><span className="premium-hero-dot" /> Seller Studio hardening</div>
+                    <div className="mt-3 text-2xl font-semibold tracking-tight">Filtro por media, orden persistente, benchmark entre rangos, export CSV y alert center.</div>
+                    <div className="mt-2 text-sm text-white/65 max-w-3xl">
+                      Usa esta vista para detectar qué listing pierde tracción, qué formato convierte mejor y cómo cambia tu revenue frente a otra ventana temporal.
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    {(["7d", "30d", "90d", "all"] as SellerRange[]).map((range) => (
+                      <button
+                        key={range}
+                        type="button"
+                        className={`px-3 py-2 rounded-lg border border-white/10 text-sm ${sellerRange === range ? "bg-white text-black" : "bg-black/30 text-white hover:bg-white/10"}`}
+                        onClick={() => setSellerRange(range)}
+                      >
+                        {range.toUpperCase()}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-4 gap-3">
+                  <div>
+                    <div className="text-[11px] uppercase tracking-wide text-white/45 mb-1">Benchmark</div>
+                    <select className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm" value={sellerCompare} onChange={(e) => setSellerCompare(e.target.value as SellerCompare)}>
+                      <option value="none">Sin comparación</option>
+                      <option value="previous">Previous equivalent</option>
+                      <option value="7d">Últimos 7 días</option>
+                      <option value="30d">Últimos 30 días</option>
+                      <option value="90d">Últimos 90 días</option>
+                      <option value="all">All time</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <div className="text-[11px] uppercase tracking-wide text-white/45 mb-1">Media type</div>
+                    <select className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm" value={sellerMediaFilter} onChange={(e) => setSellerMediaFilter(e.target.value as SellerMediaFilter)}>
+                      <option value="all">Todos</option>
+                      <option value="image">Solo image</option>
+                      <option value="video">Solo video</option>
+                      <option value="other">Otros</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <div className="text-[11px] uppercase tracking-wide text-white/45 mb-1">Orden</div>
+                    <select className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm" value={sellerSort} onChange={(e) => setSellerSort(e.target.value as SellerSort)}>
+                      <option value="revenue_desc">Mayor revenue</option>
+                      <option value="sales_desc">Más ventas</option>
+                      <option value="likes_desc">Más likes</option>
+                      <option value="comments_desc">Más comentarios</option>
+                      <option value="latest_sale_desc">Venta más reciente</option>
+                      <option value="traction_drop_desc">Mayor caída de tracción</option>
+                    </select>
+                  </div>
+
+                  <div className="flex items-end gap-2">
+                    <button type="button" className="flex-1 rounded-xl border border-white/10 bg-white/10 hover:bg-white/15 px-3 py-2 text-sm flex items-center justify-center gap-2" onClick={loadSellerDashboard}>
+                      <RefreshCw className="w-4 h-4" /> Refresh
+                    </button>
+                    <button type="button" className="flex-1 rounded-xl border border-white/10 bg-white/10 hover:bg-white/15 px-3 py-2 text-sm flex items-center justify-center gap-2" onClick={exportSellerCsv} disabled={!filteredSellerListings.length}>
+                      <Download className="w-4 h-4" /> CSV
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {sellerDashboardError ? <div className="rounded-xl border border-red-400/20 bg-red-500/10 p-4 text-red-200">{sellerDashboardError}</div> : null}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+              <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                <div className="text-white/55 text-xs uppercase tracking-wide">Revenue actual</div>
+                <div className="mt-2 text-2xl font-bold">{formatPrimaryValue(sellerSummary.netSalesCredits || 0, displayUnit, usdMicrosPerCredit)}</div>
+                <div className="mt-2 text-xs text-white/50">{sellerDashboard?.currentWindow?.label || sellerRange.toUpperCase()} · {sellerSummary.salesCount || 0} ventas</div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                <div className="text-white/55 text-xs uppercase tracking-wide">Benchmark</div>
+                <div className="mt-2 text-2xl font-bold">{formatPrimaryValue(sellerCompareSummary.netSalesCredits || 0, displayUnit, usdMicrosPerCredit)}</div>
+                <div className="mt-2 text-xs text-white/50">{sellerDashboard?.compareWindow?.label || "Sin benchmark activo"}</div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                <div className="text-white/55 text-xs uppercase tracking-wide">Delta revenue</div>
+                <div className={`mt-2 text-2xl font-bold flex items-center gap-2 ${deltaTone(Number(sellerDeltas.netSalesCreditsPct) || 0)}`}>
+                  {(Number(sellerDeltas.netSalesCreditsPct) || 0) < 0 ? <TrendingDown className="w-5 h-5" /> : <TrendingUp className="w-5 h-5" />}
+                  {deltaPrefix(Number(sellerDeltas.netSalesCreditsPct) || 0)}{(Number(sellerDeltas.netSalesCreditsPct) || 0).toFixed(1)}%
+                </div>
+                <div className="mt-2 text-xs text-white/50">Comparación de revenue neto entre ventanas.</div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                <div className="text-white/55 text-xs uppercase tracking-wide">Referral revenue</div>
+                <div className="mt-2 text-2xl font-bold">{formatPrimaryValue(sellerSummary.totalReferralCredits || 0, displayUnit, usdMicrosPerCredit)}</div>
+                <div className="mt-2 text-xs text-white/50">Store + plan referrals en la ventana actual.</div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-[1.15fr_1fr] gap-4">
+              <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                <div className="flex items-center justify-between gap-3 mb-3">
+                  <div>
+                    <div className="text-sm font-semibold">Alert center</div>
+                    <div className="text-xs text-white/55 mt-1">Listings con caída de tracción, pérdida de conversación o interés sin conversión.</div>
+                  </div>
+                  <AlertTriangle className="w-5 h-5 text-amber-300" />
+                </div>
+
+                {sellerDashboardLoading && !sellerDashboard ? (
+                  <div className="text-white/60">Cargando intelligence...</div>
+                ) : alerts.length === 0 ? (
+                  <div className="rounded-xl border border-emerald-400/20 bg-emerald-500/10 p-4 text-emerald-100 text-sm">Sin alertas relevantes en la combinación actual. Tu portfolio no muestra señales fuertes de deterioro.</div>
+                ) : (
+                  <div className="space-y-3">
+                    {alerts.map((alert: any) => (
+                      <div key={alert.id} className="rounded-xl border border-white/10 bg-black/40 p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="text-sm font-semibold">{alert.title}</div>
+                            <div className="text-xs text-white/55 mt-1">{alert.message}</div>
+                          </div>
+                          <div className={`px-2 py-1 rounded-lg text-[11px] ${alert.severity === "high" ? "bg-rose-500/15 text-rose-200" : alert.severity === "medium" ? "bg-amber-500/15 text-amber-200" : "bg-sky-500/15 text-sky-200"}`}>{alert.severity}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                <div className="text-sm font-semibold">Signals snapshot</div>
+                <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                  <div className="rounded-xl border border-white/10 bg-black/40 p-3">
+                    <div className="text-white/55 text-[11px] uppercase tracking-wide flex items-center gap-2"><Sparkles className="w-3.5 h-3.5" /> Pending</div>
+                    <div className="mt-2 text-lg font-bold">{formatPrimaryValue(sellerSummary.pendingCredits || 0, displayUnit, usdMicrosPerCredit)}</div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-black/40 p-3">
+                    <div className="text-white/55 text-[11px] uppercase tracking-wide flex items-center gap-2"><Wallet className="w-3.5 h-3.5" /> Confirmed</div>
+                    <div className="mt-2 text-lg font-bold">{formatPrimaryValue(sellerSummary.confirmedCredits || 0, displayUnit, usdMicrosPerCredit)}</div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-black/40 p-3">
+                    <div className="text-white/55 text-[11px] uppercase tracking-wide flex items-center gap-2"><Heart className="w-3.5 h-3.5" /> Likes</div>
+                    <div className="mt-2 text-lg font-bold">{sellerSummary.likesCount || 0}</div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-black/40 p-3">
+                    <div className="text-white/55 text-[11px] uppercase tracking-wide flex items-center gap-2"><MessageSquare className="w-3.5 h-3.5" /> Comments</div>
+                    <div className="mt-2 text-lg font-bold">{sellerSummary.commentsCount || 0}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+                <div>
+                  <div className="text-sm font-semibold">Portfolio by listing</div>
+                  <div className="text-xs text-white/55 mt-1">Orden persistente, filtro por media type y comparativa directa por creación.</div>
+                </div>
+                <div className="text-xs text-white/45 flex items-center gap-2"><Filter className="w-3.5 h-3.5" /> {filteredSellerListings.length} resultados</div>
+              </div>
+
+              {sellerDashboardLoading && !sellerDashboard ? (
+                <div className="text-white/60">Cargando listings...</div>
+              ) : filteredSellerListings.length === 0 ? (
+                <div className="text-white/60">No hay listings que coincidan con el filtro actual.</div>
+              ) : (
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                  {filteredSellerListings.map((it: any) => (
+                    <div key={it.id} className="premium-hero-card p-4" style={{ ["--ph-accent" as any]: "rgba(111,168,255,0.38)", ["--ph-accent2" as any]: "rgba(123,77,255,0.24)" }}>
+                      <div className="relative z-[1] flex gap-4">
+                        <div className="w-24 h-24 rounded-2xl overflow-hidden border border-white/10 bg-black/50 shrink-0">
+                          {it.previewUrl ? <img src={it.previewUrl} className="w-full h-full object-cover" /> : null}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="text-sm font-semibold truncate">{it.name}</div>
+                              <div className="text-[11px] text-white/50 mt-1 flex items-center gap-2">
+                                {it.mediaTag === "video" ? <PlayCircle className="w-3.5 h-3.5" /> : <ImageIcon className="w-3.5 h-3.5" />}
+                                {it.mediaTag || "other"} · {it.status}
+                              </div>
+                            </div>
+                            <div className={`text-xs rounded-lg px-2 py-1 border border-white/10 ${deltaTone(Number(it.revenueDeltaPct) || 0)}`}>
+                              {deltaPrefix(Number(it.revenueDeltaPct) || 0)}{(Number(it.revenueDeltaPct) || 0).toFixed(1)}%
+                            </div>
+                          </div>
+
+                          <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                            <div className="rounded-xl border border-white/10 bg-black/40 p-3">
+                              <div className="text-white/50 text-[11px] uppercase tracking-wide">Revenue actual</div>
+                              <div className="mt-1 font-semibold">{formatPrimaryValue(it.currentNetSalesCredits || 0, displayUnit, usdMicrosPerCredit)}</div>
+                            </div>
+                            <div className="rounded-xl border border-white/10 bg-black/40 p-3">
+                              <div className="text-white/50 text-[11px] uppercase tracking-wide">Benchmark</div>
+                              <div className="mt-1 font-semibold">{formatPrimaryValue(it.compareNetSalesCredits || 0, displayUnit, usdMicrosPerCredit)}</div>
+                            </div>
+                            <div className="rounded-xl border border-white/10 bg-black/40 p-3">
+                              <div className="text-white/50 text-[11px] uppercase tracking-wide">Sales</div>
+                              <div className="mt-1 font-semibold">{it.currentSalesCount} <span className="text-white/45 text-xs">vs {it.compareSalesCount}</span></div>
+                            </div>
+                            <div className="rounded-xl border border-white/10 bg-black/40 p-3">
+                              <div className="text-white/50 text-[11px] uppercase tracking-wide">Likes / comments</div>
+                              <div className="mt-1 font-semibold">{it.currentLikesCount} / {it.currentCommentsCount}</div>
+                            </div>
+                          </div>
+
+                          <div className="mt-3 flex flex-wrap gap-3 text-[11px] text-white/50">
+                            <span>Price {it.priceCredits} credits</span>
+                            <span>Pending {it.currentPendingCredits}</span>
+                            <span>Confirmed {it.currentConfirmedCredits}</span>
+                            <span>Last sale {formatDateTime(it.lastSaleAt || it.createdAt)}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )
+      ) : null}
+
+      {tab === "referrals" ? (
+        !canReferrals ? (
+          <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+            <div className="text-sm font-semibold mb-2">Desbloquea Referidos/Afiliados</div>
+            <div className="text-white/70 text-sm">{referralGateText}</div>
+            <button type="button" className="mt-4 px-4 py-2 rounded-lg bg-white text-black font-semibold" onClick={() => onNavigate(AppRoute.PROFILE)}>
+              Ir a Perfil y Créditos
+            </button>
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+            <div className="text-sm font-semibold mb-2">Referidos</div>
+
+            {refLoading ? (
+              <div className="text-white/70">Cargando panel...</div>
+            ) : (
+              <>
+                {refSummary ? (
+                  <div className="rounded-2xl border border-white/10 bg-black/30 p-4 mb-4">
+                    <div className="text-sm font-semibold">Resumen</div>
+                    <div className="mt-2 grid grid-cols-1 md:grid-cols-4 gap-3 text-sm">
+                      <div className="rounded-xl bg-black/40 border border-white/10 p-3">
+                        <div className="text-white/60 text-xs">Referrals</div>
+                        <div className="text-lg font-bold">{refSummary.totals?.count ?? 0}</div>
+                      </div>
+                      <div className="rounded-xl bg-black/40 border border-white/10 p-3">
+                        <div className="text-white/60 text-xs">Reward pending</div>
+                        <div className="text-lg font-bold">{refSummary.totals?.pendingRewardCredits ?? 0}</div>
+                      </div>
+                      <div className="rounded-xl bg-black/40 border border-white/10 p-3">
+                        <div className="text-white/60 text-xs">Reward matured</div>
+                        <div className="text-lg font-bold">{refSummary.totals?.maturedRewardCredits ?? 0}</div>
+                      </div>
+                      <div className="rounded-xl bg-black/40 border border-white/10 p-3">
+                        <div className="text-white/60 text-xs">Buyer bonuses</div>
+                        <div className="text-lg font-bold">{refSummary.totals?.totalBuyerBonusCredits ?? 0}</div>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                  <div className="text-sm font-semibold mb-2">Tus 3 códigos</div>
+
+                  {codes.length ? (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      {codes.map((c) => (
+                        <div key={c.id} className="rounded-xl bg-black/40 border border-white/10 p-3">
+                          <div className="text-xs text-white/60">Código {c.variant}</div>
+                          <div className="text-sm font-mono mt-1">{c.code}</div>
+                          <div className="text-xs text-white/60 mt-2">Buyer BONUS: {c.buyerDiscountPct}% · Reward: {c.refRewardPct}%</div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-white/70">No se pudieron cargar tus códigos.</div>
+                  )}
+                </div>
+
+                <div className="mt-4 rounded-2xl border border-white/10 bg-black/30 p-4">
+                  <div className="text-sm font-semibold mb-2">Actividad reciente</div>
+
+                  {refSummary?.referrals?.length ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {refSummary.referrals.slice(0, 10).map((r: any) => (
+                        <div key={r.id} className="rounded-xl bg-black/40 border border-white/10 p-3">
+                          <div className="text-sm font-semibold">{r.referredUsername || "(sin username)"} · {r.planSlug || "-"}</div>
+                          <div className="text-xs text-white/60 mt-1">Reward: <b className="text-white/80">{r.referrerRewardCredits}</b> · Buyer bonus: <b className="text-white/80">{r.buyerBonusCredits}</b></div>
+                          <div className="text-[11px] text-white/50 mt-1">{new Date(r.createdAt).toLocaleString()}</div>
+                          <div className="text-[11px] mt-1">
+                            {r.isMatured ? <span className="text-green-300">Matured</span> : <span className="text-yellow-300">Pending until {new Date(r.maturesAt).toLocaleDateString()}</span>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-white/60">Aún no tienes actividad de referidos. Comparte tus códigos y cuando alguien compre un plan con tu código, aparecerá aquí.</div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        )
+      ) : null}
     </div>
   );
 }

@@ -59,9 +59,16 @@ export async function getSellerListings(opts?: { limit?: number; offset?: number
   };
 }
 
-export async function getTradesDashboard(range: "7d" | "30d" | "90d" | "all" = "30d") {
+export async function getTradesDashboard(
+  range: "7d" | "30d" | "90d" | "all" = "30d",
+  compare: "none" | "previous" | "7d" | "30d" | "90d" | "all" = "previous"
+) {
   const headers = await authHeaders();
-  const resp = await fetch(apiUrl(`/api/trades/dashboard?range=${encodeURIComponent(range)}`), { method: "GET", headers });
+  const params = new URLSearchParams();
+  params.set("range", range);
+  params.set("compare", compare);
+
+  const resp = await fetch(apiUrl(`/api/trades/dashboard?${params.toString()}`), { method: "GET", headers });
   const raw = await resp.text();
   const data = parseJsonOrThrow(raw);
 
@@ -71,12 +78,13 @@ export async function getTradesDashboard(range: "7d" | "30d" | "90d" | "all" = "
 
   return {
     range: data.range || range,
+    compare: data.compare || compare,
+    currentWindow: data.currentWindow || null,
+    compareWindow: data.compareWindow || null,
     summary: data.summary || {},
-    timeline: Array.isArray(data.timeline) ? data.timeline : [],
+    compareSummary: data.compareSummary || {},
+    deltas: data.deltas || {},
     listings: Array.isArray(data.listings) ? data.listings : [],
-    top: data.top || { bestSeller: null, mostLiked: null, mostCommented: null },
-    recentEvents: Array.isArray(data.recentEvents) ? data.recentEvents : [],
-    referralCodesPerformance: Array.isArray(data.referralCodesPerformance) ? data.referralCodesPerformance : [],
-    cashoutsSummary: data.cashoutsSummary || { count: 0, totalCredits: 0, totalNetUsdMicros: 0, lastCashoutAt: null },
+    alerts: Array.isArray(data.alerts) ? data.alerts : [],
   };
 }
