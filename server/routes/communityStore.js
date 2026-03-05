@@ -230,6 +230,19 @@ export function createCommunityStoreRouter(ctx) {
 
     const previewUrl = row.preview_asset_id ? await signedUrlForAssetId(row.preview_asset_id) : null;
 
+    // ✅ likedByMe
+    let likedByMe = false;
+    if (user?.id) {
+      const { data: likeRow } = await supabaseAdmin
+        .from("community_listing_likes")
+        .select("id")
+        .eq("listing_id", listingId)
+        .eq("user_id", user.id)
+        .limit(1)
+        .maybeSingle();
+      likedByMe = Boolean(likeRow?.id);
+    }
+
     return res.json({
       ok: true,
       item: {
@@ -255,7 +268,7 @@ export function createCommunityStoreRouter(ctx) {
         commentsCount: Number(row.comments_count) || 0,
         salesCount: Number(row.sales_count) || 0,
 
-        likedByMe: false,
+        likedByMe,
         ownedByMe: user?.id ? row.seller_id === user.id : false,
         purchasedByMe,
       },

@@ -30,6 +30,11 @@ type ElementImageInput =
 
 const TOOL_ID = "image-generator";
 const REF_TOOL_ID = "image-generator-ref";
+
+// Prefill desde Community Store → Image Generator
+const PREFILL_KEY = "tales.prefill.imageGenerator";
+const PREFILL_EVENT = "tales:prefill-image-generator";
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function getStatus(err: any): number | null {
@@ -560,6 +565,14 @@ function Icon({ name }: { name: "heart" | "money" | "share" | "download" | "tras
   }
 }
 
+function safeJsonParse(raw: string): any | null {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
 const ImageGeneratorTool: React.FC = () => {
   const { user } = useAuth();
 
@@ -576,6 +589,11 @@ const ImageGeneratorTool: React.FC = () => {
 
   // "library": todas tus imágenes (generadas + subidas) para el picker y recipe
   const [myAssets, setMyAssets] = useState<Asset[]>([]);
+
+  // Prefill (Community Store → esta tool)
+  const [pendingExternalPrefill, setPendingExternalPrefill] = useState<any | null>(null);
+  const [externalElements, setExternalElements] = useState<ElementItem[]>([]);
+  const prefillAppliedRef = useRef<boolean>(false);
 
   const [prompt, setPrompt] = useState("");
   const [model, setModel] = useState<string>(GeminiModel.IMAGE);
@@ -947,6 +965,109 @@ useEffect(() => {
     reloadHistory();
   }, []);
 
+    useEffect(() => {
+    const readPrefill = () => {
+      const raw = window.localStorage.getItem(PREFILL_KEY);
+      if (!raw) return;
+
+      const payload = safeJsonParse(raw);
+      if (!payload) {
+        window.localStorage.removeItem(PREFILL_KEY);
+        return;
+      }
+
+      setPendingExternalPrefill(payload);
+    };
+
+    // 1) intento inmediato al montar
+    readPrefill();
+
+    // 2) si navegas y disparas evento
+    const onEvt = () => readPrefill();
+    window.addEventListener(PREFILL_EVENT, onEvt as any);
+
+    return () => {
+      window.removeEventListener(PREFILL_EVENT, onEvt as any);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (prefillAppliedRef.current) return;
+    if (!pendingExternalPrefill) return;
+
+    // esperamos a que termine reloadHistory para no pelear con setStates y para tener UI estable
+    if (isLoadingHistory) return;
+
+    const payload = pendingExternalPrefill;
+    const recipe = payload?.recipe || null;
+    const resolvedAssets = Array.isArray(payload?.resolvedAssets) ? payload.resolvedAssets : [];
+
+    const source = recipe?.sourceAsset || {};
+    const meta = source?.meta || {};
+    const p = typeof source?.prompt === "string" ? source.prompt : "";
+
+    // 1) aplicar prompt/meta con tu lógica existente
+    const fake: Asset = {
+      id: String(source?.id || "prefill"),
+      url: "",
+      type: "image",
+      name: String(source?.tool || "prefill"),
+      tool: source?.tool || undefined,
+      prompt: p,
+      meta,
+      createdAt: Date.now(),
+      ownerId: String(user?.id || ""),
+      isPublic: false,
+      likedByMe: false,
+      likesCount: 0,
+      commentsCount: 0,
+      likes: [],
+      comments: [],
+    };
+
+    reusePromptFromAsset(fake);
+
+    // 2) aplicar referencias reales desde resolvedAssets (para NO depender de ids en myAssets)
+    const byToken = new Map<string, any>();
+    for (const r of resolvedAssets) {
+      if (r?.token) byToken.set(String(r.token), r);
+    }
+
+    const mk = (r: any, label: string): Asset | null => {
+      if (!r?.assetId || !r?.url) return null;
+      return makeTempAsset({ assetId: String(r.assetId), url: String(r.url) }, p || "", String(user?.id || "")) as Asset;
+    };
+
+    const c1 = mk(byToken.get("@img1") || byToken.get("@reference1"), "char1");
+    const c2 = mk(byToken.get("@img2") || byToken.get("@reference2"), "char2");
+    const c3 = mk(byToken.get("@img3") || byToken.get("@reference3"), "char3");
+    const bg = mk(byToken.get("@bg") || byToken.get("@background"), "background");
+
+    setRefs({
+      char1: c1,
+      char2: c2,
+      char3: c3,
+      background: bg,
+    });
+
+    // 3) elements extra (hasta 5) como library temporal
+    const elementRefs = resolvedAssets.filter((r: any) => String(r?.role || "") === "element" && r?.assetId && r?.url);
+    const extEls: ElementItem[] = elementRefs.slice(0, 5).map((r: any, idx: number) => ({
+      id: String(r.assetId),
+      name: typeof r?.token === "string" && r.token.startsWith("@") ? r.token.slice(1) : `Element_${idx + 1}`,
+      createdAt: Date.now(),
+      url: String(r.url),
+    }));
+
+    setExternalElements(extEls);
+    setSelectedElementAssetIds(extEls.map((x) => x.id));
+
+    // limpiar payload para que no se reaplique
+    prefillAppliedRef.current = true;
+    setPendingExternalPrefill(null);
+    window.localStorage.removeItem(PREFILL_KEY);
+  }, [pendingExternalPrefill, isLoadingHistory, user?.id]);
+
   const hasMoreHistory = visibleHistory.length < history.length;
 
   function handleLoadMoreHistory() {
@@ -971,11 +1092,13 @@ useEffect(() => {
   // - Se construye desde tus uploads guardados como assets con meta.tool = "element-library".
   // ===============================
   useEffect(() => {
-    const items: ElementItem[] = (myAssets || [])
+    const internal: ElementItem[] = (myAssets || [])
       .filter((a: any) => {
         if (a?.type && a.type !== "image") return false;
         const meta = (a as any)?.meta || {};
-        return meta?.tool === "element-library" || meta?.isElement === true;
+
+        // ✅ Compat: uploads guardan tool en la columna "assets.tool" (no siempre dentro de meta)
+        return a?.tool === "element-library" || meta?.tool === "element-library" || meta?.isElement === true;
       })
       .sort((a: any, b: any) => {
         const ta = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
@@ -989,11 +1112,18 @@ useEffect(() => {
         url: a.url,
       }));
 
-    setElements(items);
+    // merge: elementos externos (prefill) + internos (library)
+    const byId = new Map<string, ElementItem>();
+    for (const el of externalElements || []) byId.set(el.id, el);
+    for (const el of internal) byId.set(el.id, el);
+
+    const merged = Array.from(byId.values());
+
+    setElements(merged);
 
     // Limpia selección si borraste elementos
-    setSelectedElementAssetIds((prev) => prev.filter((id) => items.some((x) => x.id === id)));
-  }, [myAssets]);
+    setSelectedElementAssetIds((prev) => prev.filter((id) => byId.has(id)));
+  }, [myAssets, externalElements]);
 
 
     // ===============================

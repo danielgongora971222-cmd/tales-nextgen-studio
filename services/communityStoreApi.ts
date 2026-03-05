@@ -174,5 +174,85 @@ export async function getCommunityListingRecipe(listingId: string) {
     throw new Error(data?.error?.message || `Get recipe failed (${resp.status})`);
   }
 
-  return { recipe: data.recipe, recipeHash: data.recipeHash };
+  return {
+    recipe: data.recipe,
+    recipeHash: data.recipeHash,
+    createdAt: data.createdAt,
+    resolvedAssets: Array.isArray(data.resolvedAssets) ? data.resolvedAssets : [],
+  };
+}
+
+export async function toggleCommunityListingLike(listingId: string) {
+  const headers = await authHeaders();
+
+  const resp = await fetch(apiUrl(`/api/community-store/listings/${listingId}/like`), {
+    method: "POST",
+    headers,
+    body: JSON.stringify({}),
+  });
+
+  const raw = await resp.text();
+  const data = parseJsonOrThrow(raw);
+
+  if (!resp.ok || data?.ok === false) {
+    throw new Error(data?.error?.message || `Toggle like failed (${resp.status})`);
+  }
+
+  return {
+    liked: Boolean(data.liked),
+    likesCount: Number.isFinite(Number(data.likesCount)) ? Number(data.likesCount) : 0,
+  };
+}
+
+export async function listCommunityListingComments(
+  listingId: string,
+  opts?: { limit?: number; offset?: number }
+): Promise<{ comments: Comment[]; commentsCount: number }> {
+  const headers = await authHeaders();
+
+  const params = new URLSearchParams();
+  if (opts?.limit != null) params.set("limit", String(opts.limit));
+  if (opts?.offset != null) params.set("offset", String(opts.offset));
+
+  const resp = await fetch(
+    apiUrl(`/api/community-store/listings/${listingId}/comments${params.toString() ? `?${params.toString()}` : ""}`),
+    { method: "GET", headers }
+  );
+
+  const raw = await resp.text();
+  const data = parseJsonOrThrow(raw);
+
+  if (!resp.ok || data?.ok === false) {
+    throw new Error(data?.error?.message || `List comments failed (${resp.status})`);
+  }
+
+  return {
+    comments: Array.isArray(data.comments) ? (data.comments as Comment[]) : [],
+    commentsCount: Number.isFinite(Number(data.commentsCount)) ? Number(data.commentsCount) : 0,
+  };
+}
+
+export async function createCommunityListingComment(
+  listingId: string,
+  text: string
+): Promise<{ comment: Comment; commentsCount: number }> {
+  const headers = await authHeaders();
+
+  const resp = await fetch(apiUrl(`/api/community-store/listings/${listingId}/comments`), {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ text }),
+  });
+
+  const raw = await resp.text();
+  const data = parseJsonOrThrow(raw);
+
+  if (!resp.ok || data?.ok === false) {
+    throw new Error(data?.error?.message || `Create comment failed (${resp.status})`);
+  }
+
+  return {
+    comment: data.comment as Comment,
+    commentsCount: Number.isFinite(Number(data.commentsCount)) ? Number(data.commentsCount) : 0,
+  };
 }
