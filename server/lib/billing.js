@@ -58,6 +58,14 @@ export function createBillingHelpers(supabaseAdmin) {
 
     if (error) {
       const msg = String(error.message || "");
+
+      if (msg.includes("NO_ACTIVE_PLAN")) {
+        return {
+          ok: false,
+          error: err("NO_ACTIVE_PLAN", "Necesitas un plan activo para usar créditos de generación."),
+        };
+      }
+
       if (msg.includes("INSUFFICIENT_CREDITS")) {
         let have = 0;
 
@@ -84,6 +92,7 @@ export function createBillingHelpers(supabaseAdmin) {
           error: err("INSUFFICIENT_CREDITS", "Créditos insuficientes.", { need, have, deficit }),
         };
       }
+
       return { ok: false, error: err("CREDIT_SPEND_FAILED", error.message) };
     }
 

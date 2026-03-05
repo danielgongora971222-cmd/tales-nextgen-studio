@@ -89,7 +89,7 @@ const CreateCommentSchema = z.object({
 
 export function createCommunityStoreRouter(ctx) {
   const router = express.Router();
-  const { supabaseAdmin, requireUser, signStoragePath } = ctx;
+  const { supabaseAdmin, requireUser, signStoragePath, billing } = ctx;
 
   function err(res, status, code, message, details) {
     return res.status(status).json({ ok: false, error: { code, message, details: details || null } });
@@ -112,6 +112,12 @@ export function createCommunityStoreRouter(ctx) {
     } catch {
       return null;
     }
+  }
+
+  async function sellerCanSellNow(sellerId) {
+    const active = await billing.getActiveSubscription(sellerId);
+    if (active.error) return { ok: false, error: active.error, canSell: false };
+    return { ok: true, error: null, canSell: !!active.subscription?.canSell };
   }
 
   // LISTINGS PUBLICOS (paginado)
@@ -137,7 +143,7 @@ export function createCommunityStoreRouter(ctx) {
     if (sort === "best_seller") sort = "top_sold";
 
     let q = supabaseAdmin
-      .from("community_listings")
+      .from(mine ? "community_listings" : "community_listings_public_catalog")
       .select(
         "id, name, seller_id, seller_username_snapshot, seller_verified_snapshot, listing_kind, media_tag, price_credits, description, status, preview_asset_id, created_at, likes_count, comments_count, sales_count"
       )
@@ -238,6 +244,7 @@ export function createCommunityStoreRouter(ctx) {
   // DETALLE PUBLICO (sin receta)
   router.get("/community-store/listings/:id", async (req, res) => {
     const listingId = req.params.id;
+    const { user } = await maybeUserFromReq(req, supabaseAdmin);
 
     const { data: row, error } = await supabaseAdmin
       .from("community_listings")
@@ -249,13 +256,6 @@ export function createCommunityStoreRouter(ctx) {
 
     if (error) return err(res, 500, "DB_QUERY_FAILED", error.message);
     if (!row) return err(res, 404, "NOT_FOUND", "Listing no encontrado.");
-
-    if (row.status !== "active") {
-      // No reveles unlisted/deleted al publico
-      return err(res, 404, "NOT_FOUND", "Listing no encontrado.");
-    }
-
-    const { user } = await maybeUserFromReq(req, supabaseAdmin);
 
     let purchasedByMe = false;
     if (user?.id && row.seller_id !== user.id) {
@@ -271,9 +271,25 @@ export function createCommunityStoreRouter(ctx) {
       purchasedByMe = Boolean(purchaseRow?.id);
     }
 
+    const sellerAccess = await sellerCanSellNow(row.seller_id);
+    if (!sellerAccess.ok) {
+      return err(res, 500, sellerAccess.error.code, sellerAccess.error.message, sellerAccess.error.details);
+    }
+
+    const ownedByMe = user?.id ? row.seller_id === user.id : false;
+    const hiddenByPlanLoss = row.status === "active" && !sellerAccess.canSell;
+    const canBypassPublicHide = ownedByMe || purchasedByMe;
+
+    if (row.status !== "active") {
+      return err(res, 404, "NOT_FOUND", "Listing no encontrado.");
+    }
+
+    if (hiddenByPlanLoss && !canBypassPublicHide) {
+      return err(res, 404, "NOT_FOUND", "Listing no encontrado.");
+    }
+
     const previewUrl = row.preview_asset_id ? await signedUrlForAssetId(row.preview_asset_id) : null;
 
-    // ✅ likedByMe
     let likedByMe = false;
     if (user?.id) {
       const { data: likeRow } = await supabaseAdmin
@@ -283,6 +299,7 @@ export function createCommunityStoreRouter(ctx) {
         .eq("user_id", user.id)
         .limit(1)
         .maybeSingle();
+
       likedByMe = Boolean(likeRow?.id);
     }
 
@@ -312,19 +329,19 @@ export function createCommunityStoreRouter(ctx) {
         salesCount: Number(row.sales_count) || 0,
 
         likedByMe,
-        ownedByMe: user?.id ? row.seller_id === user.id : false,
+        ownedByMe,
         purchasedByMe,
+        visibility: hiddenByPlanLoss ? "purchase_only" : "public",
       },
     });
   });
-
   // CREAR LISTING (SELL)
   router.post("/community-store/listings", async (req, res) => {
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
 
     // ✅ Solo Pro/Partner/Business pueden vender
-    const active = await ctx.billing.getActiveSubscription(user.id);
+    const active = await billing.getActiveSubscription(user.id);
     if (active.error) return err(res, 500, active.error.code, active.error.message, active.error.details);
     if (!active.subscription || !active.subscription.canSell) {
       return err(res, 403, "PLAN_REQUIRED_PRO", "Necesitas plan Pro o superior para publicar y vender.");
@@ -482,12 +499,18 @@ export function createCommunityStoreRouter(ctx) {
     // asegurar que existe y esta activo
     const { data: lrow, error: lerr } = await supabaseAdmin
       .from("community_listings")
-      .select("id, status")
+      .select("id, status, seller_id")
       .eq("id", listingId)
       .maybeSingle();
 
     if (lerr) return err(res, 500, "DB_QUERY_FAILED", lerr.message);
     if (!lrow || lrow.status !== "active") return err(res, 404, "NOT_FOUND", "Listing no encontrado.");
+
+    const sellerAccess = await sellerCanSellNow(lrow.seller_id);
+    if (!sellerAccess.ok) {
+      return err(res, 500, sellerAccess.error.code, sellerAccess.error.message, sellerAccess.error.details);
+    }
+    if (!sellerAccess.canSell) return err(res, 404, "NOT_FOUND", "Listing no encontrado.");
 
     const { data: existing, error: exErr } = await supabaseAdmin
       .from("community_listing_likes")
@@ -537,12 +560,18 @@ export function createCommunityStoreRouter(ctx) {
 
     const { data: lrow, error: lerr } = await supabaseAdmin
       .from("community_listings")
-      .select("id, status")
+      .select("id, status, seller_id")
       .eq("id", listingId)
       .maybeSingle();
 
     if (lerr) return err(res, 500, "DB_QUERY_FAILED", lerr.message);
     if (!lrow || lrow.status !== "active") return err(res, 404, "NOT_FOUND", "Listing no encontrado.");
+
+    const sellerAccess = await sellerCanSellNow(lrow.seller_id);
+    if (!sellerAccess.ok) {
+      return err(res, 500, sellerAccess.error.code, sellerAccess.error.message, sellerAccess.error.details);
+    }
+    if (!sellerAccess.canSell) return err(res, 404, "NOT_FOUND", "Listing no encontrado.");
 
     const { user } = await maybeUserFromReq(req, supabaseAdmin);
 
@@ -607,12 +636,18 @@ export function createCommunityStoreRouter(ctx) {
 
     const { data: lrow, error: lerr } = await supabaseAdmin
       .from("community_listings")
-      .select("id, status")
+      .select("id, status, seller_id")
       .eq("id", listingId)
       .maybeSingle();
 
     if (lerr) return err(res, 500, "DB_QUERY_FAILED", lerr.message);
     if (!lrow || lrow.status !== "active") return err(res, 404, "NOT_FOUND", "Listing no encontrado.");
+
+    const sellerAccess = await sellerCanSellNow(lrow.seller_id);
+    if (!sellerAccess.ok) {
+      return err(res, 500, sellerAccess.error.code, sellerAccess.error.message, sellerAccess.error.details);
+    }
+    if (!sellerAccess.canSell) return err(res, 404, "NOT_FOUND", "Listing no encontrado.");
 
     let body;
     try {
@@ -703,36 +738,55 @@ export function createCommunityStoreRouter(ctx) {
 
     if (rpcErr) {
       const msg = rpcErr.message || "Compra fallida.";
+
+      if (msg.includes("NO_ACTIVE_PLAN")) {
+        return err(res, 403, "NO_ACTIVE_PLAN", "Necesitas un plan activo para usar créditos de generación o comprar en Community Store.");
+      }
+
+      if (msg.includes("SELLER_PLAN_REQUIRED") || msg.includes("LISTING_NOT_ACTIVE") || msg.includes("LISTING_NOT_FOUND")) {
+        return err(res, 404, "LISTING_UNAVAILABLE", "Este listing ya no está disponible públicamente.");
+      }
+
+      if (msg.includes("INVALID_REFERRAL_CODE")) {
+        return err(res, 400, "INVALID_REFERRAL_CODE", "El código de referido no es válido.");
+      }
+
+      if (msg.includes("REFERRAL_OWNER_NOT_ELIGIBLE")) {
+        return err(res, 400, "REFERRAL_OWNER_NOT_ELIGIBLE", "Ese código de referido ya no está habilitado por el plan actual de su dueño.");
+      }
+
       if (msg.includes("INSUFFICIENT_CREDITS")) {
-      let need = 0;
-      let have = 0;
+        let need = 0;
+        let have = 0;
 
-      try {
-        const { data: lrow } = await supabaseAdmin
-          .from("community_listings")
-          .select("price_credits")
-          .eq("id", body.listingId)
-          .maybeSingle();
+        try {
+          const { data: lrow } = await supabaseAdmin
+            .from("community_listings")
+            .select("price_credits")
+            .eq("id", body.listingId)
+            .maybeSingle();
 
-        need = Number(lrow?.price_credits) || 0;
+          need = Number(lrow?.price_credits) || 0;
 
-        const { data: bal } = await supabaseAdmin
-          .from("wallet_balances")
-          .select("gen_plan_credits, gen_topup_credits, gen_bonus_credits")
-          .eq("user_id", user.id)
-          .maybeSingle();
+          const { data: bal } = await supabaseAdmin
+            .from("wallet_balances")
+            .select("gen_plan_credits, gen_topup_credits, gen_bonus_credits")
+            .eq("user_id", user.id)
+            .maybeSingle();
 
-        have =
-          (Number(bal?.gen_plan_credits) || 0) +
-          (Number(bal?.gen_topup_credits) || 0) +
-          (Number(bal?.gen_bonus_credits) || 0);
-      } catch {}
+          have =
+            (Number(bal?.gen_plan_credits) || 0) +
+            (Number(bal?.gen_topup_credits) || 0) +
+            (Number(bal?.gen_bonus_credits) || 0);
+        } catch {}
 
-      const deficit = Math.max(0, need - have);
-      return err(res, 400, "INSUFFICIENT_CREDITS", "No tienes créditos suficientes.", { need, have, deficit });
-    }
+        const deficit = Math.max(0, need - have);
+        return err(res, 400, "INSUFFICIENT_CREDITS", "No tienes créditos suficientes.", { need, have, deficit });
+      }
+
       if (msg.includes("ALREADY_OWNED")) return err(res, 400, "ALREADY_OWNED", "Ya compraste este listing.");
       if (msg.includes("CANNOT_BUY_OWN_LISTING")) return err(res, 400, "CANNOT_BUY_OWN_LISTING", "No puedes comprar tu propio listing.");
+
       return err(res, 500, "PURCHASE_FAILED", msg);
     }
 

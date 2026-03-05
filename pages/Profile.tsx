@@ -197,7 +197,7 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
   }
 
   async function cancelSubscription() {
-    const ok = window.confirm("Esto cancelará tu plan. ¿Deseas continuar?");
+    const ok = window.confirm("Esto cancelará tu plan activo de inmediato. Tus créditos de generación y earnings se conservarán, pero no podrás usar créditos de generación sin plan activo, tus listings públicos se ocultarán si pierdes Pro+ y tus códigos de referido dejarán de funcionar si pierdes Partner+. ¿Deseas continuar?");
     if (!ok) return;
 
     setErr("");

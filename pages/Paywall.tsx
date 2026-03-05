@@ -736,10 +736,10 @@ export default function Paywall({
                 : currentPlanPower !== null
                   ? isHigher
                     ? "Mejorar plan"
-                    : "No disponible"
+                    : "Cambiar a este plan"
                   : "Suscribirme";
 
-              const ctaDisabled = isCurrent || isLower;
+              const ctaDisabled = isCurrent;
 
               const factor = planPeriodFactor(p.billing_period);
               const creditsEqMonth = Number(p.plan_credits || 0) * factor;
@@ -753,7 +753,6 @@ export default function Paywall({
                   key={p.id}
                   className={[
                     "premium-hero-card plan-tier-card p-5 transition-transform duration-200 group",
-                    isLower ? "plan-tier-card--locked" : "",
                     isCurrent ? "plan-tier-card--current" : "",
                   ]
                     .filter(Boolean)
@@ -766,7 +765,7 @@ export default function Paywall({
                         <span className="plan-tier-pill">{mk.badge}</span>
                         {showBest ? <span className="plan-tier-pill plan-tier-pill--best">Mejor valor</span> : null}
                         {isCurrent ? <span className="plan-tier-pill plan-tier-pill--current">Actual</span> : null}
-                        {isLower ? <span className="plan-tier-pill">Bloqueado</span> : null}
+                        {isLower ? <span className="plan-tier-pill">Cambio de plan</span> : null}
                       </div>
 
                       <div className="text-2xl font-extrabold mt-3">{p.name}</div>
@@ -902,9 +901,9 @@ export default function Paywall({
                       </div>
                     ) : null}
 
-                    {ctaDisabled && isLower ? (
+                    {isLower ? (
                       <div className="text-[11px] text-white/55 mt-2 text-center">
-                        Para bajar de plan, contáctanos (protección contra downgrades accidentales).
+                        Si bajas de plan, perderás de inmediato los privilegios que ese nuevo plan no incluya: ventas públicas ocultas, referidos pausados y gestión de earnings bloqueada hasta volver al plan requerido.
                       </div>
                     ) : null}
                   </div>

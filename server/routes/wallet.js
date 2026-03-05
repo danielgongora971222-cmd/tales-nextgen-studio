@@ -3,7 +3,7 @@ import { randomUUID } from "crypto";
 
 export function createWalletRouter(ctx) {
   const router = express.Router();
-  const { supabaseAdmin, requireUser, ADMIN_TOKEN } = ctx;
+  const { supabaseAdmin, requireUser, ADMIN_TOKEN, billing } = ctx;
 
   function err(res, status, code, message, details) {
     return res.status(status).json({ ok: false, error: { code, message, details: details || null } });
@@ -107,6 +107,12 @@ export function createWalletRouter(ctx) {
       return err(res, 400, "BAD_REQUEST", "amountCredits debe ser > 0.");
     }
 
+    const active = await billing.getActiveSubscription(user.id);
+    if (active.error) return err(res, 500, active.error.code, active.error.message, active.error.details);
+    if (!active.subscription || !active.subscription.canSell) {
+      return err(res, 403, "PLAN_REQUIRED_PRO", "Necesitas plan Pro o superior activo para gestionar earnings de ventas.");
+    }
+
     const idempotencyKey = req.headers["x-idempotency-key"] ? String(req.headers["x-idempotency-key"]) : randomUUID();
 
     const { data, error: rpcErr } = await supabaseAdmin.rpc("wallet_transfer_earnings_to_generation", {
@@ -133,6 +139,7 @@ export function createWalletRouter(ctx) {
       wallet: normalizeWalletRow(row),
     });
   });
+  
 
   // Solicitar cashout (fee 37% se aplica aquí)
   router.post("/wallet/earnings/cashout", async (req, res) => {
@@ -142,6 +149,12 @@ export function createWalletRouter(ctx) {
     const amount = Math.trunc(Number(req.body?.amountCredits));
     if (!Number.isFinite(amount) || amount <= 0) {
       return err(res, 400, "BAD_REQUEST", "amountCredits debe ser > 0.");
+    }
+
+    const active = await billing.getActiveSubscription(user.id);
+    if (active.error) return err(res, 500, active.error.code, active.error.message, active.error.details);
+    if (!active.subscription || !active.subscription.canSell) {
+      return err(res, 403, "PLAN_REQUIRED_PRO", "Necesitas plan Pro o superior activo para gestionar earnings de ventas.");
     }
 
     const payoutMethodRaw = req.body?.payoutMethod || {};

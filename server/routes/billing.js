@@ -221,7 +221,7 @@ export function createBillingRouter(ctx) {
 
     const idem = getIdempotencyKey(req);
 
-    const { data, error: cErr } = await supabaseAdmin.rpc("billing_cancel_and_wipe_generation_credits", {
+    const { data, error: cErr } = await supabaseAdmin.rpc("billing_cancel_subscription_only", {
       p_user_id: user.id,
       p_idempotency_key: `cancel:${idem}`,
     });
@@ -235,10 +235,10 @@ export function createBillingRouter(ctx) {
     const row = Array.isArray(data) ? data[0] : null;
     return res.json({
       ok: true,
-      wiped: {
-        plan: Number(row?.wiped_plan) || 0,
-        topup: Number(row?.wiped_topup) || 0,
-        bonus: Number(row?.wiped_bonus) || 0,
+      retained: {
+        plan: Number(row?.retained_plan) || 0,
+        topup: Number(row?.retained_topup) || 0,
+        bonus: Number(row?.retained_bonus) || 0,
       },
     });
   });

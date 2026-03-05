@@ -29,19 +29,27 @@ export default function MyTrades({ onNavigate }: Props) {
 
   const canSell = !!subscription?.can_sell;
   const canReferrals = !!subscription?.can_referrals;
+  const canManageEarnings = !!subscription?.can_sell;
 
   const referralGateText = useMemo(() => {
     if (!subscription) {
-      return "Para obtener tus códigos de Referidos/Afiliados necesitas un plan activo (Partner o superior).";
+      return "Para obtener tus códigos de Referidos/Afiliados necesitas un plan activo Partner o superior. Si cancelas, no renuevas o bajas de nivel, tus códigos dejan de funcionar automáticamente hasta volver a Partner o superior.";
     }
-    return "Tu plan actual no incluye Referidos/Afiliados. Sube a Partner o superior para desbloquear códigos y comisiones.";
+    return "Tu plan actual no incluye Referidos/Afiliados. Tus códigos quedan pausados y dejan de funcionar hasta volver a Partner o superior.";
   }, [subscription]);
 
   const sellerGateText = useMemo(() => {
     if (!subscription) {
-      return "Para vender en Community Store necesitas un plan activo con permiso de Seller.";
+      return "Para vender en Community Store necesitas un plan Pro o superior activo. Si cancelas, no renuevas o bajas de nivel, tus listings públicos se ocultan automáticamente hasta volver a Pro o superior.";
     }
-    return "Tu plan actual no incluye Seller. Sube a un plan superior para publicar y vender.";
+    return "Tu plan actual no incluye Seller. Tus listings públicos quedan ocultos automáticamente y tus earnings de ventas quedan bloqueados hasta volver a Pro o superior.";
+  }, [subscription]);
+
+  const earningsGateText = useMemo(() => {
+    if (!subscription) {
+      return "Tus earnings y créditos de ventas se conservan, pero no puedes gestionarlos sin un plan Pro o superior activo.";
+    }
+    return "Tus earnings y créditos de ventas están retenidos. Vuelve a Pro o superior para transferirlos o solicitar cash out.";
   }, [subscription]);
 
   const [buyerItems, setBuyerItems] = useState<any[]>([]);
@@ -101,15 +109,22 @@ export default function MyTrades({ onNavigate }: Props) {
 }
 
 async function handleTransfer(amountCredits: number) {
+  if (!canManageEarnings) {
+    throw new Error("Necesitas plan Pro o superior activo para gestionar earnings.");
+  }
+
   await transferEarningsToGeneration(amountCredits);
   await refreshWalletAndCashouts();
 }
 
 async function handleCashout(args: { amountCredits: number; payoutMethod: { kind: string; handle: string; note?: string } }) {
+  if (!canManageEarnings) {
+    throw new Error("Necesitas plan Pro o superior activo para gestionar earnings.");
+  }
+
   await requestCashout(args.amountCredits, args.payoutMethod);
   await refreshWalletAndCashouts();
 }
-
   useEffect(() => {
     if (tab !== "referrals") return;
 
@@ -213,8 +228,13 @@ async function handleCashout(args: { amountCredits: number; payoutMethod: { kind
           <div className="text-sm text-white/70">Wallet</div>
           <button
             type="button"
-            className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-xs"
-            onClick={() => setEarningsModalOpen(true)}
+            className={`px-3 py-2 rounded-lg text-xs ${canManageEarnings ? "bg-white/10 hover:bg-white/15" : "bg-white/5 text-white/40 cursor-not-allowed"}`}
+            onClick={() => {
+              if (!canManageEarnings) return;
+              setEarningsModalOpen(true);
+            }}
+            disabled={!canManageEarnings}
+            title={canManageEarnings ? "Gestionar earnings" : "Necesitas plan Pro o superior activo para gestionar earnings"}
           >
             Gestionar earnings
           </button>
@@ -233,23 +253,35 @@ async function handleCashout(args: { amountCredits: number; payoutMethod: { kind
           </div>
 
           <div
-            className="rounded-xl bg-black/40 border border-white/10 p-3 cursor-pointer hover:bg-black/50"
-            role="button"
-            tabIndex={0}
-            onClick={() => setEarningsModalOpen(true)}
+            className={`rounded-xl bg-black/40 border border-white/10 p-3 ${canManageEarnings ? "cursor-pointer hover:bg-black/50" : "opacity-70 cursor-not-allowed"}`}
+            role={canManageEarnings ? "button" : undefined}
+            tabIndex={canManageEarnings ? 0 : -1}
+            onClick={() => {
+              if (!canManageEarnings) return;
+              setEarningsModalOpen(true);
+            }}
             onKeyDown={(e) => {
+              if (!canManageEarnings) return;
               if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
                 setEarningsModalOpen(true);
               }
             }}
-            title="Click para transferir a créditos o solicitar cash out"
+            title={canManageEarnings ? "Click para transferir a créditos o solicitar cash out" : "Necesitas plan Pro o superior activo para gestionar earnings"}
           >
             <div className="text-white/60 text-xs">Earnings (available)</div>
             <div className="text-xl font-bold">{wallet.earnings_matured_credits}</div>
-            <div className="text-[11px] text-white/50 mt-1">Click para transferir o cash out.</div>
+            <div className="text-[11px] text-white/50 mt-1">
+              {canManageEarnings ? "Click para transferir o cash out." : "Bloqueados hasta volver a Pro o superior."}
+            </div>
           </div>
         </div>
+
+        {!canManageEarnings ? (
+          <div className="mt-3 text-[12px] text-amber-200/90">
+            {earningsGateText}
+          </div>
+        ) : null}
 
         {/* Cashouts list */}
         <div className="mt-4 rounded-xl border border-white/10 bg-black/40 p-3">
@@ -300,7 +332,7 @@ async function handleCashout(args: { amountCredits: number; payoutMethod: { kind
     ) : null}
 
     <EarningsActionsModal
-      open={earningsModalOpen}
+      open={earningsModalOpen && canManageEarnings}
       availableCredits={Number(wallet?.earnings_matured_credits) || 0}
       cashoutConfig={cashoutConfig}
       onClose={() => setEarningsModalOpen(false)}
