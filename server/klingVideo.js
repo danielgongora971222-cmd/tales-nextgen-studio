@@ -303,7 +303,8 @@ export async function createText2VideoTask({
 
   Object.keys(payload).forEach((key) => payload[key] === undefined && delete payload[key]);
 
-  return klingPost("/videos/text2video", payload);
+  // ✅ Timeout + retry para evitar requests colgadas “infinito”
+  return klingPostWithRetry("/videos/text2video", payload, { timeoutMs: 60_000, retries: 2 });
 }
 
 export async function createImage2VideoTask({
@@ -329,7 +330,8 @@ export async function createImage2VideoTask({
 
   Object.keys(payload).forEach((key) => payload[key] === undefined && delete payload[key]);
 
-  return klingPost("/videos/image2video", payload);
+  // ✅ Timeout + retry para evitar requests colgadas “infinito”
+  return klingPostWithRetry("/videos/image2video", payload, { timeoutMs: 60_000, retries: 2 });
 }
 
 export async function createMotionControlTask({

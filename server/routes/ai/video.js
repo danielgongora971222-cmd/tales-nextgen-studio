@@ -192,6 +192,11 @@ export function createAiVideoRouter(ctx) {
       .eq("status", "running")
       .filter("params->>provider", "eq", "kling");
 
+    // ✅ Ignora jobs “running” stale que no se actualizan (worker caído / jobs antiguos)
+    const activeWindowMin = Math.max(5, Number(process.env.KLING_ACTIVE_WINDOW_MINUTES || 45));
+    const activeSinceIso = new Date(Date.now() - activeWindowMin * 60 * 1000).toISOString();
+    q.gte("updated_at", activeSinceIso);
+
     if (ownerId) q.eq("owner_id", ownerId);
 
     const r = await q;
@@ -1707,6 +1712,80 @@ const isKling = selectedModelNorm.startsWith("kling-");
       );
     }
 
+    // ✅ ASYNC real para Veo (jobs + background worker).
+    // Evita que /api/ai/video se quede esperando el poll de Fal dentro del request HTTP.
+    if (asyncMode) {
+      const submit = await falQueueSubmit(endpointId, falInput);
+
+      const jobToken = signJobToken({
+        uid: user.id,
+        requestId: submit.requestId,
+        statusUrl: submit.statusUrl,
+        responseUrl: submit.responseUrl,
+        endpointId,
+        toolName,
+        hint,
+        model: veoModel,
+
+        // metadata útil (opcional, pero ayuda a debug/receta)
+        ar: hasFirst ? null : ar,
+        totalDur: dur,
+        firstFrameAssetId: firstFrameAssetId || null,
+        lastFrameAssetId: lastFrameAssetId || null,
+      });
+
+      // Creamos job row para que el worker lo procese (provider="fal")
+      const jobId = await upsertFalJobRow({
+        ownerId: user.id,
+        kind: "video",
+        requestId: submit.requestId,
+        jobToken,
+        statusUrl: submit.statusUrl,
+        responseUrl: submit.responseUrl,
+        endpointId,
+        toolName,
+        hint,
+        model: veoModel,
+        prompt,
+        extra: {
+          ar: hasFirst ? null : ar,
+          resolution: reso,
+          durationSeconds: dur,
+          firstFrameAssetId: firstFrameAssetId || null,
+          lastFrameAssetId: lastFrameAssetId || null,
+        },
+      });
+
+      // ✅ Spend de créditos ANTES de aceptar el job (idempotente)
+      const spend = await spendVideoCreditsOrReject({
+        userId: user.id,
+        req,
+        modelNorm: veoModel,
+        durationSeconds: dur,
+        count: requestedCount,
+        entryType: "ai_video_generate",
+        refType: "job",
+        refId: jobId,
+      });
+
+      if (!spend.ok) {
+        // rollback best-effort: borrar el job para que el worker no lo procese gratis
+        try {
+          await supabaseAdmin.from("jobs").delete().eq("id", jobId);
+        } catch {}
+
+        return res.status(402).json({ ok: false, error: spend.error });
+      }
+
+      return res.json({
+        ok: true,
+        mode: "async",
+        jobToken,
+        jobId,
+      });
+    }
+
+    // ======= SYNC (solo si lo fuerzas con sync=true en dev) =======
     // ✅ Spend de créditos ANTES de ejecutar generación (idempotente vía x-idempotency-key)
     const spend = await spendVideoCreditsOrReject({
       userId: user.id,
@@ -1723,7 +1802,6 @@ const isKling = selectedModelNorm.startsWith("kling-");
       return res.status(402).json({ ok: false, error: spend.error });
     }
 
-    // Ejecutar en modo síncrono (la UI de Veo no implementa el flujo async/jobToken)
     const falJson = await falQueueRun(endpointId, falInput);
 
     const videoUrl =

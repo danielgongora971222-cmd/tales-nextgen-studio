@@ -127,7 +127,11 @@ function sleepAbortable(ms: number, signal?: AbortSignal) {
 }
 
 function isFalModel(modelNorm: string) {
-  // ✅ Kling O3 ahora usa Kling Tasks (Omni-Video), no Fal.
+  const m = String(modelNorm || "");
+  // ✅ Veo corre por Fal Queue → usar flujo async (jobToken/jobId)
+  if (m.startsWith("veo-")) return true;
+
+  // ✅ Kling O3 / Kling Tasks no usan Fal en este repo
   return false;
 }
 
