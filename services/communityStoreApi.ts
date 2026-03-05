@@ -1,5 +1,6 @@
 import { supabase } from "./supabaseClient";
 import { apiUrl } from "./apiBase";
+import type { Comment } from "../types";
 
 async function authHeaders(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession();

@@ -124,6 +124,20 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
     ? "bg-red-500 shadow-[0_0_14px_rgba(239,68,68,0.55)]"
     : "bg-emerald-400 shadow-[0_0_14px_rgba(52,211,153,0.45)]";
 
+  // ✅ Sidebar colapsada: evita que se corte el número cuando hay 5+ dígitos.
+  // (Mostramos el número completo, ajustando solo el tamaño del texto.)
+  const creditsDigits = String(Math.max(0, Math.floor(availableCredits))).length;
+  const collapsedCreditsTextClass =
+    creditsDigits <= 4
+      ? "text-sm"
+      : creditsDigits === 5
+        ? "text-[13px]"
+        : creditsDigits === 6
+          ? "text-[12px]"
+          : creditsDigits === 7
+            ? "text-[11px]"
+            : "text-[10px]";
+
   // Auto-collapse sidebar when clicking outside (matches your mock)
   useEffect(() => {
     function onPointerDown(ev: PointerEvent) {
@@ -614,7 +628,7 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
                 window.localStorage.setItem("tales_account_tab", "plans");
                 onNavigate(AppRoute.PAYWALL);
               }}
-              className={`w-full rounded-xl bg-white/5 hover:bg-white/10 transition-colors ${sidebarOpen ? "p-3" : "p-2"}`}
+              className={`w-full rounded-xl bg-white/5 hover:bg-white/10 transition-colors ${sidebarOpen ? "p-3" : "p-1.5"}`}
               title="Manage plans and extra credits"
             >
             {sidebarOpen ? (
@@ -633,12 +647,12 @@ const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) =
                 </div>
               </div>
             ) : (
-              <div className="flex items-center justify-center gap-2">
+              <div className="flex items-center justify-center gap-1.5">
                 <span className={`w-2.5 h-2.5 rounded-full animate-pulse ${creditsPulseClass}`} aria-hidden="true" />
-                <span className="text-sm font-extrabold text-white">{availableCredits}</span>
+                <span className={`${collapsedCreditsTextClass} font-extrabold text-white tabular-nums leading-none`}>{availableCredits}</span>
               </div>
             )}
-          </button>
+            </button>
 
           {sidebarOpen ? (
             <button

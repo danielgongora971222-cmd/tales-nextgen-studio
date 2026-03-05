@@ -179,6 +179,9 @@ export function createCommunityStoreRouter(ctx) {
       likesCount: Number(r.likes_count) || 0,
       commentsCount: Number(r.comments_count) || 0,
       salesCount: Number(r.sales_count) || 0,
+
+      // ✅ Feed: estado de like del usuario (si está logeado)
+      likedByMe: user?.id ? likedSet.has(r.id) : false,
     }));
 
     return res.json({
@@ -730,11 +733,55 @@ export function createCommunityStoreRouter(ctx) {
     if (rErr) return err(res, 500, "DB_QUERY_FAILED", rErr.message);
     if (!rRow) return err(res, 500, "RECIPE_MISSING", "La receta no existe (error interno).");
 
+    // ✅ Resolver referencias (para poder reusar receta con referencias reales)
+    const recipe = rRow.recipe_snapshot || {};
+    const source = recipe?.sourceAsset || {};
+    const meta = source?.meta || {};
+
+    const refs = [];
+    const seen = new Set();
+    const pushRef = (assetId, role, token) => {
+      const id = typeof assetId === "string" ? assetId.trim() : "";
+      if (!id) return;
+      if (seen.has(id)) return;
+      seen.add(id);
+      refs.push({ assetId: id, role: role || "element", token: token || null });
+    };
+
+    const prs = Array.isArray(meta.promptReferences) ? meta.promptReferences : [];
+    if (prs.length) {
+      for (const r of prs) {
+        const assetId = typeof r?.id === "string" ? r.id : typeof r?.assetId === "string" ? r.assetId : "";
+        const token = typeof r?.token === "string" ? r.token : null;
+        const role = typeof r?.role === "string" ? r.role : "element";
+        pushRef(assetId, role, token);
+      }
+    } else {
+      const chars = Array.isArray(meta.characterAssetIds) ? meta.characterAssetIds : [];
+      for (let i = 0; i < chars.length; i++) {
+        const role = i < 3 ? "character" : "element";
+        const token = i < 3 ? `@img${i + 1}` : null;
+        pushRef(chars[i], role, token);
+      }
+      if (typeof meta.backgroundAssetId === "string") pushRef(meta.backgroundAssetId, "background", "@bg");
+    }
+
+    if (typeof meta.styleAssetId === "string") pushRef(meta.styleAssetId, "style", "@style");
+
+    const resolvedAssets = [];
+    for (const r of refs) {
+      const url = await signedUrlForAssetId(r.assetId);
+      resolvedAssets.push({ ...r, url: url || null });
+    }
+
     return res.json({
       ok: true,
-      recipe: rRow.recipe_snapshot,
+      recipe,
       recipeHash: rRow.recipe_hash,
       createdAt: rRow.created_at ? new Date(rRow.created_at).getTime() : Date.now(),
+
+      // [{ assetId, role, token, url }]
+      resolvedAssets,
     });
   });
 

@@ -1,0 +1,3204 @@
+--- a/components/Layout.tsx
++++ b/components/Layout.tsx
+@@ -124,6 +124,20 @@
+     ? "bg-red-500 shadow-[0_0_14px_rgba(239,68,68,0.55)]"
+     : "bg-emerald-400 shadow-[0_0_14px_rgba(52,211,153,0.45)]";
+ 
++  // ✅ Sidebar colapsada: evita que se corte el número cuando hay 5+ dígitos.
++  // (Mostramos el número completo, ajustando solo el tamaño del texto.)
++  const creditsDigits = String(Math.max(0, Math.floor(availableCredits))).length;
++  const collapsedCreditsTextClass =
++    creditsDigits <= 4
++      ? "text-sm"
++      : creditsDigits === 5
++        ? "text-[13px]"
++        : creditsDigits === 6
++          ? "text-[12px]"
++          : creditsDigits === 7
++            ? "text-[11px]"
++            : "text-[10px]";
++
+   // Auto-collapse sidebar when clicking outside (matches your mock)
+   useEffect(() => {
+     function onPointerDown(ev: PointerEvent) {
+@@ -614,7 +628,7 @@
+                 window.localStorage.setItem("tales_account_tab", "plans");
+                 onNavigate(AppRoute.PAYWALL);
+               }}
+-              className={`w-full rounded-xl bg-white/5 hover:bg-white/10 transition-colors ${sidebarOpen ? "p-3" : "p-2"}`}
++              className={`w-full rounded-xl bg-white/5 hover:bg-white/10 transition-colors ${sidebarOpen ? "p-3" : "p-1.5"}`}
+               title="Manage plans and extra credits"
+             >
+             {sidebarOpen ? (
+@@ -633,9 +647,9 @@
+                 </div>
+               </div>
+             ) : (
+-              <div className="flex items-center justify-center gap-2">
++              <div className="flex items-center justify-center gap-1.5">
+                 <span className={`w-2.5 h-2.5 rounded-full animate-pulse ${creditsPulseClass}`} aria-hidden="true" />
+-                <span className="text-sm font-extrabold text-white">{availableCredits}</span>
++                <span className={`${collapsedCreditsTextClass} font-extrabold text-white tabular-nums leading-none`}>{availableCredits}</span>
+               </div>
+             )}
+           </button>
+--- a/services/communityStoreApi.ts
++++ b/services/communityStoreApi.ts
+@@ -1,177 +1,253 @@
+-import { supabase } from "./supabaseClient";
+-import { apiUrl } from "./apiBase";
+-
+-async function authHeaders(): Promise<Record<string, string>> {
+-  const { data } = await supabase.auth.getSession();
+-  const token = data.session?.access_token;
+-
+-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+-  if (token) headers["Authorization"] = `Bearer ${token}`;
+-  return headers;
+-}
+-
+-function parseJsonOrThrow(text: string): any {
+-  try {
+-    return JSON.parse(text);
+-  } catch {
+-    throw new Error(`El backend devolvió texto/HTML en vez de JSON. Inicio: ${text.slice(0, 80)}`);
+-  }
+-}
+-
+-export async function listCommunityListings(opts?: {
+-  limit?: number;
+-  offset?: number;
+-  sort?: "recent" | "top_liked" | "top_sold";
+-  media?: "all" | "image" | "video" | "workflow";
+-  seller?: string;
+-}) {
+-  const headers = await authHeaders();
+-
+-  const params = new URLSearchParams();
+-  if (opts?.limit != null) params.set("limit", String(opts.limit));
+-  if (opts?.offset != null) params.set("offset", String(opts.offset));
+-  if (opts?.sort) params.set("sort", opts.sort);
+-  if (opts?.media) params.set("media", opts.media);
+-  if (opts?.seller) params.set("seller", opts.seller);
+-
+-  const resp = await fetch(apiUrl(`/api/community-store/listings?${params.toString()}`), {
+-    method: "GET",
+-    headers,
+-  });
+-
+-  const raw = await resp.text();
+-  const data = parseJsonOrThrow(raw);
+-
+-  if (!resp.ok || data?.ok === false) {
+-    throw new Error(data?.error?.message || `List listings failed (${resp.status})`);
+-  }
+-
+-  return {
+-    items: Array.isArray(data.items) ? data.items : [],
+-    nextOffset: Number.isFinite(Number(data.nextOffset)) ? Number(data.nextOffset) : 0,
+-    hasMore: Boolean(data.hasMore),
+-  };
+-}
+-
+-export async function getCommunityListing(listingId: string) {
+-  const headers = await authHeaders();
+-  const resp = await fetch(apiUrl(`/api/community-store/listings/${listingId}`), { headers, method: "GET" });
+-  const raw = await resp.text();
+-  const data = parseJsonOrThrow(raw);
+-
+-  if (!resp.ok || data?.ok === false) {
+-    throw new Error(data?.error?.message || `Get listing failed (${resp.status})`);
+-  }
+-
+-  return data.item;
+-}
+-
+-export async function createCommunityListingFromAsset(input: {
+-  previewAssetId: string;
+-  name: string;
+-  priceCredits: number;
+-  description: string;
+-  listingKind?: "single" | "workflow";
+-}) {
+-  const headers = await authHeaders();
+-  const resp = await fetch(apiUrl(`/api/community-store/listings`), {
+-    method: "POST",
+-    headers,
+-    body: JSON.stringify({
+-      previewAssetId: input.previewAssetId,
+-      name: input.name,
+-      priceCredits: input.priceCredits,
+-      description: input.description,
+-      listingKind: input.listingKind || "single",
+-    }),
+-  });
+-
+-  const raw = await resp.text();
+-  const data = parseJsonOrThrow(raw);
+-
+-  if (!resp.ok || data?.ok === false) {
+-    throw new Error(data?.error?.message || `Create listing failed (${resp.status})`);
+-  }
+-
+-  return { listingId: String(data.listingId), reused: Boolean(data.reused) };
+-}
+-
+-export async function deleteCommunityListing(listingId: string) {
+-  return updateCommunityListing(listingId, { status: "deleted" });
+-}
+-
+-export async function updateCommunityListing(
+-  listingId: string,
+-  patch: { priceCredits?: number; description?: string; status?: "active" | "unlisted" | "deleted"; name?: string }
+-) {
+-  const headers = await authHeaders();
+-  const resp = await fetch(apiUrl(`/api/community-store/listings/${listingId}`), {
+-    method: "PATCH",
+-    headers,
+-    body: JSON.stringify(patch),
+-  });
+-
+-  const raw = await resp.text();
+-  const data = parseJsonOrThrow(raw);
+-
+-  if (!resp.ok || data?.ok === false) {
+-    throw new Error(data?.error?.message || `Update listing failed (${resp.status})`);
+-  }
+-
+-  return { ok: true };
+-}
+-
+-export async function purchaseCommunityListing(listingId: string, referralCode?: string | null) {
+-  const headers = await authHeaders();
+-
+-  // Idempotency key (browser moderno)
+-  const idem = typeof crypto !== "undefined" && "randomUUID" in crypto ? (crypto as any).randomUUID() : String(Date.now());
+-
+-  const resp = await fetch(apiUrl(`/api/community-store/purchase`), {
+-    method: "POST",
+-    headers: { ...headers, "x-idempotency-key": idem },
+-    body: JSON.stringify({ listingId, referralCode: referralCode || null }),
+-  });
+-
+-  const raw = await resp.text();
+-  const data = parseJsonOrThrow(raw);
+-
+-  if (!resp.ok || data?.ok === false) {
+-    const msg = data?.error?.message || `Purchase failed (${resp.status})`;
+-    const code = data?.error?.code;
+-    const details = data?.error?.details || null;
+-
+-    const err: any = new Error(msg);
+-    err.code = code;
+-    err.details = details;
+-
+-    if (code === "INSUFFICIENT_CREDITS" && details) {
+-      const { emitInsufficientCredits } = await import("./appEvents");
+-      emitInsufficientCredits(details);
+-    }
+-
+-    const { emitWalletRefresh } = await import("./appEvents");
+-    emitWalletRefresh();
+-    throw err;
+-  }
+-
+-  // ✅ Compra OK: refrescar wallet para que los créditos se descuenten al instante en toda la app.
+-  const { emitWalletRefresh } = await import("./appEvents");
+-  emitWalletRefresh();
+-
+-  return { purchaseId: data.purchaseId, paidCredits: Number(data.paidCredits) || 0 };
+-}
+-
+-export async function getCommunityListingRecipe(listingId: string) {
+-  const headers = await authHeaders();
+-  const resp = await fetch(apiUrl(`/api/community-store/listings/${listingId}/recipe`), { method: "GET", headers });
+-
+-  const raw = await resp.text();
+-  const data = parseJsonOrThrow(raw);
+-
+-  if (!resp.ok || data?.ok === false) {
+-    throw new Error(data?.error?.message || `Get recipe failed (${resp.status})`);
+-  }
+-
+-  return { recipe: data.recipe, recipeHash: data.recipeHash };
+-}
++import { supabase } from "./supabaseClient";
++import { apiUrl } from "./apiBase";
++import type { Comment } from "../types";
++
++async function authHeaders(): Promise<Record<string, string>> {
++  const { data } = await supabase.auth.getSession();
++  const token = data.session?.access_token;
++
++  const headers: Record<string, string> = { "Content-Type": "application/json" };
++  if (token) headers["Authorization"] = `Bearer ${token}`;
++  return headers;
++}
++
++function parseJsonOrThrow(text: string): any {
++  try {
++    return JSON.parse(text);
++  } catch {
++    throw new Error(`El backend devolvió texto/HTML en vez de JSON. Inicio: ${text.slice(0, 80)}`);
++  }
++}
++
++export async function listCommunityListings(opts?: {
++  limit?: number;
++  offset?: number;
++  sort?: "recent" | "top_liked" | "top_sold";
++  media?: "all" | "image" | "video" | "workflow";
++  seller?: string;
++}) {
++  const headers = await authHeaders();
++
++  const params = new URLSearchParams();
++  if (opts?.limit != null) params.set("limit", String(opts.limit));
++  if (opts?.offset != null) params.set("offset", String(opts.offset));
++  if (opts?.sort) params.set("sort", opts.sort);
++  if (opts?.media) params.set("media", opts.media);
++  if (opts?.seller) params.set("seller", opts.seller);
++
++  const resp = await fetch(apiUrl(`/api/community-store/listings?${params.toString()}`), {
++    method: "GET",
++    headers,
++  });
++
++  const raw = await resp.text();
++  const data = parseJsonOrThrow(raw);
++
++  if (!resp.ok || data?.ok === false) {
++    throw new Error(data?.error?.message || `List listings failed (${resp.status})`);
++  }
++
++  return {
++    items: Array.isArray(data.items) ? data.items : [],
++    nextOffset: Number.isFinite(Number(data.nextOffset)) ? Number(data.nextOffset) : 0,
++    hasMore: Boolean(data.hasMore),
++  };
++}
++
++export async function getCommunityListing(listingId: string) {
++  const headers = await authHeaders();
++  const resp = await fetch(apiUrl(`/api/community-store/listings/${listingId}`), { headers, method: "GET" });
++  const raw = await resp.text();
++  const data = parseJsonOrThrow(raw);
++
++  if (!resp.ok || data?.ok === false) {
++    throw new Error(data?.error?.message || `Get listing failed (${resp.status})`);
++  }
++
++  return data.item;
++}
++
++export async function createCommunityListingFromAsset(input: {
++  previewAssetId: string;
++  name: string;
++  priceCredits: number;
++  description: string;
++  listingKind?: "single" | "workflow";
++}) {
++  const headers = await authHeaders();
++  const resp = await fetch(apiUrl(`/api/community-store/listings`), {
++    method: "POST",
++    headers,
++    body: JSON.stringify({
++      previewAssetId: input.previewAssetId,
++      name: input.name,
++      priceCredits: input.priceCredits,
++      description: input.description,
++      listingKind: input.listingKind || "single",
++    }),
++  });
++
++  const raw = await resp.text();
++  const data = parseJsonOrThrow(raw);
++
++  if (!resp.ok || data?.ok === false) {
++    throw new Error(data?.error?.message || `Create listing failed (${resp.status})`);
++  }
++
++  return { listingId: String(data.listingId), reused: Boolean(data.reused) };
++}
++
++export async function deleteCommunityListing(listingId: string) {
++  return updateCommunityListing(listingId, { status: "deleted" });
++}
++
++export async function updateCommunityListing(
++  listingId: string,
++  patch: { priceCredits?: number; description?: string; status?: "active" | "unlisted" | "deleted"; name?: string }
++) {
++  const headers = await authHeaders();
++  const resp = await fetch(apiUrl(`/api/community-store/listings/${listingId}`), {
++    method: "PATCH",
++    headers,
++    body: JSON.stringify(patch),
++  });
++
++  const raw = await resp.text();
++  const data = parseJsonOrThrow(raw);
++
++  if (!resp.ok || data?.ok === false) {
++    throw new Error(data?.error?.message || `Update listing failed (${resp.status})`);
++  }
++
++  return { ok: true };
++}
++
++export async function purchaseCommunityListing(listingId: string, referralCode?: string | null) {
++  const headers = await authHeaders();
++
++  // Idempotency key (browser moderno)
++  const idem = typeof crypto !== "undefined" && "randomUUID" in crypto ? (crypto as any).randomUUID() : String(Date.now());
++
++  const resp = await fetch(apiUrl(`/api/community-store/purchase`), {
++    method: "POST",
++    headers: { ...headers, "x-idempotency-key": idem },
++    body: JSON.stringify({ listingId, referralCode: referralCode || null }),
++  });
++
++  const raw = await resp.text();
++  const data = parseJsonOrThrow(raw);
++
++  if (!resp.ok || data?.ok === false) {
++    const msg = data?.error?.message || `Purchase failed (${resp.status})`;
++    const code = data?.error?.code;
++    const details = data?.error?.details || null;
++
++    const err: any = new Error(msg);
++    err.code = code;
++    err.details = details;
++
++    if (code === "INSUFFICIENT_CREDITS" && details) {
++      const { emitInsufficientCredits } = await import("./appEvents");
++      emitInsufficientCredits(details);
++    }
++
++    const { emitWalletRefresh } = await import("./appEvents");
++    emitWalletRefresh();
++    throw err;
++  }
++
++  // ✅ Compra OK: refrescar wallet para que los créditos se descuenten al instante en toda la app.
++  const { emitWalletRefresh } = await import("./appEvents");
++  emitWalletRefresh();
++
++  return { purchaseId: data.purchaseId, paidCredits: Number(data.paidCredits) || 0 };
++}
++
++export async function getCommunityListingRecipe(listingId: string) {
++  const headers = await authHeaders();
++  const resp = await fetch(apiUrl(`/api/community-store/listings/${listingId}/recipe`), { method: "GET", headers });
++
++  const raw = await resp.text();
++  const data = parseJsonOrThrow(raw);
++
++  if (!resp.ok || data?.ok === false) {
++    throw new Error(data?.error?.message || `Get recipe failed (${resp.status})`);
++  }
++
++  return {
++    recipe: data.recipe,
++    recipeHash: data.recipeHash,
++    createdAt: data.createdAt,
++    resolvedAssets: Array.isArray(data.resolvedAssets) ? data.resolvedAssets : [],
++  };
++}
++
++export async function toggleCommunityListingLike(listingId: string): Promise<{ liked: boolean; likesCount: number }> {
++  const headers = await authHeaders();
++  const resp = await fetch(apiUrl(`/api/community-store/listings/${listingId}/like`), { method: "POST", headers });
++
++  const raw = await resp.text();
++  const data = parseJsonOrThrow(raw);
++
++  if (!resp.ok || data?.ok === false) {
++    throw new Error(data?.error?.message || `Like listing failed (${resp.status})`);
++  }
++
++  return {
++    liked: Boolean(data.liked),
++    likesCount: Number.isFinite(Number(data.likesCount)) ? Number(data.likesCount) : 0,
++  };
++}
++
++export async function listCommunityListingComments(
++  listingId: string,
++  opts?: { limit?: number; offset?: number }
++): Promise<{ comments: Comment[]; commentsCount: number }> {
++  const headers = await authHeaders();
++
++  const params = new URLSearchParams();
++  params.set("limit", String(opts?.limit ?? 50));
++  params.set("offset", String(opts?.offset ?? 0));
++
++  const resp = await fetch(apiUrl(`/api/community-store/listings/${listingId}/comments?${params.toString()}`), {
++    method: "GET",
++    headers,
++  });
++
++  const raw = await resp.text();
++  const data = parseJsonOrThrow(raw);
++
++  if (!resp.ok || data?.ok === false) {
++    throw new Error(data?.error?.message || `List comments failed (${resp.status})`);
++  }
++
++  return {
++    comments: Array.isArray(data.comments) ? data.comments : [],
++    commentsCount: Number.isFinite(Number(data.commentsCount)) ? Number(data.commentsCount) : 0,
++  };
++}
++
++export async function createCommunityListingComment(
++  listingId: string,
++  text: string
++): Promise<{ comment: Comment; commentsCount: number }> {
++  const headers = await authHeaders();
++
++  const resp = await fetch(apiUrl(`/api/community-store/listings/${listingId}/comments`), {
++    method: "POST",
++    headers,
++    body: JSON.stringify({ text }),
++  });
++
++  const raw = await resp.text();
++  const data = parseJsonOrThrow(raw);
++
++  if (!resp.ok || data?.ok === false) {
++    throw new Error(data?.error?.message || `Create comment failed (${resp.status})`);
++  }
++
++  return {
++    comment: data.comment,
++    commentsCount: Number.isFinite(Number(data.commentsCount)) ? Number(data.commentsCount) : 0,
++  };
++}
+--- a/server/routes/communityStore.js
++++ b/server/routes/communityStore.js
+@@ -1,742 +1,802 @@
+-import express from "express";
+-import { z } from "zod";
+-import { createHash, randomUUID } from "crypto";
+-import { checkUserRateLimit } from "../lib/userRateLimit.js";
+-import { evaluateCommentText, getUserModeration } from "../lib/moderation.js";
+-
+-function clampInt(n, min, max, fallback) {
+-  const x = Number(n);
+-  if (!Number.isFinite(x)) return fallback;
+-  const xi = Math.floor(x);
+-  return Math.min(Math.max(xi, min), max);
+-}
+-
+-function sortKeysDeep(value) {
+-  if (Array.isArray(value)) return value.map(sortKeysDeep);
+-  if (value && typeof value === "object") {
+-    const out = {};
+-    for (const k of Object.keys(value).sort()) out[k] = sortKeysDeep(value[k]);
+-    return out;
+-  }
+-  return value;
+-}
+-
+-function canonicalJson(value) {
+-  return JSON.stringify(sortKeysDeep(value));
+-}
+-
+-function sha256Hex(text) {
+-  return createHash("sha256").update(text).digest("hex");
+-}
+-
+-async function maybeUserFromReq(req, supabaseAdmin) {
+-  const auth = req.headers.authorization || "";
+-  const token = auth.startsWith("Bearer ") ? auth.slice(7) : null;
+-  if (!token) return { user: null };
+-  if (!supabaseAdmin) return { user: null };
+-
+-  try {
+-    const { data, error } = await supabaseAdmin.auth.getUser(token);
+-    if (error || !data?.user) return { user: null };
+-    return { user: data.user };
+-  } catch {
+-    return { user: null };
+-  }
+-}
+-
+-const CreateListingSchema = z.object({
+-  previewAssetId: z.string().uuid(),
+-  name: z.preprocess((v) => (typeof v === "string" ? v.trim() : ""), z.string().min(3).max(80)),
+-  priceCredits: z.preprocess((v) => Number(v), z.number().int().min(1).max(1000000)),
+-  description: z.preprocess((v) => (typeof v === "string" ? v.trim() : ""), z.string().max(800)).default(""),
+-  listingKind: z.enum(["single", "workflow"]).default("single"),
+-});
+-
+-
+-const UpdateListingSchema = z.object({
+-  name: z.preprocess((v) => (v === undefined ? undefined : String(v).trim()), z.string().min(3).max(80)).optional(),
+-  priceCredits: z.preprocess((v) => (v === undefined ? undefined : Number(v)), z.number().int().min(1).max(1000000)).optional(),
+-  description: z.preprocess((v) => (v === undefined ? undefined : String(v).trim()), z.string().max(800)).optional(),
+-  status: z.enum(["active", "unlisted", "deleted"]).optional(),
+-});
+-
+-
+-const PurchaseSchema = z.object({
+-  listingId: z.string().uuid(),
+-  referralCode: z.preprocess((v) => (v == null ? null : String(v).trim()), z.string().max(40).nullable()).optional(),
+-});
+-
+-const CreateCommentSchema = z.object({
+-  text: z.string().min(1).max(500),
+-});
+-
+-export function createCommunityStoreRouter(ctx) {
+-  const router = express.Router();
+-  const { supabaseAdmin, requireUser, signStoragePath } = ctx;
+-
+-  function err(res, status, code, message, details) {
+-    return res.status(status).json({ ok: false, error: { code, message, details: details || null } });
+-  }
+-
+-  async function signedUrlForAssetId(assetId) {
+-    const { data, error } = await supabaseAdmin
+-      .from("assets")
+-      .select("id, url, storage_path, type")
+-      .eq("id", assetId)
+-      .maybeSingle();
+-
+-    if (error || !data) return null;
+-
+-    if (data.url) return data.url;
+-    if (!data.storage_path) return null;
+-
+-    try {
+-      return await signStoragePath(data.storage_path, 60 * 60 * 6);
+-    } catch {
+-      return null;
+-    }
+-  }
+-
+-  // LISTINGS PUBLICOS (paginado)
+-  router.get("/community-store/listings", async (req, res) => {
+-    const limit = clampInt(req.query.limit, 1, 48, 12);
+-    const offset = clampInt(req.query.offset, 0, 1_000_000, 0);
+-
+-    const sort = typeof req.query.sort === "string" ? req.query.sort : "recent";
+-    const media = typeof req.query.media === "string" ? req.query.media : "all";
+-    const seller = typeof req.query.seller === "string" ? req.query.seller.trim() : "";
+-
+-    let q = supabaseAdmin
+-      .from("community_listings")
+-      .select(
+-        "id, name, seller_id, seller_username_snapshot, seller_verified_snapshot, listing_kind, media_tag, price_credits, description, status, preview_asset_id, created_at, likes_count, comments_count, sales_count"
+-      )
+-      .eq("status", "active");
+-
+-    if (media === "image" || media === "video" || media === "workflow") {
+-      q = q.eq("media_tag", media);
+-    }
+-
+-    if (seller) {
+-      q = q.ilike("seller_username_snapshot", `%${seller}%`);
+-    }
+-
+-    if (sort === "top_liked") {
+-      q = q.order("likes_count", { ascending: false }).order("created_at", { ascending: false });
+-    } else if (sort === "top_sold") {
+-      q = q.order("sales_count", { ascending: false }).order("created_at", { ascending: false });
+-    } else {
+-      q = q.order("created_at", { ascending: false });
+-    }
+-
+-    q = q.range(offset, offset + limit - 1);
+-
+-    const { data, error } = await q;
+-    if (error) return err(res, 500, "DB_QUERY_FAILED", error.message);
+-
+-    const rows = data || [];
+-    const listingIds = rows.map((r) => r.id).filter(Boolean);
+-
+-    const { user } = await maybeUserFromReq(req, supabaseAdmin);
+-
+-    const likedSet = new Set();
+-    if (user?.id && listingIds.length > 0) {
+-      const { data: likedRows } = await supabaseAdmin
+-        .from("community_listing_likes")
+-        .select("listing_id")
+-        .eq("user_id", user.id)
+-        .in("listing_id", listingIds);
+-
+-      for (const r of likedRows || []) likedSet.add(r.listing_id);
+-    }
+-
+-    // Signed preview URLs
+-    const previewUrlByListingId = new Map();
+-    for (const r of rows) {
+-      const url = r.preview_asset_id ? await signedUrlForAssetId(r.preview_asset_id) : null;
+-      previewUrlByListingId.set(r.id, url);
+-    }
+-
+-    const items = rows.map((r) => ({
+-      id: r.id,
+-      sellerId: r.seller_id,
+-      sellerUsername: r.seller_username_snapshot || "seller",
+-      sellerVerified: Boolean(r.seller_verified_snapshot),
+-
+-      listingKind: r.listing_kind,
+-      mediaTag: r.media_tag,
+-
+-      name: r.name || "",
+-      priceCredits: Number(r.price_credits) || 0,
+-      description: r.description || "",
+-
+-      status: r.status,
+-
+-      previewUrl: previewUrlByListingId.get(r.id) || null,
+-
+-      createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
+-
+-      likesCount: Number(r.likes_count) || 0,
+-      commentsCount: Number(r.comments_count) || 0,
+-      salesCount: Number(r.sales_count) || 0,
+-    }));
+-
+-    return res.json({
+-      ok: true,
+-      items,
+-      nextOffset: offset + items.length,
+-      hasMore: items.length === limit,
+-    });
+-  });
+-
+-  // DETALLE PUBLICO (sin receta)
+-  router.get("/community-store/listings/:id", async (req, res) => {
+-    const listingId = req.params.id;
+-
+-    const { data: row, error } = await supabaseAdmin
+-      .from("community_listings")
+-      .select(
+-        "id, name, seller_id, seller_username_snapshot, seller_verified_snapshot, listing_kind, media_tag, price_credits, description, status, preview_asset_id, created_at, likes_count, comments_count, sales_count"
+-      )
+-      .eq("id", listingId)
+-      .maybeSingle();
+-
+-    if (error) return err(res, 500, "DB_QUERY_FAILED", error.message);
+-    if (!row) return err(res, 404, "NOT_FOUND", "Listing no encontrado.");
+-
+-    if (row.status !== "active") {
+-      // No reveles unlisted/deleted al publico
+-      return err(res, 404, "NOT_FOUND", "Listing no encontrado.");
+-    }
+-
+-    const { user } = await maybeUserFromReq(req, supabaseAdmin);
+-
+-    let purchasedByMe = false;
+-    if (user?.id && row.seller_id !== user.id) {
+-      const { data: purchaseRow } = await supabaseAdmin
+-        .from("community_purchases")
+-        .select("id")
+-        .eq("listing_id", listingId)
+-        .eq("buyer_id", user.id)
+-        .eq("status", "completed")
+-        .limit(1)
+-        .maybeSingle();
+-
+-      purchasedByMe = Boolean(purchaseRow?.id);
+-    }
+-
+-    const previewUrl = row.preview_asset_id ? await signedUrlForAssetId(row.preview_asset_id) : null;
+-
+-    return res.json({
+-      ok: true,
+-      item: {
+-        id: row.id,
+-        sellerId: row.seller_id,
+-        sellerUsername: row.seller_username_snapshot || "seller",
+-        sellerVerified: Boolean(row.seller_verified_snapshot),
+-
+-        listingKind: row.listing_kind,
+-        mediaTag: row.media_tag,
+-
+-        name: row.name || "",
+-        priceCredits: Number(row.price_credits) || 0,
+-        description: row.description || "",
+-
+-        status: row.status,
+-
+-        previewUrl,
+-
+-        createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
+-
+-        likesCount: Number(row.likes_count) || 0,
+-        commentsCount: Number(row.comments_count) || 0,
+-        salesCount: Number(row.sales_count) || 0,
+-
+-        likedByMe: false,
+-        ownedByMe: user?.id ? row.seller_id === user.id : false,
+-        purchasedByMe,
+-      },
+-    });
+-  });
+-
+-  // CREAR LISTING (SELL)
+-  router.post("/community-store/listings", async (req, res) => {
+-    const { user, error } = await requireUser(req);
+-    if (error) return res.status(401).json({ ok: false, error });
+-
+-    // ✅ Solo Pro/Partner/Business pueden vender
+-    const active = await ctx.billing.getActiveSubscription(user.id);
+-    if (active.error) return err(res, 500, active.error.code, active.error.message, active.error.details);
+-    if (!active.subscription || !active.subscription.canSell) {
+-      return err(res, 403, "PLAN_REQUIRED_PRO", "Necesitas plan Pro o superior para publicar y vender.");
+-    }
+-
+-    let body;
+-    try {
+-      body = CreateListingSchema.parse(req.body);
+-    } catch (e) {
+-      return err(res, 400, "BAD_REQUEST", e?.message || "Payload inválido.");
+-    }
+-
+-        const { previewAssetId, name, priceCredits, description, listingKind } = body;
+-
+-    const { data: assetRow, error: aErr } = await supabaseAdmin
+-      .from("assets")
+-      .select("id, owner_id, type, tool, prompt, meta, created_at")
+-      .eq("id", previewAssetId)
+-      .maybeSingle();
+-
+-    if (aErr) return err(res, 500, "DB_QUERY_FAILED", aErr.message);
+-    if (!assetRow) return err(res, 404, "ASSET_NOT_FOUND", "Asset no encontrado.");
+-    if (assetRow.owner_id !== user.id) return err(res, 403, "FORBIDDEN", "Ese asset no es tuyo.");
+-
+-    // Si ya existe listing para ese asset (del mismo seller), reusalo y solo actualiza precio/desc/status
+-    const { data: existing } = await supabaseAdmin
+-      .from("community_listings")
+-      .select("id, status")
+-      .eq("seller_id", user.id)
+-      .eq("preview_asset_id", previewAssetId)
+-      .neq("status", "deleted")
+-      .order("created_at", { ascending: false })
+-      .limit(1)
+-      .maybeSingle();
+-
+-    if (existing?.id) {
+-      const { error: upErr } = await supabaseAdmin
+-        .from("community_listings")
+-        .update({
+-          name,
+-          price_credits: priceCredits,
+-          description,
+-          status: "active",
+-        })
+-        .eq("id", existing.id)
+-        .eq("seller_id", user.id);
+-
+-      if (upErr) {
+-        if (String(upErr.code) === "23505") return err(res, 409, "NAME_TAKEN", "Ya existe un listing con ese nombre. Elige otro.");
+-        return err(res, 500, "DB_UPDATE_FAILED", upErr.message);
+-      }
+-
+-      return res.json({ ok: true, listingId: existing.id, reused: true });
+-    }
+-
+-    // Snapshot seller username
+-    const { data: profileRow } = await supabaseAdmin.from("profiles").select("username").eq("id", user.id).maybeSingle();
+-    const sellerUsername = profileRow?.username || (user.email ? user.email.split("@")[0] : "seller");
+-
+-    const mediaTag = listingKind === "workflow" ? "workflow" : assetRow.type === "video" ? "video" : "image";
+-
+-    const { data: insRows, error: insErr } = await supabaseAdmin
+-      .from("community_listings")
+-      .insert({
+-        seller_id: user.id,
+-        seller_username_snapshot: sellerUsername,
+-        seller_verified_snapshot: false,
+-        listing_kind: listingKind,
+-        media_tag: mediaTag,
+-        name,
+-        price_credits: priceCredits,
+-        description,
+-        status: "active",
+-        preview_asset_id: previewAssetId,
+-        listed_at: new Date().toISOString(),
+-      })
+-      .select("id")
+-      .limit(1);
+-
+-    if (insErr) return err(res, 500, "DB_INSERT_FAILED", insErr.message);
+-    const listingId = insRows?.[0]?.id;
+-    if (!listingId) return err(res, 500, "DB_INSERT_FAILED", "No se pudo crear listing.");
+-
+-    // Receta snapshot + hash (inmutable)
+-    const recipeSnapshot = {
+-      version: 1,
+-      kind: "single",
+-      createdAt: Date.now(),
+-      sourceAsset: {
+-        id: assetRow.id,
+-        type: assetRow.type,
+-        tool: assetRow.tool || null,
+-        prompt: assetRow.prompt || null,
+-        meta: assetRow.meta || {},
+-        createdAt: assetRow.created_at || null,
+-      },
+-    };
+-
+-    const hash = sha256Hex(canonicalJson(recipeSnapshot));
+-
+-    const { error: recErr } = await supabaseAdmin.from("community_listing_recipes").insert({
+-      listing_id: listingId,
+-      seller_id: user.id,
+-      recipe_snapshot: recipeSnapshot,
+-      recipe_hash: hash,
+-    });
+-
+-    if (recErr) return err(res, 500, "DB_INSERT_FAILED", recErr.message);
+-
+-    return res.json({ ok: true, listingId, reused: false });
+-  });
+-
+-  // UPDATE LISTING (precio/descripcion/status)
+-  router.patch("/community-store/listings/:id", async (req, res) => {
+-    const { user, error } = await requireUser(req);
+-    if (error) return res.status(401).json({ ok: false, error });
+-
+-    const listingId = req.params.id;
+-
+-    let body;
+-    try {
+-      body = UpdateListingSchema.parse(req.body);
+-    } catch (e) {
+-      return err(res, 400, "BAD_REQUEST", e?.message || "Payload inválido.");
+-    }
+-
+-    const patch = {};
+-    if (body.name != null) patch.name = body.name;
+-    if (body.priceCredits != null) patch.price_credits = body.priceCredits;
+-    if (body.description != null) patch.description = body.description;
+-    if (body.status != null) {
+-      patch.status = body.status;
+-      if (body.status === "active") patch.listed_at = new Date().toISOString();
+-      if (body.status === "deleted") patch.listed_at = null;
+-    }
+-
+-    const { error: upErr } = await supabaseAdmin
+-      .from("community_listings")
+-      .update(patch)
+-      .eq("id", listingId)
+-      .eq("seller_id", user.id);
+-
+-    if (upErr) return err(res, 500, "DB_UPDATE_FAILED", upErr.message);
+-
+-    return res.json({ ok: true });
+-  });
+-
+-  // LIKE toggle
+-  router.post("/community-store/listings/:id/like", async (req, res) => {
+-    const { user, error } = await requireUser(req);
+-    if (error) return res.status(401).json({ ok: false, error });
+-
+-    const listingId = req.params.id;
+-
+-    // asegurar que existe y esta activo
+-    const { data: lrow, error: lerr } = await supabaseAdmin
+-      .from("community_listings")
+-      .select("id, status")
+-      .eq("id", listingId)
+-      .maybeSingle();
+-
+-    if (lerr) return err(res, 500, "DB_QUERY_FAILED", lerr.message);
+-    if (!lrow || lrow.status !== "active") return err(res, 404, "NOT_FOUND", "Listing no encontrado.");
+-
+-    const { data: existing, error: exErr } = await supabaseAdmin
+-      .from("community_listing_likes")
+-      .select("id")
+-      .eq("listing_id", listingId)
+-      .eq("user_id", user.id)
+-      .maybeSingle();
+-
+-    if (exErr) return err(res, 500, "DB_QUERY_FAILED", exErr.message);
+-
+-    let liked = false;
+-
+-    if (existing?.id) {
+-      const { error: delErr } = await supabaseAdmin.from("community_listing_likes").delete().eq("id", existing.id);
+-      if (delErr) return err(res, 500, "DB_DELETE_FAILED", delErr.message);
+-      liked = false;
+-    } else {
+-      const { error: insErr } = await supabaseAdmin
+-        .from("community_listing_likes")
+-        .insert({ listing_id: listingId, user_id: user.id });
+-
+-      if (insErr) {
+-        if (String(insErr.code) === "23505") liked = true;
+-        else return err(res, 500, "DB_INSERT_FAILED", insErr.message);
+-      } else {
+-        liked = true;
+-      }
+-    }
+-
+-    const { data: cntRow } = await supabaseAdmin
+-      .from("community_listings")
+-      .select("likes_count")
+-      .eq("id", listingId)
+-      .maybeSingle();
+-
+-    const likesCount = Number.isFinite(Number(cntRow?.likes_count)) ? Number(cntRow.likes_count) : 0;
+-
+-    return res.json({ ok: true, liked, likesCount });
+-  });
+-
+-  // COMMENTS list
+-  router.get("/community-store/listings/:id/comments", async (req, res) => {
+-    const listingId = req.params.id;
+-
+-    const limit = clampInt(req.query.limit, 1, 200, 50);
+-    const offset = clampInt(req.query.offset, 0, 1_000_000, 0);
+-
+-    const { data: lrow, error: lerr } = await supabaseAdmin
+-      .from("community_listings")
+-      .select("id, status")
+-      .eq("id", listingId)
+-      .maybeSingle();
+-
+-    if (lerr) return err(res, 500, "DB_QUERY_FAILED", lerr.message);
+-    if (!lrow || lrow.status !== "active") return err(res, 404, "NOT_FOUND", "Listing no encontrado.");
+-
+-    const { user } = await maybeUserFromReq(req, supabaseAdmin);
+-
+-    const rl = await checkUserRateLimit({
+-      userId: user?.id || "anon",
+-      scope: "listing_comments_list",
+-      limit: 120,
+-      windowSeconds: 60,
+-    });
+-
+-    if (!rl.allowed) {
+-      return err(res, 429, "RATE_LIMITED", "Demasiadas solicitudes. Espera un momento.", {
+-        retryAfterSeconds: rl.retryAfterSeconds,
+-      });
+-    }
+-
+-    let q = supabaseAdmin
+-      .from("community_listing_comments")
+-      .select("id, user_id, text, created_at, is_shadowed", { count: "exact" })
+-      .eq("listing_id", listingId)
+-      .order("created_at", { ascending: true })
+-      .range(offset, offset + limit - 1);
+-
+-    if (user?.id) {
+-      q = q.or(`is_shadowed.eq.false,user_id.eq.${user.id}`);
+-    } else {
+-      q = q.eq("is_shadowed", false);
+-    }
+-
+-    const { data: rows, error, count } = await q;
+-    if (error) return err(res, 500, "DB_QUERY_FAILED", error.message);
+-
+-    const commentRows = rows || [];
+-    const userIds = Array.from(new Set(commentRows.map((r) => r.user_id).filter(Boolean)));
+-
+-    const usernameById = new Map();
+-    if (userIds.length > 0) {
+-      const { data: profileRows } = await supabaseAdmin.from("profiles").select("id, username").in("id", userIds);
+-      for (const p of profileRows || []) usernameById.set(p.id, p.username);
+-    }
+-
+-    const comments = commentRows.map((r) => ({
+-      id: r.id,
+-      userId: r.user_id,
+-      username: usernameById.get(r.user_id) || `User_${String(r.user_id).slice(0, 4)}`,
+-      text: r.text,
+-      timestamp: new Date(r.created_at).getTime(),
+-      isShadowed: Boolean(r.is_shadowed),
+-    }));
+-
+-    const commentsCount = Number.isFinite(Number(count)) ? Number(count) : comments.length;
+-
+-    return res.json({ ok: true, comments, commentsCount });
+-  });
+-
+-  // COMMENT create
+-  router.post("/community-store/listings/:id/comments", async (req, res) => {
+-    const { user, error } = await requireUser(req);
+-    if (error) return res.status(401).json({ ok: false, error });
+-
+-    const listingId = req.params.id;
+-
+-    const { data: lrow, error: lerr } = await supabaseAdmin
+-      .from("community_listings")
+-      .select("id, status")
+-      .eq("id", listingId)
+-      .maybeSingle();
+-
+-    if (lerr) return err(res, 500, "DB_QUERY_FAILED", lerr.message);
+-    if (!lrow || lrow.status !== "active") return err(res, 404, "NOT_FOUND", "Listing no encontrado.");
+-
+-    let body;
+-    try {
+-      body = CreateCommentSchema.parse(req.body);
+-    } catch (e) {
+-      return err(res, 400, "BAD_REQUEST", e?.message || "Comentario inválido.");
+-    }
+-
+-    const rl = await checkUserRateLimit({
+-      userId: user.id,
+-      scope: "listing_comment_create",
+-      limit: 8,
+-      windowSeconds: 30,
+-    });
+-
+-    if (!rl.allowed) {
+-      return err(res, 429, "RATE_LIMITED", "Demasiados comentarios. Espera y vuelve a intentar.", {
+-        retryAfterSeconds: rl.retryAfterSeconds,
+-      });
+-    }
+-
+-    const moderation = await getUserModeration(supabaseAdmin, user.id);
+-    const textEval = evaluateCommentText(body.text);
+-    const isShadowed = Boolean(moderation.shadowBanned) || Boolean(textEval.shouldShadow);
+-
+-    const { data: inserted, error: insErr } = await supabaseAdmin
+-      .from("community_listing_comments")
+-      .insert({
+-        listing_id: listingId,
+-        user_id: user.id,
+-        text: body.text,
+-        is_shadowed: isShadowed,
+-      })
+-      .select("id, user_id, text, created_at, is_shadowed")
+-      .limit(1)
+-      .maybeSingle();
+-
+-    if (insErr) return err(res, 500, "DB_INSERT_FAILED", insErr.message);
+-    if (!inserted) return err(res, 500, "DB_INSERT_FAILED", "No se pudo insertar comentario.");
+-
+-    const { data: profileRow } = await supabaseAdmin.from("profiles").select("username").eq("id", user.id).maybeSingle();
+-    const username = profileRow?.username || (user.email ? user.email.split("@")[0] : "user");
+-
+-    const { data: cntRow } = await supabaseAdmin
+-      .from("community_listings")
+-      .select("comments_count")
+-      .eq("id", listingId)
+-      .maybeSingle();
+-
+-    const commentsCount = Number.isFinite(Number(cntRow?.comments_count)) ? Number(cntRow.comments_count) : 0;
+-
+-    return res.json({
+-      ok: true,
+-      comment: {
+-        id: inserted.id,
+-        userId: inserted.user_id,
+-        username,
+-        text: inserted.text,
+-        timestamp: new Date(inserted.created_at).getTime(),
+-        isShadowed: Boolean(inserted.is_shadowed),
+-      },
+-      commentsCount,
+-    });
+-  });
+-
+-  // PURCHASE (usa funcion SQL atomica)
+-  router.post("/community-store/purchase", async (req, res) => {
+-    const { user, error } = await requireUser(req);
+-    if (error) return res.status(401).json({ ok: false, error });
+-
+-    let body;
+-    try {
+-      body = PurchaseSchema.parse(req.body);
+-    } catch (e) {
+-      return err(res, 400, "BAD_REQUEST", e?.message || "Payload inválido.");
+-    }
+-
+-    const idempotencyKey = req.headers["x-idempotency-key"]
+-      ? String(req.headers["x-idempotency-key"])
+-      : randomUUID();
+-
+-    const { data, error: rpcErr } = await supabaseAdmin.rpc("community_purchase_listing", {
+-      p_listing_id: body.listingId,
+-      p_buyer_id: user.id,
+-      p_referral_code: body.referralCode || null,
+-      p_idempotency_key: idempotencyKey,
+-    });
+-
+-    if (rpcErr) {
+-      const msg = rpcErr.message || "Compra fallida.";
+-      if (msg.includes("INSUFFICIENT_CREDITS")) {
+-      let need = 0;
+-      let have = 0;
+-
+-      try {
+-        const { data: lrow } = await supabaseAdmin
+-          .from("community_listings")
+-          .select("price_credits")
+-          .eq("id", body.listingId)
+-          .maybeSingle();
+-
+-        need = Number(lrow?.price_credits) || 0;
+-
+-        const { data: bal } = await supabaseAdmin
+-          .from("wallet_balances")
+-          .select("gen_plan_credits, gen_topup_credits, gen_bonus_credits")
+-          .eq("user_id", user.id)
+-          .maybeSingle();
+-
+-        have =
+-          (Number(bal?.gen_plan_credits) || 0) +
+-          (Number(bal?.gen_topup_credits) || 0) +
+-          (Number(bal?.gen_bonus_credits) || 0);
+-      } catch {}
+-
+-      const deficit = Math.max(0, need - have);
+-      return err(res, 400, "INSUFFICIENT_CREDITS", "No tienes créditos suficientes.", { need, have, deficit });
+-    }
+-      if (msg.includes("ALREADY_OWNED")) return err(res, 400, "ALREADY_OWNED", "Ya compraste este listing.");
+-      if (msg.includes("CANNOT_BUY_OWN_LISTING")) return err(res, 400, "CANNOT_BUY_OWN_LISTING", "No puedes comprar tu propio listing.");
+-      return err(res, 500, "PURCHASE_FAILED", msg);
+-    }
+-
+-    const row = Array.isArray(data) ? data[0] : data;
+-    return res.json({
+-      ok: true,
+-      purchaseId: row?.purchase_id || null,
+-      paidCredits: Number(row?.paid_credits) || 0,
+-      idempotencyKey,
+-    });
+-  });
+-
+-  // RECIPE (solo comprador o vendedor)
+-  router.get("/community-store/listings/:id/recipe", async (req, res) => {
+-    const { user, error } = await requireUser(req);
+-    if (error) return res.status(401).json({ ok: false, error });
+-
+-    const listingId = req.params.id;
+-
+-    const { data: listingRow, error: lerr } = await supabaseAdmin
+-      .from("community_listings")
+-      .select("id, seller_id, status")
+-      .eq("id", listingId)
+-      .maybeSingle();
+-
+-    if (lerr) return err(res, 500, "DB_QUERY_FAILED", lerr.message);
+-    if (!listingRow) return err(res, 404, "NOT_FOUND", "Listing no encontrado.");
+-
+-    const isSeller = listingRow.seller_id === user.id;
+-
+-    let canView = isSeller;
+-    if (!canView) {
+-      const { data: pRow } = await supabaseAdmin
+-        .from("community_purchases")
+-        .select("id")
+-        .eq("listing_id", listingId)
+-        .eq("buyer_id", user.id)
+-        .eq("status", "completed")
+-        .limit(1)
+-        .maybeSingle();
+-
+-      canView = Boolean(pRow?.id);
+-    }
+-
+-    if (!canView) return err(res, 403, "FORBIDDEN", "Debes comprar para ver la receta.");
+-
+-    const { data: rRow, error: rErr } = await supabaseAdmin
+-      .from("community_listing_recipes")
+-      .select("recipe_snapshot, recipe_hash, created_at")
+-      .eq("listing_id", listingId)
+-      .limit(1)
+-      .maybeSingle();
+-
+-    if (rErr) return err(res, 500, "DB_QUERY_FAILED", rErr.message);
+-    if (!rRow) return err(res, 500, "RECIPE_MISSING", "La receta no existe (error interno).");
+-
+-    return res.json({
+-      ok: true,
+-      recipe: rRow.recipe_snapshot,
+-      recipeHash: rRow.recipe_hash,
+-      createdAt: rRow.created_at ? new Date(rRow.created_at).getTime() : Date.now(),
+-    });
+-  });
+-
+-  return router;
+-}
++import express from "express";
++import { z } from "zod";
++import { createHash, randomUUID } from "crypto";
++import { checkUserRateLimit } from "../lib/userRateLimit.js";
++import { evaluateCommentText, getUserModeration } from "../lib/moderation.js";
++
++function clampInt(n, min, max, fallback) {
++  const x = Number(n);
++  if (!Number.isFinite(x)) return fallback;
++  const xi = Math.floor(x);
++  return Math.min(Math.max(xi, min), max);
++}
++
++function sortKeysDeep(value) {
++  if (Array.isArray(value)) return value.map(sortKeysDeep);
++  if (value && typeof value === "object") {
++    const out = {};
++    for (const k of Object.keys(value).sort()) out[k] = sortKeysDeep(value[k]);
++    return out;
++  }
++  return value;
++}
++
++function canonicalJson(value) {
++  return JSON.stringify(sortKeysDeep(value));
++}
++
++function sha256Hex(text) {
++  return createHash("sha256").update(text).digest("hex");
++}
++
++async function maybeUserFromReq(req, supabaseAdmin) {
++  const auth = req.headers.authorization || "";
++  const token = auth.startsWith("Bearer ") ? auth.slice(7) : null;
++  if (!token) return { user: null };
++  if (!supabaseAdmin) return { user: null };
++
++  try {
++    const { data, error } = await supabaseAdmin.auth.getUser(token);
++    if (error || !data?.user) return { user: null };
++    return { user: data.user };
++  } catch {
++    return { user: null };
++  }
++}
++
++const CreateListingSchema = z.object({
++  previewAssetId: z.string().uuid(),
++  name: z.preprocess((v) => (typeof v === "string" ? v.trim() : ""), z.string().min(3).max(80)),
++  priceCredits: z.preprocess((v) => Number(v), z.number().int().min(1).max(1000000)),
++  description: z.preprocess((v) => (typeof v === "string" ? v.trim() : ""), z.string().max(800)).default(""),
++  listingKind: z.enum(["single", "workflow"]).default("single"),
++});
++
++
++const UpdateListingSchema = z.object({
++  name: z.preprocess((v) => (v === undefined ? undefined : String(v).trim()), z.string().min(3).max(80)).optional(),
++  priceCredits: z.preprocess((v) => (v === undefined ? undefined : Number(v)), z.number().int().min(1).max(1000000)).optional(),
++  description: z.preprocess((v) => (v === undefined ? undefined : String(v).trim()), z.string().max(800)).optional(),
++  status: z.enum(["active", "unlisted", "deleted"]).optional(),
++});
++
++
++const PurchaseSchema = z.object({
++  listingId: z.string().uuid(),
++  referralCode: z.preprocess((v) => (v == null ? null : String(v).trim()), z.string().max(40).nullable()).optional(),
++});
++
++const CreateCommentSchema = z.object({
++  text: z.string().min(1).max(500),
++});
++
++export function createCommunityStoreRouter(ctx) {
++  const router = express.Router();
++  const { supabaseAdmin, requireUser, signStoragePath } = ctx;
++
++  function err(res, status, code, message, details) {
++    return res.status(status).json({ ok: false, error: { code, message, details: details || null } });
++  }
++
++  async function signedUrlForAssetId(assetId) {
++    const { data, error } = await supabaseAdmin
++      .from("assets")
++      .select("id, url, storage_path, type")
++      .eq("id", assetId)
++      .maybeSingle();
++
++    if (error || !data) return null;
++
++    if (data.url) return data.url;
++    if (!data.storage_path) return null;
++
++    try {
++      return await signStoragePath(data.storage_path, 60 * 60 * 6);
++    } catch {
++      return null;
++    }
++  }
++
++  // LISTINGS PUBLICOS (paginado)
++  router.get("/community-store/listings", async (req, res) => {
++    const limit = clampInt(req.query.limit, 1, 48, 12);
++    const offset = clampInt(req.query.offset, 0, 1_000_000, 0);
++
++    const sort = typeof req.query.sort === "string" ? req.query.sort : "recent";
++    const media = typeof req.query.media === "string" ? req.query.media : "all";
++    const seller = typeof req.query.seller === "string" ? req.query.seller.trim() : "";
++
++    let q = supabaseAdmin
++      .from("community_listings")
++      .select(
++        "id, name, seller_id, seller_username_snapshot, seller_verified_snapshot, listing_kind, media_tag, price_credits, description, status, preview_asset_id, created_at, likes_count, comments_count, sales_count"
++      )
++      .eq("status", "active");
++
++    if (media === "image" || media === "video" || media === "workflow") {
++      q = q.eq("media_tag", media);
++    }
++
++    if (seller) {
++      q = q.ilike("seller_username_snapshot", `%${seller}%`);
++    }
++
++    if (sort === "top_liked") {
++      q = q.order("likes_count", { ascending: false }).order("created_at", { ascending: false });
++    } else if (sort === "top_sold") {
++      q = q.order("sales_count", { ascending: false }).order("created_at", { ascending: false });
++    } else {
++      q = q.order("created_at", { ascending: false });
++    }
++
++    q = q.range(offset, offset + limit - 1);
++
++    const { data, error } = await q;
++    if (error) return err(res, 500, "DB_QUERY_FAILED", error.message);
++
++    const rows = data || [];
++    const listingIds = rows.map((r) => r.id).filter(Boolean);
++
++    const { user } = await maybeUserFromReq(req, supabaseAdmin);
++
++    const likedSet = new Set();
++    if (user?.id && listingIds.length > 0) {
++      const { data: likedRows } = await supabaseAdmin
++        .from("community_listing_likes")
++        .select("listing_id")
++        .eq("user_id", user.id)
++        .in("listing_id", listingIds);
++
++      for (const r of likedRows || []) likedSet.add(r.listing_id);
++    }
++
++    // Signed preview URLs
++    const previewUrlByListingId = new Map();
++    for (const r of rows) {
++      const url = r.preview_asset_id ? await signedUrlForAssetId(r.preview_asset_id) : null;
++      previewUrlByListingId.set(r.id, url);
++    }
++
++    const items = rows.map((r) => ({
++      id: r.id,
++      sellerId: r.seller_id,
++      sellerUsername: r.seller_username_snapshot || "seller",
++      sellerVerified: Boolean(r.seller_verified_snapshot),
++
++      listingKind: r.listing_kind,
++      mediaTag: r.media_tag,
++
++      name: r.name || "",
++      priceCredits: Number(r.price_credits) || 0,
++      description: r.description || "",
++
++      status: r.status,
++
++      previewUrl: previewUrlByListingId.get(r.id) || null,
++
++      createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
++
++      likesCount: Number(r.likes_count) || 0,
++      commentsCount: Number(r.comments_count) || 0,
++      salesCount: Number(r.sales_count) || 0,
++
++      // ✅ Feed: estado de like del usuario (si está logeado)
++      likedByMe: user?.id ? likedSet.has(r.id) : false,
++    }));
++
++    return res.json({
++      ok: true,
++      items,
++      nextOffset: offset + items.length,
++      hasMore: items.length === limit,
++    });
++  });
++
++  // DETALLE PUBLICO (sin receta)
++  router.get("/community-store/listings/:id", async (req, res) => {
++    const listingId = req.params.id;
++
++    const { data: row, error } = await supabaseAdmin
++      .from("community_listings")
++      .select(
++        "id, name, seller_id, seller_username_snapshot, seller_verified_snapshot, listing_kind, media_tag, price_credits, description, status, preview_asset_id, created_at, likes_count, comments_count, sales_count"
++      )
++      .eq("id", listingId)
++      .maybeSingle();
++
++    if (error) return err(res, 500, "DB_QUERY_FAILED", error.message);
++    if (!row) return err(res, 404, "NOT_FOUND", "Listing no encontrado.");
++
++    if (row.status !== "active") {
++      // No reveles unlisted/deleted al publico
++      return err(res, 404, "NOT_FOUND", "Listing no encontrado.");
++    }
++
++    const { user } = await maybeUserFromReq(req, supabaseAdmin);
++
++    let purchasedByMe = false;
++    if (user?.id && row.seller_id !== user.id) {
++      const { data: purchaseRow } = await supabaseAdmin
++        .from("community_purchases")
++        .select("id")
++        .eq("listing_id", listingId)
++        .eq("buyer_id", user.id)
++        .eq("status", "completed")
++        .limit(1)
++        .maybeSingle();
++
++      purchasedByMe = Boolean(purchaseRow?.id);
++    }
++
++    const previewUrl = row.preview_asset_id ? await signedUrlForAssetId(row.preview_asset_id) : null;
++
++    // ✅ likedByMe
++    let likedByMe = false;
++    if (user?.id) {
++      const { data: likeRow } = await supabaseAdmin
++        .from("community_listing_likes")
++        .select("id")
++        .eq("listing_id", listingId)
++        .eq("user_id", user.id)
++        .limit(1)
++        .maybeSingle();
++      likedByMe = Boolean(likeRow?.id);
++    }
++
++    return res.json({
++      ok: true,
++      item: {
++        id: row.id,
++        sellerId: row.seller_id,
++        sellerUsername: row.seller_username_snapshot || "seller",
++        sellerVerified: Boolean(row.seller_verified_snapshot),
++
++        listingKind: row.listing_kind,
++        mediaTag: row.media_tag,
++
++        name: row.name || "",
++        priceCredits: Number(row.price_credits) || 0,
++        description: row.description || "",
++
++        status: row.status,
++
++        previewUrl,
++
++        createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
++
++        likesCount: Number(row.likes_count) || 0,
++        commentsCount: Number(row.comments_count) || 0,
++        salesCount: Number(row.sales_count) || 0,
++
++        likedByMe,
++        ownedByMe: user?.id ? row.seller_id === user.id : false,
++        purchasedByMe,
++      },
++    });
++  });
++
++  // CREAR LISTING (SELL)
++  router.post("/community-store/listings", async (req, res) => {
++    const { user, error } = await requireUser(req);
++    if (error) return res.status(401).json({ ok: false, error });
++
++    // ✅ Solo Pro/Partner/Business pueden vender
++    const active = await ctx.billing.getActiveSubscription(user.id);
++    if (active.error) return err(res, 500, active.error.code, active.error.message, active.error.details);
++    if (!active.subscription || !active.subscription.canSell) {
++      return err(res, 403, "PLAN_REQUIRED_PRO", "Necesitas plan Pro o superior para publicar y vender.");
++    }
++
++    let body;
++    try {
++      body = CreateListingSchema.parse(req.body);
++    } catch (e) {
++      return err(res, 400, "BAD_REQUEST", e?.message || "Payload inválido.");
++    }
++
++        const { previewAssetId, name, priceCredits, description, listingKind } = body;
++
++    const { data: assetRow, error: aErr } = await supabaseAdmin
++      .from("assets")
++      .select("id, owner_id, type, tool, prompt, meta, created_at")
++      .eq("id", previewAssetId)
++      .maybeSingle();
++
++    if (aErr) return err(res, 500, "DB_QUERY_FAILED", aErr.message);
++    if (!assetRow) return err(res, 404, "ASSET_NOT_FOUND", "Asset no encontrado.");
++    if (assetRow.owner_id !== user.id) return err(res, 403, "FORBIDDEN", "Ese asset no es tuyo.");
++
++    // Si ya existe listing para ese asset (del mismo seller), reusalo y solo actualiza precio/desc/status
++    const { data: existing } = await supabaseAdmin
++      .from("community_listings")
++      .select("id, status")
++      .eq("seller_id", user.id)
++      .eq("preview_asset_id", previewAssetId)
++      .neq("status", "deleted")
++      .order("created_at", { ascending: false })
++      .limit(1)
++      .maybeSingle();
++
++    if (existing?.id) {
++      const { error: upErr } = await supabaseAdmin
++        .from("community_listings")
++        .update({
++          name,
++          price_credits: priceCredits,
++          description,
++          status: "active",
++        })
++        .eq("id", existing.id)
++        .eq("seller_id", user.id);
++
++      if (upErr) {
++        if (String(upErr.code) === "23505") return err(res, 409, "NAME_TAKEN", "Ya existe un listing con ese nombre. Elige otro.");
++        return err(res, 500, "DB_UPDATE_FAILED", upErr.message);
++      }
++
++      return res.json({ ok: true, listingId: existing.id, reused: true });
++    }
++
++    // Snapshot seller username
++    const { data: profileRow } = await supabaseAdmin.from("profiles").select("username").eq("id", user.id).maybeSingle();
++    const sellerUsername = profileRow?.username || (user.email ? user.email.split("@")[0] : "seller");
++
++    const mediaTag = listingKind === "workflow" ? "workflow" : assetRow.type === "video" ? "video" : "image";
++
++    const { data: insRows, error: insErr } = await supabaseAdmin
++      .from("community_listings")
++      .insert({
++        seller_id: user.id,
++        seller_username_snapshot: sellerUsername,
++        seller_verified_snapshot: false,
++        listing_kind: listingKind,
++        media_tag: mediaTag,
++        name,
++        price_credits: priceCredits,
++        description,
++        status: "active",
++        preview_asset_id: previewAssetId,
++        listed_at: new Date().toISOString(),
++      })
++      .select("id")
++      .limit(1);
++
++    if (insErr) return err(res, 500, "DB_INSERT_FAILED", insErr.message);
++    const listingId = insRows?.[0]?.id;
++    if (!listingId) return err(res, 500, "DB_INSERT_FAILED", "No se pudo crear listing.");
++
++    // Receta snapshot + hash (inmutable)
++    const recipeSnapshot = {
++      version: 1,
++      kind: "single",
++      createdAt: Date.now(),
++      sourceAsset: {
++        id: assetRow.id,
++        type: assetRow.type,
++        tool: assetRow.tool || null,
++        prompt: assetRow.prompt || null,
++        meta: assetRow.meta || {},
++        createdAt: assetRow.created_at || null,
++      },
++    };
++
++    const hash = sha256Hex(canonicalJson(recipeSnapshot));
++
++    const { error: recErr } = await supabaseAdmin.from("community_listing_recipes").insert({
++      listing_id: listingId,
++      seller_id: user.id,
++      recipe_snapshot: recipeSnapshot,
++      recipe_hash: hash,
++    });
++
++    if (recErr) return err(res, 500, "DB_INSERT_FAILED", recErr.message);
++
++    return res.json({ ok: true, listingId, reused: false });
++  });
++
++  // UPDATE LISTING (precio/descripcion/status)
++  router.patch("/community-store/listings/:id", async (req, res) => {
++    const { user, error } = await requireUser(req);
++    if (error) return res.status(401).json({ ok: false, error });
++
++    const listingId = req.params.id;
++
++    let body;
++    try {
++      body = UpdateListingSchema.parse(req.body);
++    } catch (e) {
++      return err(res, 400, "BAD_REQUEST", e?.message || "Payload inválido.");
++    }
++
++    const patch = {};
++    if (body.name != null) patch.name = body.name;
++    if (body.priceCredits != null) patch.price_credits = body.priceCredits;
++    if (body.description != null) patch.description = body.description;
++    if (body.status != null) {
++      patch.status = body.status;
++      if (body.status === "active") patch.listed_at = new Date().toISOString();
++      if (body.status === "deleted") patch.listed_at = null;
++    }
++
++    const { error: upErr } = await supabaseAdmin
++      .from("community_listings")
++      .update(patch)
++      .eq("id", listingId)
++      .eq("seller_id", user.id);
++
++    if (upErr) return err(res, 500, "DB_UPDATE_FAILED", upErr.message);
++
++    return res.json({ ok: true });
++  });
++
++  // LIKE toggle
++  router.post("/community-store/listings/:id/like", async (req, res) => {
++    const { user, error } = await requireUser(req);
++    if (error) return res.status(401).json({ ok: false, error });
++
++    const listingId = req.params.id;
++
++    // asegurar que existe y esta activo
++    const { data: lrow, error: lerr } = await supabaseAdmin
++      .from("community_listings")
++      .select("id, status")
++      .eq("id", listingId)
++      .maybeSingle();
++
++    if (lerr) return err(res, 500, "DB_QUERY_FAILED", lerr.message);
++    if (!lrow || lrow.status !== "active") return err(res, 404, "NOT_FOUND", "Listing no encontrado.");
++
++    const { data: existing, error: exErr } = await supabaseAdmin
++      .from("community_listing_likes")
++      .select("id")
++      .eq("listing_id", listingId)
++      .eq("user_id", user.id)
++      .maybeSingle();
++
++    if (exErr) return err(res, 500, "DB_QUERY_FAILED", exErr.message);
++
++    let liked = false;
++
++    if (existing?.id) {
++      const { error: delErr } = await supabaseAdmin.from("community_listing_likes").delete().eq("id", existing.id);
++      if (delErr) return err(res, 500, "DB_DELETE_FAILED", delErr.message);
++      liked = false;
++    } else {
++      const { error: insErr } = await supabaseAdmin
++        .from("community_listing_likes")
++        .insert({ listing_id: listingId, user_id: user.id });
++
++      if (insErr) {
++        if (String(insErr.code) === "23505") liked = true;
++        else return err(res, 500, "DB_INSERT_FAILED", insErr.message);
++      } else {
++        liked = true;
++      }
++    }
++
++    const { data: cntRow } = await supabaseAdmin
++      .from("community_listings")
++      .select("likes_count")
++      .eq("id", listingId)
++      .maybeSingle();
++
++    const likesCount = Number.isFinite(Number(cntRow?.likes_count)) ? Number(cntRow.likes_count) : 0;
++
++    return res.json({ ok: true, liked, likesCount });
++  });
++
++  // COMMENTS list
++  router.get("/community-store/listings/:id/comments", async (req, res) => {
++    const listingId = req.params.id;
++
++    const limit = clampInt(req.query.limit, 1, 200, 50);
++    const offset = clampInt(req.query.offset, 0, 1_000_000, 0);
++
++    const { data: lrow, error: lerr } = await supabaseAdmin
++      .from("community_listings")
++      .select("id, status")
++      .eq("id", listingId)
++      .maybeSingle();
++
++    if (lerr) return err(res, 500, "DB_QUERY_FAILED", lerr.message);
++    if (!lrow || lrow.status !== "active") return err(res, 404, "NOT_FOUND", "Listing no encontrado.");
++
++    const { user } = await maybeUserFromReq(req, supabaseAdmin);
++
++    const rl = await checkUserRateLimit({
++      userId: user?.id || "anon",
++      scope: "listing_comments_list",
++      limit: 120,
++      windowSeconds: 60,
++    });
++
++    if (!rl.allowed) {
++      return err(res, 429, "RATE_LIMITED", "Demasiadas solicitudes. Espera un momento.", {
++        retryAfterSeconds: rl.retryAfterSeconds,
++      });
++    }
++
++    let q = supabaseAdmin
++      .from("community_listing_comments")
++      .select("id, user_id, text, created_at, is_shadowed", { count: "exact" })
++      .eq("listing_id", listingId)
++      .order("created_at", { ascending: true })
++      .range(offset, offset + limit - 1);
++
++    if (user?.id) {
++      q = q.or(`is_shadowed.eq.false,user_id.eq.${user.id}`);
++    } else {
++      q = q.eq("is_shadowed", false);
++    }
++
++    const { data: rows, error, count } = await q;
++    if (error) return err(res, 500, "DB_QUERY_FAILED", error.message);
++
++    const commentRows = rows || [];
++    const userIds = Array.from(new Set(commentRows.map((r) => r.user_id).filter(Boolean)));
++
++    const usernameById = new Map();
++    if (userIds.length > 0) {
++      const { data: profileRows } = await supabaseAdmin.from("profiles").select("id, username").in("id", userIds);
++      for (const p of profileRows || []) usernameById.set(p.id, p.username);
++    }
++
++    const comments = commentRows.map((r) => ({
++      id: r.id,
++      userId: r.user_id,
++      username: usernameById.get(r.user_id) || `User_${String(r.user_id).slice(0, 4)}`,
++      text: r.text,
++      timestamp: new Date(r.created_at).getTime(),
++      isShadowed: Boolean(r.is_shadowed),
++    }));
++
++    const commentsCount = Number.isFinite(Number(count)) ? Number(count) : comments.length;
++
++    return res.json({ ok: true, comments, commentsCount });
++  });
++
++  // COMMENT create
++  router.post("/community-store/listings/:id/comments", async (req, res) => {
++    const { user, error } = await requireUser(req);
++    if (error) return res.status(401).json({ ok: false, error });
++
++    const listingId = req.params.id;
++
++    const { data: lrow, error: lerr } = await supabaseAdmin
++      .from("community_listings")
++      .select("id, status")
++      .eq("id", listingId)
++      .maybeSingle();
++
++    if (lerr) return err(res, 500, "DB_QUERY_FAILED", lerr.message);
++    if (!lrow || lrow.status !== "active") return err(res, 404, "NOT_FOUND", "Listing no encontrado.");
++
++    let body;
++    try {
++      body = CreateCommentSchema.parse(req.body);
++    } catch (e) {
++      return err(res, 400, "BAD_REQUEST", e?.message || "Comentario inválido.");
++    }
++
++    const rl = await checkUserRateLimit({
++      userId: user.id,
++      scope: "listing_comment_create",
++      limit: 8,
++      windowSeconds: 30,
++    });
++
++    if (!rl.allowed) {
++      return err(res, 429, "RATE_LIMITED", "Demasiados comentarios. Espera y vuelve a intentar.", {
++        retryAfterSeconds: rl.retryAfterSeconds,
++      });
++    }
++
++    const moderation = await getUserModeration(supabaseAdmin, user.id);
++    const textEval = evaluateCommentText(body.text);
++    const isShadowed = Boolean(moderation.shadowBanned) || Boolean(textEval.shouldShadow);
++
++    const { data: inserted, error: insErr } = await supabaseAdmin
++      .from("community_listing_comments")
++      .insert({
++        listing_id: listingId,
++        user_id: user.id,
++        text: body.text,
++        is_shadowed: isShadowed,
++      })
++      .select("id, user_id, text, created_at, is_shadowed")
++      .limit(1)
++      .maybeSingle();
++
++    if (insErr) return err(res, 500, "DB_INSERT_FAILED", insErr.message);
++    if (!inserted) return err(res, 500, "DB_INSERT_FAILED", "No se pudo insertar comentario.");
++
++    const { data: profileRow } = await supabaseAdmin.from("profiles").select("username").eq("id", user.id).maybeSingle();
++    const username = profileRow?.username || (user.email ? user.email.split("@")[0] : "user");
++
++    const { data: cntRow } = await supabaseAdmin
++      .from("community_listings")
++      .select("comments_count")
++      .eq("id", listingId)
++      .maybeSingle();
++
++    const commentsCount = Number.isFinite(Number(cntRow?.comments_count)) ? Number(cntRow.comments_count) : 0;
++
++    return res.json({
++      ok: true,
++      comment: {
++        id: inserted.id,
++        userId: inserted.user_id,
++        username,
++        text: inserted.text,
++        timestamp: new Date(inserted.created_at).getTime(),
++        isShadowed: Boolean(inserted.is_shadowed),
++      },
++      commentsCount,
++    });
++  });
++
++  // PURCHASE (usa funcion SQL atomica)
++  router.post("/community-store/purchase", async (req, res) => {
++    const { user, error } = await requireUser(req);
++    if (error) return res.status(401).json({ ok: false, error });
++
++    let body;
++    try {
++      body = PurchaseSchema.parse(req.body);
++    } catch (e) {
++      return err(res, 400, "BAD_REQUEST", e?.message || "Payload inválido.");
++    }
++
++    const idempotencyKey = req.headers["x-idempotency-key"]
++      ? String(req.headers["x-idempotency-key"])
++      : randomUUID();
++
++    const { data, error: rpcErr } = await supabaseAdmin.rpc("community_purchase_listing", {
++      p_listing_id: body.listingId,
++      p_buyer_id: user.id,
++      p_referral_code: body.referralCode || null,
++      p_idempotency_key: idempotencyKey,
++    });
++
++    if (rpcErr) {
++      const msg = rpcErr.message || "Compra fallida.";
++      if (msg.includes("INSUFFICIENT_CREDITS")) {
++      let need = 0;
++      let have = 0;
++
++      try {
++        const { data: lrow } = await supabaseAdmin
++          .from("community_listings")
++          .select("price_credits")
++          .eq("id", body.listingId)
++          .maybeSingle();
++
++        need = Number(lrow?.price_credits) || 0;
++
++        const { data: bal } = await supabaseAdmin
++          .from("wallet_balances")
++          .select("gen_plan_credits, gen_topup_credits, gen_bonus_credits")
++          .eq("user_id", user.id)
++          .maybeSingle();
++
++        have =
++          (Number(bal?.gen_plan_credits) || 0) +
++          (Number(bal?.gen_topup_credits) || 0) +
++          (Number(bal?.gen_bonus_credits) || 0);
++      } catch {}
++
++      const deficit = Math.max(0, need - have);
++      return err(res, 400, "INSUFFICIENT_CREDITS", "No tienes créditos suficientes.", { need, have, deficit });
++    }
++      if (msg.includes("ALREADY_OWNED")) return err(res, 400, "ALREADY_OWNED", "Ya compraste este listing.");
++      if (msg.includes("CANNOT_BUY_OWN_LISTING")) return err(res, 400, "CANNOT_BUY_OWN_LISTING", "No puedes comprar tu propio listing.");
++      return err(res, 500, "PURCHASE_FAILED", msg);
++    }
++
++    const row = Array.isArray(data) ? data[0] : data;
++    return res.json({
++      ok: true,
++      purchaseId: row?.purchase_id || null,
++      paidCredits: Number(row?.paid_credits) || 0,
++      idempotencyKey,
++    });
++  });
++
++  // RECIPE (solo comprador o vendedor)
++  router.get("/community-store/listings/:id/recipe", async (req, res) => {
++    const { user, error } = await requireUser(req);
++    if (error) return res.status(401).json({ ok: false, error });
++
++    const listingId = req.params.id;
++
++    const { data: listingRow, error: lerr } = await supabaseAdmin
++      .from("community_listings")
++      .select("id, seller_id, status")
++      .eq("id", listingId)
++      .maybeSingle();
++
++    if (lerr) return err(res, 500, "DB_QUERY_FAILED", lerr.message);
++    if (!listingRow) return err(res, 404, "NOT_FOUND", "Listing no encontrado.");
++
++    const isSeller = listingRow.seller_id === user.id;
++
++    let canView = isSeller;
++    if (!canView) {
++      const { data: pRow } = await supabaseAdmin
++        .from("community_purchases")
++        .select("id")
++        .eq("listing_id", listingId)
++        .eq("buyer_id", user.id)
++        .eq("status", "completed")
++        .limit(1)
++        .maybeSingle();
++
++      canView = Boolean(pRow?.id);
++    }
++
++    if (!canView) return err(res, 403, "FORBIDDEN", "Debes comprar para ver la receta.");
++
++    const { data: rRow, error: rErr } = await supabaseAdmin
++      .from("community_listing_recipes")
++      .select("recipe_snapshot, recipe_hash, created_at")
++      .eq("listing_id", listingId)
++      .limit(1)
++      .maybeSingle();
++
++    if (rErr) return err(res, 500, "DB_QUERY_FAILED", rErr.message);
++    if (!rRow) return err(res, 500, "RECIPE_MISSING", "La receta no existe (error interno).");
++
++    // ✅ Resolver referencias (para poder reusar receta con referencias reales)
++    const recipe = rRow.recipe_snapshot || {};
++    const source = recipe?.sourceAsset || {};
++    const meta = source?.meta || {};
++
++    const refs = [];
++    const seen = new Set();
++    const pushRef = (assetId, role, token) => {
++      const id = typeof assetId === "string" ? assetId.trim() : "";
++      if (!id) return;
++      if (seen.has(id)) return;
++      seen.add(id);
++      refs.push({ assetId: id, role: role || "element", token: token || null });
++    };
++
++    const prs = Array.isArray(meta.promptReferences) ? meta.promptReferences : [];
++    if (prs.length) {
++      for (const r of prs) {
++        const assetId = typeof r?.id === "string" ? r.id : typeof r?.assetId === "string" ? r.assetId : "";
++        const token = typeof r?.token === "string" ? r.token : null;
++        const role = typeof r?.role === "string" ? r.role : "element";
++        pushRef(assetId, role, token);
++      }
++    } else {
++      const chars = Array.isArray(meta.characterAssetIds) ? meta.characterAssetIds : [];
++      for (let i = 0; i < chars.length; i++) {
++        const role = i < 3 ? "character" : "element";
++        const token = i < 3 ? `@img${i + 1}` : null;
++        pushRef(chars[i], role, token);
++      }
++      if (typeof meta.backgroundAssetId === "string") pushRef(meta.backgroundAssetId, "background", "@bg");
++    }
++
++    if (typeof meta.styleAssetId === "string") pushRef(meta.styleAssetId, "style", "@style");
++
++    const resolvedAssets = [];
++    for (const r of refs) {
++      const url = await signedUrlForAssetId(r.assetId);
++      resolvedAssets.push({ ...r, url: url || null });
++    }
++
++    return res.json({
++      ok: true,
++      recipe,
++      recipeHash: rRow.recipe_hash,
++      createdAt: rRow.created_at ? new Date(rRow.created_at).getTime() : Date.now(),
++
++      // [{ assetId, role, token, url }]
++      resolvedAssets,
++    });
++  });
++
++  return router;
++}
+--- a/pages/tools/ImageGeneratorTool.tsx
++++ b/pages/tools/ImageGeneratorTool.tsx
+@@ -563,6 +563,11 @@
+ const ImageGeneratorTool: React.FC = () => {
+   const { user } = useAuth();
+ 
++  // ✅ Prefill (Community Store "Reusar receta")
++  // El Community Store guarda un payload en localStorage + emite un event.
++  // Aquí lo leemos y lo aplicamos cuando ya tenemos myAssets cargados.
++  const PREFILL_KEY = "tales.prefill.imageGenerator";
++
+   // Historial: mostramos 12 al inicio y cargamos de a 9 con botón "Cargar más"
+   const HISTORY_INITIAL_COUNT = 12;
+   const HISTORY_LOAD_MORE_COUNT = 9;
+@@ -577,6 +582,8 @@
+   // "library": todas tus imágenes (generadas + subidas) para el picker y recipe
+   const [myAssets, setMyAssets] = useState<Asset[]>([]);
+ 
++  const [pendingExternalPrefill, setPendingExternalPrefill] = useState<any | null>(null);
++
+   const [prompt, setPrompt] = useState("");
+   const [model, setModel] = useState<string>(GeminiModel.IMAGE);
+   const [aspectRatio, setAspectRatio] = useState("auto");
+@@ -818,6 +825,102 @@
+   const [isGenerating, setIsGenerating] = useState(false);
+   const [pendingSlots, setPendingSlots] = useState<string[]>([]);
+   const [error, setError] = useState<string | null>(null);
++
++  // ===============================
++  // Prefill desde Community Store
++  // ===============================
++  useEffect(() => {
++    // 1) localStorage (robusto al navegar rápido)
++    try {
++      const raw = localStorage.getItem(PREFILL_KEY);
++      if (raw) {
++        const payload = JSON.parse(raw);
++        localStorage.removeItem(PREFILL_KEY);
++        setPendingExternalPrefill(payload);
++      }
++    } catch {
++      // no bloqueamos
++    }
++
++    // 2) event (útil si el tool ya estaba montado)
++    const onPrefill = (ev: any) => {
++      const payload = ev?.detail;
++      if (!payload) return;
++      setPendingExternalPrefill(payload);
++    };
++
++    window.addEventListener("tales:prefill-image-generator", onPrefill as any);
++    return () => window.removeEventListener("tales:prefill-image-generator", onPrefill as any);
++  }, []);
++
++  // Aplicar prefill cuando ya tenemos myAssets (para que las refs encuentren miniaturas)
++  useEffect(() => {
++    if (!pendingExternalPrefill) return;
++    if (!myAssets.length) return;
++
++    try {
++      const recipe = pendingExternalPrefill?.recipe || null;
++      const idMap = pendingExternalPrefill?.idMap || {};
++
++      const source = recipe?.sourceAsset || {};
++      const rawPrompt = typeof source?.prompt === "string" ? source.prompt : "";
++      const meta = source?.meta && typeof source.meta === "object" ? source.meta : {};
++
++      const mapId = (id: any) => {
++        const k = typeof id === "string" ? id : "";
++        if (!k) return id;
++        return typeof idMap?.[k] === "string" ? idMap[k] : k;
++      };
++
++      const mappedMeta: any = { ...(meta as any) };
++
++      if (Array.isArray(mappedMeta.characterAssetIds)) {
++        mappedMeta.characterAssetIds = mappedMeta.characterAssetIds.map(mapId);
++      }
++
++      if (typeof mappedMeta.backgroundAssetId === "string") {
++        mappedMeta.backgroundAssetId = mapId(mappedMeta.backgroundAssetId);
++      }
++
++      if (typeof mappedMeta.styleAssetId === "string") {
++        mappedMeta.styleAssetId = mapId(mappedMeta.styleAssetId);
++      }
++
++      if (Array.isArray(mappedMeta.promptReferences)) {
++        mappedMeta.promptReferences = mappedMeta.promptReferences.map((r: any) => {
++          const next = { ...(r || {}) };
++          if (typeof next.id === "string") next.id = mapId(next.id);
++          if (typeof next.assetId === "string") next.assetId = mapId(next.assetId);
++          return next;
++        });
++      }
++
++      const fakeAsset: any = {
++        id: `prefill-${Date.now()}`,
++        url: "",
++        type: "image",
++        name: "Prefill",
++        tool: "image-generator",
++        prompt: rawPrompt,
++        createdAt: Date.now(),
++        meta: mappedMeta,
++        ownerId: user?.id || "",
++        isPublic: false,
++        likedByMe: false,
++        likesCount: 0,
++        commentsCount: 0,
++        likes: [],
++        comments: [],
++      };
++
++      // ✅ Reusa la misma lógica que ya existe (model/ratio/count/quality + refs)
++      reusePromptFromAsset(fakeAsset);
++    } catch (e: any) {
++      setError(e?.message || "No se pudo aplicar la receta (prefill)." );
++    } finally {
++      setPendingExternalPrefill(null);
++    }
++  }, [pendingExternalPrefill, myAssets.length]);
+     // Cache de dimensiones por imagen (para layout del historial y viewer responsive)
+   const [imgDims, setImgDims] = useState<Record<string, { w: number; h: number }>>({});
+ 
+@@ -975,7 +1078,8 @@
+       .filter((a: any) => {
+         if (a?.type && a.type !== "image") return false;
+         const meta = (a as any)?.meta || {};
+-        return meta?.tool === "element-library" || meta?.isElement === true;
++        // ✅ Compat: uploads guardan tool en la columna "assets.tool" (no siempre dentro de meta)
++        return a?.tool === "element-library" || meta?.tool === "element-library" || meta?.isElement === true;
+       })
+       .sort((a: any, b: any) => {
+         const ta = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
+--- a/pages/CommunityStore.tsx
++++ b/pages/CommunityStore.tsx
+@@ -1,247 +1,794 @@
+-import React, { useEffect, useState } from "react";
+-import { AppRoute } from "../types";
+-import { listCommunityListings, getCommunityListing, purchaseCommunityListing, getCommunityListingRecipe } from "../services/communityStoreApi";
+-
+-interface Props {
+-  onNavigate: (route: AppRoute) => void;
+-}
+-
+-export default function CommunityStore({ onNavigate }: Props) {
+-  const [items, setItems] = useState<any[]>([]);
+-  const [offset, setOffset] = useState<number>(0);
+-  const [hasMore, setHasMore] = useState<boolean>(true);
+-  const [loading, setLoading] = useState<boolean>(false);
+-
+-  const [selectedId, setSelectedId] = useState<string | null>(null);
+-  const [selected, setSelected] = useState<any | null>(null);
+-
+-  const [busyPurchase, setBusyPurchase] = useState<boolean>(false);
+-  const [recipe, setRecipe] = useState<any | null>(null);
+-  const [error, setError] = useState<string | null>(null);
+-
+-  async function loadMore(reset = false) {
+-    if (loading) return;
+-    setLoading(true);
+-    setError(null);
+-
+-    try {
+-      const page = await listCommunityListings({ limit: 12, offset: reset ? 0 : offset, sort: "recent", media: "all" });
+-      const next = reset ? page.items : [...items, ...page.items];
+-
+-      setItems(next);
+-      setOffset(page.nextOffset);
+-      setHasMore(page.hasMore);
+-    } catch (e: any) {
+-      setError(e?.message || "No se pudo cargar Community Store.");
+-    } finally {
+-      setLoading(false);
+-    }
+-  }
+-
+-  useEffect(() => {
+-    loadMore(true);
+-  }, []);
+-
+-  useEffect(() => {
+-    if (!selectedId) {
+-      setSelected(null);
+-      setRecipe(null);
+-      return;
+-    }
+-
+-    (async () => {
+-      setError(null);
+-      setRecipe(null);
+-
+-      try {
+-        const item = await getCommunityListing(selectedId);
+-        setSelected(item);
+-      } catch (e: any) {
+-        setError(e?.message || "No se pudo cargar el listing.");
+-      }
+-    })();
+-  }, [selectedId]);
+-
+-  async function handleBuy() {
+-    if (!selected?.id) return;
+-
+-    setBusyPurchase(true);
+-    setError(null);
+-
+-    try {
+-      await purchaseCommunityListing(selected.id, null);
+-      const fresh = await getCommunityListing(selected.id);
+-      setSelected(fresh);
+-    } catch (e: any) {
+-      setError(e?.message || "No se pudo comprar.");
+-    } finally {
+-      setBusyPurchase(false);
+-    }
+-  }
+-
+-  async function handleViewRecipe() {
+-    if (!selected?.id) return;
+-
+-    setError(null);
+-    try {
+-      const r = await getCommunityListingRecipe(selected.id);
+-      setRecipe(r.recipe);
+-    } catch (e: any) {
+-      setError(e?.message || "No se pudo cargar la receta.");
+-    }
+-  }
+-
+-  return (
+-    <div className="p-6 text-white">
+-      <div className="flex items-center justify-between gap-3 mb-6">
+-        <div>
+-          <div className="text-2xl font-bold">Community Store</div>
+-          <div className="text-white/60 text-sm mt-1">Listings paginados (12 en 12) con receta protegida.</div>
+-        </div>
+-
+-        <button
+-          type="button"
+-          className="px-4 py-2 rounded-lg bg-white/10 hover:bg-white/15"
+-          onClick={() => onNavigate(AppRoute.MY_TRADES)}
+-        >
+-          Ir a My Trades
+-        </button>
+-      </div>
+-
+-      {error ? <div className="mb-4 text-red-400">{error}</div> : null}
+-
+-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+-        {items.map((it) => (
+-          <div
+-            key={it.id}
+-            role="button"
+-            tabIndex={0}
+-            className="text-left rounded-xl overflow-hidden border border-white/10 bg-black/30 hover:bg-black/40 transition cursor-pointer"
+-            onClick={() => setSelectedId(it.id)}
+-            onKeyDown={(e) => {
+-              if (e.key === "Enter" || e.key === " ") setSelectedId(it.id);
+-            }}
+-          >
+-            <div className="w-full aspect-square bg-black/40">
+-              {it.previewUrl ? <img src={it.previewUrl} alt="" className="w-full h-full object-cover" /> : null}
+-            </div>
+-
+-            <div className="p-3">
+-              <div className="text-sm font-semibold text-white line-clamp-1">{it.name || "Sin nombre"}</div>
+-
+-              <div className="mt-1 flex items-center justify-between gap-3">
+-                <div className="text-xs text-white/70">
+-                  <span className="font-semibold text-white/80">{it.priceCredits}</span> créditos
+-                </div>
+-
+-                <button
+-                  type="button"
+-                  className="px-3 py-1 rounded-lg bg-white/10 hover:bg-white/15 text-xs text-white"
+-                  onClick={(e) => {
+-                    e.stopPropagation();
+-                    setSelectedId(it.id);
+-                  }}
+-                >
+-                  Comprar
+-                </button>
+-              </div>
+-
+-              <div className="text-xs text-white/60 mt-2">@{it.sellerUsername}</div>
+-              <div className="text-xs text-white/70 mt-2 line-clamp-2">{it.description}</div>
+-              <div className="text-[11px] text-white/50 mt-2">
+-                ❤ {it.likesCount} · 💬 {it.commentsCount} · 🧾 {it.salesCount}
+-              </div>
+-            </div>
+-          </div>
+-        ))}
+-      </div>
+-
+-      {hasMore ? (
+-        <div className="mt-6 flex justify-center">
+-          <button
+-            type="button"
+-            disabled={loading}
+-            className="px-5 py-2 rounded-lg bg-white text-black disabled:opacity-50"
+-            onClick={() => loadMore(false)}
+-          >
+-            {loading ? "Cargando..." : "Cargar más"}
+-          </button>
+-        </div>
+-      ) : null}
+-
+-      {selectedId ? (
+-        <div className="fixed inset-0 z-[5500] bg-black/80 backdrop-blur-sm p-4 flex items-center justify-center">
+-          <div className="w-full max-w-2xl rounded-2xl border border-white/10 bg-[#0b0b0b] p-5">
+-            <div className="flex items-start justify-between gap-3">
+-              <div>
+-                <div className="text-lg font-semibold">Listing</div>
+-                <div className="text-white/60 text-xs mt-1">No muestra receta sin compra.</div>
+-              </div>
+-              <button type="button" className="text-white/70 hover:text-white" onClick={() => setSelectedId(null)}>
+-                Cerrar
+-              </button>
+-            </div>
+-
+-            {selected ? (
+-              <div className="mt-4 flex gap-4">
+-                <div className="w-56 h-56 rounded-xl overflow-hidden bg-black/40 border border-white/10">
+-                  {selected.previewUrl ? <img src={selected.previewUrl} alt="" className="w-full h-full object-cover" /> : null}
+-                </div>
+-
+-                <div className="flex-1">
+-                  <div className="text-white/80 text-sm">@{selected.sellerUsername}</div>
+-                  <div className="text-white text-xl font-bold mt-1">{selected.priceCredits} credits</div>
+-                  <div className="text-white/70 text-sm mt-2">{selected.description}</div>
+-
+-                  <div className="text-xs text-white/50 mt-3">
+-                    ❤ {selected.likesCount} · 💬 {selected.commentsCount} · 🧾 {selected.salesCount}
+-                  </div>
+-
+-                  {selected.ownedByMe ? (
+-                    <div className="mt-4 text-xs text-white/60">
+-                      Este listing es tuyo (no puedes comprarte a ti mismo).
+-                    </div>
+-                  ) : selected.purchasedByMe ? (
+-                    <div className="mt-4 flex gap-2">
+-                      <button
+-                        type="button"
+-                        className="px-4 py-2 rounded-lg bg-white text-black"
+-                        onClick={handleViewRecipe}
+-                      >
+-                        Ver receta
+-                      </button>
+-                    </div>
+-                  ) : (
+-                    <div className="mt-4 flex gap-2">
+-                      <button
+-                        type="button"
+-                        disabled={busyPurchase}
+-                        className="px-4 py-2 rounded-lg bg-white text-black disabled:opacity-50"
+-                        onClick={handleBuy}
+-                      >
+-                        {busyPurchase ? "Comprando..." : "Comprar"}
+-                      </button>
+-                    </div>
+-                  )}
+-
+-                  {recipe ? (
+-                    <div className="mt-4">
+-                      <div className="text-sm font-semibold mb-2">Recipe JSON</div>
+-                      <pre className="text-xs bg-black/40 border border-white/10 rounded-lg p-3 max-h-[240px] overflow-auto">
+-                        {JSON.stringify(recipe, null, 2)}
+-                      </pre>
+-                    </div>
+-                  ) : null}
+-
+-                  {error ? <div className="mt-3 text-red-400 text-sm">{error}</div> : null}
+-                </div>
+-              </div>
+-            ) : (
+-              <div className="mt-4 text-white/70">Cargando...</div>
+-            )}
+-          </div>
+-        </div>
+-      ) : null}
+-    </div>
+-  );
+-}
++import React, { useEffect, useMemo, useState } from "react";
++import { AppRoute, type Comment } from "../types";
++import {
++  listCommunityListings,
++  getCommunityListing,
++  purchaseCommunityListing,
++  getCommunityListingRecipe,
++  toggleCommunityListingLike,
++  listCommunityListingComments,
++  createCommunityListingComment,
++} from "../services/communityStoreApi";
++import { uploadUserAsset } from "../services/assetsApi";
++
++function HeartIcon({ filled }: { filled: boolean }) {
++  return (
++    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
++      <path
++        fill={filled ? "currentColor" : "none"}
++        stroke="currentColor"
++        strokeWidth="2"
++        d="M12 21s-7-4.6-10-9.3C-0.6 7.3 2.2 3.7 6 4.1c1.6 0.2 3 1.2 4 2.4 1-1.2 2.4-2.2 4-2.4 3.8-0.4 6.6 3.2 4 7.6C19 16.4 12 21 12 21z"
++      />
++    </svg>
++  );
++}
++
++function CommentIcon() {
++  return (
++    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
++      <path
++        fill="none"
++        stroke="currentColor"
++        strokeWidth="2"
++        d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"
++      />
++    </svg>
++  );
++}
++
++type ListingItem = {
++  id: string;
++  name: string;
++  sellerUsername: string;
++  sellerVerified?: boolean;
++  priceCredits: number;
++  description: string;
++  previewUrl: string | null;
++  likesCount: number;
++  commentsCount: number;
++  salesCount: number;
++  likedByMe?: boolean;
++};
++
++interface Props {
++  onNavigate: (route: AppRoute) => void;
++}
++
++type ModalTab = "description" | "comments" | "recipe";
++
++export default function CommunityStore({ onNavigate }: Props) {
++  const [items, setItems] = useState<ListingItem[]>([]);
++  const [offset, setOffset] = useState<number>(0);
++  const [hasMore, setHasMore] = useState<boolean>(true);
++  const [loading, setLoading] = useState<boolean>(false);
++
++  const [selectedId, setSelectedId] = useState<string | null>(null);
++  const [selected, setSelected] = useState<any | null>(null);
++
++  const [busyPurchase, setBusyPurchase] = useState<boolean>(false);
++  const [busyLikeById, setBusyLikeById] = useState<Record<string, boolean>>({});
++
++  const [recipeData, setRecipeData] = useState<any | null>(null);
++  const [recipeResolvedAssets, setRecipeResolvedAssets] = useState<any[]>([]);
++  const [recipeHash, setRecipeHash] = useState<string | null>(null);
++
++  const [modalTab, setModalTab] = useState<ModalTab>("description");
++
++  const [comments, setComments] = useState<Comment[]>([]);
++  const [commentsCount, setCommentsCount] = useState<number>(0);
++  const [commentsLoading, setCommentsLoading] = useState<boolean>(false);
++  const [commentText, setCommentText] = useState<string>("");
++  const [commentBusy, setCommentBusy] = useState<boolean>(false);
++  const [reuseBusy, setReuseBusy] = useState<boolean>(false);
++
++  const [error, setError] = useState<string | null>(null);
++
++  async function loadMore(reset = false) {
++    if (loading) return;
++    setLoading(true);
++    setError(null);
++
++    try {
++      const page = await listCommunityListings({
++        limit: 12,
++        offset: reset ? 0 : offset,
++        sort: "recent",
++        media: "all",
++      });
++
++      const next = (reset ? page.items : [...items, ...page.items]) as ListingItem[];
++
++      setItems(next);
++      setOffset(page.nextOffset);
++      setHasMore(page.hasMore);
++    } catch (e: any) {
++      setError(e?.message || "No se pudo cargar Community Store.");
++    } finally {
++      setLoading(false);
++    }
++  }
++
++  useEffect(() => {
++    loadMore(true);
++  }, []);
++
++  useEffect(() => {
++    if (!selectedId) {
++      setSelected(null);
++      setRecipeData(null);
++      setRecipeResolvedAssets([]);
++      setRecipeHash(null);
++      setModalTab("description");
++      setComments([]);
++      setCommentsCount(0);
++      setCommentText("");
++      return;
++    }
++
++    (async () => {
++      setError(null);
++      setRecipeData(null);
++      setRecipeResolvedAssets([]);
++      setRecipeHash(null);
++
++      try {
++        const item = await getCommunityListing(selectedId);
++        setSelected(item);
++      } catch (e: any) {
++        setError(e?.message || "No se pudo cargar el listing.");
++      }
++    })();
++  }, [selectedId]);
++
++  // Si abriste directo en "Comentarios", carga comentarios cuando ya existe el listing.
++  useEffect(() => {
++    if (!selected?.id) return;
++    if (modalTab !== "comments") return;
++    loadCommentsForSelected();
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [selected?.id, modalTab]);
++
++  const selectedIsPurchased = Boolean(selected?.purchasedByMe);
++  const selectedIsOwned = Boolean(selected?.ownedByMe);
++
++  async function handleToggleLike(listingId: string) {
++    setError(null);
++
++    if (busyLikeById[listingId]) return;
++    setBusyLikeById((p) => ({ ...p, [listingId]: true }));
++
++    try {
++      const res = await toggleCommunityListingLike(listingId);
++
++      setItems((prev) =>
++        prev.map((it) => (it.id === listingId ? { ...it, likedByMe: res.liked, likesCount: res.likesCount } : it))
++      );
++
++      setSelected((prev: any) =>
++        prev?.id === listingId ? { ...prev, likedByMe: res.liked, likesCount: res.likesCount } : prev
++      );
++    } catch (e: any) {
++      setError(e?.message || "No se pudo actualizar el Like.");
++    } finally {
++      setBusyLikeById((p) => ({ ...p, [listingId]: false }));
++    }
++  }
++
++  async function handleBuy() {
++    if (!selected?.id) return;
++
++    setBusyPurchase(true);
++    setError(null);
++
++    try {
++      await purchaseCommunityListing(selected.id, null);
++
++      // refresca listing (ventas + flags)
++      const fresh = await getCommunityListing(selected.id);
++      setSelected(fresh);
++
++      // refresca feed (ventas + flags)
++      setItems((prev) =>
++        prev.map((it) =>
++          it.id === selected.id
++            ? {
++                ...it,
++                salesCount: Number(fresh.salesCount) || it.salesCount,
++                priceCredits: Number(fresh.priceCredits) || it.priceCredits,
++              }
++            : it
++        )
++      );
++
++      // ✅ al comprar: muestra receta automáticamente
++      const r = await getCommunityListingRecipe(selected.id);
++      setRecipeData(r.recipe);
++      setRecipeResolvedAssets(r.resolvedAssets || []);
++      setRecipeHash(typeof r.recipeHash === "string" ? r.recipeHash : null);
++      setModalTab("recipe");
++    } catch (e: any) {
++      setError(e?.message || "No se pudo comprar.");
++    } finally {
++      setBusyPurchase(false);
++    }
++  }
++
++  async function handleLoadRecipe() {
++    if (!selected?.id) return;
++
++    setError(null);
++    try {
++      const r = await getCommunityListingRecipe(selected.id);
++      setRecipeData(r.recipe);
++      setRecipeResolvedAssets(r.resolvedAssets || []);
++      setRecipeHash(typeof r.recipeHash === "string" ? r.recipeHash : null);
++      setModalTab("recipe");
++    } catch (e: any) {
++      setError(e?.message || "No se pudo cargar la receta.");
++    }
++  }
++
++  async function loadCommentsForSelected() {
++    if (!selected?.id) return;
++
++    setCommentsLoading(true);
++    setError(null);
++    try {
++      const r = await listCommunityListingComments(selected.id, { limit: 120, offset: 0 });
++      setComments(r.comments);
++      setCommentsCount(r.commentsCount);
++
++      // actualiza contadores en feed/modal
++      setSelected((p: any) => (p?.id === selected.id ? { ...p, commentsCount: r.commentsCount } : p));
++      setItems((prev) => prev.map((it) => (it.id === selected.id ? { ...it, commentsCount: r.commentsCount } : it)));
++    } catch (e: any) {
++      setError(e?.message || "No se pudieron cargar los comentarios.");
++    } finally {
++      setCommentsLoading(false);
++    }
++  }
++
++  async function handleCreateComment() {
++    if (!selected?.id) return;
++
++    const text = (commentText || "").trim();
++    if (!text) return;
++
++    setCommentBusy(true);
++    setError(null);
++    try {
++      const r = await createCommunityListingComment(selected.id, text);
++      setCommentText("");
++
++      // UI: inserta al final (orden asc en backend)
++      setComments((prev) => [...prev, r.comment]);
++      setCommentsCount(r.commentsCount);
++
++      setSelected((p: any) => (p?.id === selected.id ? { ...p, commentsCount: r.commentsCount } : p));
++      setItems((prev) => prev.map((it) => (it.id === selected.id ? { ...it, commentsCount: r.commentsCount } : it)));
++    } catch (e: any) {
++      setError(e?.message || "No se pudo comentar.");
++    } finally {
++      setCommentBusy(false);
++    }
++  }
++
++  async function handleReuseRecipe() {
++    if (!selected?.id) return;
++    if (!recipeData) {
++      setError("Primero carga la receta.");
++      return;
++    }
++
++    const sourceTool = String(recipeData?.sourceAsset?.tool || "");
++
++    // Hoy implementamos el rehuso completo para ImageGeneratorTool.
++    if (sourceTool !== "image-generator") {
++      setError(`Reusar receta aún no está soportado para tool='${sourceTool}'.`);
++      return;
++    }
++
++    const resolved = Array.isArray(recipeResolvedAssets) ? recipeResolvedAssets : [];
++
++    setReuseBusy(true);
++    setError(null);
++
++    try {
++      // ✅ Evita duplicar uploads: cache por recipeHash
++      const cacheKey = recipeHash ? `tales.communityStore.importMap.${recipeHash}` : null;
++      let idMap: Record<string, string> = {};
++      try {
++        if (cacheKey) {
++          const raw = localStorage.getItem(cacheKey);
++          const parsed = raw ? JSON.parse(raw) : null;
++          if (parsed && typeof parsed === "object") idMap = parsed;
++        }
++      } catch {
++        idMap = {};
++      }
++
++      // 1) Importar refs al usuario comprador (para que sean seleccionables en el tool)
++      for (const r of resolved) {
++        const url = typeof r?.url === "string" ? r.url : null;
++        const origId = typeof r?.assetId === "string" ? r.assetId : null;
++        const role = typeof r?.role === "string" ? r.role : "element";
++
++        if (!url || !origId) continue;
++        if (typeof idMap[origId] === "string" && idMap[origId]) continue;
++
++        const resp = await fetch(url);
++        if (!resp.ok) throw new Error(`No se pudo descargar una referencia (${resp.status}).`);
++
++        const blob = await resp.blob();
++        const mime = blob.type || "image/jpeg";
++        const ext = mime.includes("png") ? "png" : mime.includes("webp") ? "webp" : "jpg";
++
++        const tool = role === "element" ? "element-library" : "image-generator-ref";
++        const fileName = `ref_${role}_${Date.now()}.${ext}`;
++        const file = new File([blob], fileName, { type: mime });
++
++        const uploaded = await uploadUserAsset(file, tool);
++        idMap[origId] = uploaded.id;
++      }
++
++      try {
++        if (cacheKey) localStorage.setItem(cacheKey, JSON.stringify(idMap));
++      } catch {
++        // no bloqueamos
++      }
++
++      // 2) Guardar prefill para el tool (robusto aunque cambies de pantalla rápido)
++      const payload = {
++        source: "community-store",
++        recipe: recipeData,
++        idMap,
++        createdAt: Date.now(),
++      };
++
++      localStorage.setItem("tales.prefill.imageGenerator", JSON.stringify(payload));
++      window.dispatchEvent(new CustomEvent("tales:prefill-image-generator", { detail: payload }));
++
++      // 3) Navegar al tool
++      setSelectedId(null);
++      onNavigate(AppRoute.TOOL_GENERATOR);
++    } catch (e: any) {
++      setError(e?.message || "No se pudo reusar la receta.");
++    } finally {
++      setReuseBusy(false);
++    }
++  }
++
++  const feedEmpty = !loading && items.length === 0;
++
++  const modalTitle = useMemo(() => {
++    if (!selected) return "Preview";
++    return selected.name || "Sin nombre";
++  }, [selected]);
++
++  const captionForTile = (it: ListingItem) => {
++    const name = (it.name || "Sin nombre").trim();
++    const desc = (it.description || "").trim();
++    return desc ? `${name} — ${desc}` : name;
++  };
++
++  const TilePill: React.FC<{ children: React.ReactNode }> = ({ children }) => (
++    <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-black/55 border border-white/10 backdrop-blur-md shadow-[0_14px_28px_rgba(0,0,0,0.45)]">
++      {children}
++    </span>
++  );
++
++  const TabBtn: React.FC<{ active: boolean; onClick: () => void; children: React.ReactNode }> = ({ active, onClick, children }) => (
++    <button
++      type="button"
++      onClick={onClick}
++      className={`px-3 py-2 rounded-xl border text-sm font-extrabold transition-all ${
++        active
++          ? "border-[rgba(241,225,148,0.26)] bg-[rgba(241,225,148,0.12)] text-white"
++          : "border-white/10 bg-white/5 text-white/80 hover:bg-white/10"
++      }`}
++    >
++      {children}
++    </button>
++  );
++
++  return (
++    <div className="p-6 text-white">
++      <div className="flex items-end justify-between gap-4 mb-5">
++        <div>
++          <div className="text-2xl font-extrabold tracking-tight">Community Store</div>
++          <div className="text-white/60 text-sm mt-1">
++            Feed con el mismo vibe del historial del ImageGeneratorTool: sin crop, tiles dinámicos, CTA premium.
++          </div>
++        </div>
++
++        <div className="flex gap-2">
++          <button
++            type="button"
++            className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-sm font-bold"
++            onClick={() => onNavigate(AppRoute.MY_TRADES)}
++          >
++            Ir a My Trades
++          </button>
++
++          <button
++            type="button"
++            className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-sm font-bold"
++            onClick={() => loadMore(true)}
++            disabled={loading}
++          >
++            {loading ? "Actualizando..." : "Refresh"}
++          </button>
++        </div>
++      </div>
++
++      {error ? <div className="mb-4 text-red-300">{error}</div> : null}
++
++      {feedEmpty ? (
++        <div className="text-white/60">Aún no hay listings en Community Store.</div>
++      ) : (
++        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4">
++          {items.map((it) => {
++            const liked = Boolean(it.likedByMe);
++
++            return (
++              <div
++                key={it.id}
++                role="button"
++                tabIndex={0}
++                className="group relative rounded-[14px] overflow-hidden border border-white/10 bg-black/20 cursor-pointer transition-all hover:-translate-y-0.5 hover:shadow-[0_18px_44px_rgba(0,0,0,0.60)] hover:border-[rgba(241,225,148,0.18)]"
++                onClick={() => {
++                  setSelectedId(it.id);
++                  setModalTab("description");
++                }}
++                onKeyDown={(e) => {
++                  if (e.key === "Enter" || e.key === " ") {
++                    e.preventDefault();
++                    setSelectedId(it.id);
++                    setModalTab("description");
++                  }
++                }}
++                title="Click para ver preview"
++              >
++                {it.previewUrl ? (
++                  <img className="w-full h-auto block transition-transform duration-500 group-hover:scale-[1.02]" src={it.previewUrl} alt={it.name || "Listing"} loading="lazy" decoding="async" />
++                ) : (
++                  <div className="w-full bg-black/40" style={{ paddingTop: "100%" }} />
++                )}
++
++                {/* Top overlay: creator + purchases */}
++                <div className="absolute top-2 left-2 right-2 flex justify-between gap-2 opacity-80 -translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition pointer-events-none">
++                  <TilePill>
++                    <span className="text-[11px] font-extrabold text-white/95">@{it.sellerUsername}</span>
++                    <span className="text-[10px] font-mono text-[rgba(241,225,148,0.85)]">{it.sellerVerified ? "VERIFIED" : ""}</span>
++                  </TilePill>
++
++                  <TilePill>
++                    <span className="text-[11px] font-extrabold text-white/95">{it.salesCount}</span>
++                    <span className="text-[10px] font-mono text-[rgba(241,225,148,0.85)]">compras</span>
++                  </TilePill>
++                </div>
++
++                {/* Caption (name + short desc) */}
++                <div className="absolute inset-x-0 bottom-0 px-3 pb-[56px] pt-2 bg-gradient-to-t from-black/65 to-transparent opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition pointer-events-none">
++                  <div className="text-sm text-white/95 drop-shadow-[0_2px_10px_rgba(0,0,0,0.55)] line-clamp-2">
++                    {captionForTile(it)}
++                  </div>
++                </div>
++
++                {/* Bottom overlay: like + comments + buy */}
++                <div
++                  className="absolute inset-x-0 bottom-0 p-3 bg-gradient-to-t from-black/80 to-transparent opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0 transition"
++                  onClick={(e) => e.stopPropagation()}
++                >
++                  <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-3">
++                    <div className="flex gap-2 items-center">
++                      <button
++                        type="button"
++                        className={`h-9 px-3 rounded-full border backdrop-blur-md shadow-[0_14px_28px_rgba(0,0,0,0.55)] transition flex items-center gap-2 ${
++                          liked
++                            ? "border-[rgba(241,225,148,0.24)] bg-black/60 text-[rgba(241,225,148,0.98)]"
++                            : "border-white/10 bg-black/55 text-white/95 hover:bg-black/65"
++                        }`}
++                        title={liked ? "Quitar Like" : "Dar Like"}
++                        disabled={Boolean(busyLikeById[it.id])}
++                        onClick={() => handleToggleLike(it.id)}
++                      >
++                        <span className="animate-pulse">
++                          <HeartIcon filled={liked} />
++                        </span>
++                        <span className="text-xs font-extrabold">{it.likesCount}</span>
++                      </button>
++
++                      <button
++                        type="button"
++                        className="h-9 px-3 rounded-full border border-white/10 bg-black/55 text-white/95 hover:bg-black/65 backdrop-blur-md shadow-[0_14px_28px_rgba(0,0,0,0.55)] transition flex items-center gap-2"
++                        title="Comentarios"
++                        onClick={() => {
++                          setSelectedId(it.id);
++                          setModalTab("comments");
++                        }}
++                      >
++                        <CommentIcon />
++                        <span className="text-xs font-extrabold">{it.commentsCount}</span>
++                      </button>
++                    </div>
++
++                    <div className="grid justify-items-center gap-1">
++                      <div className="text-[11px] font-extrabold tracking-wide text-white/90 drop-shadow-[0_6px_22px_rgba(0,0,0,0.60)]">
++                        {it.priceCredits} credits
++                      </div>
++                      <button
++                        type="button"
++                        className="px-4 py-2 rounded-full font-black border border-[rgba(241,225,148,0.28)] bg-[rgba(241,225,148,0.18)] hover:bg-[rgba(241,225,148,0.25)] text-white shadow-[0_18px_36px_rgba(0,0,0,0.55)] transition"
++                        onClick={() => {
++                          setSelectedId(it.id);
++                          setModalTab("description");
++                        }}
++                        title="Abrir preview"
++                      >
++                        Comprar
++                      </button>
++                    </div>
++
++                    <div className="justify-self-end flex gap-2">
++                      <span className="text-xs text-white/85 bg-black/50 border border-white/10 px-3 py-2 rounded-full backdrop-blur-md">❤ {it.likesCount}</span>
++                      <span className="text-xs text-white/85 bg-black/50 border border-white/10 px-3 py-2 rounded-full backdrop-blur-md">💬 {it.commentsCount}</span>
++                    </div>
++                  </div>
++                </div>
++              </div>
++            );
++          })}
++        </div>
++      )}
++
++      {hasMore ? (
++        <div className="mt-6 flex justify-center">
++          <button
++            type="button"
++            disabled={loading}
++            className="px-5 py-2 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-white font-extrabold disabled:opacity-50"
++            onClick={() => loadMore(false)}
++          >
++            {loading ? "Cargando..." : "Cargar más"}
++          </button>
++        </div>
++      ) : null}
++
++      {/* Modal */}
++      {selectedId ? (
++        <div
++          className="fixed inset-0 z-[5500] bg-black/80 backdrop-blur-md p-4 flex items-center justify-center"
++          onMouseDown={(e) => {
++            if (e.target === e.currentTarget) setSelectedId(null);
++          }}
++        >
++          <div className="w-full max-w-[1120px] rounded-2xl border border-white/10 bg-[rgba(11,11,15,0.92)] shadow-[0_30px_90px_rgba(0,0,0,0.72)] overflow-hidden">
++            <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-white/10">
++              <div>
++                <div className="text-[13px] font-black tracking-[0.10em] uppercase text-[rgba(241,225,148,0.90)]">Preview</div>
++                <div className="text-white/65 text-sm mt-0.5">{modalTitle}</div>
++              </div>
++              <button
++                type="button"
++                className="px-3 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-white/90 font-extrabold"
++                onClick={() => setSelectedId(null)}
++              >
++                Cerrar
++              </button>
++            </div>
++
++            {selected ? (
++              <div className="grid grid-cols-1 lg:grid-cols-[1.35fr_1fr]">
++                <div className="p-4 grid place-items-center bg-[radial-gradient(900px_420px_at_50%_30%,rgba(241,225,148,0.08),transparent_60%)]">
++                  <div className="w-full max-h-[70vh] rounded-2xl overflow-hidden border border-white/10 bg-black/35 grid place-items-center">
++                    {selected.previewUrl ? (
++                      <img src={selected.previewUrl} alt={selected.name || "Preview"} className="w-full h-full max-h-[70vh] object-contain" />
++                    ) : (
++                      <div className="w-full h-[40vh] bg-black/40" />
++                    )}
++                  </div>
++                </div>
++
++                <div className="p-4 border-t lg:border-t-0 lg:border-l border-white/10">
++                  <div className="text-xl font-extrabold tracking-tight">{selected.name || "Sin nombre"}</div>
++                  <div className="text-white/60 text-sm mt-1">
++                    @{selected.sellerUsername} · {selected.salesCount} compras · ❤ {selected.likesCount} · 💬 {selected.commentsCount}
++                  </div>
++
++                  <div className="flex flex-wrap gap-2 mt-3">
++                    <span className="text-xs px-3 py-1 rounded-full bg-white/5 border border-white/10">{selected.mediaTag || "image"}</span>
++                    <span className="text-xs px-3 py-1 rounded-full bg-white/5 border border-white/10">{selected.priceCredits} credits</span>
++                    {selected.sellerVerified ? <span className="text-xs px-3 py-1 rounded-full bg-white/5 border border-white/10">Verified</span> : null}
++                    {selectedIsPurchased ? <span className="text-xs px-3 py-1 rounded-full bg-white/5 border border-white/10">Comprado</span> : null}
++                  </div>
++
++                  <div className="flex flex-wrap gap-2 mt-4 items-center">
++                    {!selectedIsOwned && !selectedIsPurchased ? (
++                      <button
++                        type="button"
++                        className="px-4 py-2 rounded-xl border border-[rgba(241,225,148,0.28)] bg-[rgba(241,225,148,0.20)] hover:bg-[rgba(241,225,148,0.28)] text-white font-extrabold shadow-[0_18px_40px_rgba(0,0,0,0.55)] disabled:opacity-50"
++                        disabled={busyPurchase}
++                        onClick={handleBuy}
++                      >
++                        {busyPurchase ? "Comprando..." : `Comprar por ${selected.priceCredits} credits`}
++                      </button>
++                    ) : null}
++
++                    {!selectedIsOwned && selectedIsPurchased ? (
++                      <button
++                        type="button"
++                        className="px-4 py-2 rounded-xl border border-[rgba(241,225,148,0.28)] bg-[rgba(241,225,148,0.20)] hover:bg-[rgba(241,225,148,0.28)] text-white font-extrabold shadow-[0_18px_40px_rgba(0,0,0,0.55)]"
++                        onClick={handleLoadRecipe}
++                      >
++                        {recipeData ? "Receta lista" : "Ver receta"}
++                      </button>
++                    ) : null}
++
++                    <button
++                      type="button"
++                      className="px-4 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-white/90 font-extrabold disabled:opacity-50"
++                      disabled={Boolean(busyLikeById[selected.id])}
++                      onClick={() => handleToggleLike(selected.id)}
++                      title={selected.likedByMe ? "Quitar Like" : "Dar Like"}
++                    >
++                      {selected.likedByMe ? "♥" : "♡"} Like ({selected.likesCount})
++                    </button>
++
++                    <button
++                      type="button"
++                      className="px-4 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-white/90 font-extrabold"
++                      onClick={() => {
++                        setModalTab("comments");
++                        loadCommentsForSelected();
++                      }}
++                    >
++                      Comentarios ({selected.commentsCount})
++                    </button>
++                  </div>
++
++                  <div className="flex flex-wrap gap-2 mt-4">
++                    <TabBtn active={modalTab === "description"} onClick={() => setModalTab("description")}>Descripción</TabBtn>
++                    <TabBtn
++                      active={modalTab === "comments"}
++                      onClick={() => {
++                        setModalTab("comments");
++                        loadCommentsForSelected();
++                      }}
++                    >
++                      Comentarios
++                    </TabBtn>
++                    {selectedIsPurchased ? (
++                      <TabBtn
++                        active={modalTab === "recipe"}
++                        onClick={() => {
++                          if (!recipeData) handleLoadRecipe();
++                          else setModalTab("recipe");
++                        }}
++                      >
++                        Receta
++                      </TabBtn>
++                    ) : null}
++                  </div>
++
++                  {modalTab === "description" ? (
++                    <div className="mt-4 animate-[fadeIn_0.28s_ease-out]">
++                      <div className="text-[12px] font-black tracking-[0.12em] uppercase text-[rgba(241,225,148,0.80)]">Descripción</div>
++                      <div className="mt-3 text-white/75 text-sm leading-relaxed whitespace-pre-wrap">{selected.description || "(Sin descripción)"}</div>
++                    </div>
++                  ) : null}
++
++                  {modalTab === "comments" ? (
++                    <div className="mt-4 animate-[fadeIn_0.28s_ease-out]">
++                      <div className="text-[12px] font-black tracking-[0.12em] uppercase text-[rgba(241,225,148,0.80)]">
++                        Comentarios ({commentsCount || selected.commentsCount || 0})
++                      </div>
++
++                      {commentsLoading ? <div className="text-white/60 mt-2">Cargando...</div> : null}
++
++                      {!commentsLoading ? (
++                        <div className="mt-3 grid gap-2">
++                          {comments.length ? (
++                            comments.map((c) => (
++                              <div key={c.id} className="rounded-2xl border border-white/10 bg-white/5 p-3">
++                                <div className="text-sm font-extrabold text-white/95">@{c.username}</div>
++                                <div className="mt-2 text-white/75 text-sm whitespace-pre-wrap">{c.text}</div>
++                              </div>
++                            ))
++                          ) : (
++                            <div className="text-white/60 mt-2">Aún no hay comentarios. Sé el primero.</div>
++                          )}
++                        </div>
++                      ) : null}
++
++                      <div className="mt-3 grid gap-2">
++                        <textarea
++                          className="w-full min-h-[74px] resize-y rounded-2xl p-3 border border-white/10 bg-black/30 text-white/95 outline-none focus:border-[rgba(241,225,148,0.26)]"
++                          value={commentText}
++                          onChange={(e) => setCommentText(e.target.value)}
++                          placeholder="Escribe un comentario..."
++                        />
++                        <div className="flex gap-2">
++                          <button
++                            type="button"
++                            className="px-4 py-2 rounded-xl border border-[rgba(241,225,148,0.28)] bg-[rgba(241,225,148,0.20)] hover:bg-[rgba(241,225,148,0.28)] text-white font-extrabold shadow-[0_18px_40px_rgba(0,0,0,0.55)] disabled:opacity-50"
++                            disabled={commentBusy}
++                            onClick={handleCreateComment}
++                          >
++                            {commentBusy ? "Enviando..." : "Comentar"}
++                          </button>
++                        </div>
++                      </div>
++                    </div>
++                  ) : null}
++
++                  {modalTab === "recipe" ? (
++                    <div className="mt-4 animate-[fadeIn_0.28s_ease-out]">
++                      <div className="text-[12px] font-black tracking-[0.12em] uppercase text-[rgba(241,225,148,0.80)]">Receta (desbloqueada)</div>
++
++                      {recipeData ? (
++                        <>
++                          <div className="mt-3 text-white/75 text-sm leading-relaxed">
++                            Esta compra incluye los parámetros completos para re-generar el resultado. Puedes reusar la receta y generar tu propia versión.
++                          </div>
++
++                          <div className="flex flex-wrap gap-2 mt-3">
++                            <button
++                              type="button"
++                              className="px-4 py-2 rounded-xl border border-[rgba(241,225,148,0.28)] bg-[rgba(241,225,148,0.20)] hover:bg-[rgba(241,225,148,0.28)] text-white font-extrabold shadow-[0_18px_40px_rgba(0,0,0,0.55)] disabled:opacity-50"
++                              disabled={reuseBusy}
++                              onClick={handleReuseRecipe}
++                            >
++                              {reuseBusy ? "Importando referencias..." : "Reusar receta"}
++                            </button>
++
++                            <button
++                              type="button"
++                              className="px-4 py-2 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-white/90 font-extrabold"
++                              onClick={() => setModalTab("description")}
++                            >
++                              Volver a descripción
++                            </button>
++                          </div>
++
++                          {Array.isArray(recipeResolvedAssets) && recipeResolvedAssets.length ? (
++                            <div className="mt-4">
++                              <div className="text-[12px] font-black tracking-[0.12em] uppercase text-[rgba(241,225,148,0.80)]">Referencias incluidas</div>
++                              <div className="grid grid-cols-3 gap-2 mt-3">
++                                {recipeResolvedAssets
++                                  .filter((r) => typeof r?.url === "string" && r.url)
++                                  .slice(0, 12)
++                                  .map((r, idx) => (
++                                    <div key={`${r.assetId}-${idx}`} className="rounded-2xl overflow-hidden border border-white/10 bg-black/40">
++                                      <img src={r.url} alt={r.role || "ref"} className="w-full h-full object-cover" />
++                                      <div className="px-3 py-2 text-[10px] text-white/70">{r.role}</div>
++                                    </div>
++                                  ))}
++                              </div>
++                            </div>
++                          ) : null}
++
++                          <pre className="mt-4 text-xs bg-black/35 border border-white/10 rounded-2xl p-3 max-h-[280px] overflow-auto">{JSON.stringify(recipeData, null, 2)}</pre>
++                        </>
++                      ) : (
++                        <div className="text-white/60 mt-2">Cargando receta...</div>
++                      )}
++                    </div>
++                  ) : null}
++
++                  {error ? <div className="mt-4 text-red-300">{error}</div> : null}
++                </div>
++              </div>
++            ) : (
++              <div className="p-6 text-white/70">Cargando...</div>
++            )}
++          </div>
++        </div>
++      ) : null}
++
++      {/* Keyframes helper (solo para fadeIn suave) */}
++      <style>{`@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}`}</style>
++    </div>
++  );
++}
