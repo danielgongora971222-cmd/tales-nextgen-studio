@@ -646,6 +646,7 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
         >
           <canvas ref={designsCanvasRef} className={styles.refCanvas} />
           <div className={styles.refOverlay} aria-hidden="true" />
+          <div className={`${styles.auroraBorder} ${styles.auroraDesigns}`} aria-hidden="true" />
 
           <div className={styles.refLogoBadge} aria-hidden="true">
             <span className={styles.refLogoFallback}>D</span>
@@ -704,6 +705,7 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
 
           {/* Overlay para legibilidad (igual al TXT) */}
           <div className={styles.oneNationOverlay} aria-hidden="true" />
+          <div className={`${styles.auroraBorder} ${styles.auroraOneNation}`} aria-hidden="true" />
 
           {/* Logo fijo en esquina superior izquierda */}
           <div className={styles.oneNationLogoBadge} aria-hidden="true">
@@ -767,6 +769,7 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
         >
           <canvas ref={creatorCanvasRef} className={styles.refCanvas} />
           <div className={styles.refOverlay} aria-hidden="true" />
+          <div className={`${styles.auroraBorder} ${styles.auroraMono}`} aria-hidden="true" />
 
           <div className={styles.refLogoBadge} aria-hidden="true">
             <span className={styles.refLogoFallback}>C</span>

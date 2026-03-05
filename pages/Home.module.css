@@ -455,58 +455,27 @@
 ================================ */
 
 .heroCardRefBase {
-  background:
-    radial-gradient(
-      900px circle at 18% 20%,
-      color-mix(in srgb, var(--ref-accent-1, #7EAAED) 20%, transparent) 0%,
-      transparent 58%
-    ),
-    radial-gradient(
-      760px circle at 88% 92%,
-      color-mix(in srgb, var(--ref-accent-3, #DE6C53) 14%, transparent) 0%,
-      transparent 62%
-    ),
-    linear-gradient(145deg, rgba(15,15,15,0.92) 0%, rgba(5,5,5,0.96) 100%);
-
-  box-shadow:
-    0 12px 44px rgba(0,0,0,0.82),
-    0 0 26px color-mix(in srgb, var(--ref-accent-1, #7EAAED) 14%, transparent),
-    inset 0 1px 1px rgba(255,255,255,0.05);
-
-  backdrop-filter: blur(10px);
-  border: 1px solid color-mix(in srgb, var(--ref-accent-1, #7EAAED) 18%, rgba(255,255,255,0.06));
-  filter: saturate(1.06);
-  will-change: transform;
+  /* Base limpia (sin neblina): similar a 1NationUp */
+  background: linear-gradient(145deg, rgba(15,15,15,0.9) 0%, rgba(5,5,5,0.95) 100%);
+  box-shadow: 0 10px 40px rgba(0,0,0,0.8), inset 0 1px 1px rgba(255,255,255,0.05);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255,255,255,0.06);
 
   transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1),
               box-shadow 0.5s cubic-bezier(0.4, 0, 0.2, 1),
-              border-color 0.5s cubic-bezier(0.4, 0, 0.2, 1),
-              filter 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+              border-color 0.5s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .heroCardRefBase:hover {
-  animation: none;
+  transform: translateY(-8px) scale(1.02);
+  box-shadow:
+    0 20px 50px -10px var(--ref-glow-2, rgba(125, 69, 169, 0.4)),
+    0 0 20px var(--ref-glow-1, rgba(126, 170, 237, 0.2)),
+    inset 0 1px 2px rgba(255,255,255,0.15);
+  border-color: var(--ref-border-hover, rgba(255,255,255,0.22));
 }
 
-.heroCardRefBase:not(:hover) {
-  animation: refIdleBreathe 5.2s ease-in-out infinite;
-}
-
-@keyframes refIdleBreathe {
-  0%, 100% {
-    box-shadow:
-      0 12px 44px rgba(0,0,0,0.82),
-      0 0 22px color-mix(in srgb, var(--ref-accent-1, #7EAAED) 12%, transparent),
-      inset 0 1px 1px rgba(255,255,255,0.05);
-  }
-
-  50% {
-    box-shadow:
-      0 14px 48px rgba(0,0,0,0.84),
-      0 0 34px color-mix(in srgb, var(--ref-accent-1, #7EAAED) 18%, transparent),
-      inset 0 1px 1px rgba(255,255,255,0.06);
-  }
-}
+/* Desactiva los pseudo-elementos base de .heroCard (matrix/border) para que NO ensucien */
 .heroCardRefBase::before,
 .heroCardRefBase::after {
   content: none !important;
@@ -525,9 +494,8 @@
   height: 100%;
   z-index: 0;
   pointer-events: none;
-  opacity: 0.92;
-  filter: saturate(1.1);
-  transition: opacity 0.5s ease, filter 0.5s ease;
+  opacity: 0.78;
+  transition: opacity 0.5s ease;
 }
 
 .heroCardRefBase:hover .refCanvas {
@@ -540,22 +508,12 @@
   z-index: 0;
   pointer-events: none;
 
-  background:
-    radial-gradient(
-      900px circle at 16% 14%,
-      color-mix(in srgb, var(--ref-accent-2, #DFB142) 12%, transparent) 0%,
-      transparent 62%
-    ),
-    radial-gradient(
-      700px circle at 90% 92%,
-      color-mix(in srgb, var(--ref-accent-4, #FFF2C2) 10%, transparent) 0%,
-      transparent 66%
-    ),
-    linear-gradient(
-      90deg,
-      rgba(0,0,0,var(--ref-overlay-left, 0.72)) 0%,
-      rgba(0,0,0,var(--ref-overlay-right, 0.22)) 100%
-    );
+  /* Solo legibilidad, sin bruma de color */
+  background: linear-gradient(
+    90deg,
+    rgba(0,0,0,var(--ref-overlay-left, 0.70)) 0%,
+    rgba(0,0,0,var(--ref-overlay-right, 0.20)) 100%
+  );
 }
 
 .refLogoBadge {
@@ -765,7 +723,7 @@
     transparent
   );
 
-  opacity: 0.28;
+  opacity: 0;
   transition: opacity 0.7s ease;
 }
 
@@ -779,11 +737,16 @@
   --ref-accent-3: #B45309;
   --ref-accent-4: #FFF2C2;
 
+  /* Glow hover (como 1Nation, pero dorado) */
+  --ref-glow-1: rgba(253, 230, 138, 0.26);
+  --ref-glow-2: rgba(180, 83, 9, 0.44);
+  --ref-border-hover: rgba(253, 230, 138, 0.30);
+
   --ref-action-color: rgba(253, 230, 138, 1);
   --ref-title-white: #ffffff;
 
-  --ref-overlay-left: 0.64;
-  --ref-overlay-right: 0.14;
+  --ref-overlay-left: 0.68;
+  --ref-overlay-right: 0.18;
 }
 
 .monoTheme {
@@ -792,11 +755,16 @@
   --ref-accent-3: #9CA3AF;
   --ref-accent-4: #F9FAFB;
 
+  /* Glow hover (blanco/negro) */
+  --ref-glow-1: rgba(255, 255, 255, 0.22);
+  --ref-glow-2: rgba(156, 163, 175, 0.38);
+  --ref-border-hover: rgba(255, 255, 255, 0.22);
+
   --ref-action-color: rgba(255,255,255,0.88);
   --ref-title-white: rgba(255,255,255,0.96);
 
   --ref-overlay-left: 0.72;
-  --ref-overlay-right: 0.20;
+  --ref-overlay-right: 0.22;
 }
 
 .monoTheme .heroCreditsButton {
@@ -807,4 +775,92 @@
 .monoTheme .heroCreditsButton:hover {
   background: rgba(255,255,255,0.14);
   border-color: rgba(255,255,255,0.26);
+}
+
+/* ===============================
+   Aurora Boreal Border (Idle + Motion)
+   - Visible en idle
+   - En hover se intensifica (sin afectar el glow del card)
+================================ */
+
+.auroraBorder {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 2;
+
+  border: 2px solid transparent;
+
+  background:
+    linear-gradient(transparent, transparent) padding-box,
+    conic-gradient(
+      from 0deg,
+      var(--aurora-1),
+      var(--aurora-2),
+      var(--aurora-3),
+      var(--aurora-4),
+      var(--aurora-1)
+    ) border-box,
+    radial-gradient(
+      120% 220% at 12% 18%,
+      color-mix(in srgb, var(--aurora-2) 55%, transparent) 0%,
+      transparent 60%
+    ) border-box;
+
+  background-size: 100% 100%, 100% 100%, 220% 220%;
+  background-position: 0 0, 0 0, 0% 0%;
+
+  opacity: var(--aurora-opacity-idle, 0.62);
+  filter: blur(0.45px) saturate(1.25);
+  mix-blend-mode: var(--aurora-blend, screen);
+
+  animation: auroraFlow 6.2s ease-in-out infinite, auroraSpin 9.5s linear infinite;
+  will-change: transform, background-position, opacity;
+}
+
+.heroCard:hover .auroraBorder {
+  opacity: var(--aurora-opacity-hover, 0.92);
+  filter: blur(0.75px) saturate(1.35);
+}
+
+@keyframes auroraSpin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes auroraFlow {
+  0%, 100% { background-position: 0 0, 0 0, 0% 0%; }
+  50% { background-position: 0 0, 0 0, 100% 100%; }
+}
+
+/* Paletas por card */
+.auroraOneNation {
+  --aurora-1: #7EAAED;
+  --aurora-2: #DFB142;
+  --aurora-3: #DE6C53;
+  --aurora-4: #7D45A9;
+  --aurora-opacity-idle: 0.58;
+  --aurora-opacity-hover: 0.88;
+  --aurora-blend: screen;
+}
+
+.auroraDesigns {
+  --aurora-1: #FDE68A;
+  --aurora-2: #DFB142;
+  --aurora-3: #B45309;
+  --aurora-4: #FFF2C2;
+  --aurora-opacity-idle: 0.60;
+  --aurora-opacity-hover: 0.92;
+  --aurora-blend: screen;
+}
+
+.auroraMono {
+  --aurora-1: #FFFFFF;
+  --aurora-2: #E5E7EB;
+  --aurora-3: #0B0B0B; /* negro real */
+  --aurora-4: #9CA3AF;
+  --aurora-opacity-idle: 0.52;
+  --aurora-opacity-hover: 0.86;
+  --aurora-blend: normal; /* para que el negro se note */
 }
