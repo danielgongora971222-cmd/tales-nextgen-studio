@@ -88,106 +88,192 @@ export function createAssetsRouter(ctx) {
     return { row: data, error: null };
   }
 
+  function normalizeAssetMeta(raw, invalidMessage = "El campo meta no es JSON válido.") {
+    if (!raw) return {};
+
+    if (typeof raw === "string") {
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+        return {};
+      } catch {
+        throw httpError(400, "INVALID_META", invalidMessage);
+      }
+    }
+
+    if (typeof raw === "object" && !Array.isArray(raw)) {
+      return raw;
+    }
+
+    return {};
+  }
+
   async function canAccessAsset(row, userId) {
     if (!row) return false;
     if (row.is_public === true) return true;
     if (row.owner_id === userId) return true;
     return await hasCommunityAssetEntitlement(row.id, userId);
   }
-
-  // --- PASTE START ---
   // ===============================
-// Assets: delete (owner only)
-// DELETE /api/assets/:id
-// ===============================
-router.delete("/assets/:id", async (req, res) => {
-  const { user, error } = await requireUser(req);
-  if (error) return res.status(401).json({ ok: false, error });
+  // Assets: delete / hide for purchased assets
+  // DELETE /api/assets/:id
+  // ===============================
+  router.delete("/assets/:id", async (req, res) => {
+    const { user, error } = await requireUser(req);
+    if (error) return res.status(401).json({ ok: false, error });
 
-  const assetId = req.params.id;
+    const assetId = req.params.id;
 
-  // 1) Buscar asset y validar dueño
-  const { data: row, error: qErr } = await supabaseAdmin
-    .from("assets")
-    .select("id, owner_id, storage_path")
-    .eq("id", assetId)
-    .maybeSingle();
+    const { data: row, error: qErr } = await supabaseAdmin
+      .from("assets")
+      .select("id, owner_id, storage_path, name")
+      .eq("id", assetId)
+      .maybeSingle();
 
-  if (qErr) {
-    return res.status(500).json({
-      ok: false,
-      error: { code: "DB_QUERY_FAILED", message: qErr.message },
-    });
-  }
-
-  if (!row) {
-    return res.status(404).json({
-      ok: false,
-      error: { code: "NOT_FOUND", message: "Asset no encontrado." },
-    });
-  }
-
-  if (row.owner_id !== user.id) {
-    return res.status(403).json({
-      ok: false,
-      error: { code: "FORBIDDEN", message: "No tienes permiso para eliminar este asset." },
-    });
-  }
-
-    const { data: usedListing, error: usedErr } = await supabaseAdmin
-    .from("community_listings")
-    .select("id, status")
-    .eq("preview_asset_id", assetId)
-    .neq("status", "deleted")
-    .limit(1)
-    .maybeSingle();
-
-  if (usedErr) {
-    return res.status(500).json({
-      ok: false,
-      error: { code: "DB_QUERY_FAILED", message: usedErr.message },
-    });
-  }
-
-  if (usedListing?.id) {
-    return res.status(409).json({
-      ok: false,
-      error: {
-        code: "ASSET_IN_USE",
-        message: "No puedes eliminar este asset porque está en un listing de Community Store. Primero deja de venderlo.",
-        details: { listingId: usedListing.id, listingStatus: usedListing.status },
-      },
-    });
-  }
-
-
-  // 2) Borrar del storage si existe (compatible: Supabase o R2)
-  if (row.storage_path) {
-    try {
-      await deleteStoragePath(row.storage_path);
-    } catch (e) {
+    if (qErr) {
       return res.status(500).json({
         ok: false,
-        error: { code: "STORAGE_DELETE_FAILED", message: e?.message || "No se pudo borrar el archivo." },
+        error: { code: "DB_QUERY_FAILED", message: qErr.message },
       });
     }
-  }
 
-  // 3) Borrar fila en DB
-  const { error: delErr } = await supabaseAdmin
-    .from("assets")
-    .delete()
-    .eq("id", assetId)
-    .eq("owner_id", user.id);
+    if (!row) {
+      return res.status(404).json({
+        ok: false,
+        error: { code: "NOT_FOUND", message: "Asset no encontrado." },
+      });
+    }
 
-  if (delErr) {
-    return res.status(500).json({
-      ok: false,
-      error: { code: "DB_DELETE_FAILED", message: delErr.message },
-    });
-  }
+    const isOwner = row.owner_id === user.id;
 
-  return res.json({ ok: true, id: assetId });
+    if (!isOwner) {
+      let entitled = false;
+      try {
+        entitled = await hasCommunityAssetEntitlement(assetId, user.id);
+      } catch (e) {
+        return res.status(500).json({
+          ok: false,
+          error: { code: "ACCESS_CHECK_FAILED", message: e?.message || "No se pudo verificar el acceso al asset." },
+        });
+      }
+
+      if (!entitled) {
+        return res.status(403).json({
+          ok: false,
+          error: { code: "FORBIDDEN", message: "No tienes permiso para eliminar este asset." },
+        });
+      }
+
+      const { data: entitlementRow, error: entitlementErr } = await supabaseAdmin
+        .from("community_asset_entitlements")
+        .select("listing_id")
+        .eq("user_id", user.id)
+        .eq("asset_id", assetId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (entitlementErr) {
+        return res.status(500).json({
+          ok: false,
+          error: { code: "DB_QUERY_FAILED", message: entitlementErr.message },
+        });
+      }
+
+      const { error: hideErr } = await supabaseAdmin
+        .from("community_hidden_assets")
+        .upsert(
+          {
+            user_id: user.id,
+            asset_id: assetId,
+            listing_id: entitlementRow?.listing_id || null,
+            hidden_at: new Date().toISOString(),
+          },
+          { onConflict: "user_id,asset_id" }
+        );
+
+      if (hideErr) {
+        return res.status(500).json({
+          ok: false,
+          error: { code: "DB_UPSERT_FAILED", message: hideErr.message },
+        });
+      }
+
+      return res.json({ ok: true, id: assetId, mode: "hidden" });
+    }
+
+    const { data: protectedRows, error: protectedErr } = await supabaseAdmin
+      .rpc("community_find_protected_asset_usage", { p_asset_id: assetId });
+
+    if (protectedErr) {
+      return res.status(500).json({
+        ok: false,
+        error: { code: "DB_RPC_FAILED", message: protectedErr.message },
+      });
+    }
+
+    const protectedUsage = Array.isArray(protectedRows) ? protectedRows[0] : null;
+    const hasCompletedPurchases = Boolean(protectedUsage?.has_completed_purchases);
+    const linkedListingId = typeof protectedUsage?.listing_id === "string" ? protectedUsage.listing_id : null;
+
+    if (hasCompletedPurchases) {
+      return res.status(409).json({
+        ok: false,
+        error: {
+          code: "SOLD_ASSET_LOCKED",
+          message: "No puedes eliminar este asset porque ya fue entregado a compradores. Debe conservarse para que esos usuarios sigan pudiendo usarlo.",
+          details: {
+            assetId,
+            listingId: linkedListingId,
+            listingStatus: protectedUsage?.listing_status || null,
+            usageKind: protectedUsage?.usage_kind || null,
+          },
+        },
+      });
+    }
+
+    if (linkedListingId) {
+      return res.status(409).json({
+        ok: false,
+        error: {
+          code: "ASSET_IN_USE",
+          message: "No puedes eliminar este asset porque sigue formando parte de un listing o receta reutilizable de Community Store. Primero elimínalo o despublícalo ahí.",
+          details: {
+            assetId,
+            listingId: linkedListingId,
+            listingName: protectedUsage?.listing_name || null,
+            listingStatus: protectedUsage?.listing_status || null,
+            usageKind: protectedUsage?.usage_kind || null,
+          },
+        },
+      });
+    }
+
+    if (row.storage_path) {
+      try {
+        await deleteStoragePath(row.storage_path);
+      } catch (e) {
+        return res.status(500).json({
+          ok: false,
+          error: { code: "STORAGE_DELETE_FAILED", message: e?.message || "No se pudo borrar el archivo." },
+        });
+      }
+    }
+
+    const { error: delErr } = await supabaseAdmin
+      .from("assets")
+      .delete()
+      .eq("id", assetId)
+      .eq("owner_id", user.id);
+
+    if (delErr) {
+      return res.status(500).json({
+        ok: false,
+        error: { code: "DB_DELETE_FAILED", message: delErr.message },
+      });
+    }
+
+    return res.json({ ok: true, id: assetId, mode: "deleted" });
   });
 
   // ===============================
@@ -326,11 +412,36 @@ router.delete("/assets/:id", async (req, res) => {
         });
       }
 
+      const hiddenAssetIds = new Set();
+
       if (entitledAssetIds.length > 0) {
+        const { data: hiddenRows, error: hiddenErr } = await supabaseAdmin
+          .from("community_hidden_assets")
+          .select("asset_id")
+          .eq("user_id", user.id)
+          .in("asset_id", entitledAssetIds);
+
+        if (hiddenErr) {
+          console.error("[DB_QUERY_FAILED]", hiddenErr);
+          return res.status(500).json({
+            ok: false,
+            error: { code: "DB_QUERY_FAILED", message: hiddenErr.message },
+          });
+        }
+
+        for (const hiddenRow of hiddenRows || []) {
+          const hiddenId = typeof hiddenRow?.asset_id === "string" ? hiddenRow.asset_id : "";
+          if (hiddenId) hiddenAssetIds.add(hiddenId);
+        }
+      }
+
+      const visibleEntitledAssetIds = entitledAssetIds.filter((id) => !hiddenAssetIds.has(id));
+
+      if (visibleEntitledAssetIds.length > 0) {
         let purchasedQ = supabaseAdmin
           .from("assets")
           .select("id, url, storage_path, type, name, prompt, created_at, owner_id, is_public, meta, likes_count, comments_count")
-          .in("id", entitledAssetIds);
+          .in("id", visibleEntitledAssetIds);
 
         if (type) purchasedQ = purchasedQ.eq("type", type);
 
@@ -957,8 +1068,10 @@ router.post("/assets/complete-upload", async (req, res) => {
   const type = input.type || (String(input.mimeType || "").startsWith("video") ? "video" : "image");
   const tool = input.tool || "upload";
   const name = input.name || "upload";
+  const extraMeta = normalizeAssetMeta(input.meta, "El campo meta de complete-upload no es JSON válido.");
 
   const meta = {
+    ...extraMeta,
     category: input.category || null,
     mimeType: input.mimeType || null,
     sizeBytes: input.sizeBytes || null,
@@ -1025,6 +1138,7 @@ router.post("/assets/upload", upload.single("file"), async (req, res, next) => {
     let assetType = "image";
     let name = "upload";
     let category = null;
+    let extraMeta = {};
 
     let storagePath;
     let mimeType;
@@ -1041,6 +1155,7 @@ router.post("/assets/upload", upload.single("file"), async (req, res, next) => {
           : (req.file.originalname || "upload");
 
       category = typeof body.category === "string" && body.category.trim() ? body.category.trim() : null;
+      extraMeta = normalizeAssetMeta(body.meta, "El campo meta del upload no es JSON válido.");
 
       const forcedType = typeof body.type === "string" ? body.type.trim().toLowerCase() : "";
       const inferred = req.file.mimetype?.startsWith("video") ? "video" : "image";
@@ -1065,6 +1180,7 @@ router.post("/assets/upload", upload.single("file"), async (req, res, next) => {
       assetType = parsed.type || "image";
       name = parsed.name || "upload";
       category = parsed.category || null;
+      extraMeta = normalizeAssetMeta(parsed.meta, "El campo meta del upload no es válido.");
 
       const up = await uploadBase64ToStorage({
         userId: user.id,
@@ -1079,6 +1195,7 @@ router.post("/assets/upload", upload.single("file"), async (req, res, next) => {
     }
 
     const meta = {
+      ...extraMeta,
       source: "upload",
       tool: toolName,
       category,
@@ -1111,6 +1228,7 @@ router.post("/assets/upload", upload.single("file"), async (req, res, next) => {
         ownerId: user.id,
         isPublic: false,
         createdAt: new Date().toISOString(),
+        meta,
       },
     });
   } catch (err) {

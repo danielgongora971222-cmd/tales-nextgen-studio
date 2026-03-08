@@ -436,13 +436,25 @@ export async function deleteAsset(assetId: string) {
 
   invalidateMyAssetsCache();
   invalidatePublicAssetsCache();
+  invalidatePurchasedAssetsCache();
 
-  return { ok: true };
+  return {
+    ok: true,
+    mode: data?.mode || "deleted",
+  };
 }
 
 export async function uploadUserAsset(
   file: File,
-  toolOrOpts: string | { tool?: string; category?: string; name?: string; type?: "image" | "video" } = "upload"
+  toolOrOpts:
+    | string
+    | {
+        tool?: string;
+        category?: string;
+        name?: string;
+        type?: "image" | "video";
+        meta?: Record<string, any>;
+      } = "upload"
 ): Promise<Asset> {
   const { data: sessionData } = await supabase.auth.getSession();
   const token = sessionData.session?.access_token;
@@ -458,6 +470,7 @@ export async function uploadUserAsset(
   const name = opts.name ?? file.name;
   const type = opts.type ?? inferredType;
   const category = opts.category;
+  const meta = opts.meta && typeof opts.meta === "object" ? opts.meta : undefined;
 
   const headersJson: Record<string, string> = { "Content-Type": "application/json" };
   if (token) headersJson["Authorization"] = `Bearer ${token}`;
@@ -533,6 +546,7 @@ export async function uploadUserAsset(
           category,
           mimeType: file.type || "application/octet-stream",
           sizeBytes: file.size,
+          meta,
         }),
       });
 
@@ -558,8 +572,10 @@ export async function uploadUserAsset(
         url: row.url,
         type: row.type === "video" ? "video" : "image",
         name: row.name || file.name,
+        tool: row.tool ?? tool,
         prompt: undefined,
         createdAt: row.createdAt ? new Date(row.createdAt).getTime() : Date.now(),
+        meta: row.meta ?? meta ?? undefined,
         ownerId: row.ownerId,
         isPublic: !!row.isPublic,
 
@@ -583,6 +599,7 @@ export async function uploadUserAsset(
   form.append("name", name);
   form.append("type", type);
   if (category) form.append("category", category);
+  if (meta) form.append("meta", JSON.stringify(meta));
 
   const headersMultipart: Record<string, string> = {};
   if (token) headersMultipart["Authorization"] = `Bearer ${token}`;
@@ -647,7 +664,7 @@ export async function uploadUserAsset(
     const resp2 = await fetch(apiUrl("/api/assets/upload"), {
       method: "POST",
       headers: headersJson,
-      body: JSON.stringify({ dataUrl, name, tool, category, type }),
+      body: JSON.stringify({ dataUrl, name, tool, category, type, meta }),
     });
 
     const text2 = await resp2.text();
@@ -675,8 +692,10 @@ export async function uploadUserAsset(
       url: row2.url,
       type: row2.type === "video" ? "video" : "image",
       name: row2.name || file.name,
+      tool: row2.tool ?? tool,
       prompt: undefined,
       createdAt: row2.createdAt ? new Date(row2.createdAt).getTime() : Date.now(),
+      meta: row2.meta ?? meta ?? undefined,
       ownerId: row2.ownerId,
       isPublic: !!row2.isPublic,
 
@@ -703,8 +722,10 @@ export async function uploadUserAsset(
     url: row.url,
     type: row.type === "video" ? "video" : "image",
     name: row.name || file.name,
+    tool: row.tool ?? tool,
     prompt: undefined,
     createdAt: row.createdAt ? new Date(row.createdAt).getTime() : Date.now(),
+    meta: row.meta ?? meta ?? undefined,
     ownerId: row.ownerId,
     isPublic: !!row.isPublic,
 

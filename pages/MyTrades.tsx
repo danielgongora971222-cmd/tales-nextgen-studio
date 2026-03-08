@@ -145,6 +145,13 @@ export default function MyTrades({ onNavigate }: Props) {
   const canReferrals = !!subscription?.can_referrals;
   const canManageEarnings = !!subscription?.can_sell;
 
+  function openPlansAndCredits(defaultTab: "plans" | "credits" = "plans") {
+    try {
+      window.localStorage.setItem("tales_account_tab", defaultTab);
+    } catch {}
+    onNavigate(AppRoute.PAYWALL);
+  }
+
   const referralGateText = useMemo(() => {
     if (!subscription) {
       return "Para obtener tus códigos de Referidos/Afiliados necesitas un plan activo Partner o superior. Si cancelas, no renuevas o bajas de nivel, tus códigos dejan de funcionar automáticamente hasta volver a Partner o superior.";
@@ -647,8 +654,12 @@ export default function MyTrades({ onNavigate }: Props) {
           <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
             <div className="text-sm font-semibold mb-2">Desbloquea Seller</div>
             <div className="text-white/70 text-sm">{sellerGateText}</div>
-            <button type="button" className="mt-4 px-4 py-2 rounded-lg bg-white text-black font-semibold" onClick={() => onNavigate(AppRoute.PROFILE)}>
-              Ir a Perfil y Créditos
+            <button
+              type="button"
+              className="mt-4 px-4 py-2 rounded-lg bg-white text-black font-semibold"
+              onClick={() => openPlansAndCredits("plans")}
+            >
+              Ver planes y créditos
             </button>
           </div>
         ) : (
@@ -883,8 +894,12 @@ export default function MyTrades({ onNavigate }: Props) {
           <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
             <div className="text-sm font-semibold mb-2">Desbloquea Referidos/Afiliados</div>
             <div className="text-white/70 text-sm">{referralGateText}</div>
-            <button type="button" className="mt-4 px-4 py-2 rounded-lg bg-white text-black font-semibold" onClick={() => onNavigate(AppRoute.PROFILE)}>
-              Ir a Perfil y Créditos
+            <button
+              type="button"
+              className="mt-4 px-4 py-2 rounded-lg bg-white text-black font-semibold"
+              onClick={() => openPlansAndCredits("plans")}
+            >
+              Ver planes y créditos
             </button>
           </div>
         ) : (

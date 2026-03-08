@@ -180,6 +180,13 @@ export async function purchaseCommunityListing(listingId: string, referralCode?:
     err.code = code;
     err.details = details;
 
+    if (code === "NO_ACTIVE_PLAN" || code === "PLAN_REQUIRED_PRO") {
+      emitPlanRequired({
+        code: String(code),
+        message: msg || "Necesitas un plan activo para comprar esta creación.",
+      });
+    }
+
     if (code === "INSUFFICIENT_CREDITS" && details) {
       const { emitInsufficientCredits } = await import("./appEvents");
       emitInsufficientCredits(details);

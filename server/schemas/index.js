@@ -259,6 +259,7 @@ export const UploadAssetSchema = z.object({
   tool: z.string().optional(),
   category: z.string().optional(),
   type: z.enum(["image", "video"]).optional(),
+  meta: z.record(z.any()).optional(),
 });
 
 export const StoreOrderSchema = z.object({
@@ -349,6 +350,7 @@ export const CompleteUploadSchema = z.object({
   type: z.enum(["image", "video"]).optional(),
   mimeType: z.string().optional(),
   sizeBytes: z.number().int().positive().optional(),
+  meta: z.record(z.any()).optional(),
 });
 
 export const KlingElementImageSchema = z.union([

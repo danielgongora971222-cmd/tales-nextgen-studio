@@ -26,6 +26,7 @@ type ElementItem = {
   name: string;
   createdAt: string | number;
   url: string;
+  previewUrl?: string | null;
 };
 
 type ElementImageInput =
@@ -1039,19 +1040,26 @@ useEffect(() => {
       .filter((a: any) => {
         if (a?.type && a.type !== "image") return false;
         const meta = (a as any)?.meta || {};
-        return meta?.tool === "element-library" || meta?.isElement === true;
+        return a?.tool === "element-library" || meta?.tool === "element-library" || meta?.isElement === true;
       })
       .sort((a: any, b: any) => {
         const ta = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
         const tb = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
         return tb - ta;
       })
-      .map((a: any) => ({
-        id: a.id,
-        name: a.name || "Element",
-        createdAt: a.createdAt || "",
-        url: a.url,
-      }));
+      .map((a: any) => {
+        const meta = (a as any)?.meta || {};
+        return {
+          id: a.id,
+          name: a.name || "Element",
+          createdAt: a.createdAt || "",
+          url: a.url,
+          previewUrl:
+            typeof meta?.elementPreviewDataUrl === "string" && meta.elementPreviewDataUrl.trim()
+              ? meta.elementPreviewDataUrl
+              : a.url,
+        };
+      });
 
     setElements(items);
 
@@ -1197,7 +1205,7 @@ useEffect(() => {
     const selectedOrdered = (selectedElementAssetIds || [])
       .slice(0, 5)
       .map((id) => elements.find((x) => x.id === id))
-      .filter(Boolean) as { id: string; name: string; url?: string }[];
+      .filter(Boolean) as ElementItem[];
 
     const rest = (elements || []).filter((x) => !selectedSet.has(x.id));
     const ordered = [...selectedOrdered, ...rest];
@@ -1207,7 +1215,16 @@ useEffect(() => {
       const name = el?.name || `element_${i + 1}`;
       const stableToken = el?.id ? elementTokenById.get(el.id) : null;
       const token = stableToken || makeElementTag(name) || `@element_${i + 1}`;
-      push({ id: el.id, token, label: name, kind: "element", previewUrl: el?.url || null }, true);
+      push(
+        {
+          id: el.id,
+          token,
+          label: name,
+          kind: "element",
+          previewUrl: el?.previewUrl || el?.url || null,
+        },
+        true
+      );
     }
 
     return out;
@@ -1373,6 +1390,31 @@ const promptReferences: PromptReference[] = useMemo(() => {
     return { img, revoke: () => URL.revokeObjectURL(url) };
   }
 
+    async function buildElementPreviewDataUrl(input: ElementImageInput, maxSide = 320): Promise<string> {
+    const src = await resolveInputToUrl(input);
+    const loaded = await loadImageViaObjectUrl(src);
+
+    try {
+      const iw = loaded.img.naturalWidth || (loaded.img as any).width || 1;
+      const ih = loaded.img.naturalHeight || (loaded.img as any).height || 1;
+      const scale = Math.min(1, maxSide / Math.max(iw, ih));
+      const w = Math.max(1, Math.round(iw * scale));
+      const h = Math.max(1, Math.round(ih * scale));
+
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("No se pudo crear la miniatura del Element.");
+
+      ctx.drawImage(loaded.img, 0, 0, w, h);
+      return canvas.toDataURL("image/jpeg", 0.86);
+    } finally {
+      loaded.revoke?.();
+    }
+  }
+
   function drawContain(ctx: CanvasRenderingContext2D, img: HTMLImageElement, x: number, y: number, w: number, h: number) {
     const iw = img.naturalWidth || (img as any).width || 1;
     const ih = img.naturalHeight || (img as any).height || 1;
@@ -1527,15 +1569,25 @@ const promptReferences: PromptReference[] = useMemo(() => {
           ? await buildSingleElementFile(elementCreateSlots[0])
           : await buildMosaic2x2(elementCreateSlots);
 
+      const elementPreviewDataUrl = await buildElementPreviewDataUrl(elementCreateSlots[0]!);
+
       // 2) nombre bonito para el asset
       const slug = slugifyName(name);
       const fileName = slug ? `${slug}.jpg` : `element_${Date.now()}.jpg`;
       const mosaicFile = new File([base], fileName, { type: base.type || "image/jpeg" });
 
       // 3) subir como asset normal (global para todos los modelos)
-      const uploaded = await uploadUserAsset(mosaicFile, "element-library");
+      const uploaded = await uploadUserAsset(mosaicFile, {
+        tool: "element-library",
+        name,
+        category: elementCreateTag,
+        type: "image",
+        meta: {
+          isElement: true,
+          elementPreviewDataUrl,
+        },
+      });
 
-      // 4) refrescar + seleccionar
       await reloadHistory();
 
       setSelectedElementAssetIds((prev) => {
@@ -1543,7 +1595,8 @@ const promptReferences: PromptReference[] = useMemo(() => {
         const next = [uploaded.id, ...prev];
         return next.slice(0, 5);
       });
-      const tag = makeElementTag(name);
+
+      const tag = (uploaded?.id ? elementTokenById.get(uploaded.id) : null) || makeElementTag(name);
       if (tag) appendPromptTag(tag);
 
       closeCreateModal();
@@ -1868,11 +1921,24 @@ const promptReferences: PromptReference[] = useMemo(() => {
   }
 
   async function handleDelete(asset: Asset) {
-    const ok = window.confirm("¿Seguro que deseas eliminar esta imagen? Esta acción no se puede deshacer.");
+    const isPurchased = asset.accessSource === "purchased";
+
+    const ok = window.confirm(
+      isPurchased
+        ? "¿Ocultar este asset comprado de tu biblioteca?\n\nSolo desaparecerá para tu cuenta. La compra seguirá siendo válida y no se borrará para otros usuarios. Si más adelante quieres volver a usarlo, tendrás que reabrir o reusar la receta o creación que lo contiene."
+        : "¿Seguro que deseas eliminar esta imagen? Esta acción no se puede deshacer."
+    );
     if (!ok) return;
 
     try {
-      await deleteAsset(asset.id);
+      const result = await deleteAsset(asset.id);
+
+      if (isPurchased || result.mode === "hidden") {
+        setPurchasedAssets((prev) => prev.filter((x) => x.id !== asset.id));
+        if (viewer?.id === asset.id) setViewer(null);
+        return;
+      }
+
       setHistory((prev) => {
         const next = prev.filter((x) => x.id !== asset.id);
         const nextCount = Math.min(historyVisibleCount, next.length);
@@ -1880,6 +1946,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
         setVisibleHistory(next.slice(0, nextCount));
         return next;
       });
+
       if (viewer?.id === asset.id) setViewer(null);
     } catch (e: any) {
       setError(e?.message || "No se pudo eliminar.");
@@ -2230,7 +2297,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
                       <div className={styles.klingPopoverThumbRow}>
                         {elements.slice(0, 6).map((el) => {
                           const active = selectedElementAssetIds.includes(el.id);
-                          const src = el.url || "";
+                          const src = el.previewUrl || el.url || "";
                           return (
                             <div key={el.id} className={styles.klingThumbWrap}>
                               <button
@@ -2972,7 +3039,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
                   })
                   .map((el) => {
                     const active = selectedElementAssetIds.includes(el.id);
-                    const src = el.url || "";
+                    const src = el.previewUrl || el.url || "";
                     return (
                       <div key={el.id} className={`${styles.elementAllCard} ${active ? styles.elementAllCardActive : ""}`}>
                         <button
@@ -2982,7 +3049,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
                             setSelectedElementAssetIds((prev) => {
                               const has = prev.includes(el.id);
                               if (has) {
-                                const tag = makeElementTag(el.name);
+                                const tag = (el?.id ? elementTokenById.get(el.id) : null) || makeElementTag(el.name);
                                 if (tag) appendPromptTag(tag);
                                 return prev;
                               }
@@ -2990,7 +3057,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
                                 setError("Kling permite seleccionar máximo 5 Elements a la vez.");
                                 return prev;
                               }
-                              const tag = makeElementTag(el.name);
+                              const tag = (el?.id ? elementTokenById.get(el.id) : null) || makeElementTag(el.name);
                               if (tag) appendPromptTag(tag);
                               return [el.id, ...prev];
                             });
@@ -3021,7 +3088,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
                               setSelectedElementAssetIds((prev) => {
                                 const has = prev.includes(el.id);
                                 if (has) {
-                                  const tag = makeElementTag(el.name);
+                                  const tag = (el?.id ? elementTokenById.get(el.id) : null) || makeElementTag(el.name);
                                   if (tag) appendPromptTag(tag);
                                   return prev;
                                 }
@@ -3029,7 +3096,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
                                   setError("Kling permite seleccionar máximo 5 Elements a la vez.");
                                   return prev;
                                 }
-                                const tag = makeElementTag(el.name);
+                                const tag = (el?.id ? elementTokenById.get(el.id) : null) || makeElementTag(el.name);
                                 if (tag) appendPromptTag(tag);
                                 return [el.id, ...prev];
                               });
