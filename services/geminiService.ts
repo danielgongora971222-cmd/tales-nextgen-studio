@@ -1,4 +1,5 @@
 import { GeminiModel } from "../types";
+import { DEFAULT_IMAGE_GENERATOR_MODEL } from "../config/imageGenerationShared.js";
 import { backend } from "./backendService";
 import { supabase } from "./supabaseClient";
 import { apiUrl } from "./apiBase";
@@ -146,7 +147,7 @@ async function apiPost<T>(path: string, body: any): Promise<T> {
 
 export const generateImage = async (
   prompt: string,
-  model: string = GeminiModel.IMAGE,
+  model: string = DEFAULT_IMAGE_GENERATOR_MODEL,
   options?: { aspectRatio?: string }
 ): Promise<string> => {
   const res: any = await apiPost("/api/ai/image", {
@@ -189,6 +190,8 @@ export type GenerateImageBatchOptions = {
   aspectRatio?: string;
   count?: number;
   quality?: ImageGenQuality;
+  gridMode?: string;
+  googleSearchGrounding?: boolean;
   tool?: string;
   nameHint?: string;
   // Kling-only (Element Library)
@@ -224,7 +227,7 @@ export type GenerateImageBatchResult = {
 
 export const generateImageBatch = async (
   prompt: string,
-  model: string = GeminiModel.IMAGE,
+  model: string = DEFAULT_IMAGE_GENERATOR_MODEL,
   options?: GenerateImageBatchOptions
 ): Promise<GenerateImageBatchResult> => {
   const res: any = await apiPost("/api/ai/image", {
@@ -233,6 +236,8 @@ export const generateImageBatch = async (
     aspectRatio: options?.aspectRatio,
     count: options?.count,
     quality: options?.quality,
+    gridMode: options?.gridMode,
+    googleSearchGrounding: options?.googleSearchGrounding,
     tool: options?.tool,
     nameHint: options?.nameHint,
     characterAssetIds: options?.characterAssetIds,

@@ -15,6 +15,12 @@ import { createStorageHelpers } from "../lib/storage.js";
 import { apiError, httpError } from "../lib/errors.js";
 import { base64urlEncode } from "../lib/base64url.js";
 import { normalizeImageBufferForOpenAI } from "../lib/providerImageUtils.js";
+import {
+  DEFAULT_GRID_MODE,
+  GOOGLE_IMAGE_MODELS,
+  buildGridPromptInstruction,
+  supportsGoogleSearchGrounding,
+} from "../../config/imageGenerationShared.js";
 
 dotenv.config();
 
@@ -839,6 +845,8 @@ async function runImageGenerateTask({ userId, params }) {
     styleReferenceDataUrl,
     backgroundAssetId,
     promptReferences,
+    gridMode,
+    googleSearchGrounding,
     klingElementIds,
     horizontalAngle,
     verticalAngle,
@@ -846,7 +854,7 @@ async function runImageGenerateTask({ userId, params }) {
     loraScale,
   } = parsed;
 
-  const selectedModel = String(model || "");
+  const selectedModel = String(model || GOOGLE_IMAGE_MODELS.NANO_BANANA_2);
     const hasStylePresetReference =
     typeof styleReferenceDataUrl === "string" &&
     styleReferenceDataUrl.startsWith("data:image/");
@@ -867,6 +875,14 @@ async function runImageGenerateTask({ userId, params }) {
 
     return `${String(text || "").trim()}\n\n${instruction}`.trim();
   };
+
+  const effectiveGridMode = typeof gridMode === "string" ? gridMode : DEFAULT_GRID_MODE;
+  const appendGridInstruction = (text) => {
+    const instruction = buildGridPromptInstruction(effectiveGridMode);
+    return `${String(text || "").trim()}\n\n${instruction}`.trim();
+  };
+  const useGoogleSearchGrounding =
+    supportsGoogleSearchGrounding(selectedModel) && Boolean(googleSearchGrounding);
 
   const styleReferenceInlinePart = async () => {
     const { mimeType, base64 } = parseDataUrl(styleReferenceDataUrl);
@@ -1007,9 +1023,11 @@ async function runImageGenerateTask({ userId, params }) {
         )
       : prompt;
 
-    const promptAdapted = appendStyleReferenceInstruction(
-      promptAdaptedBase,
-      Math.min(refAssetIds.length, 4)
+    const promptAdapted = appendGridInstruction(
+      appendStyleReferenceInstruction(
+        promptAdaptedBase,
+        Math.min(refAssetIds.length, 4)
+      )
     );
 
     const dataUrl = await openaiGenerateImageDataUrl({
@@ -1034,6 +1052,8 @@ async function runImageGenerateTask({ userId, params }) {
       aspectRatio: aspectRatio || "auto",
       quality: oQuality,
       count: 1,
+      gridMode: effectiveGridMode,
+      googleSearchGrounding: false,
       characterAssetIds: Array.isArray(characterAssetIds) ? characterAssetIds : [],
       ...buildStoredStyleMeta(),
       backgroundAssetId: backgroundAssetId || null,
@@ -1088,7 +1108,7 @@ async function runImageGenerateTask({ userId, params }) {
         `Reference images by number: ${refUrls.map((_, i) => `image ${i + 1}`).join(", ")}.`;
     }
 
-    promptAdapted = appendStyleReferenceInstruction(promptAdapted, refUrls.length);
+    promptAdapted = appendGridInstruction(appendStyleReferenceInstruction(promptAdapted, refUrls.length));
 
     const payload = {
       prompt: String(promptAdapted || "").slice(0, 3500),
@@ -1239,9 +1259,11 @@ async function runImageGenerateTask({ userId, params }) {
       ? Math.max(0, refUrls.length - 1)
       : refUrls.length;
 
-    promptForKling = appendStyleReferenceInstruction(
-      promptForKling,
-      directKlingNonStyleRefCount
+    promptForKling = appendGridInstruction(
+      appendStyleReferenceInstruction(
+        promptForKling,
+        directKlingNonStyleRefCount
+      )
     );
 
     if (element_list.length) {
@@ -1438,9 +1460,11 @@ async function runImageGenerateTask({ userId, params }) {
         ? Math.max(0, refUrls.length - 1)
         : refUrls.length;
 
-      const safePrompt = appendStyleReferenceInstruction(
-        ensureO3Prompt(basePrompt, refUrls.length),
-        nonStyleRefCount
+      const safePrompt = appendGridInstruction(
+        appendStyleReferenceInstruction(
+          ensureO3Prompt(basePrompt, refUrls.length),
+          nonStyleRefCount
+        )
       );
 
       falInput = {
@@ -1610,9 +1634,11 @@ async function runImageGenerateTask({ userId, params }) {
       : [];
 
     const tokenRefs10 = hasTokenRefs ? tokenRefs.slice(0, Math.min(refUrls.length, 10)) : [];
-    const promptAdapted = hasTokenRefs && tokenRefs10.length
-      ? appendImageNumberMapping(replaceMentionsWithFalImageTags(prompt, tokenRefs10), tokenRefs10)
-      : prompt;
+    const promptAdapted = appendGridInstruction(
+      hasTokenRefs && tokenRefs10.length
+        ? appendImageNumberMapping(replaceMentionsWithFalImageTags(prompt, tokenRefs10), tokenRefs10)
+        : prompt
+    );
 
     const { width, height } = falDimsFromAspectQuality(
       aspectRatio || "auto",
@@ -1671,7 +1697,7 @@ async function runImageGenerateTask({ userId, params }) {
     const hint = nameHint || "generated";
     const urlExpiresInSeconds = 60 * 60;
 
-    const safePrompt = String(prompt || "").trim();
+    const safePrompt = appendGridInstruction(String(prompt || "").trim());
     if (!safePrompt) apiError(400, "MISSING_PROMPT", "Falta prompt.");
 
     const gen = await ai.models.generateImages({
@@ -1737,17 +1763,30 @@ async function runImageGenerateTask({ userId, params }) {
       ? appendImageNumberMapping(replaceMentionsWithImageNumbers(prompt, tokenRefs4), tokenRefs4)
       : prompt;
 
-    const promptAdapted = appendStyleReferenceInstruction(
-      promptBase,
-      Math.min(refAssetIds.length, 4)
+    const promptAdapted = appendGridInstruction(
+      appendStyleReferenceInstruction(
+        promptBase,
+        Math.min(refAssetIds.length, 4)
+      )
     );
 
     // Pedimos explícitamente salida de IMAGEN + aplicamos aspectRatio/quality cuando aplique.
     // (Mantener alineado con /api/ai/image sync)
     const genConfig = {
-      responseModalities: ["Image"],
+      responseModalities: useGoogleSearchGrounding ? ["TEXT", "IMAGE"] : ["IMAGE"],
       imageConfig: {},
     };
+
+    if (useGoogleSearchGrounding) {
+      genConfig.tools = [{
+        googleSearch: {
+          searchTypes: {
+            webSearch: {},
+            imageSearch: {},
+          },
+        },
+      }];
+    }
 
     // Aspect ratio (ignoramos "auto")
     if (aspectRatio && aspectRatio !== "auto") {
@@ -1755,8 +1794,12 @@ async function runImageGenerateTask({ userId, params }) {
     }
 
     // imageSize SOLO en NanoBanana Pro
-    if (selectedModel === "gemini-3-pro-image-preview" && quality) {
-      genConfig.imageConfig.imageSize = String(quality).toUpperCase(); // "1K" | "2K" | "4K"
+    if (
+      (selectedModel === GOOGLE_IMAGE_MODELS.NANO_BANANA_2 ||
+        selectedModel === GOOGLE_IMAGE_MODELS.NANO_BANANA_PRO) &&
+      quality
+    ) {
+      genConfig.imageConfig.imageSize = String(quality).toUpperCase();
     }
 
     const items = [];
@@ -1776,6 +1819,8 @@ async function runImageGenerateTask({ userId, params }) {
         count: nRequested,
         aspectRatio: aspectRatio || "auto",
         quality: String(quality || "1K").toUpperCase(),
+        gridMode: effectiveGridMode,
+        googleSearchGrounding: useGoogleSearchGrounding,
         characterAssetIds: Array.isArray(characterAssetIds) ? characterAssetIds : [],
         ...buildStoredStyleMeta(),
         backgroundAssetId: backgroundAssetId || null,

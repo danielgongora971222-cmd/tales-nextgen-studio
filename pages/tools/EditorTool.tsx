@@ -23,6 +23,13 @@ import {
 } from "../../config/presets/styleRuntime";
 import OneNationUpIcon from "@/components/brand/OneNationUpIcon";
 import { estimateImageCostCredits } from "../../config/pricing.js";
+import {
+  DEFAULT_GRID_MODE,
+  DEFAULT_IMAGE_GENERATOR_MODEL,
+  GOOGLE_IMAGE_MODELS,
+  GRID_OPTIONS,
+  supportsGoogleSearchGrounding,
+} from "../../config/imageGenerationShared.js";
 
 
 type Quality = "" | ImageGenQuality;
@@ -242,11 +249,15 @@ function makeKlingSafeStyle(styleId: string | null, stylePrompt: string): string
   }
 }
 
-type NanoModel = "imagen-4.0-generate-preview-06-06" | "imagen-4.0-ultra-generate-preview-06-06";
+type NanoModel =
+  | typeof GOOGLE_IMAGE_MODELS.NANO_BANANA
+  | typeof GOOGLE_IMAGE_MODELS.NANO_BANANA_2
+  | typeof GOOGLE_IMAGE_MODELS.NANO_BANANA_PRO;
 
 const NANO_MODELS: { id: NanoModel; label: string }[] = [
-  { id: "imagen-4.0-generate-preview-06-06", label: "NanoBanana" },
-  { id: "imagen-4.0-ultra-generate-preview-06-06", label: "NanoBanana Pro" },
+  { id: GOOGLE_IMAGE_MODELS.NANO_BANANA, label: "Nano Banana" },
+  { id: GOOGLE_IMAGE_MODELS.NANO_BANANA_2, label: "Nano Banana 2" },
+  { id: GOOGLE_IMAGE_MODELS.NANO_BANANA_PRO, label: "Nano Banana Pro" },
 ];
 
 function nanoModelLabel(id: string): string {
@@ -263,33 +274,47 @@ type ModelCaps = {
 };
 
 const MODEL_CAPS: Record<string, ModelCaps> = {
-  [GeminiModel.IMAGE]: {
-    id: GeminiModel.IMAGE,
-    label: "NanoBanana",
+  [GOOGLE_IMAGE_MODELS.NANO_BANANA_2]: {
+    id: GOOGLE_IMAGE_MODELS.NANO_BANANA_2,
+    label: "Nano Banana 2",
     supportsRefs: true,
     aspectRatios: [
       { value: "auto", label: "Auto" },
       { value: "1:1", label: "1:1" },
+      { value: "1:4", label: "1:4" },
+      { value: "1:8", label: "1:8" },
+      { value: "2:3", label: "2:3" },
+      { value: "3:2", label: "3:2" },
       { value: "4:5", label: "4:5" },
+      { value: "5:4", label: "5:4" },
       { value: "3:4", label: "3:4" },
+      { value: "4:3", label: "4:3" },
       { value: "16:9", label: "16:9" },
       { value: "9:16", label: "9:16" },
+      { value: "21:9", label: "21:9" },
+      { value: "4:1", label: "4:1" },
+      { value: "8:1", label: "8:1" },
     ],
-    qualities: ["1K"],
+    qualities: ["1K", "2K", "4K"],
     countOptions: [1, 2, 3, 4],
   },
 
-  [GeminiModel.IMAGE_PRO]: {
-    id: GeminiModel.IMAGE_PRO,
-    label: "NanoBanana Pro",
+  [GOOGLE_IMAGE_MODELS.NANO_BANANA_PRO]: {
+    id: GOOGLE_IMAGE_MODELS.NANO_BANANA_PRO,
+    label: "Nano Banana Pro",
     supportsRefs: true,
     aspectRatios: [
       { value: "auto", label: "Auto" },
       { value: "1:1", label: "1:1" },
+      { value: "2:3", label: "2:3" },
+      { value: "3:2", label: "3:2" },
       { value: "4:5", label: "4:5" },
+      { value: "5:4", label: "5:4" },
       { value: "3:4", label: "3:4" },
+      { value: "4:3", label: "4:3" },
       { value: "16:9", label: "16:9" },
       { value: "9:16", label: "9:16" },
+      { value: "21:9", label: "21:9" },
     ],
     qualities: ["1K", "2K", "4K"],
     countOptions: [1],
@@ -434,7 +459,7 @@ const MODEL_CAPS: Record<string, ModelCaps> = {
   
 
 function getActiveCaps(modelId: string) {
-  return MODEL_CAPS[modelId] || MODEL_CAPS[GeminiModel.IMAGE];
+  return MODEL_CAPS[modelId] || MODEL_CAPS[DEFAULT_IMAGE_GENERATOR_MODEL];
 }
 
 type Panel = null | "reference" | "model" | "parameters" | "styles";
@@ -634,10 +659,12 @@ const ImageGeneratorTool: React.FC = () => {
   const [elementLibraryTab, setElementLibraryTab] = useState<"mine" | "purchased">("mine");
 
   const [prompt, setPrompt] = useState("");
-  const [model, setModel] = useState<string>(GeminiModel.IMAGE);
+  const [model, setModel] = useState<string>(DEFAULT_IMAGE_GENERATOR_MODEL);
   const [aspectRatio, setAspectRatio] = useState("auto");
   const [count, setCount] = useState(1);
   const [quality, setQuality] = useState<Quality>("1K");
+  const [gridMode, setGridMode] = useState<string>(DEFAULT_GRID_MODE);
+  const [googleSearchGrounding, setGoogleSearchGrounding] = useState(false);
   // Helper: ¿modelo actual es Kling?
   const kling = isKlingModel(model);
 
@@ -759,7 +786,7 @@ useEffect(() => {
 
   const activeCaps = useMemo(() => getActiveCaps(model), [model]);
   const modelLabel = activeCaps.label;
-  const paramsLabel = `${aspectRatio} • ${quality} • x${count}`;
+  const paramsLabel = `${aspectRatio} • ${quality} • x${count} • Grid ${gridMode}${googleSearchGrounding ? " • Web" : ""}`;
   const estimatedCostCredits = useMemo(() => {
     const refCount =
       (refs?.char1 ? 1 : 0) +
@@ -794,8 +821,9 @@ useEffect(() => {
     {
       label: "Google NanoBanana",
       options: [
-        { value: GeminiModel.IMAGE, label: "NanoBanana" },
-        { value: GeminiModel.IMAGE_PRO, label: "NanoBanana Pro" },
+        { value: GOOGLE_IMAGE_MODELS.NANO_BANANA_2, label: "Nano Banana 2" },
+        { value: GOOGLE_IMAGE_MODELS.NANO_BANANA_PRO, label: "Nano Banana Pro" },
+        { value: GOOGLE_IMAGE_MODELS.NANO_BANANA, label: "Nano Banana" },
       ],
     },
     {
@@ -841,8 +869,12 @@ useEffect(() => {
       }
 
       // Regla dura: NanoBanana (flash) solo soporta 1K (el backend lo rechaza si no)
-      if (model === GeminiModel.IMAGE && quality !== "1K") {
+      if (model === GOOGLE_IMAGE_MODELS.NANO_BANANA && quality !== "1K") {
         setQuality("1K");
+      }
+
+      if (!supportsGoogleSearchGrounding(model) && googleSearchGrounding) {
+        setGoogleSearchGrounding(false);
       }
     }, [activeCaps, aspectRatio, quality, count, model]);
 
@@ -862,7 +894,8 @@ useEffect(() => {
 
     // IMPORTANTÍSIMO:
     // NanoBanana (flash) solo soporta 1K, si no, el backend lo rechaza.
-    if (next === GeminiModel.IMAGE) setQuality("1K");
+    if (next === GOOGLE_IMAGE_MODELS.NANO_BANANA) setQuality("1K");
+    if (!supportsGoogleSearchGrounding(next)) setGoogleSearchGrounding(false);
 
     setPanel(null); // auto-close
   }
@@ -1688,6 +1721,8 @@ const promptReferences: PromptReference[] = useMemo(() => {
       modelId,
       aspectRatio,
       quality,
+      gridMode: typeof meta.gridMode === "string" ? meta.gridMode : DEFAULT_GRID_MODE,
+      googleSearchGrounding: Boolean(meta.googleSearchGrounding),
       count,
       styleName: resolvedStylePreset?.name || getStyleNameFromPrompt(viewer.prompt || "", meta),
       refs: {
@@ -1937,6 +1972,8 @@ const promptReferences: PromptReference[] = useMemo(() => {
       aspectRatio: effectiveAspectRatio,
       count: effectiveCount,
       quality: effectiveQuality,
+      gridMode,
+      googleSearchGrounding: supportsGoogleSearchGrounding(effectiveModel) ? googleSearchGrounding : false,
       tool: TOOL_ID,
       nameHint: TOOL_ID,
       characterAssetIds: mergedCharacterAssetIds,
@@ -2698,6 +2735,24 @@ const promptReferences: PromptReference[] = useMemo(() => {
                     </div>
 
                     <div className={styles.formRow}>
+                      <label className={styles.formLabel}>Grid</label>
+                      <select
+                        className={styles.select}
+                        value={gridMode}
+                        onChange={(e) => {
+                          setGridMode(e.target.value);
+                          setPanel(null);
+                        }}
+                      >
+                        {GRID_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className={styles.formRow}>
                       <label className={styles.formLabel}>Quality</label>
                       <select
                         className={styles.select}
@@ -2714,6 +2769,22 @@ const promptReferences: PromptReference[] = useMemo(() => {
                         ))}
                       </select>
                     </div>
+
+                    {supportsGoogleSearchGrounding(model) && (
+                      <div className={styles.formRow}>
+                        <label className={styles.formLabel}>Web Grounding</label>
+                        <button
+                          type="button"
+                          className={`${styles.modelOption} ${googleSearchGrounding ? styles.modelOptionActive : ""}`}
+                          onClick={() => {
+                            setGoogleSearchGrounding((prev) => !prev);
+                            setPanel(null);
+                          }}
+                        >
+                          {googleSearchGrounding ? "Enabled" : "Disabled"}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -2790,6 +2861,16 @@ const promptReferences: PromptReference[] = useMemo(() => {
                     <div className={styles.recipeValue}>
                       {viewerRecipeInfo?.count != null ? String(viewerRecipeInfo.count) : "—"}
                     </div>
+                  </div>
+
+                  <div className={styles.recipeItem}>
+                    <div className={styles.recipeLabel}>Grid</div>
+                    <div className={styles.recipeValue}>{viewerRecipeInfo?.gridMode || "none"}</div>
+                  </div>
+
+                  <div className={styles.recipeItem}>
+                    <div className={styles.recipeLabel}>Web</div>
+                    <div className={styles.recipeValue}>{viewerRecipeInfo?.googleSearchGrounding ? "On" : "Off"}</div>
                   </div>
 
                   <div className={styles.recipeItemWide}>

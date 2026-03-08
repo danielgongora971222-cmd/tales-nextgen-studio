@@ -24,6 +24,8 @@ export const ImageRequestSchema = z.object({
   // UI nueva
   count: z.number().int().min(1).max(4).default(1),
   quality: z.enum(["1K", "2K", "4K"]).optional(),
+  gridMode: z.enum(["none", "2x2", "2x3", "3x3", "4x4", "3x4"]).optional(),
+  googleSearchGrounding: z.boolean().optional(),
 
   tool: z.string().optional(),      // ej: "image-generator"
   nameHint: z.string().optional(),  // ej: "generated"

@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import { generateImage } from '../services/geminiService';
 import { GeminiModel } from '../types';
+import { DEFAULT_IMAGE_GENERATOR_MODEL, GOOGLE_IMAGE_MODELS } from '../config/imageGenerationShared.js';
 
 const ImageGenerator: React.FC = () => {
   const [prompt, setPrompt] = useState('');
   const [loading, setLoading] = useState(false);
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
-  const [model, setModel] = useState<string>(GeminiModel.IMAGE);
+  const [model, setModel] = useState<string>(DEFAULT_IMAGE_GENERATOR_MODEL);
 
   const handleGenerate = async () => {
     if (!prompt.trim()) return;
@@ -41,6 +42,7 @@ const ImageGenerator: React.FC = () => {
                 onChange={(e) => setModel(e.target.value)}
                 className="w-full bg-black/50 border border-white/20 rounded-xl px-4 py-3 focus:outline-none focus:border-white focus:ring-1 focus:ring-white transition-all text-sm"
               >
+                <option value={GOOGLE_IMAGE_MODELS.NANO_BANANA_2}>Nano Banana 2</option>
                 <option value={GeminiModel.IMAGE}>Nano Banana (Fast)</option>
                 <option value={GeminiModel.IMAGE_PRO}>Nano Banana Pro (High Quality)</option>
               </select>

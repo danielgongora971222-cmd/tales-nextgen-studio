@@ -10,6 +10,12 @@ import { checkUserRateLimit } from "../../lib/userRateLimit.js";
 import { assertJobLimits } from "../../lib/jobLimits.js";
 import { estimateImageCostCredits } from "../../../config/pricing.js";
 import { normalizeImageBufferForOpenAI } from "../../lib/providerImageUtils.js";
+import {
+  DEFAULT_GRID_MODE,
+  GOOGLE_IMAGE_MODELS,
+  buildGridPromptInstruction,
+  supportsGoogleSearchGrounding,
+} from "../../../config/imageGenerationShared.js";
 
 export function createAiImageRouter(ctx) {
   const router = express.Router();
@@ -88,6 +94,8 @@ export function createAiImageRouter(ctx) {
 
         // ✅ @mentions binding
         promptReferences,
+        gridMode,
+        googleSearchGrounding,
 
         // ✅ Camera Angles (Qwen Multiple Angles)
         horizontalAngle,
@@ -123,7 +131,7 @@ export function createAiImageRouter(ctx) {
       });
     }
 
-    const selectedModel = model || "gemini-2.5-flash-image";
+    const selectedModel = model || GOOGLE_IMAGE_MODELS.NANO_BANANA_2;
     const maxCount = maxCountForImageModel(selectedModel);
     if (count > maxCount) {
       throw httpError(
@@ -156,6 +164,14 @@ export function createAiImageRouter(ctx) {
 
       return `${String(text || "").trim()}\n\n${instruction}`.trim();
     };
+
+    const effectiveGridMode = typeof gridMode === "string" ? gridMode : DEFAULT_GRID_MODE;
+    const appendGridInstruction = (text) => {
+      const instruction = buildGridPromptInstruction(effectiveGridMode);
+      return `${String(text || "").trim()}\n\n${instruction}`.trim();
+    };
+    const useGoogleSearchGrounding =
+      supportsGoogleSearchGrounding(selectedModel) && Boolean(googleSearchGrounding);
 
     const styleReferenceInlinePart = async () => {
       const { mimeType, base64 } = parseDataUrl(styleReferenceDataUrl);
@@ -454,7 +470,7 @@ export function createAiImageRouter(ctx) {
         ? appendImageNumberMapping(replaceMentionsWithImageNumbers(prompt, tokenRefs), tokenRefs)
         : prompt;
 
-      const openaiPrompt = appendStyleReferenceInstruction(openaiPromptBase, refs.length);
+      const openaiPrompt = appendGridInstruction(appendStyleReferenceInstruction(openaiPromptBase, refs.length));
 
       for (let i = 0; i < nRequested; i++) {
         const dataUrl = await openaiGenerateImageDataUrl({
@@ -486,6 +502,8 @@ export function createAiImageRouter(ctx) {
             aspectRatio: aspectRatio || null,
             quality: quality || "1K",
             count: nRequested,
+            gridMode: effectiveGridMode,
+            googleSearchGrounding: false,
             characterAssetIds: characterAssetIds || [],
             ...buildStoredStyleMeta(),
             backgroundAssetId: backgroundAssetId || null,
@@ -543,7 +561,7 @@ export function createAiImageRouter(ctx) {
           `Reference images by number: ${refUrls.map((_, i) => `image ${i + 1}`).join(", ")}.`;
       }
 
-      bflPrompt = appendStyleReferenceInstruction(bflPrompt, refUrls.length);
+      bflPrompt = appendGridInstruction(appendStyleReferenceInstruction(bflPrompt, refUrls.length));
 
 
       const payload = {
@@ -793,9 +811,11 @@ export function createAiImageRouter(ctx) {
             ? Math.max(0, refUrls.length - 1)
             : refUrls.length;
 
-          promptForKling = appendStyleReferenceInstruction(
-            promptForKling,
-            directKlingNonStyleRefCount
+          promptForKling = appendGridInstruction(
+            appendStyleReferenceInstruction(
+              promptForKling,
+              directKlingNonStyleRefCount
+            )
           );
 
 
@@ -1062,9 +1082,11 @@ export function createAiImageRouter(ctx) {
           ? Math.max(0, refUrls.length - 1)
           : refUrls.length;
 
-        const safePrompt = appendStyleReferenceInstruction(
-          ensureO3Prompt(basePrompt, refUrls.length),
-          nonStyleRefCount
+        const safePrompt = appendGridInstruction(
+          appendStyleReferenceInstruction(
+            ensureO3Prompt(basePrompt, refUrls.length),
+            nonStyleRefCount
+          )
         );
 
 
@@ -1084,7 +1106,7 @@ export function createAiImageRouter(ctx) {
       // V3: text-to-image
       else if (isV3 && selectedModel.endsWith("/text-to-image")) {
         falInput = {
-          prompt: String(prompt || "").trim(),
+          prompt: appendGridInstruction(String(prompt || "").trim()),
           resolution: resolutionForModel === "2K" ? "2K" : "1K",
           num_images: nRequested,
           // V3 no documenta "auto"; usamos default si viene "auto"
@@ -1324,11 +1346,11 @@ export function createAiImageRouter(ctx) {
 
     // 2) Validar quality según modelo
     if (quality) {
-      if (selectedModel === "gemini-2.5-flash-image" && quality !== "1K") {
+      if (selectedModel === GOOGLE_IMAGE_MODELS.NANO_BANANA && quality !== "1K") {
         apiError(
           400,
           "QUALITY_NOT_SUPPORTED",
-          `Gemini 2.5 Flash Image solo soporta 1K. Usa 1K o cambia a gemini-3-pro-image-preview para 2K/4K.`
+          `Nano Banana solo soporta 1K. Usa 1K o cambia a ${GOOGLE_IMAGE_MODELS.NANO_BANANA_2} / ${GOOGLE_IMAGE_MODELS.NANO_BANANA_PRO} para 2K/4K.`
         );
       }
       if (selectedModel.includes("imagen") && quality === "4K") {
@@ -1342,14 +1364,29 @@ export function createAiImageRouter(ctx) {
 
     // 3) Config correcta para que DEVUELVA IMAGEN
     const config = {
-      responseModalities: ["Image"],
+      responseModalities: useGoogleSearchGrounding ? ["TEXT", "IMAGE"] : ["IMAGE"],
       imageConfig: {},
     };
+
+    if (useGoogleSearchGrounding) {
+      config.tools = [{
+        googleSearch: {
+          searchTypes: {
+            webSearch: {},
+            imageSearch: {},
+          },
+        },
+      }];
+    }
 
     if (arNonOpenAI) config.imageConfig.aspectRatio = arNonOpenAI;
 
     // imageSize SOLO en gemini-3-pro-image-preview (y en imagen para 1K/2K)
-    if (selectedModel === "gemini-3-pro-image-preview" && quality) {
+    if (
+      (selectedModel === GOOGLE_IMAGE_MODELS.NANO_BANANA_2 ||
+        selectedModel === GOOGLE_IMAGE_MODELS.NANO_BANANA_PRO) &&
+      quality
+    ) {
       config.imageConfig.imageSize = quality; // "1K" | "2K" | "4K"
     } else if (selectedModel.includes("imagen") && quality && quality !== "4K") {
       config.imageConfig.imageSize = quality; // "1K" | "2K"
@@ -1389,9 +1426,11 @@ export function createAiImageRouter(ctx) {
       if (aspectRatio) imgConfig.aspectRatio = aspectRatio;
       if (quality && quality !== "4K") imgConfig.imageSize = quality; // Imagen: 1K | 2K
 
+      const providerPrompt = appendGridInstruction(prompt);
+
       const response = await aiClient.models.generateImages({
         model: selectedModel,
-        prompt,
+        prompt: providerPrompt,
         config: imgConfig,
       });
 
@@ -1469,7 +1508,7 @@ export function createAiImageRouter(ctx) {
       parts.push(await styleReferenceInlinePart());
     }
 
-    const geminiPrompt = appendStyleReferenceInstruction(prompt, refs.length);
+    const geminiPrompt = appendGridInstruction(appendStyleReferenceInstruction(prompt, refs.length));
     parts.push({ text: geminiPrompt });
 
     const n = nRequested;
@@ -1504,6 +1543,8 @@ export function createAiImageRouter(ctx) {
           aspectRatio: aspectRatio || null,
           quality: quality || null,
           count: n,
+          gridMode: effectiveGridMode,
+          googleSearchGrounding: useGoogleSearchGrounding,
           characterAssetIds: characterAssetIds || [],
           ...buildStoredStyleMeta(),
           backgroundAssetId: backgroundAssetId || null,

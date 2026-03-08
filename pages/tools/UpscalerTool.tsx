@@ -10,6 +10,7 @@ import OneNationUpIcon from "@/components/brand/OneNationUpIcon";
 import { estimateImageCostCredits } from "../../config/pricing.js";
 
 import { AssetPickerModal } from "./video/AssetPickerModal";
+import { GOOGLE_IMAGE_MODELS } from "../../config/imageGenerationShared.js";
 
 type Quality = "1K" | "2K" | "4K";
 type PanelKey = "model" | "quality" | null;
@@ -48,7 +49,8 @@ Avoid / do not:
 `.trim();
 
 const MODEL_OPTIONS: Array<{ id: string; label: string; qualities: Quality[] }> = [
-  { id: GeminiModel.IMAGE_PRO, label: "NanoBanana Pro", qualities: ["1K", "2K", "4K"] },
+  { id: GOOGLE_IMAGE_MODELS.NANO_BANANA_2, label: "Nano Banana 2", qualities: ["1K", "2K", "4K"] },
+  { id: GeminiModel.IMAGE_PRO, label: "Nano Banana Pro", qualities: ["1K", "2K", "4K"] },
   { id: "fal-ai/flux-2-max", label: "Flux Max", qualities: ["1K", "2K", "4K"] },
   { id: "openai:gpt-image-1.5-high", label: "GPT 1.5 High", qualities: ["1K"] },
 ];
