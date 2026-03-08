@@ -44,6 +44,9 @@ const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 
 const storage = createStorageHelpers({ supabase: supabaseAdmin, bucket: SUPABASE_BUCKET });
 const {
+  parseDataUrl,
+  extFromMime,
+  safeSlug,
   uploadBase64ToStorage,
   signStoragePath,
   downloadStoragePath,
