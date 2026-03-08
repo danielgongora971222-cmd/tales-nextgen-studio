@@ -286,6 +286,31 @@ type ModelCaps = {
 };
 
 const MODEL_CAPS: Record<string, ModelCaps> = {
+  [GOOGLE_IMAGE_MODELS.NANO_BANANA]: {
+    id: GOOGLE_IMAGE_MODELS.NANO_BANANA,
+    label: "Nano Banana",
+    supportsRefs: true,
+    aspectRatios: [
+      { value: "auto", label: "Auto" },
+      { value: "1:1", label: "1:1" },
+      { value: "1:4", label: "1:4" },
+      { value: "1:8", label: "1:8" },
+      { value: "2:3", label: "2:3" },
+      { value: "3:2", label: "3:2" },
+      { value: "4:5", label: "4:5" },
+      { value: "5:4", label: "5:4" },
+      { value: "3:4", label: "3:4" },
+      { value: "4:3", label: "4:3" },
+      { value: "16:9", label: "16:9" },
+      { value: "9:16", label: "9:16" },
+      { value: "21:9", label: "21:9" },
+      { value: "4:1", label: "4:1" },
+      { value: "8:1", label: "8:1" },
+    ],
+    qualities: ["1K"],
+    countOptions: [1, 2, 3, 4],
+  },
+
   [GOOGLE_IMAGE_MODELS.NANO_BANANA_2]: {
     id: GOOGLE_IMAGE_MODELS.NANO_BANANA_2,
     label: "Nano Banana 2",
@@ -534,6 +559,76 @@ function prettyModelLabel(modelId: string | null): string {
   const caps = (MODEL_CAPS as Record<string, ModelCaps | undefined>)[modelId];
   if (caps?.label) return caps.label;
   return nanoModelLabel(modelId);
+}
+
+function extractStoredRefsFromMeta(
+  meta: any,
+  charSlots: number
+): {
+  charIds: string[];
+  elementIds: string[];
+  backgroundId: string | null;
+} {
+  type StoredPromptRef = Pick<PromptReference, "assetId" | "role">;
+
+  const promptRefs: StoredPromptRef[] = Array.isArray(meta?.promptReferences)
+    ? meta.promptReferences.filter(
+        (r: any): r is StoredPromptRef =>
+          !!r &&
+          typeof r.assetId === "string" &&
+          (r.role === "character" || r.role === "background" || r.role === "element")
+      )
+    : [];
+
+  const charIdsFromPromptRefs: string[] = Array.from(
+    new Set<string>(
+      promptRefs
+        .filter((r) => r.role === "character")
+        .map((r) => r.assetId)
+    )
+  );
+
+  const elementIdsFromPromptRefs: string[] = Array.from(
+    new Set<string>(
+      promptRefs
+        .filter((r) => r.role === "element")
+        .map((r) => r.assetId)
+    )
+  );
+
+  const backgroundIdsFromPromptRefs: string[] = Array.from(
+    new Set<string>(
+      promptRefs
+        .filter((r) => r.role === "background")
+        .map((r) => r.assetId)
+    )
+  );
+
+  const legacyAllIds: string[] = Array.isArray(meta?.characterAssetIds)
+    ? meta.characterAssetIds.filter((x: any): x is string => typeof x === "string")
+    : [];
+
+  const legacyCharIds: string[] = legacyAllIds.slice(0, charSlots);
+  const legacyElementIds: string[] = legacyAllIds.slice(charSlots);
+
+  const klingElementIds: string[] = Array.isArray(meta?.klingElementIds)
+    ? meta.klingElementIds.filter((x: any): x is string => typeof x === "string")
+    : [];
+
+  return {
+    charIds: (charIdsFromPromptRefs.length ? charIdsFromPromptRefs : legacyCharIds).slice(0, charSlots),
+    elementIds: (
+      elementIdsFromPromptRefs.length
+        ? elementIdsFromPromptRefs
+        : klingElementIds.length
+          ? klingElementIds
+          : legacyElementIds
+    ).slice(0, 5),
+    backgroundId:
+      typeof meta?.backgroundAssetId === "string"
+        ? meta.backgroundAssetId
+        : backgroundIdsFromPromptRefs[0] || null,
+  };
 }
 
 
@@ -1910,13 +2005,11 @@ const promptReferences: PromptReference[] = useMemo(() => {
           ? parseInt(meta.count, 10)
           : null;
 
-    const allRefIds: string[] = Array.isArray(meta.characterAssetIds)
-      ? meta.characterAssetIds.filter((x: any) => typeof x === "string")
-      : [];
-
-    const charRefIds = allRefIds.slice(0, 3);
-    const elementRefIds = allRefIds.slice(3);
-    const backgroundAssetId = typeof meta.backgroundAssetId === "string" ? meta.backgroundAssetId : null;
+    const storedRefs = extractStoredRefsFromMeta(meta, 3);
+    const charRefIds = storedRefs.charIds;
+    const elementRefIds = storedRefs.elementIds;
+    const backgroundAssetId = storedRefs.backgroundId;
+    const allRefIds = Array.from(new Set([...charRefIds, ...elementRefIds]));
     const styleAssetId = typeof meta.styleAssetId === "string" ? meta.styleAssetId : null;
 
     const resolvedStylePreset = resolveStylePresetFromMetaOrPrompt(STYLE_PRESETS, {
@@ -2092,15 +2185,12 @@ const promptReferences: PromptReference[] = useMemo(() => {
 
       const elementAssetIds = elementFromPromptRefs.slice(0, 5);
 
-      // Se anexan detrás de los "character slots" (legacy/fallback)
-      const mergedCharacterAssetIds = Array.from(new Set([...characterAssetIds, ...elementAssetIds]));
-
       // Guardrail total referencias (usa el set real que enviará el backend)
       const effectiveRefIds = Array.from(
         new Set(
           (promptReferences && promptReferences.length)
             ? promptReferences.map((r) => r.assetId)
-            : [...mergedCharacterAssetIds, ...(backgroundAssetId ? [backgroundAssetId] : [])]
+            : [...characterAssetIds, ...elementAssetIds, ...(backgroundAssetId ? [backgroundAssetId] : [])]
         )
       );
 
@@ -2198,7 +2288,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
       googleSearchGrounding: supportsGoogleSearchGrounding(effectiveModel) ? googleSearchGrounding : false,
       tool: "image-generator",
       nameHint: "generated",
-      characterAssetIds: mergedCharacterAssetIds,
+      characterAssetIds,
       stylePresetId: effectiveStylePreset?.id || undefined,
       stylePresetName: effectiveStylePreset?.name || undefined,
       styleReferenceDataUrl: styleReferenceDataUrl || undefined,
@@ -2278,8 +2368,8 @@ const promptReferences: PromptReference[] = useMemo(() => {
     const raw = asset.prompt || "";
     if (!raw.trim()) return;
 
-    // 1) prompt (incluye bloque de style si venía guardado)
-    setPrompt(raw);
+    // 1) prompt visible (sin bloques ocultos de style/lighting)
+    setPrompt(removeStylePresetBlock(raw));
 
     // 2) receta (model/ratio/count/quality + refs)
     const meta = (asset as any).meta || {};
@@ -2326,21 +2416,10 @@ const promptReferences: PromptReference[] = useMemo(() => {
     // refs (ids -> assets) + Elements (compat)
     // meta.characterAssetIds ahora puede traer:
     // [char1, char2, char3, element1, element2, ...]
-    const allIds: string[] = Array.isArray(meta.characterAssetIds)
-      ? meta.characterAssetIds.filter((x: any) => typeof x === "string")
-      : [];
-
-    const charIds = allIds.slice(0, 3);
-    const elementIdsFromCharArray = allIds.slice(3);
-
-    // legacy fallback (por si tienes assets viejos que guardaban meta.klingElementIds)
-    const legacyElementIds: string[] = Array.isArray(meta.klingElementIds)
-      ? meta.klingElementIds.filter((x: any) => typeof x === "string")
-      : [];
-
-    const finalElementIds = elementIdsFromCharArray.length > 0 ? elementIdsFromCharArray : legacyElementIds;
-
-    const bgId = typeof meta.backgroundAssetId === "string" ? meta.backgroundAssetId : null;
+    const storedRefs = extractStoredRefsFromMeta(meta, 3);
+    const charIds = storedRefs.charIds;
+    const finalElementIds = storedRefs.elementIds;
+    const bgId = storedRefs.backgroundId;
 
     const findAsset = (id: string) => myAssets.find((a) => a.id === id) || null;
 
