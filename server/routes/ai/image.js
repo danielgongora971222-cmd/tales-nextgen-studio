@@ -9,6 +9,7 @@ import {
 import { checkUserRateLimit } from "../../lib/userRateLimit.js";
 import { assertJobLimits } from "../../lib/jobLimits.js";
 import { estimateImageCostCredits } from "../../../config/pricing.js";
+import { normalizeImageBufferForOpenAI } from "../../lib/providerImageUtils.js";
 
 export function createAiImageRouter(ctx) {
   const router = express.Router();
@@ -165,8 +166,11 @@ export function createAiImageRouter(ctx) {
       const { mimeType, base64 } = parseDataUrl(styleReferenceDataUrl);
       const bytes = Buffer.from(base64, "base64");
       const ext = extFromMime(mimeType || "image/jpeg");
-      return new File([bytes], `style-preset-reference.${ext}`, {
-        type: mimeType || "image/jpeg",
+
+      return normalizeImageBufferForOpenAI({
+        buffer: bytes,
+        mimeType: mimeType || "image/jpeg",
+        filename: `style-preset-reference.${ext}`,
       });
     };
 
@@ -183,7 +187,7 @@ export function createAiImageRouter(ctx) {
 
     const modelVisualRefLimit = (() => {
       if (selectedModel.startsWith("openai:")) return 4;
-      if (selectedModel.startsWith("fal-ai/flux-2-")) return 1;
+      if (selectedModel.startsWith("fal-ai/flux-2-")) return 8;
       if (selectedModel.startsWith("kling:")) return 4;
       if (selectedModel.startsWith("fal-ai/kling-image/")) return 10;
       if (selectedModel === "fal-ai/qwen-image-edit-2511-multiple-angles") return 1;
@@ -435,7 +439,11 @@ export function createAiImageRouter(ctx) {
 
       // ✅ Si hay referencias, las mandamos como images[] usando /v1/images/edits
       const imageFiles = refs.length
-        ? await Promise.all(refs.map((r) => assetIdToImageFile(r.id, user.id)))
+        ? await Promise.all(
+            refs.map(async (r) =>
+              normalizeImageBufferForOpenAI(await assetIdToImageFile(r.id, user.id))
+            )
+          )
         : [];
 
       if (hasStylePresetReference) {

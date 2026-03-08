@@ -497,7 +497,7 @@ function getStyleNameFromPrompt(prompt: string, meta?: any): string {
 
 function maxVisualRefsForModel(modelId: string): number | null {
   if (modelId.startsWith("openai:")) return 4;
-  if (modelId.startsWith("fal-ai/flux-2-")) return 1;
+  if (modelId.startsWith("fal-ai/flux-2-")) return 8;
   if (modelId.startsWith("kling:")) return 4;
   if (modelId.startsWith("fal-ai/kling-image/")) return 10;
   if (modelId === "fal-ai/qwen-image-edit-2511-multiple-angles") return 1;

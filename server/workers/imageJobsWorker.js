@@ -14,6 +14,7 @@ import {
 import { createStorageHelpers } from "../lib/storage.js";
 import { apiError, httpError } from "../lib/errors.js";
 import { base64urlEncode } from "../lib/base64url.js";
+import { normalizeImageBufferForOpenAI } from "../lib/providerImageUtils.js";
 
 dotenv.config();
 
@@ -876,8 +877,11 @@ async function runImageGenerateTask({ userId, params }) {
     const { mimeType, base64 } = parseDataUrl(styleReferenceDataUrl);
     const bytes = Buffer.from(base64, "base64");
     const ext = extFromMime(mimeType || "image/jpeg");
-    return new File([bytes], `style-preset-reference.${ext}`, {
-      type: mimeType || "image/jpeg",
+
+    return normalizeImageBufferForOpenAI({
+      buffer: bytes,
+      mimeType: mimeType || "image/jpeg",
+      filename: `style-preset-reference.${ext}`,
     });
   };
 
@@ -894,7 +898,7 @@ async function runImageGenerateTask({ userId, params }) {
 
   const modelVisualRefLimit = (() => {
     if (selectedModel.startsWith("openai:")) return 4;
-    if (selectedModel.startsWith("fal-ai/flux-2-")) return 1;
+    if (selectedModel.startsWith("fal-ai/flux-2-")) return 8;
     if (selectedModel.startsWith("kling:")) return 4;
     if (selectedModel.startsWith("fal-ai/kling-image/")) return 10;
     if (selectedModel === "fal-ai/qwen-image-edit-2511-multiple-angles") return 1;
@@ -985,7 +989,11 @@ async function runImageGenerateTask({ userId, params }) {
     const urlExpiresInSeconds = 60 * 60;
 
     const openaiRefs = refAssetIds.length
-      ? await Promise.all(refAssetIds.slice(0, 4).map((id) => assetIdToImageFile(id, userId)))
+      ? await Promise.all(
+          refAssetIds.slice(0, 4).map(async (id) =>
+            normalizeImageBufferForOpenAI(await assetIdToImageFile(id, userId))
+          )
+        )
       : [];
 
     if (hasStylePresetReference) {
@@ -1063,50 +1071,62 @@ async function runImageGenerateTask({ userId, params }) {
     );
 
     const refUrls = refAssetIds.length
-      ? await Promise.all(refAssetIds.slice(0, 4).map((id) => assetIdToSignedUrl(id, userId, 60 * 10)))
+      ? await Promise.all(refAssetIds.slice(0, 8).map((id) => assetIdToSignedUrl(id, userId, 60 * 10)))
       : [];
 
-    const promptAdaptedBase = hasTokenRefs
-      ? appendImageNumberMapping(
-          replaceMentionsWithFalImageTags(prompt, tokenRefs.slice(0, refUrls.length)),
-          tokenRefs.slice(0, refUrls.length)
-        )
-      : prompt;
+    const tokenRefs8 = hasTokenRefs ? tokenRefs.slice(0, Math.min(refUrls.length, 8)) : [];
+    let promptAdapted = prompt;
 
-    const promptAdapted = appendStyleReferenceInstruction(promptAdaptedBase, refUrls.length);
+    if (hasTokenRefs && tokenRefs8.length) {
+      promptAdapted = appendImageNumberMapping(
+        replaceMentionsWithImageNumbers(prompt, tokenRefs8),
+        tokenRefs8
+      );
+    } else if (refUrls.length) {
+      promptAdapted =
+        `${prompt}\n\n` +
+        `Reference images by number: ${refUrls.map((_, i) => `image ${i + 1}`).join(", ")}.`;
+    }
 
-    const bflPrimaryRefUrl =
-      refUrls[0] || (hasStylePresetReference ? await styleReferenceSignedUrl() : null);
+    promptAdapted = appendStyleReferenceInstruction(promptAdapted, refUrls.length);
 
     const payload = {
       prompt: String(promptAdapted || "").slice(0, 3500),
       width,
       height,
-      num_images: nRequested,
-      ...(bflPrimaryRefUrl ? { image_prompt: bflPrimaryRefUrl } : {}),
+      output_format: "png",
+      safety_tolerance: 2,
     };
 
-    const submit = await bflSubmit(modelSlug, payload);
-    const done = await bflPoll(submit.polling_url, { timeoutMs: 180000 });
+    const bflPrimaryRefUrl =
+      refUrls[0] || (hasStylePresetReference ? await styleReferenceSignedUrl() : null);
 
-    const sampleUrls = Array.isArray(done?.result?.sample)
-      ? done.result.sample
-      : done?.result?.sample
-        ? [done.result.sample]
-        : [];
-    if (!sampleUrls.length) throw httpError(502, "BFL_NO_SAMPLE", "BFL no devolvió samples.", done);
+    if (bflPrimaryRefUrl) payload.input_image = bflPrimaryRefUrl;
+    for (let i = 1; i < refUrls.length && i < 8; i++) {
+      payload[`input_image_${i + 1}`] = refUrls[i];
+    }
 
     const items = [];
-    for (const sampleUrl of sampleUrls.slice(0, nRequested)) {
+    for (let i = 0; i < nRequested; i++) {
+      const submit = await bflSubmit(modelSlug, payload);
+      const done = await bflPoll(submit.polling_url, { timeoutMs: 180000 });
+
+      const sampleUrl = done?.result?.sample || done?.result?.url;
       const dataUrl = await bflSampleToDataUrl(sampleUrl);
-      const { storagePath } = await uploadBase64ToStorage({ userId, tool: toolName, dataUrl, nameHint: hint });
+
+      const { storagePath } = await uploadBase64ToStorage({
+        userId,
+        tool: toolName,
+        dataUrl,
+        nameHint: hint,
+      });
 
       const meta = {
         tool: toolName,
         provider: "bfl",
         model: selectedModel,
         aspectRatio: aspectRatio || "auto",
-        quality: String(quality || "1K").toUpperCase(),
+        quality: quality || null,
         count: nRequested,
         characterAssetIds: Array.isArray(characterAssetIds) ? characterAssetIds : [],
         ...buildStoredStyleMeta(),
@@ -1124,6 +1144,7 @@ async function runImageGenerateTask({ userId, params }) {
         isPublic: false,
         meta,
       });
+
       const url = await signStoragePath(storagePath, urlExpiresInSeconds);
       items.push({ url, assetId });
     }
@@ -1195,7 +1216,7 @@ async function runImageGenerateTask({ userId, params }) {
 
     let image_list = [];
     if (refUrls.length) {
-      image_list = refUrls.map((u) => ({ url: u }));
+      image_list = refUrls.map((u) => ({ image: u }));
     }
 
     let promptForKling = String(prompt || "");
@@ -1382,6 +1403,10 @@ async function runImageGenerateTask({ userId, params }) {
       ? await Promise.all(refIds.map((id) => assetIdToSignedUrl(id, userId, 60 * 10)))
       : [];
 
+    if (hasStylePresetReference && refUrls.length < 4) {
+      refUrls.push(await styleReferenceSignedUrl());
+    }
+
     const allowedAR = new Set(["16:9", "9:16", "1:1", "4:3", "3:4", "3:2", "2:3", "21:9", "auto"]);
     const rawAR = (aspectRatio || "auto").trim();
     const mappedAR = rawAR === "4:5" ? "3:4" : rawAR;
@@ -1454,8 +1479,15 @@ async function runImageGenerateTask({ userId, params }) {
     const endpointId = selectedModel;
     const falJson = await falQueueRun(endpointId, falInput);
 
-    const images = Array.isArray(falJson?.images) ? falJson.images : [];
-    if (!images.length) throw httpError(502, "FAL_NO_IMAGES", "Fal no devolvió imágenes.", falJson);
+    const images = Array.isArray(falJson?.images)
+      ? falJson.images
+      : Array.isArray(falJson?.data?.images)
+        ? falJson.data.images
+        : [];
+
+    if (!images.length) {
+      throw httpError(502, "FAL_NO_IMAGES", "Fal no devolvió imágenes.", falJson);
+    }
 
     const items = [];
     for (const img of images.slice(0, nRequested)) {
