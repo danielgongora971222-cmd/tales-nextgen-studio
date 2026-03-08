@@ -66,8 +66,8 @@ function isInternalAsset(asset: Asset): boolean {
   const meta: any = (asset as any)?.meta || {};
   const step = meta?.step;
 
-  // Oculta outputs internos del Paso 1 de FaceSwap (mannequin)
-  return meta?.tool === "faceswap" && meta?.mode === "mannequin" && (step === 1 || step === "1");
+  // Oculta outputs internos del Paso 1 de FaceSwap (mannequin + guías técnicas)
+  return meta?.tool === "faceswap" && (step === 1 || step === "1");
 }
 
 // ===============================

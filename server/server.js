@@ -26,6 +26,7 @@ import {
   RestyleSchema,
   FaceSwapSchema,
   FaceSwapMannequinSchema,
+  FaceSwapAnalysisStageSchema,
   FaceSwapInsertSchema,
   UpscaleSchema,
   UploadAssetSchema,
@@ -54,6 +55,14 @@ import { FalFinalizeSchema } from "./schemas/index.js";
 import { assertJobLimits } from "./lib/jobLimits.js";
 import { createLegalRouter } from "./routes/legal.js";
 import { createProfileRouter } from "./routes/profile.js";
+import {
+  FACESWAP_ANALYSIS_MODEL,
+  FACESWAP_INSERT_MODEL,
+  FACESWAP_ANALYSIS_STAGES,
+  buildFaceswapAnalysisPrompt,
+  buildFaceswapInsertPrompt,
+  getFaceswapStageLabel,
+} from "./lib/faceswapPipeline.js";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
@@ -2672,6 +2681,204 @@ async function klingElementIdToInlineParts({ donorElementId, requesterId, max = 
   return parts;
 }
 
+async function getFaceswapStep1GuideRowOrThrow(assetId, expectedKind, userId) {
+  const { data, error } = await supabaseAdmin
+    .from("assets")
+    .select("id, owner_id, is_public, type, storage_path, meta")
+    .eq("id", assetId)
+    .maybeSingle();
+
+  if (error) throw httpError(500, "DB_ERROR", error.message);
+  if (!data) throw httpError(404, "ASSET_NOT_FOUND", `FaceSwap guide no encontrado: ${assetId}`);
+  if (data.type !== "image") throw httpError(400, "ASSET_NOT_IMAGE", `El asset ${assetId} no es una imagen.`);
+
+  const entitled = await hasCommunityAssetEntitlement(assetId, userId);
+  if (data.owner_id !== userId && !data.is_public && !entitled) {
+    throw httpError(403, "ASSET_FORBIDDEN", `No tienes acceso al asset ${assetId}.`);
+  }
+
+  const meta = data.meta || {};
+  if (meta.tool !== "faceswap" || Number(meta.step) !== 1 || meta.mode !== "analysis") {
+    throw httpError(400, "INVALID_FACESWAP_GUIDE", "El asset no es una guía válida del Paso 1 de FaceSwap.", {
+      assetId,
+      expectedKind,
+      meta,
+    });
+  }
+
+  if (expectedKind && meta.analysisKind !== expectedKind) {
+    throw httpError(400, "INVALID_FACESWAP_GUIDE_KIND", "La guía del Paso 1 no coincide con el tipo esperado.", {
+      assetId,
+      expectedKind,
+      foundKind: meta.analysisKind || null,
+    });
+  }
+
+  return data;
+}
+
+async function runFaceswapAnalysisStageSync({ userId, targetAssetId, swapType, quality, analysisKind }) {
+  const aiClient = await ensureAI();
+  const imgPart = await assetIdToInlinePart(targetAssetId, userId);
+  const prompt = buildFaceswapAnalysisPrompt({ swapType, analysisKind, quality });
+
+  const config = {
+    responseModalities: ["Image"],
+    imageConfig: { imageSize: quality },
+    temperature: 0.1,
+    topP: 0.5,
+    topK: 16,
+  };
+
+  const response = await aiClient.models.generateContent({
+    model: FACESWAP_ANALYSIS_MODEL,
+    contents: [
+      {
+        role: "user",
+        parts: [
+          { text: prompt },
+          { text: `IMAGE 1 — ORIGINAL TARGET (${getFaceswapStageLabel(analysisKind)} guide)` },
+          imgPart,
+        ],
+      },
+    ],
+    config,
+  });
+
+  const dataUrl = await extractImageDataUrl(response);
+
+  const { storagePath } = await uploadBase64ToStorage({
+    userId,
+    tool: "faceswap",
+    dataUrl,
+    nameHint: `faceswap-${analysisKind}-${swapType}-${quality}`,
+  });
+
+  const meta = {
+    tool: "faceswap",
+    step: 1,
+    mode: "analysis",
+    analysisKind,
+    provider: "google",
+    model: FACESWAP_ANALYSIS_MODEL,
+    swapType,
+    quality,
+    sourceAssetId: targetAssetId,
+  };
+
+  const assetId = await insertAssetRow({
+    ownerId: userId,
+    type: "image",
+    tool: "faceswap",
+    name: `faceswap-step1-${analysisKind}-${swapType}`,
+    prompt: `faceswap step1 ${analysisKind} (${swapType})`,
+    storagePath,
+    isPublic: false,
+    meta,
+  });
+
+  const urlExpiresInSeconds = 60 * 60;
+  const url = await signStoragePath(storagePath, urlExpiresInSeconds);
+  return { kind: analysisKind, url, assetId, urlExpiresInSeconds };
+}
+
+// -------------------------------
+// PASO 1 (nuevo): generar guías técnicas en serie (depth -> canny -> openpose)
+// -------------------------------
+app.post("/api/ai/faceswap/analyze", async (req, res, next) => {
+  try {
+    const { user, error } = await requireUser(req);
+    if (error) return res.status(401).json({ ok: false, error });
+
+    const active = await billing.requireActiveSubscription(user.id);
+    if (active.error) return res.status(403).json({ ok: false, error: active.error });
+
+    const body = FaceSwapMannequinSchema.parse(req.body);
+    const { targetAssetId, swapType, quality } = body;
+
+    const wantsSync = Boolean(body.sync) || body.async === false;
+    const wantsAsync = !wantsSync;
+
+    if (wantsAsync) {
+      await assertJobLimits({
+        supabaseAdmin,
+        httpError,
+        ownerId: user.id,
+        kind: "image",
+        tool: "faceswap",
+      });
+
+      const { data: jobRow, error: jobErr } = await supabaseAdmin
+        .from("jobs")
+        .insert({
+          owner_id: user.id,
+          kind: "image",
+          status: "running",
+          next_check_at: new Date().toISOString(),
+          params: {
+            task: "faceswap_analyze_bundle",
+            targetAssetId,
+            swapType,
+            quality,
+            analysisStages: FACESWAP_ANALYSIS_STAGES,
+            analysisOutputs: [],
+          },
+        })
+        .select("id")
+        .single();
+
+      if (jobErr) {
+        throw httpError(500, "JOB_INSERT_FAILED", "No se pudo crear el job del análisis FaceSwap.", { jobErr });
+      }
+
+      const spend = await billing.spendCredits({
+        userId: user.id,
+        amountCredits: 1,
+        entryType: "ai_faceswap_mannequin",
+        refType: "job",
+        refId: jobRow.id,
+        idempotencyKey: billing.getIdempotencyKey(req),
+      });
+
+      if (!spend.ok) {
+        await supabaseAdmin.from("jobs").delete().eq("id", jobRow.id);
+        return res.status(402).json({ ok: false, error: spend.error });
+      }
+
+      return res.json({ ok: true, jobId: jobRow.id });
+    }
+
+    const spend = await billing.spendCredits({
+      userId: user.id,
+      amountCredits: 1,
+      entryType: "ai_faceswap_mannequin",
+      refType: "sync",
+      refId: null,
+      idempotencyKey: billing.getIdempotencyKey(req),
+    });
+
+    if (!spend.ok) {
+      return res.status(402).json({ ok: false, error: spend.error });
+    }
+
+    const outputs = [];
+    for (const analysisKind of FACESWAP_ANALYSIS_STAGES) {
+      const output = await runFaceswapAnalysisStageSync({
+        userId: user.id,
+        targetAssetId,
+        swapType,
+        quality,
+        analysisKind,
+      });
+      outputs.push(output);
+    }
+
+    return res.json({ ok: true, outputs, urlExpiresInSeconds: 60 * 60 });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // -------------------------------
 // PASO 1: convertir imagen a MANIQUÍ
 // -------------------------------
@@ -2850,7 +3057,13 @@ app.post("/api/ai/faceswap/insert", async (req, res, next) => {
     if (active.error) return res.status(403).json({ ok: false, error: active.error });
 
   const body = FaceSwapInsertSchema.parse(req.body);
-  const { baseAssetId, donorElementId } = body;
+  const {
+    baseAssetId,
+    depthAssetId,
+    cannyAssetId,
+    openposeAssetId,
+    donorElementId,
+  } = body;
   let { swapType, quality } = body;
 
   const wantsSync = Boolean(body.sync) || body.async === false;
@@ -2874,7 +3087,10 @@ app.post("/api/ai/faceswap/insert", async (req, res, next) => {
         next_check_at: new Date().toISOString(),
         params: {
           task: "faceswap_insert",
-          baseAssetId,
+          baseAssetId: baseAssetId || null,
+          depthAssetId: depthAssetId || null,
+          cannyAssetId: cannyAssetId || null,
+          openposeAssetId: openposeAssetId || null,
           donorElementId,
           swapType,
           quality,
@@ -2919,29 +3135,63 @@ app.post("/api/ai/faceswap/insert", async (req, res, next) => {
     return res.status(402).json({ ok: false, error: spend.error });
   }
 
-  // -----------------------------
-  // 🔒 BLOQUEO (Paso 2 hereda SIEMPRE swapType + quality del Paso 1)
-  // -----------------------------
-  const { data: baseRow, error: baseErr } = await supabaseAdmin
-    .from("assets")
-    .select("id, owner_id, is_public, type, meta")
-    .eq("id", baseAssetId)
-    .maybeSingle();
+  const hasGuideBundle = Boolean(depthAssetId && cannyAssetId && openposeAssetId);
 
-  if (baseErr) throw httpError(500, "DB_ERROR", baseErr.message);
-  if (!baseRow) throw httpError(404, "ASSET_NOT_FOUND", "Base asset no encontrado.");
-  if (baseRow.type !== "image") throw httpError(400, "ASSET_NOT_IMAGE", "El baseAssetId no es una imagen.");
+  let basePart = null;
+  let depthPart = null;
+  let cannyPart = null;
+  let openposePart = null;
+  let sizeRule = "Keep exact size and aspect ratio from the target guides.";
 
-  const baseEntitled = await hasCommunityAssetEntitlement(baseAssetId, user.id);
-  if (baseRow.owner_id !== user.id && !baseRow.is_public && !baseEntitled) {
-    throw httpError(403, "ASSET_FORBIDDEN", "No tienes acceso al baseAssetId.");
+  if (hasGuideBundle) {
+    const depthRow = await getFaceswapStep1GuideRowOrThrow(depthAssetId, "depth", user.id);
+    await getFaceswapStep1GuideRowOrThrow(cannyAssetId, "canny", user.id);
+    await getFaceswapStep1GuideRowOrThrow(openposeAssetId, "openpose", user.id);
+
+    const guideMeta = depthRow.meta || {};
+    swapType = guideMeta?.swapType || swapType;
+    quality = guideMeta?.quality || quality;
+
+    depthPart = await assetIdToInlinePart(depthAssetId, user.id);
+    cannyPart = await assetIdToInlinePart(cannyAssetId, user.id);
+    openposePart = await assetIdToInlinePart(openposeAssetId, user.id);
+
+    const depthBuf = Buffer.from(depthPart.inlineData.data, "base64");
+    const dims = tryGetImageDimsFromBuffer(depthBuf, depthPart.inlineData.mimeType);
+    sizeRule = dims
+      ? `OUTPUT SIZE: EXACTLY ${dims.width}x${dims.height} pixels (same as @depth). Do NOT crop or resize.`
+      : "OUTPUT SIZE: Keep EXACT pixel dimensions and aspect ratio of @depth. Do NOT crop or resize.";
+  } else {
+    if (!baseAssetId) {
+      throw httpError(400, "FACESWAP_GUIDES_REQUIRED", "Faltan las 3 guías del Paso 1 (depth, canny y openpose).");
+    }
+
+    const { data: baseRow, error: baseErr } = await supabaseAdmin
+      .from("assets")
+      .select("id, owner_id, is_public, type, meta")
+      .eq("id", baseAssetId)
+      .maybeSingle();
+
+    if (baseErr) throw httpError(500, "DB_ERROR", baseErr.message);
+    if (!baseRow) throw httpError(404, "ASSET_NOT_FOUND", "Base asset no encontrado.");
+    if (baseRow.type !== "image") throw httpError(400, "ASSET_NOT_IMAGE", "El baseAssetId no es una imagen.");
+
+    const baseEntitled = await hasCommunityAssetEntitlement(baseAssetId, user.id);
+    if (baseRow.owner_id !== user.id && !baseRow.is_public && !baseEntitled) {
+      throw httpError(403, "ASSET_FORBIDDEN", "No tienes acceso al baseAssetId.");
+    }
+
+    const baseMeta = baseRow.meta || {};
+    swapType = baseMeta?.swapType || swapType;
+    quality = baseMeta?.quality || quality;
+    basePart = await assetIdToInlinePart(baseAssetId, user.id);
+
+    const baseBuf = Buffer.from(basePart.inlineData.data, "base64");
+    const dims = tryGetImageDimsFromBuffer(baseBuf, basePart.inlineData.mimeType);
+    sizeRule = dims
+      ? `OUTPUT SIZE: EXACTLY ${dims.width}x${dims.height} pixels (same as IMAGE 1). Do NOT crop or resize.`
+      : "OUTPUT SIZE: Keep EXACT pixel dimensions and aspect ratio of IMAGE 1. Do NOT crop or resize.";
   }
-
-  const baseMeta = baseRow.meta || {};
-  const lockedSwapType = baseMeta?.swapType || swapType;
-  const lockedQuality = baseMeta?.quality || quality;
-  swapType = lockedSwapType;
-  quality = lockedQuality;
 
   // -----------------------------
   // ✅ Donor debe venir de Element Library (General Image Generator)
@@ -2971,49 +3221,31 @@ app.post("/api/ai/faceswap/insert", async (req, res, next) => {
     );
   }
 
+
   const aiClient = await ensureAI();
 
-  const qHint = faceswapQualityHint(quality);
-  const basePart = await assetIdToInlinePart(baseAssetId, user.id);
   const donorPart = await assetIdToInlinePart(donorElementId, user.id);
+  const prompt = buildFaceswapInsertPrompt({ swapType, quality, sizeRule });
 
-  const baseBuf = Buffer.from(basePart.inlineData.data, "base64");
-  const dims = tryGetImageDimsFromBuffer(baseBuf, basePart.inlineData.mimeType);
-  const sizeRule = dims
-    ? `OUTPUT SIZE: EXACTLY ${dims.width}x${dims.height} pixels (same as IMAGE 1). Do NOT crop or resize.`
-    : "OUTPUT SIZE: Keep EXACT pixel dimensions and aspect ratio of IMAGE 1. Do NOT crop or resize.";
-
-  const systemText = `
-  You are a senior, high-end PHOTO-REALISTIC VFX compositor.
-
-  GOAL:
-  - IMAGE 1 is the BASE from Step 1 and defines the final canvas, lighting, camera, environment and composition.
-  - IMAGE 2 is the DONOR Element reference. Use it ONLY for identity/appearance/clothing.
-  - Replace ONLY the placeholder/mannequin region indicated by the mode with donor identity/clothing.
-  - Everything else must remain pixel-consistent with IMAGE 1.
-
-  GLOBAL HARD RULES:
-  - Keep EXACT framing, crop, perspective, lens look and composition from IMAGE 1.
-  - ${sizeRule}
-  - Do NOT import donor lighting, background, composition, or camera.
-  - Output a SINGLE image (never a collage/grid). No text/logos/watermarks/UI.
-  - Preserve the "essence" of IMAGE 1: dirt/wounds/stains/marks should remain in the same locations after insertion (overlay naturally).
-  - Avoid proportion errors: match head size/neck thickness/body scale to IMAGE 1 EXACTLY (no big head, no tiny head).
-  - ABSOLUTE: There must be ZERO visible mannequin/plastic/ceramic surface anywhere in the final image.
-  - If any mannequin material remains, you MUST replace it with realistic human skin (or realistic fabric for clothes).
-  ${qHint ? `QUALITY: ${qHint}` : ""}
-  `.trim();
-
-  const swapSpecific = insertSwapPrompt(swapType);
-
-    const parts = [
-    { text: systemText },
-    { text: "IMAGE 1 — BASE (Paso 1, define el canvas final):" },
-    basePart,
-    { text: "IMAGE 2 — DONOR Element (Element Library, identidad/ropa solamente):" },
-    donorPart,
-    { text: swapSpecific },
-  ];
+  const parts = hasGuideBundle
+    ? [
+        { text: prompt },
+        { text: "@depth — target structural guide:" },
+        depthPart,
+        { text: "@canny — target contour guide:" },
+        cannyPart,
+        { text: "@openpose — target pose guide:" },
+        openposePart,
+        { text: "@element — donor element reference:" },
+        donorPart,
+      ]
+    : [
+        { text: prompt },
+        { text: "IMAGE 1 — legacy target base:" },
+        basePart,
+        { text: "@element — donor element reference:" },
+        donorPart,
+      ];
 
   const config = {
     responseModalities: ["Image"],
@@ -3023,11 +3255,11 @@ app.post("/api/ai/faceswap/insert", async (req, res, next) => {
     topK: 16,
   };
 
-    const response = await aiClient.models.generateContent({
-      model: FACESWAP_MODEL,
-      contents: [{ role: "user", parts }],
-      config,
-    });
+  const response = await aiClient.models.generateContent({
+    model: FACESWAP_INSERT_MODEL,
+    contents: [{ role: "user", parts }],
+    config,
+  });
 
     const dataUrl = await extractImageDataUrl(response);
 
@@ -3043,10 +3275,13 @@ app.post("/api/ai/faceswap/insert", async (req, res, next) => {
       step: 2,
       mode: "insert",
       provider: "google",
-      model: FACESWAP_MODEL,
+      model: FACESWAP_INSERT_MODEL,
       swapType,
       quality,
-      baseAssetId,
+      baseAssetId: baseAssetId || null,
+      depthAssetId: depthAssetId || null,
+      cannyAssetId: cannyAssetId || null,
+      openposeAssetId: openposeAssetId || null,
       donorElementId,
     };
 
@@ -3084,7 +3319,7 @@ app.post("/api/ai/faceswap", async (req, res, next) => {
     const aiClient = await ensureAI();
 
     const response = await aiClient.models.generateContent({
-      model: FACESWAP_MODEL,
+      model: FACESWAP_INSERT_MODEL,
       contents: [
         {
           role: "user",

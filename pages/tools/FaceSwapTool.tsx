@@ -2,43 +2,66 @@ import React, { useEffect, useMemo, useState } from "react";
 import FileUploader from "../../components/FileUploader";
 import ElementLibraryPickerModal from "../../components/ElementLibraryPickerModal";
 import { Asset } from "../../types";
-import { ImageGenQuality, faceswapStep1MakeMannequin, faceswapStep2InsertFromElement, FaceSwapType } from "../../services/geminiService";
+import {
+  FaceSwapAnalysisOutput,
+  FaceSwapAnalysisStage,
+  FaceSwapType,
+  ImageGenQuality,
+  faceswapStep1GenerateAnalysisBundle,
+  faceswapStep2InsertFromElement,
+} from "../../services/geminiService";
 import styles from "./FaceSwapTool.module.css";
 import { estimateFaceSwapCostCredits } from "../../config/pricing.js";
 
 const QUALITYS: ImageGenQuality[] = ["1K", "2K", "4K"];
-
-const SWAP_OPTIONS: Array<{ id: FaceSwapType; label: string; desc: string }> = [
-  { id: "face", label: "Cara", desc: "Convierte solo la cara / Inserta solo la cara (mantiene pelo del base)." },
-  { id: "face_hair", label: "Cara y Pelo", desc: "Convierte cara+pelo / Inserta cabeza completa (cara+pelo)." },
-  { id: "body", label: "Cuerpo", desc: "Incluye cara+pelo+cuerpo (mantiene ropa/accesorios en base)." },
-  { id: "body_clothes", label: "Cuerpo y Ropa", desc: "Incluye todo; en base se elimina ropa (mantiene escena)." },
-  { id: "clothes_only", label: "Solo Ropa", desc: "Mantiene la persona del Paso 1 y en Paso 2 solo reemplaza la ropa con el Element (outfit)." },
+const ANALYSIS_STAGES: Array<{ id: FaceSwapAnalysisStage; label: string; short: string }> = [
+  { id: "depth", label: "Depth Map", short: "Depth" },
+  { id: "canny", label: "Canny Edge Detection", short: "Canny" },
+  { id: "openpose", label: "OpenPose", short: "OpenPose" },
 ];
 
+const SWAP_OPTIONS: Array<{ id: FaceSwapType; label: string; desc: string }> = [
+  { id: "face", label: "Cara", desc: "Analiza e inserta solo la cara. Conserva pelo del target." },
+  { id: "face_hair", label: "Cara y Pelo", desc: "Analiza e inserta cabeza completa: cara + pelo." },
+  { id: "body", label: "Cuerpo", desc: "Analiza anatomía visible, manteniendo ropa/accesorios del target." },
+  { id: "body_clothes", label: "Cuerpo y Ropa", desc: "Analiza sujeto completo para reemplazo completo." },
+  { id: "clothes_only", label: "Solo Ropa", desc: "Analiza solo la ropa; conserva identidad del target." },
+];
+
+function outputsToMap(outputs: FaceSwapAnalysisOutput[]) {
+  return outputs.reduce<Record<FaceSwapAnalysisStage, FaceSwapAnalysisOutput | null>>(
+    (acc, item) => {
+      acc[item.kind] = item;
+      return acc;
+    },
+    {
+      depth: null,
+      canny: null,
+      openpose: null,
+    }
+  );
+}
+
 export default function FaceSwapTool() {
-  // --------------------
-  // PASO 1
-  // --------------------
   const [step1Input, setStep1Input] = useState<Asset | null>(null);
   const [step1SwapType, setStep1SwapType] = useState<FaceSwapType>("face");
   const [step1Quality, setStep1Quality] = useState<ImageGenQuality>("2K");
 
   const [step1Loading, setStep1Loading] = useState(false);
   const [step1Error, setStep1Error] = useState<string | null>(null);
-  const [mannequin, setMannequin] = useState<{ url: string; assetId: string } | null>(null);
+  const [step1Progress, setStep1Progress] = useState<string>("");
+  const [activeStage, setActiveStage] = useState<FaceSwapAnalysisStage | null>(null);
+  const [analysisOutputs, setAnalysisOutputs] = useState<Record<FaceSwapAnalysisStage, FaceSwapAnalysisOutput | null>>({
+    depth: null,
+    canny: null,
+    openpose: null,
+  });
 
-  // --------------------
-  // PASO 2
-  // --------------------
   const [pickerOpen, setPickerOpen] = useState(false);
   const [donorElement, setDonorElement] = useState<Asset | null>(null);
-
   const [step2Loading, setStep2Loading] = useState(false);
   const [step2Error, setStep2Error] = useState<string | null>(null);
   const [finalOut, setFinalOut] = useState<{ url: string; assetId: string } | null>(null);
-
-  const step2Enabled = !!mannequin?.assetId;
 
   const step1SelectedDesc = useMemo(() => {
     return SWAP_OPTIONS.find((x) => x.id === step1SwapType)?.desc || "";
@@ -50,15 +73,19 @@ export default function FaceSwapTool() {
 
   const estimatedStepCostCredits = useMemo(() => estimateFaceSwapCostCredits(), []);
 
-  // 🔒 Paso 2 hereda SIEMPRE del Paso 1
   const lockedSwapType = step1SwapType;
   const lockedQuality = step1Quality;
 
-  // Si cambias área/quality o imagen del Paso 1, invalidamos el flujo (obliga re-analizar)
+  const completedStageCount = ANALYSIS_STAGES.filter((stage) => !!analysisOutputs[stage.id]?.assetId).length;
+  const step2Enabled = ANALYSIS_STAGES.every((stage) => !!analysisOutputs[stage.id]?.assetId);
+
   useEffect(() => {
-    setMannequin(null);
+    setAnalysisOutputs({ depth: null, canny: null, openpose: null });
     setFinalOut(null);
+    setStep1Error(null);
     setStep2Error(null);
+    setStep1Progress("");
+    setActiveStage(null);
   }, [step1SwapType, step1Quality, step1Input?.id]);
 
   async function runStep1() {
@@ -66,16 +93,33 @@ export default function FaceSwapTool() {
 
     setStep1Loading(true);
     setStep1Error(null);
-    setMannequin(null);
+    setStep2Error(null);
     setFinalOut(null);
+    setStep1Progress("Preparando análisis en serie...");
+    setActiveStage("depth");
+    setAnalysisOutputs({ depth: null, canny: null, openpose: null });
 
     try {
-      const res = await faceswapStep1MakeMannequin({
+      const res = await faceswapStep1GenerateAnalysisBundle({
         targetAssetId: step1Input.id,
         swapType: step1SwapType,
         quality: step1Quality,
+        asyncHooks: {
+          onProgress: (msg) => setStep1Progress(msg),
+          onStageResults: (outputs) => {
+            const nextMap = outputsToMap(outputs);
+            setAnalysisOutputs(nextMap);
+
+            const nextPending = ANALYSIS_STAGES.find((stage) => !nextMap[stage.id]);
+            setActiveStage(nextPending?.id || null);
+          },
+        },
       });
-      setMannequin({ url: res.url, assetId: res.assetId });
+
+      const nextMap = outputsToMap(res.outputs || []);
+      setAnalysisOutputs(nextMap);
+      setActiveStage(null);
+      setStep1Progress("Paso 1 completado: Depth, Canny y OpenPose listos.");
     } catch (e: any) {
       setStep1Error(e?.message || "Error en Paso 1.");
     } finally {
@@ -84,7 +128,7 @@ export default function FaceSwapTool() {
   }
 
   async function runStep2() {
-    if (!mannequin?.assetId) return;
+    if (!step2Enabled) return;
     if (!donorElement?.id) return;
 
     setStep2Loading(true);
@@ -93,7 +137,9 @@ export default function FaceSwapTool() {
 
     try {
       const res = await faceswapStep2InsertFromElement({
-        baseAssetId: mannequin.assetId,
+        depthAssetId: analysisOutputs.depth?.assetId || undefined,
+        cannyAssetId: analysisOutputs.canny?.assetId || undefined,
+        openposeAssetId: analysisOutputs.openpose?.assetId || undefined,
         donorElementId: donorElement.id,
         swapType: lockedSwapType,
         quality: lockedQuality,
@@ -112,7 +158,7 @@ export default function FaceSwapTool() {
     <div className="p-6 max-w-6xl mx-auto space-y-8">
       <h1 className="text-3xl font-bold mb-2">FaceSwap (2 pasos)</h1>
       <p className="text-gray-400 mb-8">
-        Paso 1 <b>Analiza</b> la imagen y prepara la base. Paso 2 aplica <b>Faceswap</b> usando un <b>Element</b> del <b>General Image Generator</b>.
+        Paso 1 genera 3 guías técnicas en serie sobre la misma imagen objetivo: <b>Depth</b>, <b>Canny</b> y <b>OpenPose</b>. Paso 2 usa esas 3 guías + tu <b>Element</b> para insertar el resultado final sin contaminar encuadre ni iluminación.
       </p>
 
       <ElementLibraryPickerModal
@@ -122,15 +168,14 @@ export default function FaceSwapTool() {
           setDonorElement(el);
           setPickerOpen(false);
         }}
-        title="Elegir / Crear Element (General Image Generator)"
+         title="Elegir / Crear Element (General Image Generator)"
       />
 
-      {/* PASO 1 */}
       <section className="space-y-4">
         <div className="glass-panel p-6 space-y-6">
           <div className="flex items-baseline justify-between gap-4">
             <h2 className="text-xl font-bold">Paso 1 — Analizar Imagen</h2>
-            <span className="text-xs text-white/60">Modelo fijo: NanoBanana Pro</span>
+            <span className="text-xs text-white/60">Modelo fijo: Nano Banana 2</span>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -163,7 +208,7 @@ export default function FaceSwapTool() {
                   </option>
                 ))}
               </select>
-              <div className="text-xs text-white/60">La salida conservará el encuadre y aspecto del input.</div>
+              <div className="text-xs text-white/60">Las 3 guías respetarán el canvas y la proporción del input.</div>
             </div>
           </div>
 
@@ -175,15 +220,10 @@ export default function FaceSwapTool() {
             previewFit="contain"
           />
 
-          <button
-            type="button"
-            onClick={runStep1}
-            disabled={!step1Input?.id || step1Loading}
-            className={styles.generateBtn}
-          >
+          <button type="button" onClick={runStep1} disabled={!step1Input?.id || step1Loading} className={styles.generateBtn}>
             {step1Loading ? (
               <>
-                Analizando...
+                {activeStage ? `Analizando · ${ANALYSIS_STAGES.find((x) => x.id === activeStage)?.short}` : "Analizando..."}
                 <span className={styles.generateSpinner} />
               </>
             ) : (
@@ -197,33 +237,71 @@ export default function FaceSwapTool() {
 
           {step1Error && <div className="text-sm text-red-400">{step1Error}</div>}
 
-          <div className="space-y-2">
-            <div className="text-sm font-bold">Estado Paso 1</div>
-
-            {step1Loading ? (
-              <div className="text-xs text-white/60 flex items-center gap-2">
-                Generando base…
-                <span className={styles.generateSpinner} />
-              </div>
-            ) : mannequin?.assetId ? (
-              <div className="text-sm text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-4">
-                ✅ Tarea completada. Continúa al <b>Paso 2</b>.
-              </div>
-            ) : (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-4">
+              <div className="text-sm font-bold">Viewport provisional del Paso 1</div>
               <div className="text-xs text-white/60">
-                Ejecuta el Paso 1 para preparar la base (no se mostrará la imagen intermedia).
+                {completedStageCount}/3 guías listas{step1Loading ? " · generando en serie" : ""}
               </div>
-            )}
+            </div>
+
+            <div className={styles.step1Note}>
+              Este viewport es temporal para validar si los resultados de fondo son correctos. Después lo puedes volver a ocultar.
+            </div>
+
+            {step1Progress ? <div className={styles.progressText}>{step1Progress}</div> : null}
+
+            <div className={styles.stageGrid}>
+              {ANALYSIS_STAGES.map((stage) => {
+                const output = analysisOutputs[stage.id];
+                const isActive = activeStage === stage.id;
+                const isDone = !!output?.assetId;
+                const statusLabel = isDone ? "Listo" : isActive ? "Generando..." : step1Loading ? "En cola" : "Pendiente";
+
+                return (
+                  <div
+                    key={stage.id}
+                    className={`${styles.stageCard} ${isActive ? styles.stageCardActive : ""} ${isDone ? styles.stageCardDone : ""}`}
+                  >
+                    <div className="flex items-center justify-between gap-3 mb-3">
+                      <div>
+                        <div className="text-sm font-bold text-white/90">{stage.label}</div>
+                        <div className="text-[11px] text-white/50">Paso 1/{ANALYSIS_STAGES.length}</div>
+                      </div>
+                      <span className={`${styles.stageBadge} ${isDone ? styles.stageBadgeDone : isActive ? styles.stageBadgeActive : styles.stageBadgeIdle}`}>
+                        {statusLabel}
+                      </span>
+                    </div>
+
+                    <div className={styles.stageThumb}>
+                      {output?.url ? (
+                        <img src={output.url} alt={stage.label} className="w-full h-full object-contain" />
+                      ) : (
+                        <div className="w-full h-full flex flex-col items-center justify-center text-center px-4 text-xs text-white/40 gap-2">
+                          {isActive ? <span className={styles.generateSpinner} /> : null}
+                          <span>{isActive ? `Generando ${stage.short}...` : `Sin resultado todavía`}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {!step1Loading && step2Enabled ? (
+              <div className="text-sm text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-4">
+                ✅ Las 3 guías están listas. Ahora sí se desbloquea el <b>Paso 2</b>.
+              </div>
+            ) : null}
           </div>
         </div>
       </section>
 
-      {/* PASO 2 */}
       <section className="space-y-4">
         <div className={`glass-panel p-6 space-y-6 ${step2Enabled ? "" : "opacity-60"}`}>
           <div className="flex items-baseline justify-between gap-4">
             <h2 className="text-xl font-bold">Paso 2 — Faceswap</h2>
-            <span className="text-xs text-white/60">Sin contaminar estilo/iluminación</span>
+            <span className="text-xs text-white/60">Modelo fijo: Nano Banana Pro</span>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -237,12 +315,16 @@ export default function FaceSwapTool() {
 
             <div className="space-y-2">
               <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider">Resolución (bloqueada por Paso 1)</label>
-              <div className="w-full rounded-xl bg-black/40 border border-white/10 px-4 py-3 text-sm">
-                {lockedQuality}
-              </div>
-              <div className="text-xs text-white/60">La salida respeta la relación de aspecto del Paso 1.</div>
+              <div className="w-full rounded-xl bg-black/40 border border-white/10 px-4 py-3 text-sm">{lockedQuality}</div>
+              <div className="text-xs text-white/60">La salida final usará las 3 guías del Paso 1 + el Element.</div>
             </div>
           </div>
+
+          {!step2Enabled ? (
+            <div className="text-xs text-amber-200 bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4">
+              El Paso 2 permanece bloqueado hasta completar <b>Depth</b>, <b>Canny</b> y <b>OpenPose</b>.
+            </div>
+          ) : null}
 
           <div className="space-y-2">
             <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider">Elemento (General Image Generator)</label>
@@ -268,22 +350,15 @@ export default function FaceSwapTool() {
               <div className="rounded-2xl border border-white/10 bg-black/20 overflow-hidden">
                 <div className="aspect-video bg-black/40">
                   {donorPreview ? (
-                    <img
-                      src={donorPreview}
-                      alt={donorElement.name}
-                      className="w-full h-full object-contain"
-                      style={{ objectFit: "contain", objectPosition: "center" }}
-                    />
+                    <img src={donorPreview} alt={donorElement.name} className="w-full h-full object-contain" style={{ objectFit: "contain", objectPosition: "center" }} />
                   ) : (
-                    <div className="w-full h-full flex items-center justify-center text-xs text-white/40">
-                      Sin preview
-                    </div>
+                    <div className="w-full h-full flex items-center justify-center text-xs text-white/40">Sin preview</div>
                   )}
                 </div>
                 <div className="p-4">
                   <div className="text-sm font-bold text-white/90">{donorElement.name}</div>
                   <div className="text-xs text-white/60 mt-1">
-                    Puedes elegir un Element existente o crear uno nuevo desde el botón <b>Elegir Element</b>.
+                    Paso 2 usará este Element como <b>@element</b> y lo alineará usando <b>@depth</b>, <b>@canny</b> y <b>@openpose</b>.
                   </div>
                 </div>
               </div>
@@ -294,12 +369,7 @@ export default function FaceSwapTool() {
             )}
           </div>
 
-          <button
-            type="button"
-            onClick={runStep2}
-            disabled={!step2Enabled || !donorElement?.id || step2Loading}
-            className={styles.generateBtn}
-          >
+          <button type="button" onClick={runStep2} disabled={!step2Enabled || !donorElement?.id || step2Loading} className={styles.generateBtn}>
             {step2Loading ? (
               <>
                 Faceswap...
@@ -321,9 +391,7 @@ export default function FaceSwapTool() {
             {finalOut?.url ? (
               <img src={finalOut.url} alt="Paso 2 final" className="w-full rounded-2xl border border-white/10" />
             ) : (
-              <div className="text-xs text-white/60">
-                Ejecuta el Paso 2 para generar la imagen final.
-              </div>
+              <div className="text-xs text-white/60">Ejecuta el Paso 2 para generar la imagen final.</div>
             )}
           </div>
         </div>

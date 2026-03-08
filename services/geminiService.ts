@@ -4,7 +4,7 @@ import { backend } from "./backendService";
 import { supabase } from "./supabaseClient";
 import { apiUrl } from "./apiBase";
 import { invalidateMyAssetsCache } from "./assetsApi";
-import { waitJobCompletion, JobRow } from "./jobsApi";
+import { waitJobCompletion, JobRow, fetchJobById } from "./jobsApi";
 import { emitInsufficientCredits, emitPlanRequired, emitWalletRefresh } from "./appEvents";
 
 type ApiResponse<T> = { ok: true; dataUrl?: string; videoUrl?: string } | { ok: false; error: string };
@@ -46,10 +46,76 @@ async function waitImageJob(jobId: string, onProgress?: (msg: string) => void): 
   return row;
 }
 
+export type FaceSwapAnalysisStage = "depth" | "canny" | "openpose";
+export type FaceSwapAnalysisOutput = {
+  kind: FaceSwapAnalysisStage;
+  url: string;
+  assetId: string;
+  urlExpiresInSeconds?: number;
+};
+
+function mapFaceswapAnalysisOutputs(source: any): FaceSwapAnalysisOutput[] {
+  const outputs = Array.isArray(source?.outputs)
+    ? source.outputs
+    : Array.isArray(source?.params?.analysisOutputs)
+      ? source.params.analysisOutputs
+      : [];
+
+  return outputs
+    .map((row: any) => ({
+      kind: String(row?.kind || "") as FaceSwapAnalysisStage,
+      url: String(row?.url || ""),
+      assetId: String(row?.assetId || "unknown"),
+      urlExpiresInSeconds:
+        Number.isFinite(Number(row?.urlExpiresInSeconds)) ? Number(row.urlExpiresInSeconds) : undefined,
+    }))
+    .filter((row: FaceSwapAnalysisOutput) => !!row.kind && !!row.url);
+}
+
+async function waitFaceswapAnalysisJob(
+  jobId: string,
+  hooks?: AsyncImageJobHooks & { onStageResults?: (outputs: FaceSwapAnalysisOutput[]) => void }
+): Promise<FaceSwapAnalysisOutput[]> {
+  let lastSignature = "";
+  let timer: any = null;
+
+  const emit = (row: any) => {
+    const outputs = mapFaceswapAnalysisOutputs(row);
+    const signature = JSON.stringify(outputs.map((x) => [x.kind, x.assetId, x.url]));
+    if (signature === lastSignature) return;
+    lastSignature = signature;
+    hooks?.onStageResults?.(outputs);
+  };
+
+  const first = await fetchJobById(jobId);
+  if (first) emit(first);
+
+  timer = setInterval(async () => {
+    try {
+      const row = await fetchJobById(jobId);
+      if (row) emit(row);
+      if (row?.status === "succeeded" || row?.status === "failed") {
+        clearInterval(timer);
+      }
+    } catch {
+      // silent polling fallback
+    }
+  }, 1200);
+
+  try {
+    const row = await waitJobCompletion(jobId, { onProgress: hooks?.onProgress });
+    emit(row);
+    if (row.status === "failed") throw new Error(formatJobFailure(row));
+    return mapFaceswapAnalysisOutputs(row);
+  } finally {
+    if (timer) clearInterval(timer);
+    hooks?.onJobSettled?.(jobId);
+  }
+}
+
 
 async function apiPost<T>(path: string, body: any): Promise<T> {
   const url = apiUrl(path);
-
   const { data: sessionData } = await supabase.auth.getSession();
   const token = sessionData.session?.access_token;
 
@@ -323,6 +389,38 @@ export const generateRestyle = async (assetUrl: string, prompt: string): Promise
 export type FaceSwapType = "face" | "face_hair" | "body" | "body_clothes" | "clothes_only";
 
 export type FaceSwapResult = { url: string; assetId: string; urlExpiresInSeconds?: number };
+export type FaceSwapAnalysisBundleResult = { outputs: FaceSwapAnalysisOutput[]; urlExpiresInSeconds?: number };
+
+export const faceswapStep1GenerateAnalysisBundle = async (params: {
+  targetAssetId: string;
+  swapType: FaceSwapType;
+  quality: ImageGenQuality;
+  asyncHooks?: AsyncImageJobHooks & { onStageResults?: (outputs: FaceSwapAnalysisOutput[]) => void };
+}): Promise<FaceSwapAnalysisBundleResult> => {
+  const res: any = await apiPost("/api/ai/faceswap/analyze", {
+    targetAssetId: params.targetAssetId,
+    swapType: params.swapType,
+    quality: params.quality,
+  });
+
+  if (res?.jobId) {
+    const jobId = String(res.jobId);
+    params.asyncHooks?.onJobQueued?.({ jobId });
+
+    const outputs = await waitFaceswapAnalysisJob(jobId, params.asyncHooks);
+    invalidateMyAssetsCache();
+    return {
+      outputs,
+      urlExpiresInSeconds: outputs[0]?.urlExpiresInSeconds,
+    };
+  }
+
+  const outputs = mapFaceswapAnalysisOutputs(res);
+  return {
+    outputs,
+    urlExpiresInSeconds: res?.urlExpiresInSeconds,
+  };
+};
 
 export const faceswapStep1MakeMannequin = async (params: {
   targetAssetId: string;
@@ -372,7 +470,10 @@ export const faceswapStep1MakeMannequin = async (params: {
 
 
 export const faceswapStep2InsertFromElement = async (params: {
-  baseAssetId: string;
+  baseAssetId?: string;
+  depthAssetId?: string;
+  cannyAssetId?: string;
+  openposeAssetId?: string;
   donorElementId: string;
   swapType: FaceSwapType;
   quality: ImageGenQuality;
@@ -380,6 +481,9 @@ export const faceswapStep2InsertFromElement = async (params: {
 }): Promise<FaceSwapResult> => {
   const res: any = await apiPost("/api/ai/faceswap/insert", {
     baseAssetId: params.baseAssetId,
+    depthAssetId: params.depthAssetId,
+    cannyAssetId: params.cannyAssetId,
+    openposeAssetId: params.openposeAssetId,
     donorElementId: params.donorElementId,
     swapType: params.swapType,
     quality: params.quality,

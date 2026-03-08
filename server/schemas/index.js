@@ -232,16 +232,43 @@ export const FaceSwapMannequinSchema = z.object({
   async: z.boolean().optional(),
 });
 
-export const FaceSwapInsertSchema = z.object({
-  baseAssetId: z.string().uuid(),
-  donorElementId: z.string().uuid(),
+export const FaceSwapAnalysisStageSchema = z.object({
+  targetAssetId: z.string().uuid(),
   swapType: z.enum(["face", "face_hair", "body", "body_clothes", "clothes_only"]).default("face"),
   quality: z.enum(["1K", "2K", "4K"]).default("2K"),
+  analysisKind: z.enum(["depth", "canny", "openpose"]),
 
   // control de timeout: por defecto async
   sync: z.boolean().optional(),
   async: z.boolean().optional(),
 });
+
+export const FaceSwapInsertSchema = z
+  .object({
+    baseAssetId: z.string().uuid().optional(),
+    depthAssetId: z.string().uuid().optional(),
+    cannyAssetId: z.string().uuid().optional(),
+    openposeAssetId: z.string().uuid().optional(),
+    donorElementId: z.string().uuid(),
+    swapType: z.enum(["face", "face_hair", "body", "body_clothes", "clothes_only"]).default("face"),
+    quality: z.enum(["1K", "2K", "4K"]).default("2K"),
+
+    // control de timeout: por defecto async
+    sync: z.boolean().optional(),
+    async: z.boolean().optional(),
+  })
+  .superRefine((val, ctx) => {
+    const hasLegacyBase = Boolean(val.baseAssetId);
+    const hasBundle = Boolean(val.depthAssetId && val.cannyAssetId && val.openposeAssetId);
+
+    if (!hasLegacyBase && !hasBundle) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["depthAssetId"],
+        message: "Provide baseAssetId or the trio depthAssetId + cannyAssetId + openposeAssetId",
+      });
+    }
+  });
 
 export const UpscaleSchema = z
   .object({

@@ -7,6 +7,7 @@ import {
   ImageRequestSchema,
   RestyleSchema,
   FaceSwapMannequinSchema,
+  FaceSwapAnalysisStageSchema,
   FaceSwapInsertSchema,
   UpscaleSchema,
 } from "../schemas/index.js";
@@ -21,6 +22,14 @@ import {
   buildGridPromptInstruction,
   supportsGoogleSearchGrounding,
 } from "../../config/imageGenerationShared.js";
+import {
+  FACESWAP_ANALYSIS_MODEL,
+  FACESWAP_INSERT_MODEL,
+  FACESWAP_ANALYSIS_STAGES,
+  buildFaceswapAnalysisPrompt,
+  buildFaceswapInsertPrompt,
+  getFaceswapStageLabel,
+} from "../lib/faceswapPipeline.js";
 
 dotenv.config();
 
@@ -505,7 +514,7 @@ async function bflSampleToDataUrl(sampleUrl) {
 async function getAssetRowOrThrow(assetId) {
   const { data, error } = await supabaseAdmin
     .from("assets")
-    .select("id, owner_id, is_public, storage_path, type")
+    .select("id, owner_id, is_public, storage_path, type, meta")
     .eq("id", assetId)
     .maybeSingle();
 
@@ -1897,6 +1906,110 @@ async function runUpscaleTask({ userId, params }) {
   return { items: [{ url, assetId }], urlExpiresInSeconds };
 }
 
+async function getFaceswapStep1GuideRowOrThrow(assetId, expectedKind, requesterId) {
+  const { data, error } = await supabaseAdmin
+    .from("assets")
+    .select("id, owner_id, is_public, storage_path, type, meta")
+    .eq("id", assetId)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data) throw httpError(404, "ASSET_NOT_FOUND", "FaceSwap guide no encontrado.", { assetId });
+  if (data.type !== "image") throw httpError(400, "ASSET_NOT_IMAGE", "La guía FaceSwap no es una imagen.", { assetId });
+  await assertAssetReadable(data, requesterId);
+
+  const meta = data.meta || {};
+  if (meta.tool !== "faceswap" || Number(meta.step) !== 1 || meta.mode !== "analysis") {
+    throw httpError(400, "INVALID_FACESWAP_GUIDE", "El asset no es una guía válida del Paso 1 de FaceSwap.", {
+      assetId,
+      expectedKind,
+      meta,
+    });
+  }
+  if (expectedKind && meta.analysisKind !== expectedKind) {
+    throw httpError(400, "INVALID_FACESWAP_GUIDE_KIND", "La guía del Paso 1 no coincide con el tipo esperado.", {
+      assetId,
+      expectedKind,
+      foundKind: meta.analysisKind || null,
+    });
+  }
+
+  return data;
+}
+
+async function jobMergeParams(jobRow, patch) {
+  try {
+    const nextParams = { ...(jobRow.params || {}), ...patch };
+    await updateJob(jobRow.id, { params: nextParams, updated_at: new Date().toISOString() });
+    jobRow.params = nextParams;
+  } catch {
+    // best-effort
+  }
+}
+
+async function runFaceswapAnalysisStageTask({ userId, params }) {
+  const parsed = FaceSwapAnalysisStageSchema.parse(params);
+  const { targetAssetId, swapType, quality, analysisKind } = parsed;
+
+  const ai = await ensureAI();
+  const toolName = "faceswap";
+  const hint = `faceswap-${analysisKind}`;
+  const urlExpiresInSeconds = 60 * 60;
+
+  const part = await assetIdToInlinePart(targetAssetId, userId);
+  const prompt = buildFaceswapAnalysisPrompt({ swapType, analysisKind, quality });
+  const resp = await ai.models.generateContent({
+    model: FACESWAP_ANALYSIS_MODEL,
+    contents: [{ role: "user", parts: [{ text: prompt }, { text: `IMAGE 1 — ORIGINAL TARGET (${getFaceswapStageLabel(analysisKind)} guide)` }, part] }],
+    config: {
+      responseModalities: ["Image"],
+      imageConfig: { imageSize: quality },
+      temperature: 0.1,
+      topP: 0.5,
+      topK: 16,
+    },
+  });
+
+  const dataUrl = await extractImageDataUrl(resp);
+  const { storagePath } = await uploadBase64ToStorage({ userId, tool: toolName, dataUrl, nameHint: hint });
+  const meta = {
+    tool: toolName,
+    step: 1,
+    mode: "analysis",
+    analysisKind,
+    provider: "google",
+    model: FACESWAP_ANALYSIS_MODEL,
+    targetAssetId,
+    swapType,
+    quality,
+  };
+  const assetId = await insertAssetRow({ ownerId: userId, type: "image", tool: toolName, name: hint, prompt, storagePath, isPublic: false, meta });
+  const url = await signStoragePath(storagePath, urlExpiresInSeconds);
+  return { kind: analysisKind, url, assetId, urlExpiresInSeconds };
+}
+
+async function runFaceswapAnalyzeBundleTask({ userId, params, jobRow }) {
+  const parsed = FaceSwapMannequinSchema.parse(params);
+  const { targetAssetId, swapType, quality } = parsed;
+
+  const outputs = [];
+  for (let i = 0; i < FACESWAP_ANALYSIS_STAGES.length; i += 1) {
+    const analysisKind = FACESWAP_ANALYSIS_STAGES[i];
+    await jobSetProgress(jobRow, "RUNNING", `FaceSwap Paso 1/${FACESWAP_ANALYSIS_STAGES.length} · ${getFaceswapStageLabel(analysisKind)}…`);
+    const output = await runFaceswapAnalysisStageTask({
+      userId,
+      params: { targetAssetId, swapType, quality, analysisKind },
+    });
+    outputs.push(output);
+    await jobMergeParams(jobRow, { analysisOutputs: outputs });
+  }
+
+  return {
+    items: outputs.map((x) => ({ url: x.url, assetId: x.assetId })),
+    urlExpiresInSeconds: 60 * 60,
+  };
+}
+
 async function runFaceswapMannequinTask({ userId, params }) {
   const parsed = FaceSwapMannequinSchema.parse(params);
   const { targetAssetId, swapType, quality } = parsed;
@@ -1920,9 +2033,16 @@ async function runFaceswapMannequinTask({ userId, params }) {
   return { items: [{ url, assetId }], urlExpiresInSeconds };
 }
 
+
 async function runFaceswapInsertTask({ userId, params }) {
   const parsed = FaceSwapInsertSchema.parse(params);
-  const { baseAssetId, donorElementId } = parsed;
+  const {
+    baseAssetId,
+    depthAssetId,
+    cannyAssetId,
+    openposeAssetId,
+    donorElementId,
+  } = parsed;
   let { swapType, quality } = parsed;
 
   const ai = await ensureAI();
@@ -1930,45 +2050,112 @@ async function runFaceswapInsertTask({ userId, params }) {
   const hint = "faceswap";
   const urlExpiresInSeconds = 60 * 60;
 
-  const baseRow = await getAssetRowOrThrow(baseAssetId);
-  assertAssetReadable(baseRow, userId);
-  // 🔒 Paso 2 hereda SIEMPRE swapType + quality del Paso 1 (guardado en meta del asset base)
-  const baseMeta = baseRow?.meta || {};
-  const lockedSwapType = baseMeta?.swapType || swapType;
-  const lockedQuality = baseMeta?.quality || quality;
+  const hasGuideBundle = Boolean(depthAssetId && cannyAssetId && openposeAssetId);
 
-  swapType = lockedSwapType;
-  quality = lockedQuality;
+  let basePart = null;
+  let depthPart = null;
+  let cannyPart = null;
+  let openposePart = null;
+  let sizeRule = "Keep exact size and aspect ratio from the target guides.";
 
-  const basePart = await assetIdToInlinePart(baseAssetId, userId);
+  if (hasGuideBundle) {
+    const depthRow = await getFaceswapStep1GuideRowOrThrow(depthAssetId, "depth", userId);
+    await getFaceswapStep1GuideRowOrThrow(cannyAssetId, "canny", userId);
+    await getFaceswapStep1GuideRowOrThrow(openposeAssetId, "openpose", userId);
 
-  const { data: elRow, error } = await supabaseAdmin
-    .from("kling_elements")
-    .select("id, owner_id, image_paths")
-    .eq("id", donorElementId)
-    .maybeSingle();
-  if (error) throw error;
-  if (!elRow) throw httpError(404, "ELEMENT_NOT_FOUND", "Elemento no encontrado.", { donorElementId });
-  if (elRow.owner_id !== userId) throw httpError(403, "ELEMENT_FORBIDDEN", "No tienes permisos para ese elemento.");
+    const guideMeta = depthRow.meta || {};
+    swapType = guideMeta?.swapType || swapType;
+    quality = guideMeta?.quality || quality;
 
-  const imagePaths = Array.isArray(elRow.image_paths) ? elRow.image_paths : [];
-  const donorParts = [];
-  for (const p of imagePaths.slice(0, 4)) {
-    if (!p) continue;
-    const { buffer, mimeType } = await downloadStoragePath(p);
-    donorParts.push({ inlineData: { mimeType: mimeType || "image/png", data: buffer.toString("base64") } });
+    depthPart = await assetIdToInlinePart(depthAssetId, userId);
+    cannyPart = await assetIdToInlinePart(cannyAssetId, userId);
+    openposePart = await assetIdToInlinePart(openposeAssetId, userId);
+
+    const depthBuf = Buffer.from(depthPart.inlineData.data, "base64");
+    const dims = tryGetImageDimsFromBuffer(depthBuf, depthPart.inlineData.mimeType);
+    sizeRule = dims
+      ? `OUTPUT SIZE: EXACTLY ${dims.width}x${dims.height} pixels (same as @depth). Do NOT crop or resize.`
+      : "OUTPUT SIZE: Keep EXACT pixel dimensions and aspect ratio of @depth. Do NOT crop or resize.";
+  } else {
+    if (!baseAssetId) {
+      throw httpError(400, "FACESWAP_GUIDES_REQUIRED", "Faltan las 3 guías del Paso 1 (depth, canny y openpose).");
+    }
+
+    const baseRow = await getAssetRowOrThrow(baseAssetId);
+    await assertAssetReadable(baseRow, userId);
+    const baseMeta = baseRow?.meta || {};
+    swapType = baseMeta?.swapType || swapType;
+    quality = baseMeta?.quality || quality;
+    basePart = await assetIdToInlinePart(baseAssetId, userId);
+
+    const baseBuf = Buffer.from(basePart.inlineData.data, "base64");
+    const dims = tryGetImageDimsFromBuffer(baseBuf, basePart.inlineData.mimeType);
+    sizeRule = dims
+      ? `OUTPUT SIZE: EXACTLY ${dims.width}x${dims.height} pixels (same as IMAGE 1). Do NOT crop or resize.`
+      : "OUTPUT SIZE: Keep EXACT pixel dimensions and aspect ratio of IMAGE 1. Do NOT crop or resize.";
   }
-  if (!donorParts.length) throw httpError(400, "DONOR_EMPTY", "El elemento donor no tiene imágenes.");
 
-  const prompt = `${insertSwapPrompt(swapType)} ${faceswapQualityHint(quality)}`.trim();
+  const donorRow = await getAssetRowOrThrow(donorElementId);
+  await assertAssetReadable(donorRow, userId);
+  const donorMeta = donorRow?.meta || {};
+  const isElementLibrary = donorMeta?.tool === "element-library" || donorMeta?.isElement === true;
+  if (!isElementLibrary) {
+    throw httpError(400, "DONOR_NOT_ELEMENT_LIBRARY", "El donante debe ser un Element creado en General Image Generator.", {
+      donorElementId,
+      donorMeta,
+    });
+  }
+
+  const donorPart = await assetIdToInlinePart(donorElementId, userId);
+  const prompt = buildFaceswapInsertPrompt({ swapType, quality, sizeRule });
+
+  const parts = hasGuideBundle
+    ? [
+        { text: prompt },
+        { text: "@depth — target structural guide:" },
+        depthPart,
+        { text: "@canny — target contour guide:" },
+        cannyPart,
+        { text: "@openpose — target pose guide:" },
+        openposePart,
+        { text: "@element — donor element reference:" },
+        donorPart,
+      ]
+    : [
+        { text: prompt },
+        { text: "IMAGE 1 — legacy target base:" },
+        basePart,
+        { text: "@element — donor element reference:" },
+        donorPart,
+      ];
+
   const resp = await ai.models.generateContent({
-    model: FACESWAP_MODEL,
-    contents: [{ role: "user", parts: [{ text: prompt }, basePart, ...donorParts] }],
+    model: FACESWAP_INSERT_MODEL,
+    contents: [{ role: "user", parts }],
+    config: {
+      responseModalities: ["Image"],
+      imageConfig: { imageSize: quality },
+      temperature: 0.1,
+      topP: 0.5,
+      topK: 16,
+    },
   });
 
   const dataUrl = await extractImageDataUrl(resp);
   const { storagePath } = await uploadBase64ToStorage({ userId, tool: toolName, dataUrl, nameHint: hint });
-  const meta = { tool: toolName, step: 2, provider: "google", model: FACESWAP_MODEL, baseAssetId, donorElementId, swapType, quality };
+  const meta = {
+    tool: toolName,
+    step: 2,
+    provider: "google",
+    model: FACESWAP_INSERT_MODEL,
+    baseAssetId: baseAssetId || null,
+    depthAssetId: depthAssetId || null,
+    cannyAssetId: cannyAssetId || null,
+    openposeAssetId: openposeAssetId || null,
+    donorElementId,
+    swapType,
+    quality,
+  };
   const assetId = await insertAssetRow({ ownerId: userId, type: "image", tool: toolName, name: hint, prompt, storagePath, isPublic: false, meta });
   const url = await signStoragePath(storagePath, urlExpiresInSeconds);
   return { items: [{ url, assetId }], urlExpiresInSeconds };
@@ -2003,6 +2190,9 @@ async function processJob(row) {
     } else if (task === "faceswap_mannequin") {
       await jobSetProgress(row, "RUNNING", "Faceswap paso 1...");
       result = await runFaceswapMannequinTask({ userId: row.owner_id, params });
+    } else if (task === "faceswap_analyze_bundle") {
+      await jobSetProgress(row, "RUNNING", "FaceSwap paso 1/3 · Depth…");
+      result = await runFaceswapAnalyzeBundleTask({ userId: row.owner_id, params, jobRow: row });
     } else if (task === "faceswap_insert") {
       await jobSetProgress(row, "RUNNING", "Faceswap paso 2...");
       result = await runFaceswapInsertTask({ userId: row.owner_id, params });
