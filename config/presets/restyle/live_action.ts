@@ -11,7 +11,6 @@ const preset: ImagePreset = {
     "/presets/restyle/live_action/3.png",
     "/presets/restyle/live_action/4.jpeg",
   ],
-  referenceGridUrl: "/presets/restyle/live_action/reference_grid.jpg",
   prompt: `
 STYLE: Apply photorealistic materials and cinematic lighting to the provided image using TEXTURE AND MATERIAL
 TRANSLATION ONLY.
