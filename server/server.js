@@ -88,7 +88,52 @@ const supabaseAdmin =
 
 const billing = createBillingHelpers(supabaseAdmin);
 
+async function hasActiveWorkerHeartbeat(kind, maxAgeMs = 90_000) {
+  if (!supabaseAdmin) return false;
+
+  const sinceIso = new Date(Date.now() - maxAgeMs).toISOString();
+  const { data, error } = await supabaseAdmin
+    .from("worker_heartbeats")
+    .select("worker_id,kind,updated_at")
+    .eq("kind", kind)
+    .gte("updated_at", sinceIso)
+    .order("updated_at", { ascending: false })
+    .limit(1);
+
+  if (error) {
+    console.warn("[workerHeartbeat] lookup failed:", String(error.message || error));
+    return false;
+  }
+
+  return Array.isArray(data) && data.length > 0;
+}
+
+async function waitForActiveWorkerHeartbeat(kind, { timeoutMs = 25_000, probeEveryMs = 1_500 } = {}) {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt <= timeoutMs) {
+    if (await hasActiveWorkerHeartbeat(kind)) return true;
+    await sleep(probeEveryMs);
+  }
+
+  return false;
+}
+
+async function ensureAsyncWorkerReadyOrThrow(kind, opts) {
+  const isReady = await waitForActiveWorkerHeartbeat(kind, opts);
+  if (isReady) return;
+
+  throw httpError(
+    503,
+    "ASYNC_WORKER_NOT_READY",
+    `No hay un worker activo para jobs de tipo ${kind}. Espera a que Render termine de levantar el worker y vuelve a intentar.`,
+    { kind }
+  );
+}
+
 const { requireUser: requireUserBase } = createAuthHelpers(supabaseAdmin);
+
+
 
 async function requireUser(req) {
   const out = await requireUserBase(req);
@@ -533,6 +578,7 @@ app.use(
     APP_ENV: process.env.APP_ENV,
     NODE_ENV: process.env.NODE_ENV,
     SUPABASE_BUCKET: process.env.SUPABASE_BUCKET,
+    ensureAsyncWorkerReadyOrThrow,
   })
 );
 
@@ -2800,6 +2846,7 @@ app.post("/api/ai/faceswap/analyze", async (req, res, next) => {
     const wantsAsync = !wantsSync;
 
     if (wantsAsync) {
+      await ensureAsyncWorkerReadyOrThrow("image");
       await assertJobLimits({
         supabaseAdmin,
         httpError,
@@ -2898,6 +2945,7 @@ app.post("/api/ai/faceswap/mannequin", async (req, res, next) => {
     const wantsAsync = !wantsSync;
 
     if (wantsAsync) {
+      await ensureAsyncWorkerReadyOrThrow("image");
       await assertJobLimits({
         supabaseAdmin,
         httpError,
@@ -3070,6 +3118,7 @@ app.post("/api/ai/faceswap/insert", async (req, res, next) => {
   const wantsAsync = !wantsSync;
 
   if (wantsAsync) {
+    await ensureAsyncWorkerReadyOrThrow("image");
     await assertJobLimits({
       supabaseAdmin,
       httpError,
@@ -3087,10 +3136,10 @@ app.post("/api/ai/faceswap/insert", async (req, res, next) => {
         next_check_at: new Date().toISOString(),
         params: {
           task: "faceswap_insert",
-          baseAssetId: baseAssetId || null,
-          depthAssetId: depthAssetId || null,
-          cannyAssetId: cannyAssetId || null,
-          openposeAssetId: openposeAssetId || null,
+          ...(baseAssetId ? { baseAssetId } : {}),
+          ...(depthAssetId ? { depthAssetId } : {}),
+          ...(cannyAssetId ? { cannyAssetId } : {}),
+          ...(openposeAssetId ? { openposeAssetId } : {}),
           donorElementId,
           swapType,
           quality,
@@ -3383,6 +3432,7 @@ app.post("/api/ai/upscale", async (req, res, next) => {
 
     // ✅ ASYNC: devolver jobId rápido (sin riesgo de timeout)
     if (wantsAsync) {
+      await ensureAsyncWorkerReadyOrThrow("image");
       if (!body.imageAssetId) {
         throw httpError(
           400,

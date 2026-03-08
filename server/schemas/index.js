@@ -245,10 +245,10 @@ export const FaceSwapAnalysisStageSchema = z.object({
 
 export const FaceSwapInsertSchema = z
   .object({
-    baseAssetId: z.string().uuid().optional(),
-    depthAssetId: z.string().uuid().optional(),
-    cannyAssetId: z.string().uuid().optional(),
-    openposeAssetId: z.string().uuid().optional(),
+    baseAssetId: z.string().uuid().nullish(),
+    depthAssetId: z.string().uuid().nullish(),
+    cannyAssetId: z.string().uuid().nullish(),
+    openposeAssetId: z.string().uuid().nullish(),
     donorElementId: z.string().uuid(),
     swapType: z.enum(["face", "face_hair", "body", "body_clothes", "clothes_only"]).default("face"),
     quality: z.enum(["1K", "2K", "4K"]).default("2K"),

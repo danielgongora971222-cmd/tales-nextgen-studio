@@ -62,6 +62,7 @@ export function createAiImageRouter(ctx) {
     APP_ENV,
     NODE_ENV,
     SUPABASE_BUCKET,
+    ensureAsyncWorkerReadyOrThrow,
 
     // cualquier otra cosa que use tu handler de imagen (clientes, fetch, etc)
     ...rest
@@ -339,6 +340,7 @@ export function createAiImageRouter(ctx) {
     }
 
     if (wantsAsync) {
+      await ensureAsyncWorkerReadyOrThrow("image");
       await assertJobLimits({
         supabaseAdmin,
         httpError,
@@ -1614,6 +1616,7 @@ router.post("/ai/restyle", async (req, res, next) => {
     }
 
     if (wantsAsync) {
+      await ensureAsyncWorkerReadyOrThrow("image");
       if (!body.sourceAssetId) {
         throw httpError(
           400,
@@ -1629,7 +1632,6 @@ router.post("/ai/restyle", async (req, res, next) => {
         kind: "image",
         tool: "restyler",
       });
-
       const { data: jobRow, error: jobErr } = await supabaseAdmin
         .from("jobs")
         .insert({
