@@ -196,7 +196,15 @@ export type GenerateImageBatchOptions = {
 
   // refs (IDs de assets guardados en tu DB)
   characterAssetIds?: string[];
+
+  // legacy/manual style asset
   styleAssetId?: string;
+
+  // nuevo flujo de preset visual
+  stylePresetId?: string;
+  stylePresetName?: string;
+  styleReferenceDataUrl?: string;
+
   backgroundAssetId?: string;
 
   // ✅ Token bindings (robust @mentions)
@@ -229,6 +237,9 @@ export const generateImageBatch = async (
     nameHint: options?.nameHint,
     characterAssetIds: options?.characterAssetIds,
     styleAssetId: options?.styleAssetId,
+    stylePresetId: options?.stylePresetId,
+    stylePresetName: options?.stylePresetName,
+    styleReferenceDataUrl: options?.styleReferenceDataUrl,
     backgroundAssetId: options?.backgroundAssetId,
 
     // ✅ @mentions bindings

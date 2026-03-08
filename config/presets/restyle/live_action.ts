@@ -3,6 +3,7 @@ import type { ImagePreset } from "../presetTypes";
 const preset: ImagePreset = {
   id: "live_action",
   name: "Live Action",
+  kind: "restyle",
   coverUrl: "/presets/restyle/live_action/cover.png",
   exampleUrls: [
     "/presets/restyle/live_action/1.png",
@@ -10,9 +11,16 @@ const preset: ImagePreset = {
     "/presets/restyle/live_action/3.png",
     "/presets/restyle/live_action/4.jpeg",
   ],
+  referenceGridUrl: "/presets/restyle/live_action/reference_grid.jpg",
   prompt: `
 STYLE: Apply photorealistic materials and cinematic lighting to the provided image using TEXTURE AND MATERIAL
 TRANSLATION ONLY.
+
+STYLE REFERENCE HANDLING:
+A style reference image may be provided as a 2x2 grid or mosaic of example images.
+Use that grid ONLY to infer materials, rendering language, lighting logic, surface treatment, and overall aesthetic direction.
+Do NOT reproduce the grid, panel layout, collage composition, contact sheet look, split frames, or multiple-image arrangement in the final result.
+The final output must always be a single cohesive image unless the user's own prompt explicitly asks for a grid, collage, diptych, triptych, or multi-panel composition.
 
 ABSOLUTE PRESERVATION RULE:
 Preserve the original image EXACTLY as-is in design and identity. This is a material/lighting pass only.

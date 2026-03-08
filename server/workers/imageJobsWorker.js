@@ -830,6 +830,9 @@ async function runImageGenerateTask({ userId, params }) {
     nameHint,
     characterAssetIds,
     styleAssetId,
+    stylePresetId,
+    stylePresetName,
+    styleReferenceDataUrl,
     backgroundAssetId,
     promptReferences,
     klingElementIds,
@@ -840,6 +843,60 @@ async function runImageGenerateTask({ userId, params }) {
   } = parsed;
 
   const selectedModel = String(model || "");
+    const hasStylePresetReference =
+    typeof styleReferenceDataUrl === "string" &&
+    styleReferenceDataUrl.startsWith("data:image/");
+
+  const buildStoredStyleMeta = () => ({
+    styleAssetId: styleAssetId || null,
+    stylePresetId: stylePresetId || null,
+    stylePresetName: stylePresetName || null,
+  });
+
+  const appendStyleReferenceInstruction = (text, currentRefCount) => {
+    if (!hasStylePresetReference) return String(text || "").trim();
+
+    const styleIndex = Number(currentRefCount || 0) + 1;
+    const instruction =
+      `Use image ${styleIndex} only as style guidance for overall look, materials, rendering, lighting and finish. ` +
+      `Do not reproduce any grid, collage, contact sheet or multi-panel layout from that style reference unless the user's prompt explicitly asks for it.`;
+
+    return `${String(text || "").trim()}\n\n${instruction}`.trim();
+  };
+
+  const styleReferenceInlinePart = async () => {
+    const { mimeType, base64 } = parseDataUrl(styleReferenceDataUrl);
+    return { inlineData: { mimeType, data: base64 } };
+  };
+
+  const styleReferenceImageFile = async () => {
+    const { mimeType, base64 } = parseDataUrl(styleReferenceDataUrl);
+    const bytes = Buffer.from(base64, "base64");
+    const ext = extFromMime(mimeType || "image/jpeg");
+    return new File([bytes], `style-preset-reference.${ext}`, {
+      type: mimeType || "image/jpeg",
+    });
+  };
+
+  const styleReferenceSignedUrl = async () => {
+    const { storagePath } = await uploadBase64ToStorage({
+      userId,
+      tool: "preset-style-ref",
+      dataUrl: styleReferenceDataUrl,
+      nameHint: `style_preset_${safeSlug(stylePresetId || stylePresetName || "reference")}`,
+    });
+
+    return signStoragePath(storagePath, 60 * 10);
+  };
+
+  const modelVisualRefLimit = (() => {
+    if (selectedModel.startsWith("openai:")) return 4;
+    if (selectedModel.startsWith("fal-ai/flux-2-")) return 1;
+    if (selectedModel.startsWith("kling:")) return 4;
+    if (selectedModel.startsWith("fal-ai/kling-image/")) return 10;
+    if (selectedModel === "fal-ai/qwen-image-edit-2511-multiple-angles") return 1;
+    return null;
+  })();
   const maxCount = maxCountForImageModel(selectedModel);
 
   // ---- Token -> refs (robusto) ----
@@ -903,6 +960,16 @@ async function runImageGenerateTask({ userId, params }) {
   ].filter(Boolean);
 
   const refAssetIds = hasTokenRefs ? tokenRefs.map((r) => r.id) : fallbackRefs;
+  const totalVisualRefs = refAssetIds.length + (hasStylePresetReference ? 1 : 0);
+
+  if (modelVisualRefLimit != null && totalVisualRefs > modelVisualRefLimit) {
+    throw httpError(
+      400,
+      "TOO_MANY_REFS",
+      `El modelo "${selectedModel}" soporta hasta ${modelVisualRefLimit} referencia(s) visual(es) en este flujo. ` +
+        `Ahora intentaste usar ${totalVisualRefs} contando el grid de estilo.`
+    );
+  }
 
   // =============================
   // OpenAI (GPT Image)
@@ -918,12 +985,21 @@ async function runImageGenerateTask({ userId, params }) {
       ? await Promise.all(refAssetIds.slice(0, 4).map((id) => assetIdToImageFile(id, userId)))
       : [];
 
-    const promptAdapted = hasTokenRefs
+    if (hasStylePresetReference) {
+      openaiRefs.push(await styleReferenceImageFile());
+    }
+
+    const promptAdaptedBase = hasTokenRefs
       ? appendImageNumberMapping(
-          replaceMentionsWithImageNumbers(prompt, tokenRefs.slice(0, openaiRefs.length)),
-          tokenRefs.slice(0, openaiRefs.length)
+          replaceMentionsWithImageNumbers(prompt, tokenRefs.slice(0, Math.min(refAssetIds.length, 4))),
+          tokenRefs.slice(0, Math.min(refAssetIds.length, 4))
         )
       : prompt;
+
+    const promptAdapted = appendStyleReferenceInstruction(
+      promptAdaptedBase,
+      Math.min(refAssetIds.length, 4)
+    );
 
     const dataUrl = await openaiGenerateImageDataUrl({
       model: oModel,
@@ -948,7 +1024,7 @@ async function runImageGenerateTask({ userId, params }) {
       quality: oQuality,
       count: 1,
       characterAssetIds: Array.isArray(characterAssetIds) ? characterAssetIds : [],
-      styleAssetId: styleAssetId || null,
+      ...buildStoredStyleMeta(),
       backgroundAssetId: backgroundAssetId || null,
       promptReferences: tokenRefs,
     };
@@ -971,13 +1047,13 @@ async function runImageGenerateTask({ userId, params }) {
   // =============================
   // BFL (Black Forest Labs)
   // =============================
-  if (selectedModel.startsWith("bfl:")) {
+  if (selectedModel.startsWith("fal-ai/flux-2-")) {
     const nRequested = Math.max(1, Math.min(Number(count || 1), maxCount));
     const toolName = tool || "image-generator";
     const hint = nameHint || "generated";
     const urlExpiresInSeconds = 60 * 60;
 
-    const modelSlug = String(selectedModel || "").replace(/^bfl:/, "");
+    const modelSlug = String(selectedModel || "").replace(/^fal-ai\//, "");
     const { width, height } = falDimsFromAspectQuality(
       aspectRatio || "auto",
       String(quality || "1K").toUpperCase()
@@ -987,19 +1063,24 @@ async function runImageGenerateTask({ userId, params }) {
       ? await Promise.all(refAssetIds.slice(0, 4).map((id) => assetIdToSignedUrl(id, userId, 60 * 10)))
       : [];
 
-    const promptAdapted = hasTokenRefs
+    const promptAdaptedBase = hasTokenRefs
       ? appendImageNumberMapping(
           replaceMentionsWithFalImageTags(prompt, tokenRefs.slice(0, refUrls.length)),
           tokenRefs.slice(0, refUrls.length)
         )
       : prompt;
 
+    const promptAdapted = appendStyleReferenceInstruction(promptAdaptedBase, refUrls.length);
+
+    const bflPrimaryRefUrl =
+      refUrls[0] || (hasStylePresetReference ? await styleReferenceSignedUrl() : null);
+
     const payload = {
       prompt: String(promptAdapted || "").slice(0, 3500),
       width,
       height,
       num_images: nRequested,
-      ...(refUrls[0] ? { image_prompt: refUrls[0] } : {}),
+      ...(bflPrimaryRefUrl ? { image_prompt: bflPrimaryRefUrl } : {}),
     };
 
     const submit = await bflSubmit(modelSlug, payload);
@@ -1025,7 +1106,7 @@ async function runImageGenerateTask({ userId, params }) {
         quality: String(quality || "1K").toUpperCase(),
         count: nRequested,
         characterAssetIds: Array.isArray(characterAssetIds) ? characterAssetIds : [],
-        styleAssetId: styleAssetId || null,
+        ...buildStoredStyleMeta(),
         backgroundAssetId: backgroundAssetId || null,
         promptReferences: tokenRefs,
       };
@@ -1073,6 +1154,10 @@ async function runImageGenerateTask({ userId, params }) {
     const refUrls = refIds.length
       ? await Promise.all(refIds.map((id) => assetIdToSignedUrl(id, userId, 60 * 10)))
       : [];
+
+    if (hasStylePresetReference && refUrls.length < 4) {
+      refUrls.push(await styleReferenceSignedUrl());
+    }
 
     const tokenRefs10 = hasTokenRefs ? tokenRefs.slice(0, Math.min(refUrls.length, 10)) : [];
 
@@ -1125,6 +1210,15 @@ async function runImageGenerateTask({ userId, params }) {
         promptForKling = `${promptForKling}\n\n${placeholders}`.trim();
       }
     }
+
+    const directKlingNonStyleRefCount = hasStylePresetReference
+      ? Math.max(0, refUrls.length - 1)
+      : refUrls.length;
+
+    promptForKling = appendStyleReferenceInstruction(
+      promptForKling,
+      directKlingNonStyleRefCount
+    );
 
     if (element_list.length) {
       const used = new Set();
@@ -1247,7 +1341,7 @@ async function runImageGenerateTask({ userId, params }) {
         quality: klingResolution,
         count: 1,
         characterAssetIds: Array.isArray(characterAssetIds) ? characterAssetIds : [],
-        styleAssetId: styleAssetId || null,
+        ...buildStoredStyleMeta(),
         backgroundAssetId: backgroundAssetId || null,
         klingElementIds: Array.isArray(klingElementIds) ? klingElementIds : [],
         klingElementRecipe,
@@ -1312,7 +1406,14 @@ async function runImageGenerateTask({ userId, params }) {
 
       const tokenRefs10 = hasTokenRefs ? tokenRefs.slice(0, Math.min(refUrls.length, 10)) : [];
       const basePrompt = hasTokenRefs && tokenRefs10.length ? replaceMentionsWithFalImageTags(prompt, tokenRefs10) : prompt;
-      const safePrompt = ensureO3Prompt(basePrompt, refUrls.length);
+      const nonStyleRefCount = hasStylePresetReference
+        ? Math.max(0, refUrls.length - 1)
+        : refUrls.length;
+
+      const safePrompt = appendStyleReferenceInstruction(
+        ensureO3Prompt(basePrompt, refUrls.length),
+        nonStyleRefCount
+      );
 
       falInput = {
         prompt: safePrompt,
@@ -1365,7 +1466,7 @@ async function runImageGenerateTask({ userId, params }) {
         aspectRatio: aspectRatio || "auto",
         quality: falResolution,
         characterAssetIds: Array.isArray(characterAssetIds) ? characterAssetIds : [],
-        styleAssetId: styleAssetId || null,
+        ...buildStoredStyleMeta(),
         backgroundAssetId: backgroundAssetId || null,
         promptReferences: tokenRefs,
       };
@@ -1435,7 +1536,7 @@ async function runImageGenerateTask({ userId, params }) {
         prompt,
         camera: { horizontalAngle, verticalAngle, zoom, loraScale },
         characterAssetIds: Array.isArray(characterAssetIds) ? characterAssetIds : [],
-        styleAssetId: styleAssetId || null,
+        ...buildStoredStyleMeta(),
         backgroundAssetId: backgroundAssetId || null,
         promptReferences: tokenRefs,
       };
@@ -1508,7 +1609,7 @@ async function runImageGenerateTask({ userId, params }) {
         aspectRatio: aspectRatio || "auto",
         quality: String(quality || "1K").toUpperCase(),
         characterAssetIds: Array.isArray(characterAssetIds) ? characterAssetIds : [],
-        styleAssetId: styleAssetId || null,
+        ...buildStoredStyleMeta(),
         backgroundAssetId: backgroundAssetId || null,
         promptReferences: tokenRefs,
       };
@@ -1565,7 +1666,7 @@ async function runImageGenerateTask({ userId, params }) {
         aspectRatio: aspectRatio || "auto",
         quality: String(quality || "1K").toUpperCase(),
         characterAssetIds: Array.isArray(characterAssetIds) ? characterAssetIds : [],
-        styleAssetId: styleAssetId || null,
+        ...buildStoredStyleMeta(),
         backgroundAssetId: backgroundAssetId || null,
         promptReferences: tokenRefs,
       };
@@ -1592,10 +1693,19 @@ async function runImageGenerateTask({ userId, params }) {
       ? await Promise.all(refAssetIds.slice(0, 4).map((id) => assetIdToInlinePart(id, userId)))
       : [];
 
-    const tokenRefs4 = hasTokenRefs ? tokenRefs.slice(0, Math.min(refParts.length, 4)) : [];
-    const promptAdapted = hasTokenRefs && tokenRefs4.length
+    if (hasStylePresetReference) {
+      refParts.push(await styleReferenceInlinePart());
+    }
+
+    const tokenRefs4 = hasTokenRefs ? tokenRefs.slice(0, Math.min(refAssetIds.length, 4)) : [];
+    const promptBase = hasTokenRefs && tokenRefs4.length
       ? appendImageNumberMapping(replaceMentionsWithImageNumbers(prompt, tokenRefs4), tokenRefs4)
       : prompt;
+
+    const promptAdapted = appendStyleReferenceInstruction(
+      promptBase,
+      Math.min(refAssetIds.length, 4)
+    );
 
     // Pedimos explícitamente salida de IMAGEN + aplicamos aspectRatio/quality cuando aplique.
     // (Mantener alineado con /api/ai/image sync)
@@ -1618,7 +1728,7 @@ async function runImageGenerateTask({ userId, params }) {
     for (let i = 0; i < nRequested; i++) {
       const resp = await ai.models.generateContent({
         model: selectedModel,
-        contents: [{ role: "user", parts: [{ text: String(promptAdapted || "") }, ...refParts] }],
+        contents: [{ role: "user", parts: [...refParts, { text: String(promptAdapted || "") }] }],
         config: genConfig,
       });
 
@@ -1632,7 +1742,7 @@ async function runImageGenerateTask({ userId, params }) {
         aspectRatio: aspectRatio || "auto",
         quality: String(quality || "1K").toUpperCase(),
         characterAssetIds: Array.isArray(characterAssetIds) ? characterAssetIds : [],
-        styleAssetId: styleAssetId || null,
+        ...buildStoredStyleMeta(),
         backgroundAssetId: backgroundAssetId || null,
         promptReferences: tokenRefs,
       };

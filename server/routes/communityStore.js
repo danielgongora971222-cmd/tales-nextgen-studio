@@ -29,6 +29,47 @@ function sha256Hex(text) {
   return createHash("sha256").update(text).digest("hex");
 }
 
+const STYLE_PRESET_BLOCK_START = "[[STYLE_PRESET_START]]";
+const STYLE_PRESET_BLOCK_END = "[[STYLE_PRESET_END]]";
+const LEGACY_STYLE_PRESET_BLOCK_START = "/* STYLE_PRESET_START */";
+const LEGACY_STYLE_PRESET_BLOCK_END = "/* STYLE_PRESET_END */";
+const LIGHTING_PRESET_BLOCK_START = "[[LIGHTING_PRESET_START]]";
+const LIGHTING_PRESET_BLOCK_END = "[[LIGHTING_PRESET_END]]";
+
+function escapeRegExp(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function stripHiddenPresetBlocks(input) {
+  let out = String(input || "");
+  const pairs = [
+    { start: STYLE_PRESET_BLOCK_START, end: STYLE_PRESET_BLOCK_END },
+    { start: LEGACY_STYLE_PRESET_BLOCK_START, end: LEGACY_STYLE_PRESET_BLOCK_END },
+    { start: LIGHTING_PRESET_BLOCK_START, end: LIGHTING_PRESET_BLOCK_END },
+  ];
+
+  for (const { start, end } of pairs) {
+    const re = new RegExp(`${escapeRegExp(start)}[\\s\\S]*?${escapeRegExp(end)}\\n*`, "g");
+    out = out.replace(re, "");
+  }
+
+  return out.trim();
+}
+
+function sanitizeRecipeMeta(meta) {
+  const src = meta && typeof meta === "object" ? meta : {};
+  const next = JSON.parse(JSON.stringify(src));
+
+  delete next.styleAssetId;
+  delete next.styleReferenceDataUrl;
+  delete next.styleReferenceUrl;
+
+  next.stylePresetId = typeof next.stylePresetId === "string" ? next.stylePresetId : null;
+  next.stylePresetName = typeof next.stylePresetName === "string" ? next.stylePresetName : null;
+
+  return next;
+}
+
 async function maybeUserFromReq(req, supabaseAdmin) {
   const auth = req.headers.authorization || "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : null;
@@ -427,15 +468,15 @@ export function createCommunityStoreRouter(ctx) {
 
     // Receta snapshot + hash (inmutable)
     const recipeSnapshot = {
-      version: 1,
+      version: 2,
       kind: "single",
       createdAt: Date.now(),
       sourceAsset: {
         id: assetRow.id,
         type: assetRow.type,
         tool: assetRow.tool || null,
-        prompt: assetRow.prompt || null,
-        meta: assetRow.meta || {},
+        prompt: stripHiddenPresetBlocks(assetRow.prompt || ""),
+        meta: sanitizeRecipeMeta(assetRow.meta || {}),
         createdAt: assetRow.created_at || null,
       },
     };
@@ -884,8 +925,6 @@ export function createCommunityStoreRouter(ctx) {
       }
       if (typeof meta.backgroundAssetId === "string") pushRef(meta.backgroundAssetId, "background", "@bg");
     }
-
-    if (typeof meta.styleAssetId === "string") pushRef(meta.styleAssetId, "style", "@style");
 
     const resolvedAssets = [];
     for (const r of refs) {

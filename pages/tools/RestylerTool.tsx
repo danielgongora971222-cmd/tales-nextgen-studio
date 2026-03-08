@@ -8,6 +8,13 @@ import { generateImageBatch } from "../../services/geminiService";
 import { deleteAsset, listMyAssets, uploadUserAsset, downloadAssetToDisk } from "../../services/assetsApi";
 import { AssetPickerModal } from "./video/AssetPickerModal";
 import { STYLE_PRESETS } from "../../config/presets/restyle";
+import {
+  findPresetById as findStylePresetById,
+  findPresetByPrompt as findStylePresetByPrompt,
+  getPresetNameFromMetaOrPrompt as getStylePresetNameFromMetaOrPrompt,
+  resolvePresetFromMetaOrPrompt as resolveStylePresetFromMetaOrPrompt,
+  fetchPresetReferenceGridDataUrl,
+} from "../../config/presets/styleRuntime";
 import OneNationUpIcon from "@/components/brand/OneNationUpIcon";
 import { estimateImageCostCredits } from "../../config/pricing.js";
 
@@ -173,11 +180,11 @@ function extractStyleBlock(input: string) {
   return null;
 }
 
-function getStyleNameFromPrompt(prompt: string): string {
-  const inside = extractStyleBlock(prompt || "");
-  if (!inside) return "None";
-  const match = STYLE_PRESETS.find((p) => (p.prompt || "").trim() === inside.trim());
-  return match?.name || "Custom";
+function getStyleNameFromPrompt(prompt: string, meta?: any): string {
+  return getStylePresetNameFromMetaOrPrompt(STYLE_PRESETS, {
+    prompt,
+    meta,
+  });
 }
 
 function prettyModelLabel(modelId: string | null): string {
@@ -294,6 +301,17 @@ function StylePickerModal(props: {
               >
                 <div className={styles.presetCover}>
                   {p.coverUrl ? <img src={p.coverUrl} alt={p.name} /> : <div className={styles.presetCoverEmpty} />}
+
+                  {Array.isArray(p.exampleUrls) && p.exampleUrls.length > 0 ? (
+                    <div className={styles.presetHoverExamples}>
+                      {p.exampleUrls.slice(0, 4).map((url, idx) => (
+                        <div key={`${p.id}_${idx}_${url}`} className={styles.presetHoverExample}>
+                          <img src={url} alt={`${p.name} example ${idx + 1}`} />
+                          <span className={styles.presetHoverBadge}>{idx + 1}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
                 <div className={styles.presetName}>{p.name}</div>
               </button>
@@ -477,6 +495,14 @@ const RestylerTool: React.FC = () => {
       const basePrompt = "Restyle reference image.";
       const finalPrompt = applyStylePresetToPrompt(basePrompt, selectedStyle.prompt);
 
+      if (model.startsWith("fal-ai/flux-2-")) {
+        throw new Error(
+          "Flux Max en este flujo solo admite 1 imagen de referencia. " +
+            "Para usar imagen base + grid visual del preset, usa NanoBanana Pro o GPT 1.5 High."
+        );
+      }
+
+      const styleReferenceDataUrl = await fetchPresetReferenceGridDataUrl(selectedStyle);
       const effectiveQuality = normalizeQuality(model, quality);
 
       await generateImageBatch(finalPrompt, model, {
@@ -486,6 +512,9 @@ const RestylerTool: React.FC = () => {
         tool: TOOL_ID,
         nameHint: `restyle_${slugName(selectedStyle.name)}`,
         characterAssetIds: [baseRef.id],
+        stylePresetId: selectedStyle.id,
+        stylePresetName: selectedStyle.name,
+        styleReferenceDataUrl: styleReferenceDataUrl || undefined,
       });
 
       await reloadHistory();
@@ -519,13 +548,12 @@ const RestylerTool: React.FC = () => {
     }
 
     // style from embedded style block
-    const inside = extractStyleBlock(asset.prompt || "") || "";
-    if (inside) {
-      const match = STYLE_PRESETS.find((p) => (p.prompt || "").trim() === inside.trim());
-      setSelectedStyleId(match ? match.id : null);
-    } else {
-      setSelectedStyleId(null);
-    }
+    const metaStyleId = typeof meta.stylePresetId === "string" ? meta.stylePresetId : null;
+    const match =
+      findStylePresetById(STYLE_PRESETS, metaStyleId) ||
+      findStylePresetByPrompt(STYLE_PRESETS, extractStyleBlock(asset.prompt || "") || "");
+
+    setSelectedStyleId(match ? match.id : null);
   }
 
   const viewerRecipeInfo = useMemo(() => {
@@ -534,19 +562,27 @@ const RestylerTool: React.FC = () => {
     const modelId = typeof meta.model === "string" ? meta.model : null;
     const q = typeof meta.quality === "string" ? meta.quality : null;
 
-    const charIds: string[] = Array.isArray(meta.characterAssetIds) ? meta.characterAssetIds : [];
-    const refs = {
-      chars: charIds
-        .map((id) => myAssets.find((a) => a.id === id) || null)
-        .filter(Boolean) as Asset[],
-    };
+  const charIds: string[] = Array.isArray(meta.characterAssetIds) ? meta.characterAssetIds : [];
+  const resolvedStylePreset = resolveStylePresetFromMetaOrPrompt(STYLE_PRESETS, {
+    meta,
+    prompt: viewer.prompt || "",
+  });
 
-    return {
-      modelId,
-      quality: q,
-      styleName: getStyleNameFromPrompt(viewer.prompt || ""),
-      refs,
-    };
+  const refs = {
+    chars: charIds
+      .map((id) => myAssets.find((a) => a.id === id) || null)
+      .filter(Boolean) as Asset[],
+    style: resolvedStylePreset?.referenceGridUrl
+      ? ({ id: `preset:${resolvedStylePreset.id}`, url: resolvedStylePreset.referenceGridUrl } as any)
+      : null,
+  };
+
+  return {
+    modelId,
+    quality: q,
+    styleName: resolvedStylePreset?.name || getStyleNameFromPrompt(viewer.prompt || "", meta),
+    refs,
+  };
   }, [viewer, myAssets]);
 
   const previewStyleCover = selectedStyle?.coverUrl || null;
@@ -961,6 +997,13 @@ const RestylerTool: React.FC = () => {
                     ) : (
                       <div className={(styles as any).recipeEmpty}>No saved refs (legacy)</div>
                     )}
+
+                    {viewerRecipeInfo?.refs?.style ? (
+                      <div className={styles.recipeRefThumb} title="Style preset grid">
+                        <img src={viewerRecipeInfo.refs.style.url} alt="Style preset grid" />
+                        <span className={styles.recipeRefTag}>STYLE</span>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
 

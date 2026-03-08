@@ -30,8 +30,16 @@ export const ImageRequestSchema = z.object({
 
   // Referencias por Asset IDs (opcional)
   characterAssetIds: z.array(z.string()).max(12).optional(),
+
+  // legacy/manual style asset
   styleAssetId: z.string().optional(),
-    backgroundAssetId: z.string().optional(),
+
+  // nuevo flujo de preset visual
+  stylePresetId: z.string().max(120).optional(),
+  stylePresetName: z.string().max(200).optional(),
+  styleReferenceDataUrl: Base64ImageSchema.optional(),
+
+  backgroundAssetId: z.string().optional(),
 
   // ✅ Token -> Asset binding for robust @mentions in prompt
   // Example: [{ token:"@img1", assetId:"uuid", role:"character" }]

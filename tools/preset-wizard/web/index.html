@@ -3,117 +3,140 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Preset Wizard (LOCAL)</title>
+    <title>Preset Manager (LOCAL)</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <div class="wrap">
-      <h1>Preset Wizard (LOCAL)</h1>
-      <p class="muted">
-        Esto solo corre en tu PC. Crea presets y los agrega automáticamente a tu proyecto.
-      </p>
-
-      <div class="card">
-        <div class="steps">
-          <span id="s1" class="step active">1</span>
-          <span id="s2" class="step">2</span>
-          <span id="s3" class="step">3</span>
-          <span id="s4" class="step">4</span>
+      <div class="topbar">
+        <div>
+          <h1>Preset Manager (LOCAL)</h1>
+          <p class="muted">
+            Crear, editar, regenerar grid 2x2 y borrar presets de restyle o lightroom.
+          </p>
         </div>
 
-        <!-- STEP 1 -->
-        <section id="step1" class="section">
-          <h2>Paso 1: ¿Para qué es este preset?</h2>
-
-          <label class="radio">
+        <div class="topbar-actions">
+          <label class="kind-pill">
             <input type="radio" name="kind" value="restyle" checked />
-            <div>
-              <strong>Styles</strong>
-              <div class="muted">Para Image Generator / Restyler</div>
-            </div>
+            <span>Styles</span>
           </label>
 
-          <label class="radio">
+          <label class="kind-pill">
             <input type="radio" name="kind" value="lightroom" />
-            <div>
-              <strong>Lighting</strong>
-              <div class="muted">Para Lightroom</div>
-            </div>
+            <span>Lighting</span>
           </label>
+        </div>
+      </div>
 
-          <div class="row">
-            <button id="next1" class="btn primary">Siguiente</button>
+      <div class="layout">
+        <aside class="sidebar card">
+          <div class="sidebar-head">
+            <input id="search" class="input" placeholder="Buscar preset..." />
+            <button id="newPreset" class="btn primary" type="button">Nuevo preset</button>
           </div>
-        </section>
 
-        <!-- STEP 2 -->
-        <section id="step2" class="section hidden">
-          <h2>Paso 2: Nombre e imágenes</h2>
+          <div id="presetList" class="preset-list"></div>
+        </aside>
 
-          <label class="label">Nombre del preset</label>
-          <input id="name" class="input" placeholder="Ej: Anime Soft" />
+        <main class="editor card">
+          <div class="editor-head">
+            <div>
+              <div class="kicker">EDITOR</div>
+              <h2 id="editorTitle">Nuevo preset</h2>
+            </div>
 
-          <label class="label">ID (se genera solo, puedes cambiarlo)</label>
-          <input id="id" class="input" placeholder="ej: anime_soft" />
+            <div class="row">
+              <button id="deletePreset" class="btn danger" type="button">Eliminar preset</button>
+              <button id="savePreset" class="btn primary" type="button">Guardar preset</button>
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <div>
+              <label class="label">Nombre del preset</label>
+              <input id="name" class="input" placeholder="Ej: Anime Soft" />
+            </div>
+
+            <div>
+              <label class="label">ID</label>
+              <input id="id" class="input" placeholder="ej: anime_soft" />
+            </div>
+          </div>
+
           <div class="muted">
-            Se guardará en: <code id="savePath"></code>
+            Archivo TS: <code id="savePathTs"></code><br />
+            Carpeta pública: <code id="savePathPublic"></code>
           </div>
 
           <hr />
 
-          <label class="label">Cover (portada) — OBLIGATORIO</label>
-          <input id="cover" class="input" type="file" accept=".png,.jpg,.jpeg,.webp" />
-          <div id="coverInfo" class="muted">No cargado</div>
+          <label class="label">Prompt del preset</label>
+          <textarea id="prompt" class="textarea" placeholder="Pega aquí el prompt completo del preset..."></textarea>
 
-          <label class="label">Ejemplos (hasta 4) — opcional pero recomendado</label>
-          <input id="examples" class="input" type="file" accept=".png,.jpg,.jpeg,.webp" multiple />
-          <div id="examplesInfo" class="muted">0 archivos</div>
+          <hr />
 
-          <div class="row">
-            <button id="back2" class="btn">Atrás</button>
-            <button id="next2" class="btn primary">Siguiente</button>
+          <div class="section-title">Cover</div>
+          <div class="asset-row">
+            <div class="asset-preview" id="coverPreview"></div>
+            <div class="asset-actions">
+              <input id="cover" class="input" type="file" accept=".png,.jpg,.jpeg,.webp" />
+              <button id="clearCover" class="btn" type="button">Quitar cover</button>
+            </div>
           </div>
-        </section>
 
-        <!-- STEP 3 -->
-        <section id="step3" class="section hidden">
-          <h2>Paso 3: Prompt del preset</h2>
+          <hr />
 
-          <label class="label">Prompt</label>
-          <textarea id="prompt" class="textarea" placeholder="Pega aquí tu prompt completo..."></textarea>
+          <div class="section-title">Imágenes de ejemplo (1, 2, 3, 4)</div>
+          <div class="examples-grid">
+            <div class="example-card">
+              <div class="example-label">1</div>
+              <div class="asset-preview" id="examplePreview1"></div>
+              <input id="example1" class="input" type="file" accept=".png,.jpg,.jpeg,.webp" />
+              <button data-clear-example="1" class="btn clear-example" type="button">Quitar</button>
+            </div>
 
-          <div class="row">
-            <button id="back3" class="btn">Atrás</button>
-            <button id="next3" class="btn primary">Siguiente</button>
+            <div class="example-card">
+              <div class="example-label">2</div>
+              <div class="asset-preview" id="examplePreview2"></div>
+              <input id="example2" class="input" type="file" accept=".png,.jpg,.jpeg,.webp" />
+              <button data-clear-example="2" class="btn clear-example" type="button">Quitar</button>
+            </div>
+
+            <div class="example-card">
+              <div class="example-label">3</div>
+              <div class="asset-preview" id="examplePreview3"></div>
+              <input id="example3" class="input" type="file" accept=".png,.jpg,.jpeg,.webp" />
+              <button data-clear-example="3" class="btn clear-example" type="button">Quitar</button>
+            </div>
+
+            <div class="example-card">
+              <div class="example-label">4</div>
+              <div class="asset-preview" id="examplePreview4"></div>
+              <input id="example4" class="input" type="file" accept=".png,.jpg,.jpeg,.webp" />
+              <button data-clear-example="4" class="btn clear-example" type="button">Quitar</button>
+            </div>
           </div>
-        </section>
 
-        <!-- STEP 4 -->
-        <section id="step4" class="section hidden">
-          <h2>Paso 4: Confirmar y crear</h2>
+          <div class="row left">
+            <button id="generateGrid" class="btn" type="button">Generar grid 2x2 desde ejemplos</button>
+          </div>
 
-          <div class="summary">
-            <div><strong>Tipo:</strong> <span id="sumKind"></span></div>
-            <div><strong>Nombre:</strong> <span id="sumName"></span></div>
-            <div><strong>ID:</strong> <span id="sumId"></span></div>
-            <div><strong>Cover:</strong> <span id="sumCover"></span></div>
-            <div><strong>Ejemplos:</strong> <span id="sumExamples"></span></div>
+          <hr />
+
+          <div class="section-title">Grid 2x2 real de referencia</div>
+          <div class="asset-row">
+            <div class="asset-preview wide" id="referenceGridPreview"></div>
+            <div class="asset-actions">
+              <input id="referenceGrid" class="input" type="file" accept=".png,.jpg,.jpeg,.webp" />
+              <button id="clearReferenceGrid" class="btn" type="button">Quitar grid</button>
+            </div>
           </div>
 
           <div id="status" class="status"></div>
-
-          <div class="row">
-            <button id="back4" class="btn">Atrás</button>
-            <button id="create" class="btn primary">Crear preset</button>
-          </div>
-
           <div id="result" class="result hidden"></div>
-        </section>
+        </main>
       </div>
-
-      <p class="muted small">
-        Si te pide permitir acceso por firewall en Windows, acepta en redes privadas.
-      </p>
     </div>
 
     <script src="./app.js"></script>

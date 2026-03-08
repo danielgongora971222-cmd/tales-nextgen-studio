@@ -14,6 +14,13 @@ import { supabase } from "../../services/supabaseClient";
 import { Asset, GeminiModel } from "../../types";
 import ErrorModal from "../../components/ErrorModal";
 import { STYLE_PRESETS } from "../../config/presets/restyle";
+import {
+  findPresetById as findStylePresetById,
+  findPresetByPrompt as findStylePresetByPrompt,
+  getPresetNameFromMetaOrPrompt as getStylePresetNameFromMetaOrPrompt,
+  resolvePresetFromMetaOrPrompt as resolveStylePresetFromMetaOrPrompt,
+  fetchPresetReferenceGridDataUrl,
+} from "../../config/presets/styleRuntime";
 import OneNationUpIcon from "@/components/brand/OneNationUpIcon";
 import { estimateImageCostCredits } from "../../config/pricing.js";
 
@@ -498,20 +505,29 @@ function extractStyleBlock(input: string) {
 function getStyleNameFromPromptOrSelection(opts: {
   prompt: string;
   selectedStyleId: string | null;
+  meta?: any;
 }) {
-  if (opts.selectedStyleId) {
-    const found = STYLE_PRESETS.find((p) => p.id === opts.selectedStyleId);
-    return found?.name || "Style";
-  }
-  const inside = extractStyleBlock(opts.prompt || "");
-  return inside ? "Custom" : "None";
+  return getStylePresetNameFromMetaOrPrompt(STYLE_PRESETS, {
+    prompt: opts.prompt,
+    meta: opts.meta,
+    selectedStyleId: opts.selectedStyleId,
+  });
 }
 
-function getStyleNameFromPrompt(prompt: string): string {
-  const inside = extractStyleBlock(prompt || "");
-  if (!inside) return "None";
-  const match = STYLE_PRESETS.find((p) => (p.prompt || "").trim() === inside.trim());
-  return match?.name || "Custom";
+function getStyleNameFromPrompt(prompt: string, meta?: any): string {
+  return getStylePresetNameFromMetaOrPrompt(STYLE_PRESETS, {
+    prompt,
+    meta,
+  });
+}
+
+function maxVisualRefsForModel(modelId: string): number | null {
+  if (modelId.startsWith("openai:")) return 4;
+  if (modelId.startsWith("fal-ai/flux-2-")) return 1;
+  if (modelId.startsWith("kling:")) return 4;
+  if (modelId.startsWith("fal-ai/kling-image/")) return 10;
+  if (modelId === "fal-ai/qwen-image-edit-2511-multiple-angles") return 1;
+  return null;
 }
 
 function prettyModelLabel(modelId: string | null): string {
@@ -732,10 +748,14 @@ useEffect(() => {
 
   // Styles (solo aquí)
   const [selectedStyleId, setSelectedStyleId] = useState<string | null>(null);
-  const selectedStylePrompt = useMemo(() => {
-    if (!selectedStyleId) return "";
-    return STYLE_PRESETS.find((p) => p.id === selectedStyleId)?.prompt?.trim() || "";
+
+  const selectedStylePreset = useMemo(() => {
+    return findStylePresetById(STYLE_PRESETS, selectedStyleId);
   }, [selectedStyleId]);
+
+  const selectedStylePrompt = useMemo(() => {
+    return selectedStylePreset?.prompt?.trim() || "";
+  }, [selectedStylePreset]);
 
   const activeCaps = useMemo(() => getActiveCaps(model), [model]);
   const modelLabel = activeCaps.label;
@@ -759,9 +779,7 @@ useEffect(() => {
 
     return estimateImageCostCredits({ model: effectiveModel, quality: effQuality, count: effCount });
   }, [model, quality, count, refs, selectedElementAssetIds]);
-  const styleLabel = selectedStyleId
-    ? (STYLE_PRESETS.find((p) => p.id === selectedStyleId)?.name || "Selected")
-    : "None";
+  const styleLabel = selectedStylePreset?.name || "None";
 
   // Options reales para el selector de Aspect Ratio.
   // Para Kling o1: escondemos "Auto" si no hay referencias (text-to-image puro)
@@ -1659,6 +1677,11 @@ const promptReferences: PromptReference[] = useMemo(() => {
     const backgroundAssetId = typeof meta.backgroundAssetId === "string" ? meta.backgroundAssetId : null;
     const styleAssetId = typeof meta.styleAssetId === "string" ? meta.styleAssetId : null;
 
+    const resolvedStylePreset = resolveStylePresetFromMetaOrPrompt(STYLE_PRESETS, {
+      meta,
+      prompt: viewer.prompt || "",
+    });
+
     const findAsset = (id: string) => myAssets.find((a) => a.id === id) || null;
 
     return {
@@ -1666,13 +1689,22 @@ const promptReferences: PromptReference[] = useMemo(() => {
       aspectRatio,
       quality,
       count,
-      styleName: getStyleNameFromPrompt(viewer.prompt || ""),
+      styleName: resolvedStylePreset?.name || getStyleNameFromPrompt(viewer.prompt || "", meta),
       refs: {
         chars: charRefIds.map(findAsset).filter(Boolean) as Asset[],
         elements: elementRefIds.map(findAsset).filter(Boolean) as Asset[],
         bg: backgroundAssetId ? findAsset(backgroundAssetId) : null,
-        style: styleAssetId ? findAsset(styleAssetId) : null,
-        raw: { characterAssetIds: allRefIds, backgroundAssetId, styleAssetId },
+        style: resolvedStylePreset?.referenceGridUrl
+          ? ({ id: `preset:${resolvedStylePreset.id}`, url: resolvedStylePreset.referenceGridUrl } as any)
+          : styleAssetId
+            ? findAsset(styleAssetId)
+            : null,
+        raw: {
+          characterAssetIds: allRefIds,
+          backgroundAssetId,
+          styleAssetId,
+          stylePresetId: typeof meta.stylePresetId === "string" ? meta.stylePresetId : null,
+        },
       },
     };
   }, [viewer, myAssets]);
@@ -1842,62 +1874,77 @@ const promptReferences: PromptReference[] = useMemo(() => {
         }
       }
 
-      // Solo aplica preset si el usuario eligió uno en Styles.
-      // Si NO eliges estilo nuevo, para Kling reusamos el estilo embebido (pero “corto”).
-      if (selectedStylePrompt) {
-        const styleForModel = kling ? makeKlingSafeStyle(selectedStyleId, selectedStylePrompt) : selectedStylePrompt;
-        finalPrompt = applyStylePresetToPrompt(finalPrompt, styleForModel);
-      } else if (kling && split.style) {
-        const embeddedId =
-          STYLE_PRESETS.find((p) => (p.prompt || "").trim() === (split.style || "").trim())?.id || null;
-        const styleForModel = makeKlingSafeStyle(embeddedId, split.style);
-        finalPrompt = applyStylePresetToPrompt(finalPrompt, styleForModel);
-      }
+    // Solo aplica preset si el usuario eligió uno en Styles.
+    // Si NO eliges estilo nuevo, para Kling reusamos el estilo embebido (pero “corto”).
+    if (selectedStylePrompt) {
+      const styleForModel = kling ? makeKlingSafeStyle(selectedStyleId, selectedStylePrompt) : selectedStylePrompt;
+      finalPrompt = applyStylePresetToPrompt(finalPrompt, styleForModel);
+    } else if (kling && split.style) {
+      const embeddedId =
+        STYLE_PRESETS.find((p) => (p.prompt || "").trim() === (split.style || "").trim())?.id || null;
+      const styleForModel = makeKlingSafeStyle(embeddedId, split.style);
+      finalPrompt = applyStylePresetToPrompt(finalPrompt, styleForModel);
+    }
 
-      // Guardrail: Kling limita el prompt completo a 2500 caracteres.
-      if (kling && finalPrompt.length > KLING_PROMPT_MAX) {
-        throw new Error(
-          `Kling limita el prompt a ${KLING_PROMPT_MAX} caracteres. Tu prompt final tiene ${finalPrompt.length}. ` +
-            `Reduce el texto (o quita Style/Background) y vuelve a intentar.`
-        );
-      }
+    if (kling && finalPrompt.length > KLING_PROMPT_MAX) {
+      throw new Error(
+        `Kling limita el prompt a ${KLING_PROMPT_MAX} caracteres. Tu prompt final tiene ${finalPrompt.length}. ` +
+          `Reduce el texto (o quita Style/Background) y vuelve a intentar.`
+      );
+    }
 
-      // Auto-fallback: si el usuario eligió Omni O3 pero NO puso referencias,
-      // evitamos el error FAL_KLING_MISSING_REFERENCE usando el modelo texto (V3).
-      const totalRefs = effectiveRefIds.length;
-      const effectiveModel = model === KLING_MODEL_O3_OMNI && totalRefs === 0 ? KLING_MODEL_V3_TEXT : model;
+    const embeddedStylePreset = split.style
+      ? findStylePresetByPrompt(STYLE_PRESETS, split.style)
+      : null;
 
-      // Asegura que los parámetros sean válidos para el modelo efectivo.
-      // Ej: O3 soporta aspectRatio="auto" y quality="4K", pero V3 no.
-      const effCaps = getActiveCaps(effectiveModel);
+    const effectiveStylePreset = selectedStylePreset || embeddedStylePreset;
+    const styleReferenceCount = effectiveStylePreset?.referenceGridUrl ? 1 : 0;
 
-      let effectiveAspectRatio =
-        effCaps.aspectRatios.some((ar) => ar.value === aspectRatio)
-          ? aspectRatio
-          : (effCaps.aspectRatios.find((ar) => ar.value === "1:1")?.value || effCaps.aspectRatios[0]?.value || "1:1");
+    const totalRefs = effectiveRefIds.length + styleReferenceCount;
+    const effectiveModel = model === KLING_MODEL_O3_OMNI && totalRefs === 0 ? KLING_MODEL_V3_TEXT : model;
 
-      // ✅ FIX: Kling o1 (API) rechaza aspectRatio="auto" si NO hay imágenes de referencia
-      // (error: "Auto aspect ratio is not allowed when no image input").
-      if (effectiveModel === "kling:kling-image-o1" && totalRefs === 0 && effectiveAspectRatio === "auto") {
-        effectiveAspectRatio = "1:1";
-      }
+    const maxRefsForModel = maxVisualRefsForModel(effectiveModel);
+    if (maxRefsForModel != null && totalRefs > maxRefsForModel) {
+      throw new Error(
+        `El modelo ${prettyModelLabel(effectiveModel)} soporta hasta ${maxRefsForModel} referencia(s) visual(es) en este flujo. ` +
+          `Ahora intentaste usar ${totalRefs} contando el grid del preset.`
+      );
+    }
 
-      const effectiveQuality: ImageGenQuality =
-        quality && effCaps.qualities.includes(quality)
-          ? (quality as ImageGenQuality)
-          : ((effCaps.qualities[effCaps.qualities.length - 1] || effCaps.qualities[0] || "1K") as ImageGenQuality);
+    const styleReferenceDataUrl = effectiveStylePreset
+      ? await fetchPresetReferenceGridDataUrl(effectiveStylePreset)
+      : null;
 
-      const effectiveCount = effCaps.countOptions.includes(count) ? count : (effCaps.countOptions[0] || 1);
+    const effCaps = getActiveCaps(effectiveModel);
 
-      await generateImageBatch(finalPrompt, effectiveModel, {
-        aspectRatio: effectiveAspectRatio,
-        count: effectiveCount,
-        quality: effectiveQuality,
-        tool: TOOL_ID,
-        nameHint: TOOL_ID,
-        characterAssetIds: mergedCharacterAssetIds,
-        promptReferences,
-      });
+    let effectiveAspectRatio =
+      effCaps.aspectRatios.some((ar) => ar.value === aspectRatio)
+        ? aspectRatio
+        : (effCaps.aspectRatios.find((ar) => ar.value === "1:1")?.value || effCaps.aspectRatios[0]?.value || "1:1");
+
+    if (effectiveModel === "kling:kling-image-o1" && totalRefs === 0 && effectiveAspectRatio === "auto") {
+      effectiveAspectRatio = "1:1";
+    }
+
+    const effectiveQuality: ImageGenQuality =
+      quality && effCaps.qualities.includes(quality)
+        ? (quality as ImageGenQuality)
+        : ((effCaps.qualities[effCaps.qualities.length - 1] || effCaps.qualities[0] || "1K") as ImageGenQuality);
+
+    const effectiveCount = effCaps.countOptions.includes(count) ? count : (effCaps.countOptions[0] || 1);
+
+    await generateImageBatch(finalPrompt, effectiveModel, {
+      aspectRatio: effectiveAspectRatio,
+      count: effectiveCount,
+      quality: effectiveQuality,
+      tool: TOOL_ID,
+      nameHint: TOOL_ID,
+      characterAssetIds: mergedCharacterAssetIds,
+      stylePresetId: effectiveStylePreset?.id || undefined,
+      stylePresetName: effectiveStylePreset?.name || undefined,
+      styleReferenceDataUrl: styleReferenceDataUrl || undefined,
+      promptReferences,
+    });
 
       await reloadHistory();
     } catch (e: any) {
@@ -2058,13 +2105,12 @@ const promptReferences: PromptReference[] = useMemo(() => {
     setSelectedElementAssetIds(finalElementIds.slice(0, 5));
 
     // 3) UI: si el prompt trae un bloque de style, intentamos “reconocer” el preset
-    const inside = extractStyleBlock(raw) || "";
-    if (inside) {
-      const match = STYLE_PRESETS.find((p) => (p.prompt || "").trim() === inside.trim());
-      setSelectedStyleId(match ? match.id : null);
-    } else {
-      setSelectedStyleId(null);
-    }
+    const metaStyleId = typeof meta.stylePresetId === "string" ? meta.stylePresetId : null;
+    const match =
+      findStylePresetById(STYLE_PRESETS, metaStyleId) ||
+      findStylePresetByPrompt(STYLE_PRESETS, extractStyleBlock(raw) || "");
+
+    setSelectedStyleId(match ? match.id : null);
 
     setPanel(null);
     setViewer(null);

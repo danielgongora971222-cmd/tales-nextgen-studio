@@ -80,6 +80,9 @@ export function createAiImageRouter(ctx) {
         klingElementIds,
         characterAssetIds,
         styleAssetId,
+        stylePresetId,
+        stylePresetName,
+        styleReferenceDataUrl,
         backgroundAssetId,
 
         // ✅ @mentions binding
@@ -131,6 +134,61 @@ export function createAiImageRouter(ctx) {
 
     // "auto" en UI = dejar que el modelo use su default (excepto OpenAI, que sí soporta size="auto")
     const arNonOpenAI = aspectRatio === "auto" ? undefined : aspectRatio;
+
+        const hasStylePresetReference =
+      typeof styleReferenceDataUrl === "string" &&
+      styleReferenceDataUrl.startsWith("data:image/");
+
+    const buildStoredStyleMeta = () => ({
+      styleAssetId: styleAssetId || null,
+      stylePresetId: stylePresetId || null,
+      stylePresetName: stylePresetName || null,
+    });
+
+    const appendStyleReferenceInstruction = (text, currentRefCount) => {
+      if (!hasStylePresetReference) return String(text || "").trim();
+
+      const styleIndex = Number(currentRefCount || 0) + 1;
+      const instruction =
+        `Use image ${styleIndex} only as style guidance for overall look, materials, rendering, lighting and finish. ` +
+        `Do not reproduce any grid, collage, contact sheet or multi-panel layout from that style reference unless the user's prompt explicitly asks for it.`;
+
+      return `${String(text || "").trim()}\n\n${instruction}`.trim();
+    };
+
+    const styleReferenceInlinePart = async () => {
+      const { mimeType, base64 } = parseDataUrl(styleReferenceDataUrl);
+      return { inlineData: { mimeType, data: base64 } };
+    };
+
+    const styleReferenceImageFile = async () => {
+      const { mimeType, base64 } = parseDataUrl(styleReferenceDataUrl);
+      const bytes = Buffer.from(base64, "base64");
+      const ext = extFromMime(mimeType || "image/jpeg");
+      return new File([bytes], `style-preset-reference.${ext}`, {
+        type: mimeType || "image/jpeg",
+      });
+    };
+
+    const styleReferenceSignedUrl = async () => {
+      const { storagePath } = await uploadBase64ToStorage({
+        userId: user.id,
+        tool: "preset-style-ref",
+        dataUrl: styleReferenceDataUrl,
+        nameHint: `style_preset_${safeSlug(stylePresetId || stylePresetName || "reference")}`,
+      });
+
+      return signStoragePath(storagePath, 60 * 10);
+    };
+
+    const modelVisualRefLimit = (() => {
+      if (selectedModel.startsWith("openai:")) return 4;
+      if (selectedModel.startsWith("fal-ai/flux-2-")) return 1;
+      if (selectedModel.startsWith("kling:")) return 4;
+      if (selectedModel.startsWith("fal-ai/kling-image/")) return 10;
+      if (selectedModel === "fal-ai/qwen-image-edit-2511-multiple-angles") return 1;
+      return null;
+    })();
 
     // =============================
     // @mentions binding (token -> asset) for robust multi-reference prompts
@@ -190,6 +248,17 @@ export function createAiImageRouter(ctx) {
 
     const hasTokenRefs = Array.isArray(tokenRefs) && tokenRefs.length > 0;
     const effectiveRefs = hasTokenRefs ? tokenRefs : legacyRefs;
+    const refAssetIds = effectiveRefs.map((r) => r.id).filter(Boolean);
+    const totalVisualRefs = effectiveRefs.length + (hasStylePresetReference ? 1 : 0);
+
+    if (modelVisualRefLimit != null && totalVisualRefs > modelVisualRefLimit) {
+      throw httpError(
+        400,
+        "TOO_MANY_REFS",
+        `El modelo "${selectedModel}" soporta hasta ${modelVisualRefLimit} referencia(s) visual(es) en este flujo. ` +
+          `Ahora intentaste usar ${totalVisualRefs} contando el grid de estilo.`
+      );
+    }
 
     const escapeRegExp = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -271,6 +340,9 @@ export function createAiImageRouter(ctx) {
             klingElementIds,
             characterAssetIds,
             styleAssetId,
+            stylePresetId,
+            stylePresetName,
+            styleReferenceDataUrl,
             backgroundAssetId,
             promptReferences,
             horizontalAngle,
@@ -366,9 +438,15 @@ export function createAiImageRouter(ctx) {
         ? await Promise.all(refs.map((r) => assetIdToImageFile(r.id, user.id)))
         : [];
 
-      const openaiPrompt = hasTokenRefs
+      if (hasStylePresetReference) {
+        imageFiles.push(await styleReferenceImageFile());
+      }
+
+      const openaiPromptBase = hasTokenRefs
         ? appendImageNumberMapping(replaceMentionsWithImageNumbers(prompt, tokenRefs), tokenRefs)
         : prompt;
+
+      const openaiPrompt = appendStyleReferenceInstruction(openaiPromptBase, refs.length);
 
       for (let i = 0; i < nRequested; i++) {
         const dataUrl = await openaiGenerateImageDataUrl({
@@ -401,7 +479,7 @@ export function createAiImageRouter(ctx) {
             quality: quality || "1K",
             count: nRequested,
             characterAssetIds: characterAssetIds || [],
-            styleAssetId: styleAssetId || null,
+            ...buildStoredStyleMeta(),
             backgroundAssetId: backgroundAssetId || null,
           },
         });
@@ -452,11 +530,12 @@ export function createAiImageRouter(ctx) {
       if (hasTokenRefs && tokenRefs8.length) {
         bflPrompt = appendImageNumberMapping(replaceMentionsWithImageNumbers(prompt, tokenRefs8), tokenRefs8);
       } else if (refUrls.length) {
-        // En BFL puedes referenciar "image 1", "image 2", etc.
         bflPrompt =
           `${prompt}\n\n` +
           `Reference images by number: ${refUrls.map((_, i) => `image ${i + 1}`).join(", ")}.`;
       }
+
+      bflPrompt = appendStyleReferenceInstruction(bflPrompt, refUrls.length);
 
 
       const payload = {
@@ -467,7 +546,10 @@ export function createAiImageRouter(ctx) {
         safety_tolerance: 2,
       };
 
-      if (refUrls[0]) payload.input_image = refUrls[0];
+      const bflPrimaryRefUrl =
+        refUrls[0] || (hasStylePresetReference ? await styleReferenceSignedUrl() : null);
+
+      if (bflPrimaryRefUrl) payload.input_image = bflPrimaryRefUrl;
       for (let i = 1; i < refUrls.length && i < 8; i++) {
         payload[`input_image_${i + 1}`] = refUrls[i];
       }
@@ -496,7 +578,7 @@ export function createAiImageRouter(ctx) {
           quality: quality || null,
           count: nRequested,
           characterAssetIds: Array.isArray(characterAssetIds) ? characterAssetIds : [],
-          styleAssetId: styleAssetId || null,
+          ...buildStoredStyleMeta(),
           backgroundAssetId: backgroundAssetId || null,
         };
 
@@ -576,23 +658,19 @@ export function createAiImageRouter(ctx) {
           const mappedAR = rawAR === "4:5" ? "3:4" : rawAR; // 4:5 -> 3:4 (lo más cercano)
           const klingAspectRatio = allowedAspectRatios.has(mappedAR) ? mappedAR : "auto";
 
-          // Referencias -> image_list (máx 10)
-          const refIds = (
-            hasTokenRefs
-              ? tokenRefs.map((r) => r.id)
-              : [
-                  ...(Array.isArray(characterAssetIds) ? characterAssetIds : []),
-                  ...(backgroundAssetId ? [backgroundAssetId] : []),
-                  ...(styleAssetId ? [styleAssetId] : []),
-                ]
-          )
-            .filter(Boolean)
-            .slice(0, 10);
-
-
+          // Referencias -> image_list
+          const refIds = refAssetIds.slice(0, 4);
           const refUrls = refIds.length
             ? await Promise.all(refIds.map((id) => assetIdToSignedUrl(id, user.id, 60 * 10)))
             : [];
+
+          if (hasStylePresetReference && refUrls.length < 4) {
+            refUrls.push(await styleReferenceSignedUrl());
+          }
+
+          if (hasStylePresetReference && refUrls.length < 4) {
+            refUrls.push(await styleReferenceSignedUrl());
+          }
 
           const image_list = refUrls.map((u) => ({ image: u }));
 
@@ -706,6 +784,15 @@ export function createAiImageRouter(ctx) {
               promptForKling = `${promptForKling}\n\n${placeholders}`.trim();
             }
           }
+
+          const directKlingNonStyleRefCount = hasStylePresetReference
+            ? Math.max(0, refUrls.length - 1)
+            : refUrls.length;
+
+          promptForKling = appendStyleReferenceInstruction(
+            promptForKling,
+            directKlingNonStyleRefCount
+          );
 
 
           // ✅ Prompt templating para elements:
@@ -878,7 +965,7 @@ export function createAiImageRouter(ctx) {
               quality: klingResolution,
               count: nRequested,
               characterAssetIds: Array.isArray(characterAssetIds) ? characterAssetIds : [],
-              styleAssetId: styleAssetId || null,
+              ...buildStoredStyleMeta(),
               backgroundAssetId: backgroundAssetId || null,
               klingElementIds: Array.isArray(klingElementIds) ? klingElementIds : [],
               // "Receta" opcional para render rápido (los previewUrl expiran).
@@ -921,23 +1008,19 @@ export function createAiImageRouter(ctx) {
       const hint = nameHint || "generated";
       const urlExpiresInSeconds = 60 * 60;
 
-      // Referencias (máx 10 para O3)
-      const refIds = (
-        hasTokenRefs
-          ? tokenRefs.map((r) => r.id)
-          : [
-              ...(Array.isArray(characterAssetIds) ? characterAssetIds : []),
-              ...(backgroundAssetId ? [backgroundAssetId] : []),
-              ...(styleAssetId ? [styleAssetId] : []),
-            ]
-      )
-        .filter(Boolean)
-        .slice(0, 10);
-
-
+      // Referencias
+      const refIds = refAssetIds.slice(0, 10);
       const refUrls = refIds.length
         ? await Promise.all(refIds.map((id) => assetIdToSignedUrl(id, user.id, 60 * 10)))
         : [];
+
+      if (hasStylePresetReference && refUrls.length < 4) {
+        refUrls.push(await styleReferenceSignedUrl());
+      }
+
+      if (hasStylePresetReference && refUrls.length < 4) {
+        refUrls.push(await styleReferenceSignedUrl());
+      }
 
       const allowedAR = new Set(["16:9", "9:16", "1:1", "4:3", "3:4", "3:2", "2:3", "21:9", "auto"]);
       const rawAR = (aspectRatio || "auto").trim();
@@ -975,7 +1058,14 @@ export function createAiImageRouter(ctx) {
         const basePrompt = hasTokenRefs && tokenRefs10.length
           ? replaceMentionsWithFalImageTags(prompt, tokenRefs10)
           : prompt;
-        const safePrompt = ensureO3Prompt(basePrompt, refUrls.length);
+        const nonStyleRefCount = hasStylePresetReference
+          ? Math.max(0, refUrls.length - 1)
+          : refUrls.length;
+
+        const safePrompt = appendStyleReferenceInstruction(
+          ensureO3Prompt(basePrompt, refUrls.length),
+          nonStyleRefCount
+        );
 
 
         falInput = {
@@ -1064,7 +1154,7 @@ export function createAiImageRouter(ctx) {
           quality: resolutionForModel,
           count: nRequested,
           characterAssetIds: Array.isArray(characterAssetIds) ? characterAssetIds : [],
-          styleAssetId: styleAssetId || null,
+          ...buildStoredStyleMeta(),
           backgroundAssetId: backgroundAssetId || null,
         };
 
@@ -1373,7 +1463,14 @@ export function createAiImageRouter(ctx) {
       parts.push({ text: `${ref.label}:` });
       parts.push(await assetIdToInlinePart(ref.id, user.id));
     }
-    parts.push({ text: prompt });
+
+    if (hasStylePresetReference) {
+      parts.push({ text: "Style reference:" });
+      parts.push(await styleReferenceInlinePart());
+    }
+
+    const geminiPrompt = appendStyleReferenceInstruction(prompt, refs.length);
+    parts.push({ text: geminiPrompt });
 
     const n = nRequested;
 
@@ -1408,7 +1505,7 @@ export function createAiImageRouter(ctx) {
           quality: quality || null,
           count: n,
           characterAssetIds: characterAssetIds || [],
-          styleAssetId: styleAssetId || null,
+          ...buildStoredStyleMeta(),
           backgroundAssetId: backgroundAssetId || null,
         },
       });
