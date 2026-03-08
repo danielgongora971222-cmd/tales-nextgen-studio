@@ -75,6 +75,12 @@ export default function MotionControlTool() {
 
   const [pendingJob, setPendingJob] = useState<PendingMotionControlJob | null>(null);
 
+    const pendingSlots = useMemo(() => {
+    if (isGenerating) return ["pending-1"];
+    if (pendingJob) return ["pending-resume-1"];
+    return [];
+  }, [isGenerating, pendingJob]);
+
   // Output + history
   const [latest, setLatest] = useState<Asset | null>(null);
   const [history, setHistory] = useState<Asset[]>([]);
@@ -312,10 +318,14 @@ export default function MotionControlTool() {
     }
   }
 
-  useEffect(() => {
-    refreshHistory();
+ useEffect(() => {
+    void refreshHistory();
+
     const p = typeof window !== "undefined" ? loadPending() : null;
-    if (p) setPendingJob(p);
+    if (!p) return;
+
+    setPendingJob(p);
+    void runMotionControlJob(p);
   }, []);
 
   return (
@@ -673,10 +683,31 @@ export default function MotionControlTool() {
 
             {historyLoading ? (
               <div className="text-sm text-white/50">Cargando…</div>
-            ) : history.length === 0 ? (
+            ) : history.length === 0 && !pendingJob ? (
               <div className="text-sm text-white/40">Todavía no hay generaciones aquí.</div>
             ) : (
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                {pendingJob && (
+                  <div className="rounded-xl overflow-hidden border border-amber-400/20 bg-black/40">
+                    <div className="aspect-video bg-black/60 relative overflow-hidden">
+                      <div className="absolute inset-0 animate-pulse bg-gradient-to-br from-white/10 via-white/5 to-transparent" />
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="px-3 py-1 rounded-full border border-amber-400/30 bg-amber-400/10 text-[11px] uppercase tracking-wider text-amber-200 font-bold">
+                          Generando...
+                        </div>
+                      </div>
+                    </div>
+                    <div className="p-2 text-left">
+                      <div className="text-xs text-white/80">
+                        {(pendingJob.prompt || "Motion Control").trim()}
+                      </div>
+                      <div className="text-[11px] text-amber-200/80 mt-1">
+                        {progressMsg || "En curso"}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {history.slice(0, 12).map((a) => (
                   <button
                     key={a.id}

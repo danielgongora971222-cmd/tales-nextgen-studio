@@ -34,7 +34,7 @@ type EditModelId =
 type AspectRatio = "auto" | "16:9" | "9:16" | "1:1";
 
 const TOOL_NAME = "ingredients-to-video";
-const PENDING_KEY = "tales_pending_video_edit_job_v2";
+const PENDING_KEY = "tales_pending_video_edit_job_v2:ingredients-to-video";
 
 // 🔒 Feature flag: oculta Storyboard/Multishot SOLO en Edit Video Tool (por ahora)
 const ENABLE_EDITVIDEO_MULTISHOT = true;
@@ -456,7 +456,11 @@ const [multishotOpen, setMultishotOpen] = useState(false);
   const visibleHistory = useMemo(() => history.slice(0, visibleCount), [history, visibleCount]);
   const hasMore = history.length > visibleHistory.length;
 
-  const pendingSlots = useMemo(() => (isGenerating ? ["pending-1"] : []), [isGenerating]);
+  const pendingSlots = useMemo(() => {
+    if (isGenerating) return ["pending-1"];
+    if (pendingJob) return ["pending-resume-1"];
+    return [];
+  }, [isGenerating, pendingJob]);
 
   const viewerRecipeInfo = useMemo(() => {
     if (!viewer) return null;
@@ -614,13 +618,29 @@ const [multishotOpen, setMultishotOpen] = useState(false);
   }, [user]);
 
   useEffect(() => {
-    if (!user) return;
-    reloadImages();
-    reloadVideos();
-    reloadHistory();
-    reloadKlingElements();
-    setPendingJob(loadPending());
-  }, [user, reloadImages, reloadVideos, reloadHistory, reloadKlingElements, loadPending]);
+    const run = async () => {
+      const pj = loadPending();
+      setPendingJob(pj);
+
+      if (!pj || isGenerating) return;
+
+      setIsGenerating(true);
+      const ctrl = new AbortController();
+      abortRef.current = ctrl;
+
+      try {
+        await runWaitFlow(pj.supabaseJobId);
+      } catch (err: any) {
+        setError(formatErr(err));
+        setProgressText("");
+      } finally {
+        setIsGenerating(false);
+        abortRef.current = null;
+      }
+    };
+
+    void run();
+  }, [user, reloadImages, reloadVideos, reloadHistory, reloadKlingElements, loadPending, isGenerating]);
 
   // Close popover on outside click
   useEffect(() => {
@@ -1181,29 +1201,26 @@ const [multishotOpen, setMultishotOpen] = useState(false);
   ]);
 
 
-  const runWaitFlow = useCallback(
-    async (supabaseJobId: string) => {
-      setProgressText("Procesando (Kling, background)…");
+  async function runWaitFlow(supabaseJobId: string) {
+    setProgressText("Procesando (Kling, background)…");
 
-      const row = await waitJobCompletion(supabaseJobId, {
-        signal: abortRef.current?.signal,
-        onProgress: (msg) => setProgressText(msg),
-        pollMs: 15_000,
-      });
+    const row = await waitJobCompletion(supabaseJobId, {
+      signal: abortRef.current?.signal,
+      onProgress: (msg) => setProgressText(msg),
+      pollMs: 15_000,
+    });
 
-      if (row.status === "failed") {
-        throw new Error(row.error || "Falló el job de Kling en background.");
-      }
+    if (row.status === "failed") {
+      throw new Error(row.error || "Falló el job de Kling en background.");
+    }
 
-      clearPending();
-      setPendingJob(null);
-      setProgressText("");
+    clearPending();
+    setPendingJob(null);
+    setProgressText("");
 
-      await reloadVideos();
-      await reloadHistory();
-    },
-    [reloadHistory, reloadVideos, clearPending]
-  );
+    await reloadVideos();
+    await reloadHistory();
+  }
 
   const onGenerate = useCallback(async () => {
     if (isGenerating) return;
@@ -1257,7 +1274,7 @@ const [multishotOpen, setMultishotOpen] = useState(false);
       setIsGenerating(false);
       abortRef.current = null;
     }
-  }, [isGenerating, validateAndBuildRequest, model, runWaitFlow, savePending]);
+  }, [isGenerating, validateAndBuildRequest, model, savePending]);
 
   const onResumePending = useCallback(async () => {
     const pj = loadPending();
@@ -1280,7 +1297,7 @@ const [multishotOpen, setMultishotOpen] = useState(false);
       setIsGenerating(false);
       abortRef.current = null;
     }
-  }, [loadPending, runWaitFlow]);
+  }, [loadPending]);
 
   const onDiscardPending = useCallback(() => {
     clearPending();

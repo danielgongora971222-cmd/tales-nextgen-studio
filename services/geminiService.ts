@@ -194,6 +194,7 @@ export type GenerateImageBatchOptions = {
   googleSearchGrounding?: boolean;
   tool?: string;
   nameHint?: string;
+  asyncHooks?: AsyncImageJobHooks;
   // Kling-only (Element Library)
   klingElementIds?: string[];
 
@@ -223,6 +224,12 @@ export type GenerateImageBatchOptions = {
 export type GenerateImageBatchResult = {
   items: ImageGenItem[];
   urlExpiresInSeconds?: number;
+};
+
+export type AsyncImageJobHooks = {
+  onJobQueued?: (job: { jobId: string }) => void;
+  onJobSettled?: (jobId: string) => void;
+  onProgress?: (msg: string) => void;
 };
 
 export const generateImageBatch = async (
@@ -262,18 +269,25 @@ export const generateImageBatch = async (
 
   // ✅ Async (background job)
   if (res?.jobId) {
-    const row = await waitImageJob(String(res.jobId));
-    invalidateMyAssetsCache();
+    const jobId = String(res.jobId);
+    options?.asyncHooks?.onJobQueued?.({ jobId });
 
-    const items = jobRowToItems(row);
-    if (!items.length) throw new Error("No image returned from job.");
+    try {
+      const row = await waitImageJob(jobId, options?.asyncHooks?.onProgress);
+      invalidateMyAssetsCache();
 
-    const urlExpiresInSeconds =
-      (row as any)?.params?.urlExpiresInSeconds ||
-      (row as any)?.params?.expiresInSeconds ||
-      res.urlExpiresInSeconds;
+      const items = jobRowToItems(row);
+      if (!items.length) throw new Error("No image returned from job.");
 
-    return { items, urlExpiresInSeconds };
+      const urlExpiresInSeconds =
+        (row as any)?.params?.urlExpiresInSeconds ||
+        (row as any)?.params?.expiresInSeconds ||
+        res.urlExpiresInSeconds;
+
+      return { items, urlExpiresInSeconds };
+    } finally {
+      options?.asyncHooks?.onJobSettled?.(jobId);
+    }
   }
 
   // ✅ Sync (compat)
@@ -314,6 +328,7 @@ export const faceswapStep1MakeMannequin = async (params: {
   targetAssetId: string;
   swapType: FaceSwapType;
   quality: ImageGenQuality;
+  asyncHooks?: AsyncImageJobHooks;
 }): Promise<FaceSwapResult> => {
   const res: any = await apiPost("/api/ai/faceswap/mannequin", {
     targetAssetId: params.targetAssetId,
@@ -323,19 +338,26 @@ export const faceswapStep1MakeMannequin = async (params: {
 
   // ✅ Async (background job)
   if (res?.jobId) {
-    const row = await waitImageJob(String(res.jobId));
-    invalidateMyAssetsCache();
+    const jobId = String(res.jobId);
+    params.asyncHooks?.onJobQueued?.({ jobId });
 
-    const items = jobRowToItems(row);
-    const first = items[0] || null;
-    const out = first?.url || (row as any)?.params?.resultUrl;
-    if (!out) throw new Error("No image returned from job.");
+    try {
+      const row = await waitImageJob(jobId, params.asyncHooks?.onProgress);
+      invalidateMyAssetsCache();
 
-    return {
-      url: out,
-      assetId: first?.assetId || row.result_asset_id || "unknown",
-      urlExpiresInSeconds: (row as any)?.params?.urlExpiresInSeconds,
-    };
+      const items = jobRowToItems(row);
+      const first = items[0] || null;
+      const out = first?.url || (row as any)?.params?.resultUrl;
+      if (!out) throw new Error("No image returned from job.");
+
+      return {
+        url: out,
+        assetId: first?.assetId || row.result_asset_id || "unknown",
+        urlExpiresInSeconds: (row as any)?.params?.urlExpiresInSeconds,
+      };
+    } finally {
+      params.asyncHooks?.onJobSettled?.(jobId);
+    }
   }
 
   // ✅ Sync (compat)
@@ -354,6 +376,7 @@ export const faceswapStep2InsertFromElement = async (params: {
   donorElementId: string;
   swapType: FaceSwapType;
   quality: ImageGenQuality;
+  asyncHooks?: AsyncImageJobHooks;
 }): Promise<FaceSwapResult> => {
   const res: any = await apiPost("/api/ai/faceswap/insert", {
     baseAssetId: params.baseAssetId,
@@ -364,19 +387,26 @@ export const faceswapStep2InsertFromElement = async (params: {
 
   // ✅ Async (background job)
   if (res?.jobId) {
-    const row = await waitImageJob(String(res.jobId));
-    invalidateMyAssetsCache();
+    const jobId = String(res.jobId);
+    params.asyncHooks?.onJobQueued?.({ jobId });
 
-    const items = jobRowToItems(row);
-    const first = items[0] || null;
-    const out = first?.url || (row as any)?.params?.resultUrl;
-    if (!out) throw new Error("No image returned from job.");
+    try {
+      const row = await waitImageJob(jobId, params.asyncHooks?.onProgress);
+      invalidateMyAssetsCache();
 
-    return {
-      url: out,
-      assetId: first?.assetId || row.result_asset_id || "unknown",
-      urlExpiresInSeconds: (row as any)?.params?.urlExpiresInSeconds,
-    };
+      const items = jobRowToItems(row);
+      const first = items[0] || null;
+      const out = first?.url || (row as any)?.params?.resultUrl;
+      if (!out) throw new Error("No image returned from job.");
+
+      return {
+        url: out,
+        assetId: first?.assetId || row.result_asset_id || "unknown",
+        urlExpiresInSeconds: (row as any)?.params?.urlExpiresInSeconds,
+      };
+    } finally {
+      params.asyncHooks?.onJobSettled?.(jobId);
+    }
   }
 
   // ✅ Sync (compat)

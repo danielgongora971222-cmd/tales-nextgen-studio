@@ -11,6 +11,8 @@ import { estimateImageCostCredits } from "../../config/pricing.js";
 
 import { AssetPickerModal } from "./video/AssetPickerModal";
 import { GOOGLE_IMAGE_MODELS } from "../../config/imageGenerationShared.js";
+import { usePendingImageToolJobs } from "../../hooks/usePendingImageToolJobs";
+import { useAuth } from "../../contexts/AuthContext";
 
 type Quality = "1K" | "2K" | "4K";
 type PanelKey = "model" | "quality" | null;
@@ -181,6 +183,7 @@ function isGeneratedUpscale(a: Asset): boolean {
 }
 
 const UpscalerTool: React.FC<{ prefillAsset?: Asset | null }> = ({ prefillAsset }) => {
+  const { user } = useAuth();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
 
@@ -205,9 +208,21 @@ const UpscalerTool: React.FC<{ prefillAsset?: Asset | null }> = ({ prefillAsset 
   // ✅ Default: NanoBanana Pro
   const [model, setModel] = useState<string>(GeminiModel.IMAGE_PRO);
   const [quality, setQuality] = useState<Quality>("4K");
-
   const [isGenerating, setIsGenerating] = useState(false);
   const [pendingSlots, setPendingSlots] = useState<string[]>([]);
+
+  const {
+    pendingSlots: persistedPendingSlots,
+    startLocalPending,
+    clearLocalPending,
+    makeAsyncHooks,
+    resumePendingJobs,
+  } = usePendingImageToolJobs({
+    userId: user?.id || null,
+    tool: TOOL_ID,
+    onCompleted: reloadHistory,
+    onError: (error: any) => setError(error?.message || "No se pudo reanudar una generación pendiente."),
+  });
 
   const modelLabel = useMemo(() => prettyModelLabel(model), [model]);
 
@@ -245,6 +260,15 @@ const UpscalerTool: React.FC<{ prefillAsset?: Asset | null }> = ({ prefillAsset 
   useEffect(() => {
     reloadHistory();
   }, []);
+
+  useEffect(() => {
+    void resumePendingJobs();
+  }, [resumePendingJobs]);
+
+  useEffect(() => {
+    setPendingSlots(persistedPendingSlots);
+    setIsGenerating(persistedPendingSlots.length > 0);
+  }, [persistedPendingSlots]);
 
   useEffect(() => {
     // Ajusta quality automáticamente si el modelo no soporta la actual
@@ -304,9 +328,8 @@ const UpscalerTool: React.FC<{ prefillAsset?: Asset | null }> = ({ prefillAsset 
     setIsGenerating(true);
     setError(null);
     setPanel(null);
-
-    const slotId = `pending_${Date.now()}`;
-    setPendingSlots([slotId]);
+    startLocalPending(1);
+    setPendingSlots([`pending-local-${Date.now()}`]);
 
     try {
       const basePrompt = "Restore and upscale the reference image.";
@@ -320,6 +343,7 @@ const UpscalerTool: React.FC<{ prefillAsset?: Asset | null }> = ({ prefillAsset 
         tool: TOOL_ID,
         nameHint: `upscale_${slugName(baseRef.name || "image")}`,
         characterAssetIds: [baseRef.id],
+        asyncHooks: makeAsyncHooks(finalPrompt, 1),
       });
 
       await reloadHistory();
@@ -327,7 +351,10 @@ const UpscalerTool: React.FC<{ prefillAsset?: Asset | null }> = ({ prefillAsset 
       setError(e?.message || "Failed to upscale image.");
     } finally {
       setIsGenerating(false);
-      setPendingSlots([]);
+      clearLocalPending();
+      if (!persistedPendingSlots.length) {
+        setPendingSlots([]);
+      }
     }
   }
 

@@ -10,6 +10,7 @@ import {
   downloadAssetToDisk,
 } from "../../services/assetsApi";
 import { useAuth } from "../../contexts/AuthContext";
+import { usePendingImageToolJobs } from "../../hooks/usePendingImageToolJobs";
 import { supabase } from "../../services/supabaseClient";
 import { Asset, GeminiModel } from "../../types";
 import ErrorModal from "../../components/ErrorModal";
@@ -995,6 +996,19 @@ useEffect(() => {
 
   const [isGenerating, setIsGenerating] = useState(false);
   const [pendingSlots, setPendingSlots] = useState<string[]>([]);
+
+  const {
+    pendingSlots: persistedPendingSlots,
+    startLocalPending,
+    clearLocalPending,
+    makeAsyncHooks,
+    resumePendingJobs,
+  } = usePendingImageToolJobs({
+    userId: user?.id || null,
+    tool: TOOL_ID,
+    onCompleted: reloadHistory,
+    onError: (error: any) => setError(error?.message || "No se pudo reanudar una generación pendiente."),
+  });
   const [error, setError] = useState<string | null>(null);
     // Cache de dimensiones por imagen (para layout del historial y viewer responsive)
   const [imgDims, setImgDims] = useState<Record<string, { w: number; h: number }>>({});
@@ -1141,6 +1155,15 @@ useEffect(() => {
   useEffect(() => {
     reloadHistory();
   }, []);
+
+  useEffect(() => {
+    void resumePendingJobs();
+  }, [resumePendingJobs]);
+
+  useEffect(() => {
+    setPendingSlots(persistedPendingSlots);
+    setIsGenerating(persistedPendingSlots.length > 0);
+  }, [persistedPendingSlots]);
 
     useEffect(() => {
     const readPrefill = () => {
@@ -2156,12 +2179,11 @@ const promptReferences: PromptReference[] = useMemo(() => {
       return;
     }
 
+    const requestedCount = Math.max(1, Math.min(4, Number(count) || 1));
+
     setIsGenerating(true);
-    {
-      const n = Math.max(1, Math.min(4, Number(count) || 1));
-      const stamp = Date.now();
-      setPendingSlots(Array.from({ length: n }, (_, i) => `pending-${stamp}-${i}`));
-    }
+    startLocalPending(requestedCount);
+    setPendingSlots(Array.from({ length: requestedCount }, (_, i) => `pending-local-${Date.now()}-${i}`));
     setError(null);
 
     try {
@@ -2294,6 +2316,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
       styleReferenceDataUrl: styleReferenceDataUrl || undefined,
       backgroundAssetId,
       promptReferences,
+      asyncHooks: makeAsyncHooks(finalPrompt, effectiveCount),
     });
 
       await reloadHistory();
@@ -2301,7 +2324,10 @@ const promptReferences: PromptReference[] = useMemo(() => {
       setError(e?.message || "Failed to generate image.");
     } finally {
       setIsGenerating(false);
-      setPendingSlots([]);
+      clearLocalPending();
+      if (!persistedPendingSlots.length) {
+        setPendingSlots([]);
+      }
     }
   }
 
@@ -2421,17 +2447,20 @@ const promptReferences: PromptReference[] = useMemo(() => {
     const finalElementIds = storedRefs.elementIds;
     const bgId = storedRefs.backgroundId;
 
-    const findAsset = (id: string) => myAssets.find((a) => a.id === id) || null;
+    const findAsset = (id: unknown) =>
+      typeof id === "string" ? myAssets.find((a) => a.id === id) || null : null;
 
-    const c1 = charIds[0] ? findAsset(charIds[0]) : null;
-    const c2 = charIds[1] ? findAsset(charIds[1]) : null;
-    const c3 = charIds[2] ? findAsset(charIds[2]) : null;
-    const bg = bgId ? findAsset(bgId) : null;
+    const c1 = findAsset(charIds[0]);
+    const c2 = findAsset(charIds[1]);
+    const c3 = findAsset(charIds[2]);
+    const bg = findAsset(bgId);
 
     setRefs({ char1: c1, char2: c2, char3: c3, background: bg });
 
     // restaurar Elements (global)
-    setSelectedElementAssetIds(finalElementIds.slice(0, 5));
+    setSelectedElementAssetIds(
+      finalElementIds.filter((id): id is string => typeof id === "string").slice(0, 5)
+    );
 
     // 3) UI: si el prompt trae un bloque de style, intentamos “reconocer” el preset
     const metaStyleId = typeof meta.stylePresetId === "string" ? meta.stylePresetId : null;

@@ -30,6 +30,7 @@ import {
   GRID_OPTIONS,
   supportsGoogleSearchGrounding,
 } from "../../config/imageGenerationShared.js";
+import { usePendingImageToolJobs } from "../../hooks/usePendingImageToolJobs";
 
 
 type Quality = "" | ImageGenQuality;
@@ -1011,6 +1012,18 @@ useEffect(() => {
 
   const [isGenerating, setIsGenerating] = useState(false);
   const [pendingSlots, setPendingSlots] = useState<string[]>([]);
+    const {
+    pendingSlots: persistedPendingSlots,
+    startLocalPending,
+    clearLocalPending,
+    makeAsyncHooks,
+    resumePendingJobs,
+  } = usePendingImageToolJobs({
+    userId: user?.id || null,
+    tool: TOOL_ID,
+    onCompleted: reloadHistory,
+    onError: (error: any) => setError(error?.message || "No se pudo reanudar una generación pendiente."),
+  });
   const [error, setError] = useState<string | null>(null);
     // Cache de dimensiones por imagen (para layout del historial y viewer responsive)
   const [imgDims, setImgDims] = useState<Record<string, { w: number; h: number }>>({});
@@ -1157,6 +1170,15 @@ useEffect(() => {
   useEffect(() => {
     reloadHistory();
   }, []);
+
+  useEffect(() => {
+    void resumePendingJobs();
+  }, [resumePendingJobs]);
+
+  useEffect(() => {
+    setPendingSlots(persistedPendingSlots);
+    setIsGenerating(persistedPendingSlots.length > 0);
+  }, [persistedPendingSlots]);
 
   const hasMoreHistory = visibleHistory.length < history.length;
 
@@ -1935,13 +1957,11 @@ const promptReferences: PromptReference[] = useMemo(() => {
     const basePrompt = (prompt || "").trim();
     if (!basePrompt) return;
 
+    const requestedCount = Math.max(1, Math.min(4, Number(count) || 1));
+
     setIsGenerating(true);
-    // crea "slots" temporales en el historial (uno por imagen a generar)
-    {
-      const n = Math.max(1, Math.min(4, Number(count) || 1));
-      const stamp = Date.now();
-      setPendingSlots(Array.from({ length: n }, (_, i) => `pending-${stamp}-${i}`));
-    }
+    startLocalPending(requestedCount);
+    setPendingSlots(Array.from({ length: requestedCount }, (_, i) => `pending-local-${Date.now()}-${i}`));
     setError(null);
 
     try {
@@ -2071,14 +2091,17 @@ const promptReferences: PromptReference[] = useMemo(() => {
       stylePresetName: effectiveStylePreset?.name || undefined,
       styleReferenceDataUrl: styleReferenceDataUrl || undefined,
       promptReferences,
+      asyncHooks: makeAsyncHooks(finalPrompt, effectiveCount),
     });
-
       await reloadHistory();
     } catch (e: any) {
       setError(e?.message || "Failed to generate image.");
     } finally {
       setIsGenerating(false);
-      setPendingSlots([]);
+      clearLocalPending();
+      if (!persistedPendingSlots.length) {
+        setPendingSlots([]);
+      }
     }
   }
 
@@ -2199,27 +2222,30 @@ const promptReferences: PromptReference[] = useMemo(() => {
     const charIds = storedRefs.charIds;
     const finalElementIds = storedRefs.elementIds;
 
-    const findAsset = (id: string) => myAssets.find((a) => a.id === id) || null;
+    const findAsset = (id: unknown) =>
+      typeof id === "string" ? myAssets.find((a) => a.id === id) || null : null;
 
     const nextRefs: Record<RefSlot, Asset | null> = {
-      char1: charIds[0] ? findAsset(charIds[0]) : null,
-      char2: charIds[1] ? findAsset(charIds[1]) : null,
-      char3: charIds[2] ? findAsset(charIds[2]) : null,
-      char4: charIds[3] ? findAsset(charIds[3]) : null,
-      char5: charIds[4] ? findAsset(charIds[4]) : null,
-      char6: charIds[5] ? findAsset(charIds[5]) : null,
-      char7: charIds[6] ? findAsset(charIds[6]) : null,
-      char8: charIds[7] ? findAsset(charIds[7]) : null,
-      char9: charIds[8] ? findAsset(charIds[8]) : null,
-      char10: charIds[9] ? findAsset(charIds[9]) : null,
-      char11: charIds[10] ? findAsset(charIds[10]) : null,
-      char12: charIds[11] ? findAsset(charIds[11]) : null,
+      char1: findAsset(charIds[0]),
+      char2: findAsset(charIds[1]),
+      char3: findAsset(charIds[2]),
+      char4: findAsset(charIds[3]),
+      char5: findAsset(charIds[4]),
+      char6: findAsset(charIds[5]),
+      char7: findAsset(charIds[6]),
+      char8: findAsset(charIds[7]),
+      char9: findAsset(charIds[8]),
+      char10: findAsset(charIds[9]),
+      char11: findAsset(charIds[10]),
+      char12: findAsset(charIds[11]),
     };
 
     setRefs(nextRefs);
 
     // restaurar Elements (global)
-    setSelectedElementAssetIds(finalElementIds.slice(0, 5));
+    setSelectedElementAssetIds(
+      finalElementIds.filter((id): id is string => typeof id === "string").slice(0, 5)
+    );
 
     // 3) UI: si el prompt trae un bloque de style, intentamos “reconocer” el preset
     const metaStyleId = typeof meta.stylePresetId === "string" ? meta.stylePresetId : null;

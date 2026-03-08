@@ -18,6 +18,8 @@ import {
 import OneNationUpIcon from "@/components/brand/OneNationUpIcon";
 import { estimateImageCostCredits } from "../../config/pricing.js";
 import { GOOGLE_IMAGE_MODELS } from "../../config/imageGenerationShared.js";
+import { usePendingImageToolJobs } from "../../hooks/usePendingImageToolJobs";
+import { useAuth } from "../../contexts/AuthContext";
 
 type Quality = "1K" | "2K" | "4K";
 type PanelKey = "model" | "quality" | null;
@@ -327,6 +329,7 @@ function StylePickerModal(props: {
 }
 
 const RestylerTool: React.FC = () => {
+  const { user } = useAuth();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
 
@@ -353,6 +356,18 @@ const RestylerTool: React.FC = () => {
 
   const [isGenerating, setIsGenerating] = useState(false);
   const [pendingSlots, setPendingSlots] = useState<string[]>([]);
+  const {
+    pendingSlots: persistedPendingSlots,
+    startLocalPending,
+    clearLocalPending,
+    makeAsyncHooks,
+    resumePendingJobs,
+  } = usePendingImageToolJobs({
+    userId: user?.id || null,
+    tool: TOOL_ID,
+    onCompleted: reloadHistory,
+    onError: (error: any) => setError(error?.message || "No se pudo reanudar una generación pendiente."),
+  });
 
   const selectedStyle = useMemo(() => {
     if (!selectedStyleId) return null;
@@ -402,6 +417,15 @@ const RestylerTool: React.FC = () => {
   useEffect(() => {
     reloadHistory();
   }, []);
+
+  useEffect(() => {
+    void resumePendingJobs();
+  }, [resumePendingJobs]);
+
+  useEffect(() => {
+    setPendingSlots(persistedPendingSlots);
+    setIsGenerating(persistedPendingSlots.length > 0);
+  }, [persistedPendingSlots]);
 
   useEffect(() => {
     setQuality((prev) => normalizeQuality(model, prev));
@@ -487,10 +511,8 @@ const RestylerTool: React.FC = () => {
     setIsGenerating(true);
     setError(null);
     setPanel(null);
-
-    // placeholder (1 output)
-    const slotId = `pending_${Date.now()}`;
-    setPendingSlots([slotId]);
+    startLocalPending(1);
+    setPendingSlots([`pending-local-${Date.now()}`]);
 
     try {
       const basePrompt = "Restyle reference image.";
@@ -516,6 +538,7 @@ const RestylerTool: React.FC = () => {
         stylePresetId: selectedStyle.id,
         stylePresetName: selectedStyle.name,
         styleReferenceDataUrl: styleReferenceDataUrl || undefined,
+        asyncHooks: makeAsyncHooks(finalPrompt, 1),
       });
 
       await reloadHistory();
@@ -523,7 +546,10 @@ const RestylerTool: React.FC = () => {
       setError(e?.message || "Failed to restyle image.");
     } finally {
       setIsGenerating(false);
-      setPendingSlots([]);
+      clearLocalPending();
+      if (!persistedPendingSlots.length) {
+        setPendingSlots([]);
+      }
     }
   }
 
