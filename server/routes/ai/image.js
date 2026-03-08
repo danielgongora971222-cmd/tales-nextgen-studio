@@ -668,10 +668,6 @@ export function createAiImageRouter(ctx) {
             refUrls.push(await styleReferenceSignedUrl());
           }
 
-          if (hasStylePresetReference && refUrls.length < 4) {
-            refUrls.push(await styleReferenceSignedUrl());
-          }
-
           const image_list = refUrls.map((u) => ({ image: u }));
 
           // ✅ Elements (Kling Element Library) -> element_list
@@ -1013,10 +1009,6 @@ export function createAiImageRouter(ctx) {
       const refUrls = refIds.length
         ? await Promise.all(refIds.map((id) => assetIdToSignedUrl(id, user.id, 60 * 10)))
         : [];
-
-      if (hasStylePresetReference && refUrls.length < 4) {
-        refUrls.push(await styleReferenceSignedUrl());
-      }
 
       if (hasStylePresetReference && refUrls.length < 4) {
         refUrls.push(await styleReferenceSignedUrl());

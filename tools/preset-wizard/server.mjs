@@ -13,6 +13,8 @@ const PORT = Number(process.env.PRESET_WIZARD_PORT || 5055);
 
 const app = express();
 
+app.use("/presets", express.static(path.join(REPO_ROOT, "public", "presets")));
+app.use("/style-presets", express.static(path.join(REPO_ROOT, "public", "style-presets")));
 app.use(express.static(WEB_DIR));
 app.use(express.json({ limit: "10mb" }));
 
