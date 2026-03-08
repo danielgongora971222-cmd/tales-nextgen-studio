@@ -2211,6 +2211,22 @@ async function processJob(row) {
 
 let lastHeartbeatAt = 0;
 
+async function heartbeatNow() {
+  if (!supabaseAdmin) return;
+
+  try {
+    await supabaseAdmin
+      .from("worker_heartbeats")
+      .upsert(
+        { worker_id: WORKER_ID, kind: JOB_KIND, updated_at: new Date().toISOString() },
+        { onConflict: "worker_id" }
+      );
+    lastHeartbeatAt = Date.now();
+  } catch (e) {
+    console.warn("[imageJobsWorker][heartbeat_failed]", String(e?.message || e));
+  }
+}
+
 async function heartbeatMaybe() {
   const now = Date.now();
   if (now - lastHeartbeatAt < 30_000) return;
@@ -2236,6 +2252,7 @@ async function heartbeatMaybe() {
 async function main() {
   console.log(`[imageJobsWorker] start WORKER_ID=${WORKER_ID} JOB_KIND=${JOB_KIND} CLAIM_LIMIT=${CLAIM_LIMIT}`);
 
+  await heartbeatNow();
   await supabaseAdmin.from("jobs").select("id").limit(1);
 
 while (true) {
