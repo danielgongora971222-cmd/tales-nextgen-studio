@@ -339,7 +339,13 @@ export function createAiImageRouter(ctx) {
     }
 
     if (wantsAsync) {
-      await assertJobLimits({ supabaseAdmin, httpError, ownerId: user.id, kind: "image" });
+      await assertJobLimits({
+        supabaseAdmin,
+        httpError,
+        ownerId: user.id,
+        kind: "image",
+        tool: tool || "image-generator",
+      });
 
       const { data: jobRow, error: jobErr } = await supabaseAdmin
         .from("jobs")
@@ -1616,7 +1622,13 @@ router.post("/ai/restyle", async (req, res, next) => {
         );
       }
 
-      await assertJobLimits({ supabaseAdmin, httpError, ownerId: user.id, kind: "image" });
+      await assertJobLimits({
+        supabaseAdmin,
+        httpError,
+        ownerId: user.id,
+        kind: "image",
+        tool: "restyler",
+      });
 
       const { data: jobRow, error: jobErr } = await supabaseAdmin
         .from("jobs")

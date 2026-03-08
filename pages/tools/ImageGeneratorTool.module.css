@@ -44,6 +44,8 @@
   background-color: var(--void-bg);
   color: var(--text-main);
   font-family: var(--sans);
+  isolation: isolate;
+  transform: translateZ(0);
 }
 
 /* --- ANIMATED COSMOS BACKGROUND --- */

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invalidateMyAssetsCache } from "../services/assetsApi";
 import { waitJobCompletion } from "../services/jobsApi";
 import type { AsyncImageJobHooks } from "../services/geminiService";
@@ -77,11 +77,12 @@ function buildSlots(jobs: PendingImageToolJob[], localPendingCount: number) {
     Array.from({ length: Math.max(1, Number(job.pendingSlotsCount) || 1) }, (_, i) => `pending-${job.jobId}-${i}`)
   );
 
-  if (!storageSlots.length && localPendingCount > 0) {
-    return Array.from({ length: localPendingCount }, (_, i) => `pending-local-${i}`);
-  }
+  const localSlots = Array.from(
+    { length: Math.max(0, Number(localPendingCount) || 0) },
+    (_, i) => `pending-local-${i}`
+  );
 
-  return storageSlots;
+  return [...storageSlots, ...localSlots];
 }
 
 export function usePendingImageToolJobs({ userId, tool, onCompleted, onError }: UsePendingImageToolJobsArgs) {
@@ -93,10 +94,26 @@ export function usePendingImageToolJobs({ userId, tool, onCompleted, onError }: 
     setStorageTick((x) => x + 1);
   }, []);
 
-  const jobs = useMemo(() => {
+  useEffect(() => {
+    if (!userId) return;
+
+    const onStorage = (e: StorageEvent) => {
+      if (e.key && e.key !== storageKey(userId)) return;
+      refresh();
+    };
+
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [userId, refresh]);
+
+  const allJobs = useMemo(() => {
     if (!userId) return [];
-    return readPendingJobs(userId).filter((x) => x.tool === tool);
-  }, [userId, tool, storageTick]);
+    return readPendingJobs(userId);
+  }, [userId, storageTick]);
+
+  const jobs = useMemo(() => {
+    return allJobs.filter((x) => x.tool === tool);
+  }, [allJobs, tool]);
 
   const pendingSlots = useMemo(() => buildSlots(jobs, localPendingCount), [jobs, localPendingCount]);
 
@@ -185,5 +202,7 @@ export function usePendingImageToolJobs({ userId, tool, onCompleted, onError }: 
     makeAsyncHooks,
     resumePendingJobs,
     hasPending: pendingSlots.length > 0,
+    activeToolJobsCount: jobs.length,
+    activeGlobalJobsCount: allJobs.length,
   };
 }

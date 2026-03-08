@@ -440,7 +440,7 @@ export function createAssetsRouter(ctx) {
       if (visibleEntitledAssetIds.length > 0) {
         let purchasedQ = supabaseAdmin
           .from("assets")
-          .select("id, url, storage_path, type, name, prompt, created_at, owner_id, is_public, meta, likes_count, comments_count")
+          .select("id, url, storage_path, type, tool, name, prompt, created_at, owner_id, is_public, meta, likes_count, comments_count")
           .in("id", visibleEntitledAssetIds);
 
         if (type) purchasedQ = purchasedQ.eq("type", type);
@@ -467,7 +467,7 @@ export function createAssetsRouter(ctx) {
     } else {
       let q = supabaseAdmin
         .from("assets")
-        .select("id, url, storage_path, type, name, prompt, created_at, owner_id, is_public, meta, likes_count, comments_count")
+        .select("id, url, storage_path, type, tool, name, prompt, created_at, owner_id, is_public, meta, likes_count, comments_count")
         .order("created_at", { ascending: false })
         .limit(limit);
 

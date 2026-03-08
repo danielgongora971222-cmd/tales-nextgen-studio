@@ -57,6 +57,91 @@ const REF_TOOL_ID = "image-generator-ref";
 const PREFILL_KEY = "tales.prefill.imageGenerator";
 const PREFILL_EVENT = "tales:prefill-image-generator";
 
+const DRAFT_STORAGE_PREFIX = "tales.imageGenerator.draft.v1";
+
+type ImageGeneratorDraftV1 = {
+  v: 1;
+  prompt: string;
+  model: string;
+  aspectRatio: string;
+  quality: Quality;
+  count: number;
+  gridMode: string;
+  googleSearchGrounding: boolean;
+  selectedStyleId: string | null;
+  refs: {
+    char1: Asset | null;
+    char2: Asset | null;
+    char3: Asset | null;
+    background: Asset | null;
+  };
+  externalElements: ElementItem[];
+  selectedElementAssetIds: string[];
+};
+
+function draftStorageKey(userId: string) {
+  return `${DRAFT_STORAGE_PREFIX}:${userId}`;
+}
+
+function normalizeStoredAsset(raw: any, fallbackOwnerId: string): Asset | null {
+  if (!raw || typeof raw !== "object") return null;
+
+  const id = typeof raw.id === "string" ? raw.id : "";
+  const url = typeof raw.url === "string" ? raw.url : "";
+  if (!id || !url) return null;
+
+  return {
+    id,
+    url,
+    type: "image",
+    name: typeof raw.name === "string" ? raw.name : "Asset",
+    tool: typeof raw.tool === "string" ? raw.tool : undefined,
+    prompt: typeof raw.prompt === "string" ? raw.prompt : undefined,
+    meta: raw.meta && typeof raw.meta === "object" ? raw.meta : undefined,
+    createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
+    ownerId: typeof raw.ownerId === "string" && raw.ownerId ? raw.ownerId : fallbackOwnerId,
+    isPublic: Boolean(raw.isPublic),
+    accessSource:
+      raw.accessSource === "owned" || raw.accessSource === "purchased" || raw.accessSource === "public"
+        ? raw.accessSource
+        : undefined,
+    acquiredAt: typeof raw.acquiredAt === "number" ? raw.acquiredAt : undefined,
+    sourceListingId: typeof raw.sourceListingId === "string" ? raw.sourceListingId : null,
+    likedByMe: Boolean(raw.likedByMe),
+    likesCount: Number.isFinite(Number(raw.likesCount)) ? Number(raw.likesCount) : 0,
+    commentsCount: Number.isFinite(Number(raw.commentsCount)) ? Number(raw.commentsCount) : 0,
+    likes: Array.isArray(raw.likes) ? raw.likes : [],
+    comments: Array.isArray(raw.comments) ? raw.comments : [],
+  };
+}
+
+function normalizeStoredElementItem(raw: any): ElementItem | null {
+  if (!raw || typeof raw !== "object") return null;
+
+  const id = typeof raw.id === "string" ? raw.id : "";
+  const url = typeof raw.url === "string" ? raw.url : "";
+  if (!id || !url) return null;
+
+  return {
+    id,
+    url,
+    name: typeof raw.name === "string" && raw.name.trim() ? raw.name : "Element",
+    createdAt:
+      typeof raw.createdAt === "number" || typeof raw.createdAt === "string"
+        ? raw.createdAt
+        : Date.now(),
+    previewUrl: typeof raw.previewUrl === "string" ? raw.previewUrl : url,
+  };
+}
+
+function nextPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => resolve());
+    });
+  });
+}
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function getStatus(err: any): number | null {
@@ -994,21 +1079,26 @@ useEffect(() => {
 
   const [viewer, setViewer] = useState<Asset | null>(null);
 
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [pendingSlots, setPendingSlots] = useState<string[]>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const draftLoadedRef = useRef(false);
 
   const {
-    pendingSlots: persistedPendingSlots,
+    pendingSlots,
     startLocalPending,
     clearLocalPending,
     makeAsyncHooks,
     resumePendingJobs,
+    activeToolJobsCount,
+    activeGlobalJobsCount,
   } = usePendingImageToolJobs({
     userId: user?.id || null,
     tool: TOOL_ID,
     onCompleted: reloadHistory,
     onError: (error: any) => setError(error?.message || "No se pudo reanudar una generación pendiente."),
   });
+
+  const toolLimitReached = activeToolJobsCount >= 2;
+  const totalLimitReached = activeGlobalJobsCount >= 4;
   const [error, setError] = useState<string | null>(null);
     // Cache de dimensiones por imagen (para layout del historial y viewer responsive)
   const [imgDims, setImgDims] = useState<Record<string, { w: number; h: number }>>({});
@@ -1159,11 +1249,6 @@ useEffect(() => {
   useEffect(() => {
     void resumePendingJobs();
   }, [resumePendingJobs]);
-
-  useEffect(() => {
-    setPendingSlots(persistedPendingSlots);
-    setIsGenerating(persistedPendingSlots.length > 0);
-  }, [persistedPendingSlots]);
 
     useEffect(() => {
     const readPrefill = () => {
@@ -1325,6 +1410,122 @@ useEffect(() => {
     setPendingExternalPrefill(null);
     window.localStorage.removeItem(PREFILL_KEY);
   }, [pendingExternalPrefill, isLoadingHistory, user?.id]);
+
+    useEffect(() => {
+    if (!user?.id) {
+      draftLoadedRef.current = false;
+      return;
+    }
+
+    if (draftLoadedRef.current) return;
+    if (isLoadingHistory) return;
+    if (pendingExternalPrefill) return;
+
+    // Si entramos desde "Reuse recipe", NO restauramos un draft viejo.
+    if (prefillAppliedRef.current) {
+      draftLoadedRef.current = true;
+      return;
+    }
+
+    const raw = window.localStorage.getItem(draftStorageKey(user.id));
+    const parsed = raw ? safeJsonParse(raw) : null;
+
+    if (parsed?.v === 1) {
+      const draft = parsed as ImageGeneratorDraftV1;
+
+      setPrompt(typeof draft.prompt === "string" ? draft.prompt : "");
+
+      if (typeof draft.model === "string" && draft.model.trim()) {
+        setModel(draft.model as GeminiModel);
+      }
+
+      if (typeof draft.aspectRatio === "string" && draft.aspectRatio.trim()) {
+        setAspectRatio(draft.aspectRatio);
+      }
+
+      if (draft.quality === "" || draft.quality === "1K" || draft.quality === "2K" || draft.quality === "4K") {
+        setQuality(draft.quality);
+      }
+
+      if (Number.isFinite(Number(draft.count))) {
+        setCount(Math.max(1, Math.min(4, Number(draft.count))));
+      }
+
+      if (typeof draft.gridMode === "string" && draft.gridMode.trim()) {
+        setGridMode(draft.gridMode);
+      }
+
+      setGoogleSearchGrounding(Boolean(draft.googleSearchGrounding));
+      setSelectedStyleId(typeof draft.selectedStyleId === "string" ? draft.selectedStyleId : null);
+
+      setRefs({
+        char1: normalizeStoredAsset(draft.refs?.char1, user.id),
+        char2: normalizeStoredAsset(draft.refs?.char2, user.id),
+        char3: normalizeStoredAsset(draft.refs?.char3, user.id),
+        background: normalizeStoredAsset(draft.refs?.background, user.id),
+      });
+
+      const restoredExternalElements = Array.isArray(draft.externalElements)
+        ? (draft.externalElements.map(normalizeStoredElementItem).filter(Boolean) as ElementItem[])
+        : [];
+
+      setExternalElements(restoredExternalElements);
+
+      setSelectedElementAssetIds(
+        Array.isArray(draft.selectedElementAssetIds)
+          ? draft.selectedElementAssetIds.filter((id): id is string => typeof id === "string").slice(0, 5)
+          : []
+      );
+    }
+
+    draftLoadedRef.current = true;
+  }, [user?.id, isLoadingHistory, pendingExternalPrefill]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    if (!draftLoadedRef.current) return;
+
+    const payload: ImageGeneratorDraftV1 = {
+      v: 1,
+      prompt,
+      model,
+      aspectRatio,
+      quality,
+      count,
+      gridMode,
+      googleSearchGrounding,
+      selectedStyleId,
+      refs: {
+        char1: refs.char1,
+        char2: refs.char2,
+        char3: refs.char3,
+        background: refs.background,
+      },
+      externalElements,
+      selectedElementAssetIds: (selectedElementAssetIds || []).slice(0, 5),
+    };
+
+    const t = window.setTimeout(() => {
+      try {
+        window.localStorage.setItem(draftStorageKey(user.id), JSON.stringify(payload));
+      } catch {}
+    }, 250);
+
+    return () => window.clearTimeout(t);
+  }, [
+    user?.id,
+    prompt,
+    model,
+    aspectRatio,
+    quality,
+    count,
+    gridMode,
+    googleSearchGrounding,
+    selectedStyleId,
+    refs,
+    externalElements,
+    selectedElementAssetIds,
+  ]);
 
   const hasMoreHistory = visibleHistory.length < history.length;
 
@@ -2181,12 +2382,22 @@ const promptReferences: PromptReference[] = useMemo(() => {
 
     const requestedCount = Math.max(1, Math.min(4, Number(count) || 1));
 
-    setIsGenerating(true);
+    if (toolLimitReached) {
+      setError("Ya tienes 2 generaciones activas en Image Generator. Espera a que termine una antes de lanzar otra.");
+      return;
+    }
+
+    if (totalLimitReached) {
+      setError("Ya tienes 4 generaciones de imagen activas en total. Espera a que termine una antes de seguir.");
+      return;
+    }
+
+    setIsSubmitting(true);
     startLocalPending(requestedCount);
-    setPendingSlots(Array.from({ length: requestedCount }, (_, i) => `pending-local-${Date.now()}-${i}`));
     setError(null);
 
     try {
+      await nextPaint();
       // IDs para backend
       const characterAssetIds = [refs.char1?.id, refs.char2?.id, refs.char3?.id].filter(Boolean) as string[];
       const backgroundAssetId = refs.background?.id;
@@ -2323,11 +2534,8 @@ const promptReferences: PromptReference[] = useMemo(() => {
     } catch (e: any) {
       setError(e?.message || "Failed to generate image.");
     } finally {
-      setIsGenerating(false);
+      setIsSubmitting(false);
       clearLocalPending();
-      if (!persistedPendingSlots.length) {
-        setPendingSlots([]);
-      }
     }
   }
 
@@ -2447,8 +2655,43 @@ const promptReferences: PromptReference[] = useMemo(() => {
     const finalElementIds = storedRefs.elementIds;
     const bgId = storedRefs.backgroundId;
 
-    const findAsset = (id: unknown) =>
-      typeof id === "string" ? myAssets.find((a) => a.id === id) || null : null;
+    const tempRefsById = new Map<string, Asset>();
+
+    for (const r of [refs.char1, refs.char2, refs.char3, refs.background]) {
+      if (r?.id) tempRefsById.set(r.id, r);
+    }
+
+    for (const el of externalElements || []) {
+      if (!el?.id || !(el.previewUrl || el.url)) continue;
+
+      tempRefsById.set(el.id, {
+        id: el.id,
+        url: el.previewUrl || el.url,
+        type: "image",
+        name: el.name || "Element",
+        tool: "element-library",
+        prompt: raw,
+        createdAt: typeof el.createdAt === "number" ? el.createdAt : Date.now(),
+        ownerId: String(user?.id || ""),
+        isPublic: false,
+        likedByMe: false,
+        likesCount: 0,
+        commentsCount: 0,
+        likes: [],
+        comments: [],
+      });
+    }
+
+    const findAsset = (id: unknown) => {
+      if (typeof id !== "string") return null;
+
+      return (
+        myAssets.find((a) => a.id === id) ||
+        purchasedAssets.find((a) => a.id === id) ||
+        tempRefsById.get(id) ||
+        null
+      );
+    };
 
     const c1 = findAsset(charIds[0]);
     const c2 = findAsset(charIds[1]);
@@ -2457,7 +2700,28 @@ const promptReferences: PromptReference[] = useMemo(() => {
 
     setRefs({ char1: c1, char2: c2, char3: c3, background: bg });
 
-    // restaurar Elements (global)
+    const restoredExternalElements: ElementItem[] = finalElementIds
+      .map((id) => findAsset(id))
+      .filter((a): a is Asset => Boolean(a))
+      .map((a, idx) => ({
+        id: a.id,
+        name: a.name || `Element_${idx + 1}`,
+        createdAt: a.createdAt || Date.now(),
+        url: a.url,
+        previewUrl: a.url,
+      }));
+
+    if (restoredExternalElements.length) {
+      setExternalElements((prev) => {
+        const byId = new Map<string, ElementItem>();
+        for (const el of restoredExternalElements) byId.set(el.id, el);
+        for (const el of prev) {
+          if (!byId.has(el.id)) byId.set(el.id, el);
+        }
+        return Array.from(byId.values()).slice(0, 5);
+      });
+    }
+
     setSelectedElementAssetIds(
       finalElementIds.filter((id): id is string => typeof id === "string").slice(0, 5)
     );
@@ -2883,18 +3147,32 @@ const promptReferences: PromptReference[] = useMemo(() => {
               <button
                 type="button"
                 className={styles.generateBtn}
-                disabled={isGenerating || !prompt.trim()}
+                disabled={isSubmitting || !prompt.trim() || toolLimitReached || totalLimitReached}
                 onClick={() => {
                   void handleGenerate();
                 }}
-                data-loading={isGenerating ? "true" : "false"}
+                data-loading={isSubmitting ? "true" : "false"}
+                title={
+                  toolLimitReached
+                    ? "Límite por herramienta: 2 generaciones activas."
+                    : totalLimitReached
+                      ? "Límite global: 4 generaciones de imagen activas."
+                      : undefined
+                }
               >
-                  <span className={styles.generateLabel}>{isGenerating ? "GENERATING" : "GENERATE"}</span>
-                  {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
+                  <span className={styles.generateLabel}>{isSubmitting ? "GENERATING" : "GENERATE"}</span>
+                  {isSubmitting && <span className={styles.generateSpinner} aria-hidden="true" />}
                 </button>
                 <div style={{ marginTop: 8, fontSize: 12, color: "rgba(255,255,255,0.65)", textAlign: "center" }}>
                   Coste estimado: <b>{estimatedCostCredits}</b> créditos
                 </div>
+                {(toolLimitReached || totalLimitReached) && (
+                  <div style={{ marginTop: 6, fontSize: 11, color: "rgba(255,220,220,0.82)", textAlign: "center" }}>
+                    {toolLimitReached
+                      ? "Máximo 2 generaciones activas en esta herramienta."
+                      : "Máximo 4 generaciones de imagen activas en total."}
+                  </div>
+                )}
             </div>
           </div>
 

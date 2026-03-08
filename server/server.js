@@ -2691,7 +2691,13 @@ app.post("/api/ai/faceswap/mannequin", async (req, res, next) => {
     const wantsAsync = !wantsSync;
 
     if (wantsAsync) {
-      await assertJobLimits({ supabaseAdmin, httpError, ownerId: user.id, kind: "image" });
+      await assertJobLimits({
+        supabaseAdmin,
+        httpError,
+        ownerId: user.id,
+        kind: "image",
+        tool: "faceswap",
+      });
 
       const { data: jobRow, error: jobErr } = await supabaseAdmin
         .from("jobs")
@@ -2851,7 +2857,13 @@ app.post("/api/ai/faceswap/insert", async (req, res, next) => {
   const wantsAsync = !wantsSync;
 
   if (wantsAsync) {
-    await assertJobLimits({ supabaseAdmin, httpError, ownerId: user.id, kind: "image" });
+    await assertJobLimits({
+      supabaseAdmin,
+      httpError,
+      ownerId: user.id,
+      kind: "image",
+      tool: "faceswap",
+    });
 
     const { data: jobRow, error: jobErr } = await supabaseAdmin
       .from("jobs")
@@ -3144,7 +3156,13 @@ app.post("/api/ai/upscale", async (req, res, next) => {
         );
       }
 
-      await assertJobLimits({ supabaseAdmin, httpError, ownerId: user.id, kind: "image" });
+      await assertJobLimits({
+        supabaseAdmin,
+        httpError,
+        ownerId: user.id,
+        kind: "image",
+        tool: "upscaler",
+      });
 
       const { data: jobRow, error: jobErr } = await supabaseAdmin
         .from("jobs")
