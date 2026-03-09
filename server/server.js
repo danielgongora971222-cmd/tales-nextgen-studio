@@ -120,8 +120,28 @@ async function waitForActiveWorkerHeartbeat(kind, { timeoutMs = 25_000, probeEve
 }
 
 async function ensureAsyncWorkerReadyOrThrow(kind, opts) {
-  const isReady = await waitForActiveWorkerHeartbeat(kind, opts);
-  if (isReady) return;
+  const enforceHeartbeat =
+    String(process.env.ENFORCE_WORKER_HEARTBEAT || "").trim() === "1";
+
+  try {
+    const isReady = await waitForActiveWorkerHeartbeat(kind, opts);
+    if (isReady) return true;
+
+    if (!enforceHeartbeat) {
+      console.warn(
+        `[workerHeartbeat] no active heartbeat for kind=${kind}; allowing async enqueue in advisory mode`
+      );
+      return false;
+    }
+  } catch (err) {
+    if (!enforceHeartbeat) {
+      console.warn(
+        `[workerHeartbeat] readiness check failed for kind=${kind}; allowing async enqueue in advisory mode:`,
+        String(err?.message || err)
+      );
+      return false;
+    }
+  }
 
   throw httpError(
     503,
