@@ -163,7 +163,7 @@ const MyCreations: React.FC = () => {
     <div className={styles.root}>
       <div className={styles.header}>
         <div>
-          <span className={styles.kicker}>MY CREATIONS</span>
+          <span className={styles.kicker}>MY ASSETS</span>
           <h1 className={styles.title}>Historial</h1>
         </div>
         <span className={styles.count}>{assets.length}</span>

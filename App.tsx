@@ -1,34 +1,32 @@
-import React, { useState, useEffect, useRef } from "react";
-import Layout from './components/Layout';
-import Home from './pages/Home';
-import Login from './pages/Login';
-import Landing from "./pages/Landing";
-import ImageGenHub from './pages/ImageGenHub';
-import VideoGenHub from './pages/VideoGenHub';
-import MyCreations from './pages/MyCreations';
-import Store from './pages/Store';
-import CommunityStore from './pages/CommunityStore';
-import MyTrades from './pages/MyTrades';
+import React, { useEffect, useMemo, useState } from "react";
+import Layout from "./components/Layout";
+import Home from "./pages/Home";
+import ImageGenHub from "./pages/ImageGenHub";
+import VideoGenHub from "./pages/VideoGenHub";
+import MyCreations from "./pages/MyCreations";
+import Store from "./pages/Store";
+import CommunityStore from "./pages/CommunityStore";
+import MyTrades from "./pages/MyTrades";
 import SellListingModal from "./components/SellListingModal";
 import type { Asset } from "./types";
-import ImageGeneratorTool from './pages/tools/ImageGeneratorTool';
+import ImageGeneratorTool from "./pages/tools/ImageGeneratorTool";
 import Profile from "./pages/Profile";
-import RestylerTool from './pages/tools/RestylerTool';
-import LightroomTool from './pages/tools/LightroomTool';
-import FaceSwapTool from './pages/tools/FaceSwapTool';
-import UpscalerTool from './pages/tools/UpscalerTool';
-import EditorTool from './pages/tools/EditorTool';
-import CameraAnglesTool from './pages/tools/CameraAnglesTool';
-import CollageTool from './pages/tools/CollageTool';
-import EditVideoTool from './pages/tools/EditVideoTool';
-import IngredientsToVideoTool from './pages/tools/IngredientsToVideoTool';
-import ExtendVideoTool from './pages/tools/ExtendVideoTool';
-import MotionControlTool from './pages/tools/MotionControlTool';
-import VideoGeneratorTool from './pages/tools/VideoGeneratorTool';
-import Background3D from './components/Background3D';
-import { AppRoute } from './types';
-import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { GenerationQueueProvider } from './contexts/GenerationQueueContext';
+import RestylerTool from "./pages/tools/RestylerTool";
+import LightroomTool from "./pages/tools/LightroomTool";
+import FaceSwapTool from "./pages/tools/FaceSwapTool";
+import UpscalerTool from "./pages/tools/UpscalerTool";
+import EditorTool from "./pages/tools/EditorTool";
+import CameraAnglesTool from "./pages/tools/CameraAnglesTool";
+import CollageTool from "./pages/tools/CollageTool";
+import EditVideoTool from "./pages/tools/EditVideoTool";
+import IngredientsToVideoTool from "./pages/tools/IngredientsToVideoTool";
+import ExtendVideoTool from "./pages/tools/ExtendVideoTool";
+import MotionControlTool from "./pages/tools/MotionControlTool";
+import VideoGeneratorTool from "./pages/tools/VideoGeneratorTool";
+import Background3D from "./components/Background3D";
+import { AppRoute } from "./types";
+import { AuthProvider, useAuth } from "./contexts/AuthContext";
+import { GenerationQueueProvider } from "./contexts/GenerationQueueContext";
 import { apiUrl } from "./services/apiBase";
 import Paywall from "./pages/Paywall";
 import { billingMe } from "./services/billingApi";
@@ -36,9 +34,18 @@ import { WalletProvider } from "@/contexts/WalletContext";
 import InsufficientCreditsModal from "@/components/InsufficientCreditsModal";
 import PlanRequiredModal from "@/components/PlanRequiredModal";
 import { EVENT_INSUFFICIENT_CREDITS, EVENT_PLAN_REQUIRED } from "@/services/appEvents";
+import EarnMoney from "./pages/EarnMoney";
+import ReelFeed from "./pages/ReelFeed";
+
+const PUBLIC_ROUTES = new Set<AppRoute>([
+  AppRoute.HOME,
+  AppRoute.COMMUNITY_STORE,
+  AppRoute.REEL_FEED,
+]);
 
 const AppContent: React.FC = () => {
   const [route, setRoute] = useState<AppRoute>(AppRoute.HOME);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
 
   const [storePrefill, setStorePrefill] = useState<{ asset?: any | null }>({ asset: null });
   const [upscalerPrefill, setUpscalerPrefill] = useState<any | null>(null);
@@ -60,21 +67,18 @@ const AppContent: React.FC = () => {
   const [planRequiredMessage, setPlanRequiredMessage] = useState<string | null>(null);
 
   const { user, isLoading: authLoading } = useAuth();
-
-  // 👇 Controla qué ve el usuario NO logeado: primero Landing, luego Login si toca cualquier botón
-  const [unauthView, setUnauthView] = useState<"landing" | "login">("landing");
-  const prevUserRef = useRef<typeof user>(null);
-
-  // Si venías logeado y te deslogueas => volver a Landing como primera pantalla
-  useEffect(() => {
-    const prev = prevUserRef.current;
-    if (prev && !user) {
-      setUnauthView("landing");
-    }
-    prevUserRef.current = user;
-  }, [user]);
-
   const healthUrl = apiUrl("/api/health");
+
+  const navigate = useMemo(
+    () => (nextRoute: AppRoute) => {
+      if (!user && !PUBLIC_ROUTES.has(nextRoute)) {
+        setAuthModalOpen(true);
+        return;
+      }
+      setRoute(nextRoute);
+    },
+    [user]
+  );
 
   useEffect(() => {
     async function checkBackend() {
@@ -83,8 +87,6 @@ const AppContent: React.FC = () => {
         const data = await resp.json();
 
         setCapabilities(data?.capabilities || null);
-
-        // Backend “OK” si responde y tiene Supabase server-side configurado (imprescindible)
         const ok = Boolean(resp.ok && data?.ok && data?.capabilities?.supabase);
         setBackendOk(ok);
       } catch {
@@ -95,90 +97,104 @@ const AppContent: React.FC = () => {
       }
     }
     checkBackend();
+  }, [healthUrl]);
+
+  useEffect(() => {
+    const onOpenStore = (ev: any) => {
+      const asset = ev?.detail?.asset || null;
+      setStorePrefill({ asset });
+      navigate(AppRoute.STORE);
+    };
+
+    window.addEventListener("tales:open-store", onOpenStore as any);
+    return () => window.removeEventListener("tales:open-store", onOpenStore as any);
+  }, [navigate]);
+
+  useEffect(() => {
+    const onOpenSell = (ev: any) => {
+      if (!user) {
+        setAuthModalOpen(true);
+        return;
+      }
+
+      const asset = (ev?.detail?.asset || null) as Asset | null;
+      const hasExistingListing = Boolean((asset as any)?.communityListing?.id);
+
+      if (!hasExistingListing && !subscription?.canSell) {
+        setPlanRequiredMessage("Para publicar y vender en Community Store necesitas un plan Pro o superior activo.");
+        setPlanRequiredOpen(true);
+        return;
+      }
+
+      setSellAsset(asset);
+      setSellOpen(true);
+    };
+
+    window.addEventListener("tales:open-sell", onOpenSell as any);
+    return () => window.removeEventListener("tales:open-sell", onOpenSell as any);
+  }, [subscription?.canSell, user?.id]);
+
+  useEffect(() => {
+    const handler = (ev: any) => {
+      setInsufficientDetails(ev?.detail || null);
+      setInsufficientOpen(true);
+    };
+
+    window.addEventListener(EVENT_INSUFFICIENT_CREDITS, handler as any);
+    return () => window.removeEventListener(EVENT_INSUFFICIENT_CREDITS, handler as any);
   }, []);
 
   useEffect(() => {
-  const onOpenStore = (ev: any) => {
-    const asset = ev?.detail?.asset || null;
-    setStorePrefill({ asset });
-    setRoute(AppRoute.STORE);
-  };
-
-  window.addEventListener("tales:open-store", onOpenStore as any);
-  return () => window.removeEventListener("tales:open-store", onOpenStore as any);
-}, []);
-
-useEffect(() => {
-  const onOpenSell = (ev: any) => {
-    const asset = (ev?.detail?.asset || null) as Asset | null;
-    const hasExistingListing = Boolean((asset as any)?.communityListing?.id);
-
-    // Si no tiene listing todavía y no tiene permiso seller, no abrimos el modal de venta:
-    // abrimos directo el modal de planes.
-    if (!hasExistingListing && !subscription?.canSell) {
-      setPlanRequiredMessage("Para publicar y vender en Community Store necesitas un plan Pro o superior activo.");
+    const handler = (ev: any) => {
+      const msg = ev?.detail?.message ? String(ev.detail.message) : "Para comenzar a generar, necesitas un plan activo.";
+      setPlanRequiredMessage(msg);
       setPlanRequiredOpen(true);
-      return;
-    }
+    };
 
-    setSellAsset(asset);
-    setSellOpen(true);
-  };
+    window.addEventListener(EVENT_PLAN_REQUIRED, handler as any);
+    return () => window.removeEventListener(EVENT_PLAN_REQUIRED, handler as any);
+  }, []);
 
-  window.addEventListener("tales:open-sell", onOpenSell as any);
-  return () => window.removeEventListener("tales:open-sell", onOpenSell as any);
-}, [subscription?.canSell]);
+  useEffect(() => {
+    let alive = true;
 
-useEffect(() => {
-  const handler = (ev: any) => {
-    setInsufficientDetails(ev?.detail || null);
-    setInsufficientOpen(true);
-  };
+    (async () => {
+      if (!user) {
+        setSubscription(null);
+        setBillingChecked(true);
+        return;
+      }
 
-  window.addEventListener(EVENT_INSUFFICIENT_CREDITS, handler as any);
-  return () => window.removeEventListener(EVENT_INSUFFICIENT_CREDITS, handler as any);
-}, []);
+      setBillingChecked(false);
+      try {
+        const sub = await billingMe();
+        if (!alive) return;
+        setSubscription(sub || null);
+      } catch {
+        if (!alive) return;
+        setSubscription(null);
+      } finally {
+        if (!alive) return;
+        setBillingChecked(true);
+      }
+    })();
 
-useEffect(() => {
-  const handler = (ev: any) => {
-    const msg = ev?.detail?.message ? String(ev.detail.message) : "Para comenzar a generar, necesitas un plan activo.";
-    setPlanRequiredMessage(msg);
-    setPlanRequiredOpen(true);
-  };
+    return () => {
+      alive = false;
+    };
+  }, [user?.id]);
 
-  window.addEventListener(EVENT_PLAN_REQUIRED, handler as any);
-  return () => window.removeEventListener(EVENT_PLAN_REQUIRED, handler as any);
-}, []);
-
-useEffect(() => {
-  let alive = true;
-
-  (async () => {
-    // Si NO hay usuario, no hay que chequear plan:
+  useEffect(() => {
     if (!user) {
-      setSubscription(null);
-      setBillingChecked(true); // importante: no bloquear la landing/login
+      setAuthModalOpen(false);
+      if (!PUBLIC_ROUTES.has(route)) {
+        setRoute(AppRoute.HOME);
+      }
       return;
     }
 
-    setBillingChecked(false);
-    try {
-      const sub = await billingMe(); // null si no hay plan activo
-      if (!alive) return;
-      setSubscription(sub || null);
-    } catch {
-      if (!alive) return;
-      setSubscription(null);
-    } finally {
-      if (!alive) return;
-      setBillingChecked(true);
-    }
-  })();
-
-  return () => {
-    alive = false;
-  };
-}, [user?.id]);
+    setAuthModalOpen(false);
+  }, [user?.id, route]);
 
   const handleConnect = async () => {
     setChecking(true);
@@ -187,7 +203,6 @@ useEffect(() => {
       const data = await resp.json();
 
       setCapabilities(data?.capabilities || null);
-
       const ok = Boolean(resp.ok && data?.ok && data?.capabilities?.supabase);
       setBackendOk(ok);
     } catch {
@@ -198,34 +213,43 @@ useEffect(() => {
     }
   };
 
+  const routeWithReset = (nextRoute: AppRoute) => {
+    setStorePrefill({ asset: null });
+    navigate(nextRoute);
+  };
+
   const renderPage = () => {
     switch (route) {
       case AppRoute.HOME:
-        return <Home onNavigate={(r) => { setStorePrefill({ asset: null }); setRoute(r); }} />;
+        return <Home onNavigate={routeWithReset} />;
 
       case AppRoute.STORE:
         return (
           <Store
-            onNavigate={(r) => { setStorePrefill({ asset: null }); setRoute(r); }}
+            onNavigate={routeWithReset}
             prefill={storePrefill}
             onRequestUpscale={(asset) => {
               setUpscalerPrefill(asset);
               setStorePrefill({ asset: null });
-              setRoute(AppRoute.TOOL_UPSCALER);
+              navigate(AppRoute.TOOL_UPSCALER);
             }}
           />
         );
 
       case AppRoute.COMMUNITY_STORE:
-        return <CommunityStore onNavigate={(r) => { setStorePrefill({ asset: null }); setRoute(r); }} />;
+        return <CommunityStore onNavigate={routeWithReset} />;
+
+      case AppRoute.REEL_FEED:
+        return <ReelFeed onNavigate={routeWithReset} />;
 
       case AppRoute.MY_TRADES:
-        return <MyTrades onNavigate={(r) => { setStorePrefill({ asset: null }); setRoute(r); }} />;
+        return <MyTrades onNavigate={routeWithReset} />;
 
-      
-      // Image Tools
+      case AppRoute.EARN_MONEY:
+        return <EarnMoney onNavigate={routeWithReset} />;
+
       case AppRoute.IMAGE_GEN_ROOT:
-        return <ImageGenHub onNavigate={setRoute} />;
+        return <ImageGenHub onNavigate={navigate} />;
       case AppRoute.TOOL_GENERATOR:
         return <ImageGeneratorTool />;
       case AppRoute.TOOL_RESTYLER:
@@ -244,7 +268,7 @@ useEffect(() => {
         return <CollageTool />;
 
       case AppRoute.VIDEO_GEN:
-        return <VideoGenHub onNavigate={setRoute} />;
+        return <VideoGenHub onNavigate={navigate} />;
 
       case AppRoute.TOOL_VIDEO_GENERATOR:
         return <VideoGeneratorTool />;
@@ -260,7 +284,6 @@ useEffect(() => {
         return <MyCreations />;
 
       case AppRoute.PAYWALL:
-        // My Account: Planes + Créditos extra (tabs)
         return (
           <Paywall
             onSubscribed={async () => {
@@ -277,7 +300,7 @@ useEffect(() => {
         );
 
       case AppRoute.PROFILE:
-        return <Profile onNavigate={(r) => { setStorePrefill({ asset: null }); setRoute(r); }} />;
+        return <Profile onNavigate={routeWithReset} />;
 
       case AppRoute.CHAT:
         return (
@@ -289,24 +312,27 @@ useEffect(() => {
           </div>
         );
       default:
-        return <Home onNavigate={setRoute} />;
+        return <Home onNavigate={navigate} />;
     }
   };
 
   if (checking || authLoading) {
     return (
       <div className="relative w-full h-screen bg-black text-white flex items-center justify-center">
-        <div className="absolute inset-0 z-0 opacity-50"><Background3D /></div>
+        <div className="absolute inset-0 z-0 opacity-50">
+          <Background3D />
+        </div>
         <div className="z-10 animate-pulse font-mono tracking-widest">INITIALIZING STUDIO...</div>
       </div>
     );
   }
 
-  // Backend Check Barrier (no bloquea por Gemini si hay otros providers; pero sí exige Supabase server-side)
   if (!backendOk) {
     return (
       <div className="relative w-full h-screen bg-black text-white overflow-hidden flex items-center justify-center font-sans">
-        <div className="absolute inset-0 z-0"><Background3D /></div>
+        <div className="absolute inset-0 z-0">
+          <Background3D />
+        </div>
         <div className="absolute inset-0 z-0 bg-gradient-to-b from-transparent via-black/50 to-black pointer-events-none" />
 
         <div className="relative z-10 p-8 max-w-md w-full glass-panel rounded-3xl border border-white/10 text-center shadow-2xl">
@@ -338,31 +364,27 @@ useEffect(() => {
     );
   }
 
-  // Unauth Barrier: primero Landing, y cualquier acción => Login
-  if (!user) {
-    if (unauthView === "landing") {
-      return <Landing onEnter={() => setUnauthView("login")} />;
-    }
-    return <Login />;
-  }
-
-
-  // 👇 desde aquí ya hay usuario
-
-  if (!billingChecked) {
+  if (user && !billingChecked) {
     return (
       <div className="relative w-full h-screen bg-black text-white flex items-center justify-center">
-        <div className="absolute inset-0 z-0 opacity-50"><Background3D /></div>
+        <div className="absolute inset-0 z-0 opacity-50">
+          <Background3D />
+        </div>
         <div className="z-10 animate-pulse font-mono tracking-widest">CHECKING PLAN...</div>
       </div>
     );
   }
 
-
   return (
     <GenerationQueueProvider>
       <WalletProvider>
-        <Layout currentRoute={route} onNavigate={setRoute}>
+        <Layout
+          currentRoute={route}
+          onNavigate={navigate}
+          authModalOpen={authModalOpen}
+          onOpenAuth={() => setAuthModalOpen(true)}
+          onCloseAuth={() => setAuthModalOpen(false)}
+        >
           {renderPage()}
         </Layout>
 
@@ -375,38 +397,38 @@ useEffect(() => {
           }}
         />
 
-      <InsufficientCreditsModal
-        open={insufficientOpen}
-        details={insufficientDetails}
-        onClose={() => setInsufficientOpen(false)}
-        onGoProfile={() => {
-          setInsufficientOpen(false);
-          window.localStorage.setItem("tales_account_tab", "credits");
-          setRoute(AppRoute.PAYWALL);
-        }}
-      />
+        <InsufficientCreditsModal
+          open={insufficientOpen}
+          details={insufficientDetails}
+          onClose={() => setInsufficientOpen(false)}
+          onGoProfile={() => {
+            setInsufficientOpen(false);
+            window.localStorage.setItem("tales_account_tab", "credits");
+            setRoute(AppRoute.PAYWALL);
+          }}
+        />
 
-      <PlanRequiredModal
-        open={planRequiredOpen}
-        message={planRequiredMessage}
-        onClose={() => setPlanRequiredOpen(false)}
-        onGoPlans={() => {
-          setPlanRequiredOpen(false);
-          window.localStorage.setItem("tales_account_tab", "plans");
-          setRoute(AppRoute.PAYWALL);
-        }}
-      />
+        <PlanRequiredModal
+          open={planRequiredOpen}
+          message={planRequiredMessage}
+          onClose={() => setPlanRequiredOpen(false)}
+          onGoPlans={() => {
+            setPlanRequiredOpen(false);
+            window.localStorage.setItem("tales_account_tab", "plans");
+            setRoute(AppRoute.PAYWALL);
+          }}
+        />
       </WalletProvider>
     </GenerationQueueProvider>
   );
 };
 
 const App: React.FC = () => {
-    return (
-        <AuthProvider>
-            <AppContent />
-        </AuthProvider>
-    );
-}
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
+  );
+};
 
 export default App;

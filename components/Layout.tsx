@@ -1,738 +1,479 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { AppRoute } from '../types';
-import GenerationQueueWidget from './GenerationQueueWidget';
-import Background3D from './Background3D';
-import { TOOLS_REGISTRY } from '../config/tools';
-import { VIDEO_TOOLS_REGISTRY } from '../config/videoTools';
-import { useAuth } from '../contexts/AuthContext';
-import OneNationUpIcon from "@/components/brand/OneNationUpIcon";
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  ArrowRightLeft,
+  ChevronRight,
+  CircleDollarSign,
+  Coins,
+  Crown,
+  Film,
+  FolderOpen,
+  Home,
+  ImageIcon,
+  Languages,
+  LogOut,
+  Menu,
+  Music2,
+  Plus,
+  Settings2,
+  Sparkles,
+  Video,
+  X,
+} from "lucide-react";
+import { AppRoute } from "../types";
+import GenerationQueueWidget from "./GenerationQueueWidget";
+import Background3D from "./Background3D";
+import { useAuth } from "../contexts/AuthContext";
 import { useWallet } from "../contexts/WalletContext";
 import BottomSheet from "./BottomSheet";
-import { emitMyCreationsFilter } from "../services/appEvents";
+import Login from "../pages/Login";
 
 interface LayoutProps {
   children: React.ReactNode;
   currentRoute: AppRoute;
   onNavigate: (route: AppRoute) => void;
+  authModalOpen: boolean;
+  onOpenAuth: () => void;
+  onCloseAuth: () => void;
 }
 
-const NavItem: React.FC<{
+function ActionButton({
+  label,
+  icon,
+  onClick,
+  primary = false,
+}: {
   label: string;
-  active: boolean;
-  icon: React.ReactNode;
+  icon?: React.ReactNode;
   onClick: () => void;
-  expanded?: boolean;
-}> = ({ label, active, icon, onClick, expanded }) => (
-  <button
-    onClick={onClick}
-    className={`w-full flex items-center gap-4 px-4 py-3 text-sm font-medium transition-all duration-300 rounded-xl group border ${
-      active
-        ? 'border-[rgba(241,225,148,0.40)] bg-[rgba(241,225,148,0.12)] text-white shadow-[0_0_22px_rgba(241,225,148,0.10)]'
-        : 'border-transparent text-white/55 hover:text-white hover:bg-[rgba(241,225,148,0.06)] hover:border-[rgba(241,225,148,0.18)]'
-    }`}
-  >
-    <span className="text-xl group-hover:scale-110 transition-transform">{icon}</span>
-    {expanded !== undefined ? (
-      <div className="flex-1 flex justify-between items-center">
-        <span className={`tracking-wide ${active ? 'font-bold' : ''}`}>{label}</span>
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className={`transition-transform duration-300 ${expanded ? 'rotate-180' : ''}`}
-        >
-          <path d="m6 9 6 6 6-6" />
-        </svg>
-      </div>
-    ) : (
-      <span className={`tracking-wide ${active ? 'font-bold' : ''}`}>{label}</span>
-    )}
-  </button>
-);
-
-const Layout: React.FC<LayoutProps> = ({ children, currentRoute, onNavigate }) => {
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [isMobile, setIsMobile] = useState(false);
-  const [sheetOpen, setSheetOpen] = useState(false);
-  const [sheetKind, setSheetKind] = useState<"image" | "video" | "creations" | null>(null);
-  const [imageMenuOpen, setImageMenuOpen] = useState(false);
-  const [videoMenuOpen, setVideoMenuOpen] = useState(false);
-  const [myCreationsMenuOpen, setMyCreationsMenuOpen] = useState(false);
-  const [imageMenuVisible, setImageMenuVisible] = useState(false);
-  const [videoMenuVisible, setVideoMenuVisible] = useState(false);
-  const [myCreationsMenuVisible, setMyCreationsMenuVisible] = useState(false);
-  const [imageFlyoutTop, setImageFlyoutTop] = useState<number | null>(null);
-  const [videoFlyoutTop, setVideoFlyoutTop] = useState<number | null>(null);
-  const [myCreationsFlyoutTop, setMyCreationsFlyoutTop] = useState<number | null>(null);
-  const { user, logout } = useAuth();
-  const { wallet, subscription, refresh: refreshWallet } = useWallet();
-
-  const sidebarRef = useRef<HTMLElement | null>(null);
-  const imageMenuTimer = useRef<number | null>(null);
-  const videoMenuTimer = useRef<number | null>(null);
-  const myCreationsMenuTimer = useRef<number | null>(null);
-
-  useEffect(() => {
-    const mq = window.matchMedia("(max-width: 768px)");
-    const apply = () => setIsMobile(mq.matches);
-    apply();
-
-    if (mq.addEventListener) mq.addEventListener("change", apply);
-    else mq.addListener(apply);
-
-    return () => {
-      if (mq.removeEventListener) mq.removeEventListener("change", apply);
-      else mq.removeListener(apply);
-    };
-  }, []);
-
-  const isImageTool =
-    TOOLS_REGISTRY.some((tool) => tool.route === currentRoute) || currentRoute === AppRoute.IMAGE_GEN_ROOT;
-
-  const isVideoTool =
-    VIDEO_TOOLS_REGISTRY.some((tool) => tool.route === currentRoute) || currentRoute === AppRoute.VIDEO_GEN;
-
-  // Si en tu rama Motion Control ya está dentro del desplegable de Image Gen,
-  // solo inyectamos "Edit Video" ahí. Si no está, agregamos ambos.
-  const hasMotionControlInImageMenu = TOOLS_REGISTRY.some(
-    (tool) => tool.id === 'motion-control' || tool.label.toLowerCase().includes('motion control')
+  primary?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={
+        "inline-flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-semibold transition md:px-4 md:text-sm " +
+        (primary
+          ? "border-[rgba(241,225,148,0.28)] bg-[rgba(241,225,148,0.14)] text-white hover:bg-[rgba(241,225,148,0.2)]"
+          : "border-white/10 bg-white/5 text-white/90 hover:bg-white/10")
+      }
+    >
+      {icon}
+      <span>{label}</span>
+    </button>
   );
+}
 
-  const myCreationsFilters = [
-    { key: 'all', label: 'Todos' },
-    { key: 'favorites', label: 'Favoritos' },
-    { key: 'image', label: 'Solo Imagen' },
-    { key: 'video', label: 'Solo Video' },
-    { key: 'lip-sync', label: 'Lip-Sync' },
-    { key: 'motion-control', label: 'Motion Control' },
-    { key: 'element', label: 'Element' },
-    { key: 'reference', label: 'Reference' },
-    { key: 'audio', label: 'Audio' },
-    { key: 'extras', label: 'Extras' }
-  ];
+function SidebarRow({
+  label,
+  value,
+  onClick,
+  right,
+}: {
+  label: string;
+  value?: string;
+  onClick?: () => void;
+  right?: React.ReactNode;
+}) {
+  const shared = "w-full rounded-[22px] border border-white/10 bg-white/[0.03] px-4 py-4 text-left transition hover:bg-white/[0.07]";
 
-  const activePlanName = subscription?.plan_name ? String(subscription.plan_name) : "Ninguno";
-  const availableCredits = Number(wallet?.generationCredits ?? 0);
-  const lowCredits = availableCredits <= 1000;
-  const creditsPulseClass = lowCredits
-    ? "bg-red-500 shadow-[0_0_14px_rgba(239,68,68,0.55)]"
-    : "bg-emerald-400 shadow-[0_0_14px_rgba(52,211,153,0.45)]";
-
-  // ✅ Sidebar colapsada: evita que se corte el número cuando hay 5+ dígitos.
-  // (Mostramos el número completo, ajustando solo el tamaño del texto.)
-  const creditsDigits = String(Math.max(0, Math.floor(availableCredits))).length;
-  const collapsedCreditsTextClass =
-    creditsDigits <= 4
-      ? "text-sm"
-      : creditsDigits === 5
-        ? "text-[13px]"
-        : creditsDigits === 6
-          ? "text-[12px]"
-          : creditsDigits === 7
-            ? "text-[11px]"
-            : "text-[10px]";
-
-  // Auto-collapse sidebar when clicking outside (matches your mock)
-  useEffect(() => {
-    function onPointerDown(ev: PointerEvent) {
-      if (!sidebarOpen) return;
-      const el = sidebarRef.current;
-      if (!el) return;
-      const target = ev.target as Node | null;
-      if (!target) return;
-      if (el.contains(target)) return;
-      setSidebarOpen(false);
-    }
-
-    document.addEventListener('pointerdown', onPointerDown);
-    return () => document.removeEventListener('pointerdown', onPointerDown);
-  }, [sidebarOpen]);
-  useEffect(() => {
-    return () => {
-      if (imageMenuTimer.current) window.clearTimeout(imageMenuTimer.current);
-      if (videoMenuTimer.current) window.clearTimeout(videoMenuTimer.current);
-      if (myCreationsMenuTimer.current) window.clearTimeout(myCreationsMenuTimer.current);
-    };
-  }, []);
-  useEffect(() => {
-    if (imageMenuOpen) {
-      setImageMenuVisible(true);
-      return;
-    }
-    if (imageMenuVisible) {
-      const timer = window.setTimeout(() => setImageMenuVisible(false), 200);
-      return () => window.clearTimeout(timer);
-    }
-  }, [imageMenuOpen, imageMenuVisible]);
-
-  useEffect(() => {
-    if (videoMenuOpen) {
-      setVideoMenuVisible(true);
-      return;
-    }
-    if (videoMenuVisible) {
-      const timer = window.setTimeout(() => setVideoMenuVisible(false), 200);
-      return () => window.clearTimeout(timer);
-    }
-  }, [videoMenuOpen, videoMenuVisible]);
-
-  useEffect(() => {
-    if (myCreationsMenuOpen) {
-      setMyCreationsMenuVisible(true);
-      return;
-    }
-    if (myCreationsMenuVisible) {
-      const timer = window.setTimeout(() => setMyCreationsMenuVisible(false), 200);
-      return () => window.clearTimeout(timer);
-    }
-  }, [myCreationsMenuOpen, myCreationsMenuVisible]);
-
-  const handleImageMenuEnter = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (imageMenuTimer.current) window.clearTimeout(imageMenuTimer.current);
-    if (videoMenuTimer.current) window.clearTimeout(videoMenuTimer.current);
-    if (myCreationsMenuTimer.current) window.clearTimeout(myCreationsMenuTimer.current);
-    const sidebarEl = sidebarRef.current;
-    if (sidebarEl) {
-      const itemRect = event.currentTarget.getBoundingClientRect();
-      const sidebarRect = sidebarEl.getBoundingClientRect();
-      setImageFlyoutTop(itemRect.top - sidebarRect.top);
-    }
-    setVideoMenuOpen(false);
-    setMyCreationsMenuOpen(false);
-    setImageMenuOpen(true);
-  };
-
-  const handleImageMenuLeave = () => {
-    if (imageMenuTimer.current) window.clearTimeout(imageMenuTimer.current);
-    imageMenuTimer.current = window.setTimeout(() => setImageMenuOpen(false), 700);
-  };
-
-  const handleVideoMenuEnter = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (videoMenuTimer.current) window.clearTimeout(videoMenuTimer.current);
-    if (imageMenuTimer.current) window.clearTimeout(imageMenuTimer.current);
-    if (myCreationsMenuTimer.current) window.clearTimeout(myCreationsMenuTimer.current);
-    const sidebarEl = sidebarRef.current;
-    if (sidebarEl) {
-      const itemRect = event.currentTarget.getBoundingClientRect();
-      const sidebarRect = sidebarEl.getBoundingClientRect();
-      setVideoFlyoutTop(itemRect.top - sidebarRect.top);
-    }
-    setImageMenuOpen(false);
-    setMyCreationsMenuOpen(false);
-    setVideoMenuOpen(true);
-  };
-
-  const handleVideoMenuLeave = () => {
-    if (videoMenuTimer.current) window.clearTimeout(videoMenuTimer.current);
-    videoMenuTimer.current = window.setTimeout(() => setVideoMenuOpen(false), 700);
-  };
-
-  const handleMyCreationsEnter = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (myCreationsMenuTimer.current) window.clearTimeout(myCreationsMenuTimer.current);
-    if (imageMenuTimer.current) window.clearTimeout(imageMenuTimer.current);
-    if (videoMenuTimer.current) window.clearTimeout(videoMenuTimer.current);
-    const sidebarEl = sidebarRef.current;
-    if (sidebarEl) {
-      const itemRect = event.currentTarget.getBoundingClientRect();
-      const sidebarRect = sidebarEl.getBoundingClientRect();
-      setMyCreationsFlyoutTop(itemRect.top - sidebarRect.top);
-    }
-    setImageMenuOpen(false);
-    setVideoMenuOpen(false);
-    setMyCreationsMenuOpen(true);
-  };
-
-  const handleMyCreationsLeave = () => {
-    if (myCreationsMenuTimer.current) window.clearTimeout(myCreationsMenuTimer.current);
-    myCreationsMenuTimer.current = window.setTimeout(() => setMyCreationsMenuOpen(false), 700);
-  };
+  if (!onClick) {
+    return (
+      <div className={shared}>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-sm font-semibold text-white">{label}</div>
+            {value ? <div className="mt-1 text-xs text-white/52">{value}</div> : null}
+          </div>
+          {right}
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="relative w-full h-screen overflow-hidden flex bg-black text-white font-sans selection:bg-white selection:text-black">
+    <button type="button" onClick={onClick} className={shared}>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold text-white">{label}</div>
+          {value ? <div className="mt-1 text-xs text-white/52">{value}</div> : null}
+        </div>
+        <div className="flex items-center gap-3 text-white/66">
+          {right}
+          <ChevronRight className="h-4 w-4" />
+        </div>
+      </div>
+    </button>
+  );
+}
+
+export default function Layout({
+  children,
+  currentRoute,
+  onNavigate,
+  authModalOpen,
+  onOpenAuth,
+  onCloseAuth,
+}: LayoutProps) {
+  const { user, logout } = useAuth();
+  const { wallet } = useWallet();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [createSheetOpen, setCreateSheetOpen] = useState(false);
+
+  useEffect(() => {
+    if (!user) {
+      setSidebarOpen(false);
+    }
+  }, [user?.id]);
+
+  const availableCredits = Number(wallet?.generationCredits ?? 0);
+  const isImageZone =
+    currentRoute === AppRoute.IMAGE_GEN_ROOT ||
+    currentRoute === AppRoute.TOOL_GENERATOR ||
+    currentRoute === AppRoute.TOOL_EDITOR ||
+    currentRoute === AppRoute.TOOL_RESTYLER ||
+    currentRoute === AppRoute.TOOL_LIGHTROOM ||
+    currentRoute === AppRoute.TOOL_FACESWAP ||
+    currentRoute === AppRoute.TOOL_UPSCALER ||
+    currentRoute === AppRoute.TOOL_ANGLES ||
+    currentRoute === AppRoute.TOOL_COLLAGE;
+
+  const isVideoZone =
+    currentRoute === AppRoute.VIDEO_GEN ||
+    currentRoute === AppRoute.TOOL_VIDEO_GENERATOR ||
+    currentRoute === AppRoute.TOOL_VIDEO_EDIT ||
+    currentRoute === AppRoute.TOOL_INGREDIENTS_TO_VIDEO ||
+    currentRoute === AppRoute.TOOL_EXTEND_VIDEO ||
+    currentRoute === AppRoute.TOOL_MOTION_CONTROL;
+
+  const plusActive = useMemo(() => isImageZone || isVideoZone, [isImageZone, isVideoZone]);
+
+  function goProfileTab(tab: "profile" | "security" | "billing") {
+    window.localStorage.setItem("tales_profile_focus", tab);
+    onNavigate(AppRoute.PROFILE);
+    setSidebarOpen(false);
+  }
+
+  function goAccountTab(tab: "plans" | "credits") {
+    window.localStorage.setItem("tales_account_tab", tab);
+    onNavigate(AppRoute.PAYWALL);
+    setSidebarOpen(false);
+  }
+
+  const bottomItems = [
+    {
+      key: "home",
+      label: "Home",
+      active: currentRoute === AppRoute.HOME,
+      icon: <Home className="h-[18px] w-[18px]" />,
+      onClick: () => onNavigate(AppRoute.HOME),
+    },
+    {
+      key: "reel",
+      label: "Carrete",
+      active: currentRoute === AppRoute.REEL_FEED,
+      icon: <Film className="h-[18px] w-[18px]" />,
+      onClick: () => onNavigate(AppRoute.REEL_FEED),
+    },
+    {
+      key: "assets",
+      label: "My Assets",
+      active: currentRoute === AppRoute.MY_CREATIONS,
+      icon: <FolderOpen className="h-[18px] w-[18px]" />,
+      onClick: () => onNavigate(AppRoute.MY_CREATIONS),
+    },
+    {
+      key: "trades",
+      label: "My Trades",
+      active: currentRoute === AppRoute.MY_TRADES,
+      icon: <ArrowRightLeft className="h-[18px] w-[18px]" />,
+      onClick: () => onNavigate(AppRoute.MY_TRADES),
+    },
+  ];
+
+  return (
+    <div className="relative h-screen w-full overflow-hidden bg-black text-white selection:bg-white selection:text-black">
       <div className="absolute inset-0 z-0">
         <Background3D />
       </div>
-      <div className="absolute inset-0 z-0 bg-gradient-to-b from-transparent via-black/20 to-black/80 pointer-events-none" />
+      <div className="pointer-events-none absolute inset-0 z-0 bg-[radial-gradient(circle_at_top,rgba(91,14,20,0.28),transparent_38%),linear-gradient(180deg,rgba(0,0,0,0.15),rgba(0,0,0,0.86))]" />
 
-      <aside
-        ref={sidebarRef}
-        className={`relative z-20 h-full overflow-visible transition-all duration-500 ease-out flex flex-col hud-panel hud-noise ${
-          sidebarOpen ? 'w-72' : 'w-20'
-        }`}
-      >
-        <div className="p-6 flex items-center justify-between">
-          {sidebarOpen && (
-            <h1 className="text-2xl font-bold tracking-tighter animate-pulse-fast">
-              TALES<span className="font-light opacity-50">.AI</span>
-            </h1>
-          )}
-          <button onClick={() => setSidebarOpen(!sidebarOpen)} className="p-2 rounded-full hud-btn transition-colors">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="24"
-              height="24"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
+      <header className="fixed inset-x-0 top-0 z-40 px-3 pt-[max(env(safe-area-inset-top),12px)] md:px-6">
+        <div className="mx-auto flex max-w-[1600px] items-center justify-between gap-3 rounded-[28px] border border-white/10 bg-[rgba(0,0,0,0.42)] px-3 py-3 shadow-[0_18px_50px_rgba(0,0,0,0.34)] backdrop-blur-xl md:px-5">
+          <div className="flex min-w-0 items-center gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                if (!user) {
+                  onOpenAuth();
+                  return;
+                }
+                setSidebarOpen(true);
+              }}
+              className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/90 transition hover:bg-white/10"
+              aria-label="Abrir menú"
+              title="Abrir menú"
             >
-              <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
-              <path d="M9 3v18" />
-            </svg>
-          </button>
-        </div>
+              <Menu className="h-5 w-5" />
+            </button>
 
-        <nav className="flex-1 px-4 space-y-2 py-4 overflow-y-auto overflow-x-hidden custom-scrollbar">
-          <NavItem
-            label={sidebarOpen ? 'Dashboard' : ''}
-            active={currentRoute === AppRoute.HOME}
-            onClick={() => onNavigate(AppRoute.HOME)}
-            icon={
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect width="7" height="9" x="3" y="3" rx="1" />
-                <rect width="7" height="5" x="14" y="3" rx="1" />
-                <rect width="7" height="9" x="14" y="12" rx="1" />
-                <rect width="7" height="5" x="3" y="16" rx="1" />
-              </svg>
-            }
-          />
-
-          <NavItem
-            label={sidebarOpen ? 'My Trades' : ''}
-            active={currentRoute === AppRoute.MY_TRADES}
-            onClick={() => onNavigate(AppRoute.MY_TRADES)}
-            icon={
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M3 17l6-6 4 4 7-7" />
-                <path d="M14 8h7v7" />
-              </svg>
-            }
-          />
-
-          <NavItem
-            label={sidebarOpen ? 'Community Store' : ''}
-            active={currentRoute === AppRoute.COMMUNITY_STORE}
-            onClick={() => onNavigate(AppRoute.COMMUNITY_STORE)}
-            icon={
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                {/* Store icon */}
-                <path d="M4 7V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v2" />
-                <path d="M3 7h18l-1 4H4L3 7z" />
-                <path d="M4 11v9a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-9" />
-                <path d="M9 21v-6h6v6" />
-              </svg>
-            }
-          />
-
-          <div className="relative" onMouseEnter={handleMyCreationsEnter} onMouseLeave={handleMyCreationsLeave}>
-            <NavItem
-              label={sidebarOpen ? 'My Creations' : ''}
-              active={currentRoute === AppRoute.MY_CREATIONS}
-              onClick={() => {
-                if (isMobile) {
-                  setSheetKind("creations");
-                  setSheetOpen(true);
-                  if (!sidebarOpen) setSidebarOpen(true);
-                  return;
-                }
-                onNavigate(AppRoute.MY_CREATIONS);
-              }}
-              expanded={sidebarOpen ? myCreationsMenuOpen : undefined}
-              icon={
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M3 3h5l2 3h11v13a2 2 0 0 1-2 2H3V3z" />
-                  <path d="M7 11h8" />
-                  <path d="M7 15h5" />
-                </svg>
-              }
-            />
-          </div>
-
-          <div className="hud-divider my-4 mx-2" />
-
-          <div className="relative" onMouseEnter={handleImageMenuEnter} onMouseLeave={handleImageMenuLeave}>
-            <NavItem
-              label={sidebarOpen ? 'Image Gen' : ''}
-              active={isImageTool}
-              onClick={() => {
-                if (isMobile) {
-                  setSheetKind("image");
-                  setSheetOpen(true);
-                  if (!sidebarOpen) setSidebarOpen(true);
-                  return;
-                }
-                if (!sidebarOpen) setSidebarOpen(true);
-                onNavigate(AppRoute.IMAGE_GEN_ROOT);
-              }}
-              expanded={sidebarOpen ? imageMenuOpen : undefined}
-              icon={
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect width="18" height="14" x="3" y="5" rx="2" ry="2" />
-                  <circle cx="9" cy="10" r="1.5" />
-                  <path d="m21 16-4.2-4.2a2 2 0 0 0-2.8 0L7 18" />
-                </svg>
-              }
-            />
-          </div>
-
-          <div className="relative" onMouseEnter={handleVideoMenuEnter} onMouseLeave={handleVideoMenuLeave}>
-            <NavItem
-              label={sidebarOpen ? 'Video Gen' : ''}
-              active={isVideoTool}
-              onClick={() => {
-                if (isMobile) {
-                  setSheetKind("video");
-                  setSheetOpen(true);
-                  if (!sidebarOpen) setSidebarOpen(true);
-                  return;
-                }
-                if (!sidebarOpen) setSidebarOpen(true);
-                onNavigate(AppRoute.VIDEO_GEN);
-              }}
-              expanded={sidebarOpen ? videoMenuOpen : undefined}
-              icon={
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="m22 8-6 4 6 4V8Z" />
-                  <rect width="14" height="12" x="2" y="6" rx="2" ry="2" />
-                </svg>
-              }
-            />
-          </div>
-
-          <NavItem
-            label={sidebarOpen ? 'Smart Assistant' : ''}
-            active={false}
-            onClick={() => {}}
-            icon={
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 2a7 7 0 0 0-4 12.7V18a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-3.3A7 7 0 0 0 12 2z" />
-                <path d="M9 22h6" />
-              </svg>
-            }
-          />
-
-          <NavItem
-            label={sidebarOpen ? 'Audio' : ''}
-            active={false}
-            onClick={() => {}}
-            icon={
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M9 18V5l12-2v13" />
-                <circle cx="6" cy="18" r="3" />
-                <circle cx="18" cy="16" r="3" />
-              </svg>
-            }
-          />
-
-          <NavItem
-            label={sidebarOpen ? 'Extras' : ''}
-            active={false}
-            onClick={() => {}}
-            icon={
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 2v20" />
-                <path d="M2 12h20" />
-              </svg>
-            }
-          />
-
-          <NavItem
-            label={sidebarOpen ? 'All Tools' : ''}
-            active={false}
-            onClick={() => {}}
-            icon={
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect width="7" height="7" x="3" y="3" rx="1" />
-                <rect width="7" height="7" x="14" y="3" rx="1" />
-                <rect width="7" height="7" x="3" y="14" rx="1" />
-                <rect width="7" height="7" x="14" y="14" rx="1" />
-              </svg>
-            }
-          />
-        </nav>
-
-        {myCreationsMenuVisible && myCreationsFlyoutTop !== null && (
-          <div
-            className={`absolute left-full z-50 ml-3 w-64 rounded-2xl border border-white/10 bg-black shadow-[0_20px_40px_rgba(0,0,0,0.45)] p-3 space-y-1 transition-all duration-200 ${
-              myCreationsMenuOpen ? 'opacity-100 translate-x-0 scale-100' : 'opacity-0 -translate-x-2 scale-95 pointer-events-none'
-            }`}
-            style={{ top: myCreationsFlyoutTop }}
-            onMouseEnter={() => {
-              if (myCreationsMenuTimer.current) window.clearTimeout(myCreationsMenuTimer.current);
-              setImageMenuOpen(false);
-              setVideoMenuOpen(false);
-              setMyCreationsMenuOpen(true);
-            }}
-            onMouseLeave={handleMyCreationsLeave}
-          >
-            {myCreationsFilters.map((filter) => (
-              <button
-                key={filter.key}
-                onClick={() => onNavigate(AppRoute.MY_CREATIONS)}
-                className="w-full text-left px-3 py-2 rounded-xl text-xs font-medium transition-all border border-transparent text-white/60 hover:text-white hover:bg-white/5"
-              >
-                {filter.label}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {imageMenuVisible && imageFlyoutTop !== null && (
-          <div
-            className={`absolute left-full z-50 ml-3 w-64 rounded-2xl border border-white/10 bg-black shadow-[0_20px_40px_rgba(0,0,0,0.45)] p-3 space-y-1 transition-all duration-200 ${
-              imageMenuOpen ? 'opacity-100 translate-x-0 scale-100' : 'opacity-0 -translate-x-2 scale-95 pointer-events-none'
-            }`}
-            style={{ top: imageFlyoutTop }}
-            onMouseEnter={() => {
-              if (imageMenuTimer.current) window.clearTimeout(imageMenuTimer.current);
-              setVideoMenuOpen(false);
-              setMyCreationsMenuOpen(false);
-              setImageMenuOpen(true);
-            }}
-            onMouseLeave={handleImageMenuLeave}
-          >
-            {/* ✅ Image Gen tools */}
-            {TOOLS_REGISTRY.map((tool) => {
-              const isPrimary = tool.id === 'image-generator';
-              return (
-                <button
-                  key={tool.id}
-                  onClick={() => onNavigate(tool.route)}
-                  className={`w-full text-left px-3 py-2 rounded-xl text-xs font-medium transition-all border ${
-                    currentRoute === tool.route
-                      ? 'border-[rgba(241,225,148,0.45)] text-white bg-[rgba(241,225,148,0.08)]'
-                      : isPrimary
-                        ? 'border-[rgba(241,225,148,0.35)] text-white bg-[rgba(241,225,148,0.14)] shadow-[0_0_18px_rgba(241,225,148,0.18)]'
-                        : 'border-transparent text-white/60 hover:text-white hover:bg-white/5'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span>{tool.label}</span>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        )}
-
-        {videoMenuVisible && videoFlyoutTop !== null && (
-          <div
-            className={`absolute left-full z-50 ml-3 w-60 rounded-2xl border border-white/10 bg-black shadow-[0_20px_40px_rgba(0,0,0,0.45)] p-3 space-y-1 transition-all duration-200 ${
-              videoMenuOpen ? 'opacity-100 translate-x-0 scale-100' : 'opacity-0 -translate-x-2 scale-95 pointer-events-none'
-            }`}
-            style={{ top: videoFlyoutTop }}
-            onMouseEnter={() => {
-              if (videoMenuTimer.current) window.clearTimeout(videoMenuTimer.current);
-              setImageMenuOpen(false);
-              setMyCreationsMenuOpen(false);
-              setVideoMenuOpen(true);
-            }}
-            onMouseLeave={handleVideoMenuLeave}
-          >
-            {VIDEO_TOOLS_REGISTRY.map((tool) => {
-              const isPrimary = tool.id === 'video-generator';
-              return (
-                <button
-                  key={tool.id}
-                  onClick={() => onNavigate(tool.route)}
-                  className={`w-full text-left px-3 py-2 rounded-xl text-xs font-medium transition-all border ${
-                    currentRoute === tool.route
-                      ? 'border-[rgba(241,225,148,0.45)] text-white bg-[rgba(241,225,148,0.08)]'
-                      : isPrimary
-                        ? 'border-[rgba(241,225,148,0.35)] text-white bg-[rgba(241,225,148,0.14)] shadow-[0_0_18px_rgba(241,225,148,0.18)]'
-                        : 'border-transparent text-white/60 hover:text-white hover:bg-white/5'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span>{tool.label}</span>
-                    {tool.status === 'beta' && <span className="text-[9px] bg-white/20 px-1 rounded">BETA</span>}
-                    {tool.status === 'coming_soon' && <span className="text-[9px] bg-white/10 px-1 rounded text-white/70">SOON</span>}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        )}
-
-
-      {/* ✅ 1NationUp Store (colapsa correctamente con la sidebar) */}
-      <div className={`${sidebarOpen ? "px-4" : "px-3"} pb-4`}>
-        <div className={`flex ${sidebarOpen ? "justify-end" : "justify-center"} mb-2`}>
-          <button
-            type="button"
-            onClick={() => {
-              window.localStorage.setItem("tales_profile_focus", "profile");
-              onNavigate(AppRoute.PROFILE);
-            }}
-            className="w-10 h-10 grid place-items-center rounded-xl bg-white/5 hover:bg-white/10 border border-white/10"
-            title="Settings"
-            aria-label="Settings"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M12 15.5A3.5 3.5 0 1 0 12 8.5a3.5 3.5 0 0 0 0 7z" />
-              <path d="M19.4 15a7.8 7.8 0 0 0 .1-1 7.8 7.8 0 0 0-.1-1l2-1.5-2-3.5-2.4 1a7.5 7.5 0 0 0-1.7-1l-.4-2.6H9.1L8.7 7a7.5 7.5 0 0 0-1.7 1l-2.4-1-2 3.5 2 1.5a7.8 7.8 0 0 0-.1 1 7.8 7.8 0 0 0 .1 1l-2 1.5 2 3.5 2.4-1a7.5 7.5 0 0 0 1.7 1l.4 2.6h5.8l.4-2.6a7.5 7.5 0 0 0 1.7-1l2.4 1 2-3.5-2-1.5z" />
-            </svg>
-          </button>
-        </div>
-
-        <button
-          onClick={() => onNavigate(AppRoute.STORE)}
-          className={`w-full flex items-center rounded-xl oneNation-sidebarPremium ${
-            sidebarOpen ? "gap-3 px-4 py-3 justify-start" : "px-0 py-3 justify-center"
-          } ${currentRoute === AppRoute.STORE ? "ring-1 ring-white/10" : ""}`}
-          title="1NationUp Store"
-        >
-          {/* Logo: siempre 1 sola vez */}
-          <div
-            className={`grid place-items-center rounded-xl border border-white/10 bg-[rgba(11,11,15,0.72)] ${
-              sidebarOpen ? "w-9 h-9" : "w-10 h-10"
-            }`}
-            style={{ boxShadow: "inset 0 0 20px rgba(255,255,255,0.04)" }}
-            aria-hidden="true"
-          >
-            <OneNationUpIcon size={22} />
-          </div>
-
-          {/* Texto SOLO si sidebar está abierta */}
-          {sidebarOpen && (
-            <div className="flex-1 text-left leading-tight min-w-0">
-              <div className="text-sm font-black tracking-wide oneNation-animatedGradientText whitespace-nowrap">
-                1NationUp Store
-              </div>
-              <div className="text-[10px] text-white/55">
-                Prints • Posters • Canvas
+            <div className="min-w-0">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/40">Tales.AI</div>
+              <div className="truncate text-sm font-semibold text-white/88">
+                {currentRoute === AppRoute.HOME
+                  ? "Home"
+                  : currentRoute === AppRoute.REEL_FEED
+                  ? "Carrete"
+                  : currentRoute === AppRoute.MY_CREATIONS
+                  ? "My Assets"
+                  : currentRoute === AppRoute.MY_TRADES
+                  ? "My Trades"
+                  : currentRoute === AppRoute.PAYWALL
+                  ? "My Account"
+                  : currentRoute === AppRoute.PROFILE
+                  ? "Settings"
+                  : currentRoute === AppRoute.EARN_MONEY
+                  ? "Earn Money"
+                  : "Studio"}
               </div>
             </div>
-          )}
-        </button>
-      </div>
+          </div>
 
-        <div className="p-3 border-t border-white/10">
-            <button
-              onClick={() => {
-                window.localStorage.setItem("tales_account_tab", "plans");
-                onNavigate(AppRoute.PAYWALL);
-              }}
-              className={`w-full rounded-xl bg-white/5 hover:bg-white/10 transition-colors ${sidebarOpen ? "p-3" : "p-1.5"}`}
-              title="Manage plans and extra credits"
-            >
-            {sidebarOpen ? (
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  <img src={user?.avatarUrl} alt="User" className="w-8 h-8 rounded-full border border-white/30 shrink-0" />
-                  <div className="overflow-hidden min-w-0">
-                    <p className="text-xs font-bold text-white truncate">{user?.username || "Guest"}</p>
-                    <p className="text-[10px] text-gray-400 truncate">Plan: {activePlanName}</p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2 shrink-0">
-                  <span className={`w-2.5 h-2.5 rounded-full animate-pulse ${creditsPulseClass}`} aria-hidden="true" />
-                  <span className="text-sm font-extrabold text-white">{availableCredits}</span>
-                </div>
-              </div>
+          <div className="flex items-center gap-2">
+            {!user ? (
+              <ActionButton label="Sign in for Credits" onClick={onOpenAuth} primary />
             ) : (
-              <div className="flex items-center justify-center gap-1.5">
-                <span className={`w-2.5 h-2.5 rounded-full animate-pulse ${creditsPulseClass}`} aria-hidden="true" />
-                <span className={`${collapsedCreditsTextClass} font-extrabold text-white tabular-nums leading-none`}>{availableCredits}</span>
-              </div>
+              <>
+                <ActionButton
+                  label="Upgrade"
+                  onClick={() => goAccountTab("plans")}
+                />
+                <ActionButton
+                  label="Earn Money"
+                  onClick={() => onNavigate(AppRoute.EARN_MONEY)}
+                  primary
+                  icon={<CircleDollarSign className="h-4 w-4" />}
+                />
+              </>
             )}
-            </button>
-
-          {sidebarOpen ? (
-            <button
-              onClick={logout}
-              className="w-full text-xs bg-white/10 hover:bg-white/20 py-1.5 rounded transition-colors text-gray-300 mt-3"
-            >
-              Log Out
-            </button>
-          ) : null}
+          </div>
         </div>
-      </aside>
+      </header>
 
-      <main className="flex-1 relative z-10 overflow-y-auto overflow-x-hidden">
-        <div className="max-w-[1600px] mx-auto p-4 md:p-8">{children}</div>
+      {user && (
+        <>
+          <div
+            className={`fixed inset-0 z-[70] bg-black/62 backdrop-blur-[2px] transition ${sidebarOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"}`}
+            onClick={() => setSidebarOpen(false)}
+          />
+
+          <aside
+            className={`fixed left-0 top-0 z-[80] h-full w-[min(92vw,360px)] transform border-r border-white/10 bg-[rgba(5,5,7,0.95)] px-4 pb-6 pt-[max(env(safe-area-inset-top),18px)] shadow-[0_30px_80px_rgba(0,0,0,0.58)] backdrop-blur-2xl transition duration-300 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}
+          >
+            <div className="flex items-center justify-between gap-3 px-1 pb-4">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/40">Menu</div>
+                <div className="mt-1 text-lg font-black tracking-tight text-white">My Space</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSidebarOpen(false)}
+                className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/85 transition hover:bg-white/10"
+                aria-label="Cerrar menú"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 overflow-y-auto pb-10">
+              <button
+                type="button"
+                onClick={() => goProfileTab("profile")}
+                className="w-full rounded-[24px] border border-white/10 bg-white/[0.03] p-4 text-left transition hover:bg-white/[0.07]"
+              >
+                <div className="flex items-center gap-4">
+                  <img
+                    src={user.avatarUrl}
+                    alt={user.username}
+                    className="h-14 w-14 rounded-full border border-white/15 object-cover"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-lg font-bold text-white">{user.username}</div>
+                    <div className="mt-1 break-all text-xs text-white/50">ID {user.id}</div>
+                  </div>
+                  <Settings2 className="h-5 w-5 shrink-0 text-white/56" />
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => goAccountTab("plans")}
+                className="w-full rounded-[24px] border border-[rgba(241,225,148,0.22)] bg-[linear-gradient(135deg,rgba(241,225,148,0.18),rgba(0,0,0,0.32))] p-4 text-left shadow-[0_16px_40px_rgba(0,0,0,0.28)] transition hover:bg-[linear-gradient(135deg,rgba(241,225,148,0.22),rgba(0,0,0,0.38))]"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-lg font-black text-white">Upgrade your plan</div>
+                    <div className="mt-1 text-sm text-white/62">More Credits & Premium Features</div>
+                  </div>
+                  <Crown className="mt-1 h-5 w-5 shrink-0 text-[rgba(241,225,148,0.92)]" />
+                </div>
+              </button>
+
+              <SidebarRow
+                label="Credits Details"
+                onClick={() => goAccountTab("credits")}
+                right={
+                  <div className="inline-flex items-center gap-2 rounded-full bg-emerald-500/10 px-3 py-1 text-sm font-bold text-emerald-300">
+                    <Coins className="h-4 w-4" />
+                    {availableCredits.toLocaleString()}
+                  </div>
+                }
+              />
+
+              <SidebarRow
+                label="Manage your plans"
+                value="Plans and extra credits"
+                onClick={() => goAccountTab("plans")}
+              />
+
+              <SidebarRow
+                label="Language"
+                value="English"
+                right={<Languages className="h-4 w-4 text-white/56" />}
+              />
+
+              <button
+                type="button"
+                onClick={async () => {
+                  setSidebarOpen(false);
+                  await logout();
+                  onNavigate(AppRoute.HOME);
+                }}
+                className="w-full rounded-[22px] border border-white/10 bg-white/[0.03] px-4 py-4 text-left text-[17px] font-semibold text-[#ff6b47] transition hover:bg-white/[0.07]"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <span>Sign out</span>
+                  <LogOut className="h-4 w-4" />
+                </div>
+              </button>
+            </div>
+          </aside>
+        </>
+      )}
+
+      <main className="relative z-10 h-full overflow-y-auto overflow-x-hidden">
+        <div className="mx-auto max-w-[1600px] px-3 pb-[calc(env(safe-area-inset-bottom)+122px)] pt-[112px] md:px-6 md:pb-[148px] md:pt-[116px]">
+          {children}
+        </div>
       </main>
 
-      <GenerationQueueWidget />
+      <nav className="pointer-events-none fixed inset-x-0 bottom-0 z-40 px-3 pb-[max(env(safe-area-inset-bottom),12px)] md:px-6">
+        <div className="mx-auto flex max-w-[920px] items-end justify-between gap-2 rounded-[30px] border border-white/10 bg-[rgba(0,0,0,0.62)] px-3 py-3 shadow-[0_22px_60px_rgba(0,0,0,0.42)] backdrop-blur-2xl md:px-5">
+          {bottomItems.slice(0, 2).map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              onClick={item.onClick}
+              className={`pointer-events-auto flex min-w-0 flex-1 flex-col items-center gap-1 rounded-[20px] px-2 py-2 text-[11px] font-semibold transition ${item.active ? "bg-white/10 text-white" : "text-white/58 hover:bg-white/5 hover:text-white"}`}
+            >
+              {item.icon}
+              <span className="truncate">{item.label}</span>
+            </button>
+          ))}
 
-      <BottomSheet
-        open={sheetOpen}
-        title={sheetKind === "image" ? "Image Gen" : sheetKind === "video" ? "Video Gen" : "My Creations"}
-        onClose={() => setSheetOpen(false)}
-      >
-        {sheetKind === "image" ? (
-          <div className="space-y-2">
-            {TOOLS_REGISTRY.map((tool) => (
-              <button
-                key={tool.id}
-                type="button"
-                className="w-full text-left px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10"
-                onClick={() => {
-                  setSheetOpen(false);
-                  onNavigate(tool.route);
-                }}
-              >
-                {tool.label}
-              </button>
-            ))}
+          <button
+            type="button"
+            onClick={() => setCreateSheetOpen(true)}
+            className={`pointer-events-auto -mt-8 inline-flex h-16 w-16 shrink-0 items-center justify-center rounded-full border text-white shadow-[0_18px_44px_rgba(0,0,0,0.48)] transition ${plusActive ? "border-[rgba(241,225,148,0.34)] bg-[rgba(241,225,148,0.18)]" : "border-white/10 bg-white/10 hover:bg-white/14"}`}
+            aria-label="Crear"
+            title="Crear"
+          >
+            <Plus className="h-7 w-7" />
+          </button>
+
+          {bottomItems.slice(2).map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              onClick={item.onClick}
+              className={`pointer-events-auto flex min-w-0 flex-1 flex-col items-center gap-1 rounded-[20px] px-2 py-2 text-[11px] font-semibold transition ${item.active ? "bg-white/10 text-white" : "text-white/58 hover:bg-white/5 hover:text-white"}`}
+            >
+              {item.icon}
+              <span className="truncate">{item.label}</span>
+            </button>
+          ))}
+        </div>
+      </nav>
+
+      {user ? <GenerationQueueWidget /> : null}
+
+      <BottomSheet open={createSheetOpen} title="Create" onClose={() => setCreateSheetOpen(false)}>
+        <div className="space-y-3 pb-2">
+          <button
+            type="button"
+            className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-4 text-left transition hover:bg-white/10"
+            onClick={() => {
+              setCreateSheetOpen(false);
+              onNavigate(AppRoute.IMAGE_GEN_ROOT);
+            }}
+          >
+            <div className="flex items-center gap-3">
+              <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-black/30">
+                <ImageIcon className="h-5 w-5" />
+              </div>
+              <div>
+                <div className="text-sm font-semibold text-white">Crear o Editar imagen</div>
+                <div className="mt-1 text-xs text-white/55">Abre las herramientas de imagen</div>
+              </div>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-4 text-left transition hover:bg-white/10"
+            onClick={() => {
+              setCreateSheetOpen(false);
+              onNavigate(AppRoute.VIDEO_GEN);
+            }}
+          >
+            <div className="flex items-center gap-3">
+              <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-black/30">
+                <Video className="h-5 w-5" />
+              </div>
+              <div>
+                <div className="text-sm font-semibold text-white">Crear o Editar video</div>
+                <div className="mt-1 text-xs text-white/55">Abre las herramientas de video</div>
+              </div>
+            </div>
+          </button>
+
+          <div className="w-full rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4 text-left opacity-70">
+            <div className="flex items-center gap-3">
+              <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-black/30">
+                <Sparkles className="h-5 w-5" />
+              </div>
+              <div className="flex-1">
+                <div className="text-sm font-semibold text-white">Smart assistant</div>
+                <div className="mt-1 text-xs text-white/55">Coming soon</div>
+              </div>
+            </div>
           </div>
-        ) : sheetKind === "video" ? (
-          <div className="space-y-2">
-            {VIDEO_TOOLS_REGISTRY.map((tool) => (
-              <button
-                key={tool.id}
-                type="button"
-                className="w-full text-left px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10"
-                onClick={() => {
-                  setSheetOpen(false);
-                  onNavigate(tool.route);
-                }}
-              >
-                {tool.label}
-              </button>
-            ))}
+
+          <div className="w-full rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4 text-left opacity-70">
+            <div className="flex items-center gap-3">
+              <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-black/30">
+                <Music2 className="h-5 w-5" />
+              </div>
+              <div className="flex-1">
+                <div className="text-sm font-semibold text-white">Crear o Editar audio</div>
+                <div className="mt-1 text-xs text-white/55">Coming soon</div>
+              </div>
+            </div>
           </div>
-        ) : sheetKind === "creations" ? (
-          <div className="space-y-2">
-            {myCreationsFilters.map((f) => (
-              <button
-                key={f.key}
-                type="button"
-                className="w-full text-left px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10"
-                onClick={() => {
-                  emitMyCreationsFilter(f.key);
-                  setSheetOpen(false);
-                  onNavigate(AppRoute.MY_CREATIONS);
-                }}
-              >
-                {f.label}
-              </button>
-            ))}
-          </div>
-        ) : null}
+        </div>
       </BottomSheet>
+
+      {authModalOpen ? <Login mode="modal" onClose={onCloseAuth} /> : null}
     </div>
   );
-};
-
-
-export default Layout;
+}

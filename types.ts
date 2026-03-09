@@ -5,7 +5,9 @@ export enum AppRoute {
   // New Service
   STORE = 'store',
   COMMUNITY_STORE = 'community-store',
+  REEL_FEED = 'reel-feed',
   MY_TRADES = 'my-trades',
+  EARN_MONEY = 'earn-money',
 
   
   // Tool Categories

@@ -685,62 +685,6 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
           <div className={styles.refBottomBorder} aria-hidden="true" />
         </button>
 
-        <button
-          ref={oneNationBtnRef}
-          type="button"
-          onClick={() => onNavigate(AppRoute.STORE)}
-          className={`${styles.heroCard} ${styles.heroCardVideo} ${styles.oneNationHeroCard}`}
-          onMouseEnter={() => { oneNationHoverRef.current = true; }}
-          onMouseLeave={() => {
-            oneNationHoverRef.current = false;
-            oneNationMouseRef.current = { x: -1000, y: -1000 };
-          }}
-          onMouseMove={(e) => {
-            const rect = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
-            oneNationMouseRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-          }}
-        >
-          {/* Canvas constelaciones/ADN tecnológico (igual al TXT) */}
-          <canvas ref={oneNationCanvasRef} className={styles.oneNationCanvas} />
-
-          {/* Overlay para legibilidad (igual al TXT) */}
-          <div className={styles.oneNationOverlay} aria-hidden="true" />
-          <div className={`${styles.auroraBorder} ${styles.auroraOneNation}`} aria-hidden="true" />
-
-          {/* Logo fijo en esquina superior izquierda */}
-          <div className={styles.oneNationLogoBadge} aria-hidden="true">
-            <img
-              src="/brands/1nation-up/logo.png"
-              alt="1NationUp Logo"
-              className={styles.oneNationLogo}
-              loading="lazy"
-              decoding="async"
-            />
-          </div>
-
-          {/* Contenido frontal (solo texto, 100% responsive) */}
-          <div className={styles.oneNationFront}>
-            <div className={styles.oneNationTextWrap}>
-              <h2 className={styles.oneNationKicker}>Explora la</h2>
-
-              <h1 className={styles.oneNationTitle}>
-                <span className={styles.oneNationGradientText}>1NationUp</span>
-                <span className={styles.oneNationTitleWhite}>Store</span>
-              </h1>
-
-              <div className={styles.oneNationActionRow}>
-                <span>Acceder a la tienda</span>
-                <svg className={styles.oneNationArrow} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 8l4 4m0 0l-4 4m4-4H3"></path>
-                </svg>
-              </div>
-            </div>
-          </div>
-
-          {/* Borde brillante inferior (igual al TXT) */}
-          <div className={styles.oneNationBottomBorder} aria-hidden="true" />
-        </button>
-
         <div
           ref={creatorBtnRef}
           className={`${styles.heroCard} ${styles.heroCardRefBase} ${styles.refHeroCard} ${styles.monoTheme}`}
@@ -830,6 +774,56 @@ const Home: React.FC<HomeProps> = ({ onNavigate }) => {
 
           <div className={styles.refBottomBorder} aria-hidden="true" />
         </div>
+
+        <button
+          ref={oneNationBtnRef}
+          type="button"
+          onClick={() => onNavigate(AppRoute.STORE)}
+          className={`${styles.heroCard} ${styles.heroCardVideo} ${styles.oneNationHeroCard}`}
+          onMouseEnter={() => { oneNationHoverRef.current = true; }}
+          onMouseLeave={() => {
+            oneNationHoverRef.current = false;
+            oneNationMouseRef.current = { x: -1000, y: -1000 };
+          }}
+          onMouseMove={(e) => {
+            const rect = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
+            oneNationMouseRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+          }}
+        >
+          <canvas ref={oneNationCanvasRef} className={styles.oneNationCanvas} />
+          <div className={styles.oneNationOverlay} aria-hidden="true" />
+          <div className={`${styles.auroraBorder} ${styles.auroraOneNation}`} aria-hidden="true" />
+
+          <div className={styles.oneNationLogoBadge} aria-hidden="true">
+            <img
+              src="/brands/1nation-up/logo.png"
+              alt="1NationUp Logo"
+              className={styles.oneNationLogo}
+              loading="lazy"
+              decoding="async"
+            />
+          </div>
+
+          <div className={styles.oneNationFront}>
+            <div className={styles.oneNationTextWrap}>
+              <h2 className={styles.oneNationKicker}>Explora la</h2>
+
+              <h1 className={styles.oneNationTitle}>
+                <span className={styles.oneNationGradientText}>1NationUp</span>
+                <span className={styles.oneNationTitleWhite}>Store</span>
+              </h1>
+
+              <div className={styles.oneNationActionRow}>
+                <span>Acceder a la tienda</span>
+                <svg className={styles.oneNationArrow} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 8l4 4m0 0l-4 4m4-4H3"></path>
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          <div className={styles.oneNationBottomBorder} aria-hidden="true" />
+        </button>
       </section>
 
       {/* Community Store */}

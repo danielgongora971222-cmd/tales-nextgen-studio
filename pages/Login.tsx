@@ -7,7 +7,12 @@ import { useAuth } from "../contexts/AuthContext";
 
 type ToastType = "success" | "error" | "info";
 
-export default function Login() {
+type LoginProps = {
+  mode?: "page" | "modal";
+  onClose?: () => void;
+};
+
+export default function Login({ mode = "page", onClose }: LoginProps) {
   const { isLoading } = useAuth();
 
   const [view, setView] = useState<"login" | "register" | "verify">("login");
@@ -24,6 +29,14 @@ export default function Login() {
   const [toast, setToast] = useState<{ type: ToastType; text: string } | null>(null);
   const toastTimer = useRef<number | null>(null);
 
+  function finishAuthFlow() {
+    if (mode === "modal") {
+      onClose?.();
+      return;
+    }
+    window.location.replace("/");
+  }
+
   function showToast(type: ToastType, text: string) {
     setToast({ type, text });
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
@@ -31,11 +44,21 @@ export default function Login() {
   }
 
   useEffect(() => {
-    // Si ya hay sesión, manda al home
-    supabase.auth.getSession().then(({ data }) => {
-      if (data.session) window.location.replace("/");
-    });
+    return () => {
+      if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    };
   }, []);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      if (!data.session) return;
+      if (mode === "modal") {
+        onClose?.();
+        return;
+      }
+      window.location.replace("/");
+    });
+  }, [mode, onClose]);
 
   function resetForm() {
     setDisplayName("");
@@ -100,7 +123,7 @@ export default function Login() {
       }
 
       showToast("success", "Login correcto ✅");
-      window.location.replace("/");
+      finishAuthFlow();
     } catch (err: any) {
       showToast("error", err?.message || "Error iniciando sesión.");
     } finally {
@@ -137,7 +160,6 @@ export default function Login() {
     if (!email.trim()) return showToast("error", "Falta el correo.");
     if (!otpCode.trim()) return showToast("error", "Escribe el código que te llegó por correo.");
 
-    // Si venimos de registro, aseguramos que la contraseña esté lista
     if (verifyMode === "register") {
       if (!password) return showToast("error", "Falta la contraseña.");
       if (!password2) return showToast("error", "Repite la contraseña.");
@@ -157,7 +179,6 @@ export default function Login() {
         return;
       }
 
-      // Si fue registro: setear password + display_name (ya hay sesión luego del verify)
       if (verifyMode === "register") {
         const { error: updateError } = await supabase.auth.updateUser({
           password,
@@ -170,13 +191,12 @@ export default function Login() {
         }
 
         showToast("success", "Correo confirmado ✅ ¡Bienvenido!");
-        window.location.replace("/");
+        finishAuthFlow();
         return;
       }
 
-      // Si fue login (solo confirmar correo)
       showToast("success", "Correo confirmado ✅");
-      window.location.replace("/");
+      finishAuthFlow();
     } catch (err: any) {
       showToast("error", err?.message || "No se pudo confirmar el código.");
     } finally {
@@ -193,33 +213,72 @@ export default function Login() {
 
   const canSubmitLogin = Boolean(email.trim() && password);
   const canSubmitRegister = Boolean(displayName.trim() && email.trim() && password && password2);
+  const isModal = mode === "modal";
 
   return (
-    <div className="relative w-full h-screen overflow-hidden flex items-center justify-center bg-black text-white font-sans">
-      {/* Galaxy/Cosmos Grid Background */}
-      <div className="absolute inset-0 z-0 opacity-60 pointer-events-none">
-        <Background3D />
-      </div>
-
-      {/* Ambient Glows */}
-      <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-purple-900/20 blur-[120px] rounded-full pointer-events-none" />
-      <div className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] bg-blue-900/20 blur-[120px] rounded-full pointer-events-none" />
-
-      {/* Card */}
-      <div className="relative z-10 w-full max-w-md p-8 glass-panel rounded-3xl border border-white/10 shadow-[0_0_50px_rgba(0,0,0,0.5)] animate-in fade-in zoom-in duration-700 backdrop-blur-xl">
-        <div className="text-center mb-8 relative">
-          <div className="inline-block relative">
-            <h1 className="text-5xl font-bold tracking-tighter mb-2 bg-gradient-to-br from-white via-gray-300 to-gray-500 bg-clip-text text-transparent">
-              TALES
-            </h1>
-            <div className="absolute -top-2 -right-4 w-2 h-2 bg-white rounded-full animate-pulse shadow-[0_0_10px_white]" />
+    <div
+      className={isModal ? "fixed inset-0 z-[140] flex items-start justify-center bg-black/78 px-4 pb-10 pt-6 backdrop-blur-md md:items-center" : "relative w-full h-screen overflow-hidden flex items-center justify-center bg-black text-white font-sans"}
+      onClick={isModal ? onClose : undefined}
+    >
+      {!isModal && (
+        <>
+          <div className="absolute inset-0 z-0 opacity-60 pointer-events-none">
+            <Background3D />
           </div>
-          <p className="text-gray-400 text-sm font-mono tracking-widest uppercase opacity-70">
-            NextGen Creative Studio
+          <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-purple-900/20 blur-[120px] rounded-full pointer-events-none" />
+          <div className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] bg-blue-900/20 blur-[120px] rounded-full pointer-events-none" />
+        </>
+      )}
+
+      <div
+        className="relative z-10 w-full max-w-md rounded-[32px] border border-white/10 bg-[rgba(0,0,0,0.78)] p-6 text-white shadow-[0_0_50px_rgba(0,0,0,0.5)] backdrop-blur-xl md:p-8"
+        onClick={isModal ? (e) => e.stopPropagation() : undefined}
+      >
+        {isModal && (
+          <button
+            type="button"
+            onClick={onClose}
+            className="absolute right-4 top-4 inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/80 transition hover:bg-white/10 hover:text-white"
+            aria-label="Cerrar login"
+            title="Cerrar"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M18 6 6 18" />
+              <path d="m6 6 12 12" />
+            </svg>
+          </button>
+        )}
+
+        <div className="text-center mb-6 relative">
+          <div className="mx-auto flex h-20 w-20 items-center justify-center overflow-hidden rounded-[26px] border border-white/10 bg-white/5 shadow-[0_16px_40px_rgba(0,0,0,0.42)]">
+            <img
+              src="/branding/tales-logo.png"
+              alt="Tales.AI"
+              className="h-full w-full object-contain"
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).style.display = "none";
+                const fallback = e.currentTarget.nextElementSibling as HTMLSpanElement | null;
+                if (fallback) fallback.style.display = "inline-flex";
+              }}
+            />
+            <span className="hidden h-full w-full items-center justify-center text-2xl font-black tracking-tight">TALES</span>
+          </div>
+
+          <p className="mt-5 text-sm font-mono uppercase tracking-[0.35em] text-white/42">Welcome to</p>
+          <h1 className="mt-2 text-3xl font-black tracking-tight text-white">Tales.AI</h1>
+          <p className="mt-3 text-sm leading-6 text-white/62">
+            Crea imágenes y video con un flujo más estable, más claro y preparado para crecer contigo.
           </p>
         </div>
 
-        {/* Toast */}
+        <div className="mb-6 rounded-[24px] border border-[rgba(241,225,148,0.14)] bg-[linear-gradient(145deg,rgba(91,14,20,0.24),rgba(0,0,0,0.54))] px-4 py-4 shadow-[0_20px_44px_rgba(0,0,0,0.34)]">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/46">Studio access</div>
+          <div className="mt-2 text-lg font-bold text-white">Activa tu cuenta y tus créditos</div>
+          <div className="mt-2 text-sm leading-6 text-white/62">
+            Desde aquí podrás entrar a Design Studio, Creator Hub, My Assets, My Trades y las siguientes capas premium del producto.
+          </div>
+        </div>
+
         {toast && (
           <div className={`mb-6 p-3 border rounded-lg text-xs text-center animate-in slide-in-from-top-2 ${toastClass}`}>
             {toast.type === "success" ? "✅ " : toast.type === "error" ? "⚠️ " : "ℹ️ "}
@@ -227,7 +286,6 @@ export default function Login() {
           </div>
         )}
 
-        {/* LOGIN */}
         {view === "login" && (
           <form onSubmit={handleLoginSubmit} className="space-y-6">
             <div className="space-y-1">
@@ -268,17 +326,16 @@ export default function Login() {
                   : "bg-white hover:bg-gray-100 hover:scale-[1.02] hover:shadow-[0_0_30px_rgba(255,255,255,0.2)]"
               }`}
             >
-              {submitting ? "AUTHENTICATING..." : "LOGIN"}
+              {submitting ? "ENTERING STUDIO..." : "LOGIN"}
             </button>
 
             <div className="mt-4 pt-6 border-t border-white/5 text-center space-y-4">
-              <p className="text-xs text-gray-400">New here?</p>
+              <p className="text-xs text-gray-400">Don't have an account?</p>
               <button
                 type="button"
                 onClick={() => {
                   resetForm();
                   setView("register");
-                  showToast("info", "Completa el registro y te llegará un código al correo.");
                 }}
                 className="text-xs font-bold text-white border border-white/20 px-6 py-2 rounded-full hover:bg-white hover:text-black transition-all"
               >
@@ -288,7 +345,6 @@ export default function Login() {
           </form>
         )}
 
-        {/* REGISTER */}
         {view === "register" && (
           <form onSubmit={handleRegisterSubmit} className="space-y-6">
             <div className="space-y-1">
@@ -380,7 +436,6 @@ export default function Login() {
           </form>
         )}
 
-        {/* VERIFY OTP */}
         {view === "verify" && (
           <form onSubmit={handleVerifySubmit} className="space-y-6">
             <div className="text-xs text-gray-400 text-center">
@@ -421,7 +476,6 @@ export default function Login() {
                 onClick={async () => {
                   try {
                     setSubmitting(true);
-                    // Para reenviar, NO intentamos “crear usuario” de nuevo
                     await requestOtp(false);
                     showToast("success", "Código reenviado ✅");
                   } catch (err: any) {
@@ -440,7 +494,6 @@ export default function Login() {
                 disabled={submitting}
                 onClick={() => {
                   setOtpCode("");
-                  // Volver al formulario correcto según de dónde veníamos
                   setView(verifyMode === "register" ? "register" : "login");
                   showToast("info", "Puedes intentar de nuevo cuando quieras.");
                 }}
