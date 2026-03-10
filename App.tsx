@@ -34,8 +34,8 @@ import { WalletProvider } from "@/contexts/WalletContext";
 import InsufficientCreditsModal from "@/components/InsufficientCreditsModal";
 import PlanRequiredModal from "@/components/PlanRequiredModal";
 import { EVENT_INSUFFICIENT_CREDITS, EVENT_PLAN_REQUIRED } from "@/services/appEvents";
-import EarnMoney from "./pages/EarnMoney";
-import ReelFeed from "./pages/ReelFeed";
+import EarnMoney from "./pages/EarnMoney.tsx";
+import ReelFeed from "./pages/ReelFeed.tsx";
 
 const PUBLIC_ROUTES = new Set<AppRoute>([
   AppRoute.HOME,

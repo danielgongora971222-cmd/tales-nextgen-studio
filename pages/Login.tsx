@@ -217,7 +217,11 @@ export default function Login({ mode = "page", onClose }: LoginProps) {
 
   return (
     <div
-      className={isModal ? "fixed inset-0 z-[140] flex items-start justify-center bg-black/78 px-4 pb-10 pt-6 backdrop-blur-md md:items-center" : "relative w-full h-screen overflow-hidden flex items-center justify-center bg-black text-white font-sans"}
+      className={
+        isModal
+          ? "fixed inset-0 z-[140] overflow-y-auto bg-black/78 px-4 py-[max(env(safe-area-inset-top),16px)] pb-[calc(env(safe-area-inset-bottom)+16px)] backdrop-blur-md"
+          : "relative flex min-h-screen w-full items-start justify-center overflow-y-auto bg-black px-4 py-10 text-white font-sans md:items-center"
+      }
       onClick={isModal ? onClose : undefined}
     >
       {!isModal && (
@@ -231,7 +235,12 @@ export default function Login({ mode = "page", onClose }: LoginProps) {
       )}
 
       <div
-        className="relative z-10 w-full max-w-md rounded-[32px] border border-white/10 bg-[rgba(0,0,0,0.78)] p-6 text-white shadow-[0_0_50px_rgba(0,0,0,0.5)] backdrop-blur-xl md:p-8"
+        className="relative z-10 mx-auto w-full max-w-[min(100%,34rem)] overflow-y-auto rounded-[32px] border border-white/10 bg-[rgba(0,0,0,0.82)] p-6 text-white shadow-[0_0_50px_rgba(0,0,0,0.5)] backdrop-blur-xl md:p-8"
+        style={
+          isModal
+            ? { maxHeight: "calc(100svh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 1.5rem)" }
+            : undefined
+        }
         onClick={isModal ? (e) => e.stopPropagation() : undefined}
       >
         {isModal && (

@@ -23,7 +23,7 @@ export default function GenerationQueueWidget() {
   const hasFinished = jobs.some((j) => j.status === "succeeded" || j.status === "failed" || j.status === "canceled");
 
   return (
-    <div className="fixed bottom-[calc(env(safe-area-inset-bottom)+6.75rem)] right-4 z-50 md:bottom-[calc(env(safe-area-inset-bottom)+7.5rem)]">
+    <div className="fixed bottom-[calc(env(safe-area-inset-bottom)+5.75rem)] right-4 z-50 md:bottom-[calc(env(safe-area-inset-bottom)+6rem)]">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}

@@ -21,6 +21,7 @@ interface Props {
 
 const PREFILL_KEY = "tales.prefill.imageGenerator";
 const PREFILL_EVENT = "tales:prefill-image-generator";
+const REEL_ENTRY_KEY = "tales.reel.initialListingId";
 
 type PreviewPalette = { sand: string; sandDim: string; burgundy: string; burgundyGlow: string };
 
@@ -542,14 +543,18 @@ export default function CommunityStore({ onNavigate }: Props) {
               tabIndex={0}
               className={styles.tile}
               style={{ borderRadius: 22 }} // ✅ más redondeado
-              onClick={() => openPreview(it.id, "overview")}
+              onClick={() => {
+                window.localStorage.setItem(REEL_ENTRY_KEY, it.id);
+                onNavigate(AppRoute.REEL_FEED);
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();
-                  openPreview(it.id, "overview");
+                  window.localStorage.setItem(REEL_ENTRY_KEY, it.id);
+                  onNavigate(AppRoute.REEL_FEED);
                 }
               }}
-              title="Click para ver"
+              title="Click para abrir en carrete"
             >
               {it.previewUrl ? (
                 it.mediaTag === "video" ? (

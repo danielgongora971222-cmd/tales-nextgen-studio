@@ -192,7 +192,7 @@ export default function Layout({
   ];
 
   return (
-    <div className="relative h-screen w-full overflow-hidden bg-black text-white selection:bg-white selection:text-black">
+    <div className="relative h-[100svh] min-h-[100svh] w-full overflow-hidden bg-black text-white selection:bg-white selection:text-black">
       <div className="absolute inset-0 z-0">
         <Background3D />
       </div>
@@ -361,14 +361,21 @@ export default function Layout({
         </>
       )}
 
-      <main className="relative z-10 h-full overflow-y-auto overflow-x-hidden">
-        <div className="mx-auto max-w-[1600px] px-3 pb-[calc(env(safe-area-inset-bottom)+122px)] pt-[112px] md:px-6 md:pb-[148px] md:pt-[116px]">
+      <main className="relative z-10 h-full overflow-y-auto overflow-x-hidden overscroll-y-contain">
+        <div
+          className={
+            "mx-auto max-w-[1600px] pt-[104px] md:pt-[112px] " +
+            (currentRoute === AppRoute.REEL_FEED
+              ? "px-0 pb-[calc(env(safe-area-inset-bottom)+104px)] md:px-0 md:pb-[118px]"
+              : "px-3 pb-[calc(env(safe-area-inset-bottom)+118px)] md:px-6 md:pb-[132px]")
+          }
+        >
           {children}
         </div>
       </main>
 
-      <nav className="pointer-events-none fixed inset-x-0 bottom-0 z-40 px-3 pb-[max(env(safe-area-inset-bottom),12px)] md:px-6">
-        <div className="mx-auto flex max-w-[920px] items-end justify-between gap-2 rounded-[30px] border border-white/10 bg-[rgba(0,0,0,0.62)] px-3 py-3 shadow-[0_22px_60px_rgba(0,0,0,0.42)] backdrop-blur-2xl md:px-5">
+      <nav className="pointer-events-none fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-[rgba(6,6,8,0.9)] shadow-[0_-18px_40px_rgba(0,0,0,0.45)] backdrop-blur-2xl">
+        <div className="mx-auto flex max-w-[920px] items-end justify-between gap-2 px-2 pt-2 pb-[max(env(safe-area-inset-bottom),10px)] md:px-5">
           {bottomItems.slice(0, 2).map((item) => (
             <button
               key={item.key}
@@ -384,7 +391,7 @@ export default function Layout({
           <button
             type="button"
             onClick={() => setCreateSheetOpen(true)}
-            className={`pointer-events-auto -mt-8 inline-flex h-16 w-16 shrink-0 items-center justify-center rounded-full border text-white shadow-[0_18px_44px_rgba(0,0,0,0.48)] transition ${plusActive ? "border-[rgba(241,225,148,0.34)] bg-[rgba(241,225,148,0.18)]" : "border-white/10 bg-white/10 hover:bg-white/14"}`}
+            className={`pointer-events-auto -mt-5 inline-flex h-16 w-16 shrink-0 items-center justify-center rounded-full border text-white shadow-[0_18px_44px_rgba(0,0,0,0.48)] transition ${plusActive ? "border-[rgba(241,225,148,0.34)] bg-[rgba(241,225,148,0.18)]" : "border-white/10 bg-white/10 hover:bg-white/14"}`}
             aria-label="Crear"
             title="Crear"
           >
