@@ -52,10 +52,10 @@ function ActionButton({
       type="button"
       onClick={onClick}
       className={
-        "inline-flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-semibold transition md:px-4 md:text-sm " +
+        "inline-flex min-h-[44px] items-center gap-2 rounded-full border px-4 py-2 text-xs font-semibold transition md:text-sm " +
         (primary
-          ? "border-[rgba(241,225,148,0.28)] bg-[rgba(241,225,148,0.14)] text-white hover:bg-[rgba(241,225,148,0.2)]"
-          : "border-white/10 bg-white/5 text-white/90 hover:bg-white/10")
+          ? "border-[rgba(241,225,148,0.3)] bg-[rgba(241,225,148,0.14)] text-white hover:bg-[rgba(241,225,148,0.22)]"
+          : "border-white/10 bg-white/5 text-white/88 hover:bg-white/10")
       }
     >
       {icon}
@@ -75,7 +75,8 @@ function SidebarRow({
   onClick?: () => void;
   right?: React.ReactNode;
 }) {
-  const shared = "w-full rounded-[22px] border border-white/10 bg-white/[0.03] px-4 py-4 text-left transition hover:bg-white/[0.07]";
+  const shared =
+    "w-full rounded-[22px] border border-white/10 bg-white/[0.03] px-4 py-4 text-left transition hover:bg-white/[0.07]";
 
   if (!onClick) {
     return (
@@ -121,12 +122,13 @@ export default function Layout({
   const [createSheetOpen, setCreateSheetOpen] = useState(false);
 
   useEffect(() => {
-    if (!user) {
-      setSidebarOpen(false);
-    }
+    if (!user) setSidebarOpen(false);
   }, [user?.id]);
 
   const availableCredits = Number(wallet?.generationCredits ?? 0);
+  const showHomeTopBar = currentRoute === AppRoute.HOME;
+  const isReel = currentRoute === AppRoute.REEL_FEED;
+
   const isImageZone =
     currentRoute === AppRoute.IMAGE_GEN_ROOT ||
     currentRoute === AppRoute.TOOL_GENERATOR ||
@@ -191,16 +193,22 @@ export default function Layout({
     },
   ];
 
+  const mainPaddingClass = showHomeTopBar
+    ? "mx-auto max-w-[1360px] px-3 pb-[calc(env(safe-area-inset-bottom)+118px)] pt-[calc(env(safe-area-inset-top)+86px)] md:px-6 md:pb-[132px] md:pt-[calc(env(safe-area-inset-top)+94px)]"
+    : isReel
+    ? "h-full px-0 pb-0 pt-0"
+    : "mx-auto max-w-[1600px] px-3 pb-[calc(env(safe-area-inset-bottom)+118px)] pt-[max(env(safe-area-inset-top),14px)] md:px-6 md:pb-[132px] md:pt-[max(env(safe-area-inset-top),18px)]";
+
   return (
     <div className="relative h-[100svh] min-h-[100svh] w-full overflow-hidden bg-black text-white selection:bg-white selection:text-black">
       <div className="absolute inset-0 z-0">
         <Background3D />
       </div>
-      <div className="pointer-events-none absolute inset-0 z-0 bg-[radial-gradient(circle_at_top,rgba(91,14,20,0.28),transparent_38%),linear-gradient(180deg,rgba(0,0,0,0.15),rgba(0,0,0,0.86))]" />
+      <div className="pointer-events-none absolute inset-0 z-0 bg-[radial-gradient(circle_at_top,rgba(91,14,20,0.28),transparent_38%),linear-gradient(180deg,rgba(0,0,0,0.16),rgba(0,0,0,0.9))]" />
 
-      <header className="fixed inset-x-0 top-0 z-40 px-3 pt-[max(env(safe-area-inset-top),12px)] md:px-6">
-        <div className="mx-auto flex max-w-[1600px] items-center justify-between gap-3 rounded-[28px] border border-white/10 bg-[rgba(0,0,0,0.42)] px-3 py-3 shadow-[0_18px_50px_rgba(0,0,0,0.34)] backdrop-blur-xl md:px-5">
-          <div className="flex min-w-0 items-center gap-3">
+      {showHomeTopBar ? (
+        <header className="fixed inset-x-0 top-0 z-40 border-b border-white/10 bg-[rgba(6,6,8,0.9)] shadow-[0_14px_38px_rgba(0,0,0,0.4)] backdrop-blur-2xl">
+          <div className="mx-auto flex max-w-[1360px] items-center justify-between gap-3 px-3 pb-3 pt-[max(env(safe-area-inset-top),12px)] md:px-6">
             <button
               type="button"
               onClick={() => {
@@ -210,65 +218,45 @@ export default function Layout({
                 }
                 setSidebarOpen(true);
               }}
-              className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/90 transition hover:bg-white/10"
+              className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/92 transition hover:bg-white/10"
               aria-label="Abrir menú"
               title="Abrir menú"
             >
               <Menu className="h-5 w-5" />
             </button>
 
-            <div className="min-w-0">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/40">Tales.AI</div>
-              <div className="truncate text-sm font-semibold text-white/88">
-                {currentRoute === AppRoute.HOME
-                  ? "Home"
-                  : currentRoute === AppRoute.REEL_FEED
-                  ? "Carrete"
-                  : currentRoute === AppRoute.MY_CREATIONS
-                  ? "My Assets"
-                  : currentRoute === AppRoute.MY_TRADES
-                  ? "My Trades"
-                  : currentRoute === AppRoute.PAYWALL
-                  ? "My Account"
-                  : currentRoute === AppRoute.PROFILE
-                  ? "Settings"
-                  : currentRoute === AppRoute.EARN_MONEY
-                  ? "Earn Money"
-                  : "Studio"}
-              </div>
+            <div className="flex items-center gap-2">
+              {!user ? (
+                <ActionButton label="Sign in for Credits" onClick={onOpenAuth} primary />
+              ) : (
+                <>
+                  <ActionButton label="Upgrade" onClick={() => goAccountTab("plans")} />
+                  <ActionButton
+                    label="Earn Money"
+                    onClick={() => onNavigate(AppRoute.EARN_MONEY)}
+                    primary
+                    icon={<CircleDollarSign className="h-4 w-4" />}
+                  />
+                </>
+              )}
             </div>
           </div>
+        </header>
+      ) : null}
 
-          <div className="flex items-center gap-2">
-            {!user ? (
-              <ActionButton label="Sign in for Credits" onClick={onOpenAuth} primary />
-            ) : (
-              <>
-                <ActionButton
-                  label="Upgrade"
-                  onClick={() => goAccountTab("plans")}
-                />
-                <ActionButton
-                  label="Earn Money"
-                  onClick={() => onNavigate(AppRoute.EARN_MONEY)}
-                  primary
-                  icon={<CircleDollarSign className="h-4 w-4" />}
-                />
-              </>
-            )}
-          </div>
-        </div>
-      </header>
-
-      {user && (
+      {user ? (
         <>
           <div
-            className={`fixed inset-0 z-[70] bg-black/62 backdrop-blur-[2px] transition ${sidebarOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"}`}
+            className={`fixed inset-0 z-[70] bg-black/62 backdrop-blur-[2px] transition ${
+              sidebarOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
+            }`}
             onClick={() => setSidebarOpen(false)}
           />
 
           <aside
-            className={`fixed left-0 top-0 z-[80] h-full w-[min(92vw,360px)] transform border-r border-white/10 bg-[rgba(5,5,7,0.95)] px-4 pb-6 pt-[max(env(safe-area-inset-top),18px)] shadow-[0_30px_80px_rgba(0,0,0,0.58)] backdrop-blur-2xl transition duration-300 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}
+            className={`fixed left-0 top-0 z-[80] h-full w-[min(92vw,360px)] transform border-r border-white/10 bg-[rgba(5,5,7,0.95)] px-4 pb-6 pt-[max(env(safe-area-inset-top),18px)] shadow-[0_30px_80px_rgba(0,0,0,0.58)] backdrop-blur-2xl transition duration-300 ${
+              sidebarOpen ? "translate-x-0" : "-translate-x-full"
+            }`}
           >
             <div className="flex items-center justify-between gap-3 px-1 pb-4">
               <div>
@@ -359,29 +347,27 @@ export default function Layout({
             </div>
           </aside>
         </>
-      )}
+      ) : null}
 
-      <main className="relative z-10 h-full overflow-y-auto overflow-x-hidden overscroll-y-contain">
-        <div
-          className={
-            "mx-auto max-w-[1600px] pt-[104px] md:pt-[112px] " +
-            (currentRoute === AppRoute.REEL_FEED
-              ? "px-0 pb-[calc(env(safe-area-inset-bottom)+104px)] md:px-0 md:pb-[118px]"
-              : "px-3 pb-[calc(env(safe-area-inset-bottom)+118px)] md:px-6 md:pb-[132px]")
-          }
-        >
-          {children}
-        </div>
+      <main
+        className={
+          "relative z-10 h-full overflow-x-hidden " +
+          (isReel ? "overflow-hidden" : "overflow-y-auto overscroll-y-contain")
+        }
+      >
+        <div className={mainPaddingClass}>{children}</div>
       </main>
 
-      <nav className="pointer-events-none fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-[rgba(6,6,8,0.9)] shadow-[0_-18px_40px_rgba(0,0,0,0.45)] backdrop-blur-2xl">
+      <nav className="pointer-events-none fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-[rgba(6,6,8,0.92)] shadow-[0_-18px_40px_rgba(0,0,0,0.45)] backdrop-blur-2xl">
         <div className="mx-auto flex max-w-[920px] items-end justify-between gap-2 px-2 pt-2 pb-[max(env(safe-area-inset-bottom),10px)] md:px-5">
           {bottomItems.slice(0, 2).map((item) => (
             <button
               key={item.key}
               type="button"
               onClick={item.onClick}
-              className={`pointer-events-auto flex min-w-0 flex-1 flex-col items-center gap-1 rounded-[20px] px-2 py-2 text-[11px] font-semibold transition ${item.active ? "bg-white/10 text-white" : "text-white/58 hover:bg-white/5 hover:text-white"}`}
+              className={`pointer-events-auto flex min-w-0 flex-1 flex-col items-center gap-1 rounded-[20px] px-2 py-2 text-[11px] font-semibold transition ${
+                item.active ? "bg-white/10 text-white" : "text-white/58 hover:bg-white/5 hover:text-white"
+              }`}
             >
               {item.icon}
               <span className="truncate">{item.label}</span>
@@ -391,7 +377,11 @@ export default function Layout({
           <button
             type="button"
             onClick={() => setCreateSheetOpen(true)}
-            className={`pointer-events-auto -mt-5 inline-flex h-16 w-16 shrink-0 items-center justify-center rounded-full border text-white shadow-[0_18px_44px_rgba(0,0,0,0.48)] transition ${plusActive ? "border-[rgba(241,225,148,0.34)] bg-[rgba(241,225,148,0.18)]" : "border-white/10 bg-white/10 hover:bg-white/14"}`}
+            className={`pointer-events-auto -mt-5 inline-flex h-16 w-16 shrink-0 items-center justify-center rounded-full border text-white shadow-[0_18px_44px_rgba(0,0,0,0.48)] transition ${
+              plusActive
+                ? "border-[rgba(241,225,148,0.34)] bg-[rgba(241,225,148,0.18)]"
+                : "border-white/10 bg-white/10 hover:bg-white/14"
+            }`}
             aria-label="Crear"
             title="Crear"
           >
@@ -403,7 +393,9 @@ export default function Layout({
               key={item.key}
               type="button"
               onClick={item.onClick}
-              className={`pointer-events-auto flex min-w-0 flex-1 flex-col items-center gap-1 rounded-[20px] px-2 py-2 text-[11px] font-semibold transition ${item.active ? "bg-white/10 text-white" : "text-white/58 hover:bg-white/5 hover:text-white"}`}
+              className={`pointer-events-auto flex min-w-0 flex-1 flex-col items-center gap-1 rounded-[20px] px-2 py-2 text-[11px] font-semibold transition ${
+                item.active ? "bg-white/10 text-white" : "text-white/58 hover:bg-white/5 hover:text-white"
+              }`}
             >
               {item.icon}
               <span className="truncate">{item.label}</span>
@@ -412,7 +404,7 @@ export default function Layout({
         </div>
       </nav>
 
-      {user ? <GenerationQueueWidget /> : null}
+      {user && !isReel ? <GenerationQueueWidget /> : null}
 
       <BottomSheet open={createSheetOpen} title="Create" onClose={() => setCreateSheetOpen(false)}>
         <div className="space-y-3 pb-2">

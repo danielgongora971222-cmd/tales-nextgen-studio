@@ -1,973 +1,138 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AppRoute, Asset, Comment } from '../types';
-import { listPublicAssets } from '../services/assetsApi';
-import { toggleLike, listComments, createComment } from '../services/socialApi';
-import { useAuth } from '../contexts/AuthContext';
+import React from "react";
+import { ArrowRight, Coins, Crown, ShoppingBag, Sparkles, Wand2 } from "lucide-react";
+import { AppRoute } from "../types";
+import { useAuth } from "../contexts/AuthContext";
 import { useWallet } from "../contexts/WalletContext";
-import styles from './Home.module.css';
-import generatorStyles from './tools/ImageGeneratorTool.module.css';
-import OneNationUpIcon from "@/components/brand/OneNationUpIcon";
-import CommunityStore from './CommunityStore';
+import CommunityStore from "./CommunityStore";
 
 interface HomeProps {
   onNavigate: (route: AppRoute) => void;
 }
 
-type ConstellationEffectOptions = {
-  btn: HTMLElement | null;
-  canvas: HTMLCanvasElement | null;
-  hoverRef: React.MutableRefObject<boolean>;
-  mouseRef: React.MutableRefObject<{ x: number; y: number }>;
-  colors: string[];
-  lineRgb: string; // ejemplo: "180, 200, 255"
-};
-
-function setupConstellationEffect(opts: ConstellationEffectOptions) {
-  const { btn, canvas, hoverRef, mouseRef, colors, lineRgb } = opts;
-
-  if (!btn || !canvas) return () => {};
-
-  const prefersReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
-  if (prefersReducedMotion) return () => {};
-
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return () => {};
-
-  let particles: Array<{
-    x: number; y: number;
-    vx: number; vy: number;
-    baseRadius: number; radius: number;
-    color: string;
-    phase: number;
-  }> = [];
-
-  let raf = 0;
-
-  const resize = () => {
-    const w = btn.offsetWidth;
-    const h = btn.offsetHeight;
-    canvas.width = Math.max(1, Math.floor(w));
-    canvas.height = Math.max(1, Math.floor(h));
-
-    particles = [];
-    const count = Math.max(18, Math.floor((canvas.width * canvas.height) / 4000));
-    for (let i = 0; i < count; i++) {
-      particles.push({
-        x: Math.random() * canvas.width,
-        y: Math.random() * canvas.height,
-        vx: (Math.random() - 0.5) * 0.5,
-        vy: (Math.random() - 0.5) * 0.5,
-        baseRadius: Math.random() * 1.5 + 0.5,
-        radius: 1,
-        color: colors[Math.floor(Math.random() * colors.length)],
-        phase: Math.random() * Math.PI * 2
-      });
-    }
-  };
-
-  const drawLines = () => {
-    const isHovered = hoverRef.current;
-    const mouse = mouseRef.current;
-    const connectionDistance = isHovered ? 110 : 80;
-
-    for (let i = 0; i < particles.length; i++) {
-      for (let j = i + 1; j < particles.length; j++) {
-        const dx = particles[i].x - particles[j].x;
-        const dy = particles[i].y - particles[j].y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-
-        if (dist < connectionDistance) {
-          ctx.beginPath();
-          let opacity = 1 - (dist / connectionDistance);
-          opacity *= isHovered ? 0.6 : 0.2;
-          ctx.strokeStyle = `rgba(${lineRgb}, ${opacity})`;
-          ctx.lineWidth = 1;
-          ctx.moveTo(particles[i].x, particles[i].y);
-          ctx.lineTo(particles[j].x, particles[j].y);
-          ctx.stroke();
-        }
-      }
-
-      if (isHovered) {
-        const mdx = particles[i].x - mouse.x;
-        const mdy = particles[i].y - mouse.y;
-        const mdist = Math.sqrt(mdx * mdx + mdy * mdy);
-
-        if (mdist < 120) {
-          ctx.beginPath();
-          const mOpacity = 1 - (mdist / 120);
-          ctx.strokeStyle = particles[i].color;
-          ctx.globalAlpha = mOpacity * 0.8;
-          ctx.lineWidth = 1.5;
-          ctx.moveTo(particles[i].x, particles[i].y);
-          ctx.lineTo(mouse.x, mouse.y);
-          ctx.stroke();
-          ctx.globalAlpha = 1.0;
-        }
-      }
-    }
-  };
-
-  const tick = () => {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    const isHovered = hoverRef.current;
-    const mouse = mouseRef.current;
-
-    for (const p of particles) {
-      p.x += p.vx;
-      p.y += p.vy;
-
-      if (p.x < 0 || p.x > canvas.width) p.vx *= -1;
-      if (p.y < 0 || p.y > canvas.height) p.vy *= -1;
-
-      p.phase += 0.02;
-      p.radius = p.baseRadius + Math.sin(p.phase) * 0.5;
-
-      if (isHovered) {
-        const dx = mouse.x - p.x;
-        const dy = mouse.y - p.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        const interactionRadius = 100;
-
-        if (dist > 0.001 && dist < interactionRadius) {
-          const fx = dx / dist;
-          const fy = dy / dist;
-          const force = (interactionRadius - dist) / interactionRadius;
-
-          p.vx += fx * force * 0.02;
-          p.vy += fy * force * 0.02;
-
-          const maxSpeed = 1.5;
-          const sp = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
-          if (sp > maxSpeed) {
-            p.vx = (p.vx / sp) * maxSpeed;
-            p.vy = (p.vy / sp) * maxSpeed;
-          }
-
-          p.radius = p.baseRadius + (force * 1.5);
-        }
-      } else {
-        p.vx *= 0.99;
-        p.vy *= 0.99;
-        if (Math.abs(p.vx) < 0.1) p.vx += (Math.random() - 0.5) * 0.05;
-        if (Math.abs(p.vy) < 0.1) p.vy += (Math.random() - 0.5) * 0.05;
-      }
-
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
-      ctx.fillStyle = p.color;
-      ctx.globalAlpha = isHovered ? 0.8 : 0.5;
-      ctx.fill();
-      ctx.globalAlpha = 1.0;
-    }
-
-    drawLines();
-    raf = requestAnimationFrame(tick);
-  };
-
-  const onResize = () => resize();
-
-  resize();
-  raf = requestAnimationFrame(tick);
-  window.addEventListener("resize", onResize);
-
-  return () => {
-    cancelAnimationFrame(raf);
-    window.removeEventListener("resize", onResize);
-  };
-}
-
-const Home: React.FC<HomeProps> = ({ onNavigate }) => {
-  const { user } = useAuth();
-  const { wallet, subscription } = useWallet();
-  const [feed, setFeed] = useState<Asset[]>([]);
-  const [commentText, setCommentText] = useState<{[key:string]: string}>({}); // Map assetId -> text
-  const [viewer, setViewer] = useState<Asset | null>(null);
-
-  const [viewerComments, setViewerComments] = useState<Comment[]>([]);
-  const [viewerLoadingComments, setViewerLoadingComments] = useState<boolean>(false);
-
-  // ===============================
-  // Anti-spam / Anti-abuso (Frontend)
-  // ===============================
-  const LIKE_COOLDOWN_MS = 650;      // evita spam de like/unlike
-  const COMMENT_COOLDOWN_MS = 2000;  // 1 comment cada 2s por asset (frontend)
-
-  const [likeBusy, setLikeBusy] = useState<Record<string, boolean>>({});
-  const [likeCooldownUntil, setLikeCooldownUntil] = useState<Record<string, number>>({});
-
-  const [commentBusy, setCommentBusy] = useState<Record<string, boolean>>({});
-  const [commentCooldownUntil, setCommentCooldownUntil] = useState<Record<string, number>>({});
-
-  const [socialNotice, setSocialNotice] = useState<string | null>(null);
-  const noticeTimerRef = useRef<number | null>(null);
-
-  const pushNotice = (msg: string) => {
-    setSocialNotice(msg);
-
-    if (noticeTimerRef.current != null) {
-      window.clearTimeout(noticeTimerRef.current);
-      noticeTimerRef.current = null;
-    }
-
-    noticeTimerRef.current = window.setTimeout(() => {
-      setSocialNotice(null);
-      noticeTimerRef.current = null;
-    }, 2500);
-  };
-
-  const oneNationBtnRef = useRef<HTMLButtonElement | null>(null);
-  const oneNationCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const oneNationHoverRef = useRef<boolean>(false);
-  const oneNationMouseRef = useRef<{ x: number; y: number }>({ x: -1000, y: -1000 });
-
-  const designsBtnRef = useRef<HTMLButtonElement | null>(null);
-  const designsCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const designsHoverRef = useRef<boolean>(false);
-  const designsMouseRef = useRef<{ x: number; y: number }>({ x: -1000, y: -1000 });
-
-  const creatorBtnRef = useRef<HTMLDivElement | null>(null);
-  const creatorCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const creatorHoverRef = useRef<boolean>(false);
-  const creatorMouseRef = useRef<{ x: number; y: number }>({ x: -1000, y: -1000 });
-
-  const validateComment = (raw: string) => {
-    const text = (raw || "").trim();
-
-    if (!text) return { ok: false as const, reason: "El comentario está vacío." };
-    if (text.length > 500) return { ok: false as const, reason: "Máximo 500 caracteres." };
-
-    // Bloqueo básico de links (spam típico)
-    const lower = text.toLowerCase();
-    if (lower.includes("http://") || lower.includes("https://") || lower.includes("www.")) {
-      return { ok: false as const, reason: "Links no permitidos por seguridad (anti-spam)." };
-    }
-
-    // Bloqueo básico de flood (mismo char repetido muchas veces)
-    if (/(\S)\1{10,}/.test(text)) {
-      return { ok: false as const, reason: "Texto inválido (flood detectado)." };
-    }
-
-    return { ok: true as const, text };
-  };
-
-  function escapeRegExp(input: string) {
-    return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  }
-
-  function removeStylePresetBlock(input: string) {
-    let out = input;
-    const pairs = [
-      { start: '[[STYLE_PRESET_START]]', end: '[[STYLE_PRESET_END]]' },
-      { start: '/* STYLE_PRESET_START */', end: '/* STYLE_PRESET_END */' },
-
-      // Lightroom hidden lighting block
-      { start: '[[LIGHTING_PRESET_START]]', end: '[[LIGHTING_PRESET_END]]' },
-
-      // Upscaler hidden master block
-      { start: '[[UPSCALE_MASTER_START]]', end: '[[UPSCALE_MASTER_END]]' }
-    ];
-
-    for (const { start, end } of pairs) {
-      const re = new RegExp(`${escapeRegExp(start)}[\\s\\S]*?${escapeRegExp(end)}\\n*`, 'g');
-      out = out.replace(re, '');
-    }
-    return out.trim();
-  }
-
-  function isUpscalerAsset(asset: Asset) {
-    const meta = (asset as any)?.meta || {};
-    return typeof meta.tool === 'string' && meta.tool === 'upscaler';
-  }
-
-  function prettyModelLabel(modelId: string | null) {
-    if (!modelId) return 'Unknown';
-    return modelId.replace(/[-_]/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase());
-  }
-
-  useEffect(() => {
-    const btn = oneNationBtnRef.current;
-    const canvas = oneNationCanvasRef.current;
-    if (!btn || !canvas) return;
-
-    const prefersReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
-    if (prefersReducedMotion) return;
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-        const colors = ['#7EAAED', '#DFB142', '#DE6C53', '#7D45A9']; // paleta 1NationUp
-    let particles: Array<{
-      x: number; y: number;
-      vx: number; vy: number;
-      baseRadius: number; radius: number;
-      color: string;
-      phase: number;
-    }> = [];
-
-    let raf = 0;
-
-    const resize = () => {
-      const w = btn.offsetWidth;
-      const h = btn.offsetHeight;
-      canvas.width = Math.max(1, Math.floor(w));
-      canvas.height = Math.max(1, Math.floor(h));
-
-      particles = [];
-            const count = Math.max(18, Math.floor((canvas.width * canvas.height) / 4000)); // densidad de partículas
-      for (let i = 0; i < count; i++) {
-        particles.push({
-          x: Math.random() * canvas.width,
-          y: Math.random() * canvas.height,
-          vx: (Math.random() - 0.5) * 0.5,
-          vy: (Math.random() - 0.5) * 0.5,
-          baseRadius: Math.random() * 1.5 + 0.5,
-          radius: 1,
-          color: colors[Math.floor(Math.random() * colors.length)],
-          phase: Math.random() * Math.PI * 2
-        });
-      }
-    };
-
-    const drawLines = () => {
-      const isHovered = oneNationHoverRef.current;
-      const mouse = oneNationMouseRef.current;
-      const connectionDistance = isHovered ? 110 : 94;
-
-      for (let i = 0; i < particles.length; i++) {
-        for (let j = i + 1; j < particles.length; j++) {
-          const dx = particles[i].x - particles[j].x;
-          const dy = particles[i].y - particles[j].y;
-          const dist = Math.sqrt(dx * dx + dy * dy);
-
-          if (dist < connectionDistance) {
-            ctx.beginPath();
-            let opacity = 1 - (dist / connectionDistance);
-            opacity *= isHovered ? 0.6 : 0.34;
-            ctx.strokeStyle = `rgba(180, 200, 255, ${opacity})`;
-            ctx.lineWidth = 1;
-            ctx.moveTo(particles[i].x, particles[i].y);
-            ctx.lineTo(particles[j].x, particles[j].y);
-            ctx.stroke();
-          }
-        }
-
-        if (isHovered) {
-          const mdx = particles[i].x - mouse.x;
-          const mdy = particles[i].y - mouse.y;
-          const mdist = Math.sqrt(mdx * mdx + mdy * mdy);
-
-          if (mdist < 120) {
-            ctx.beginPath();
-            const mOpacity = 1 - (mdist / 120);
-            ctx.strokeStyle = particles[i].color;
-            ctx.globalAlpha = mOpacity * 0.8;
-            ctx.lineWidth = 1.5;
-            ctx.moveTo(particles[i].x, particles[i].y);
-            ctx.lineTo(mouse.x, mouse.y);
-            ctx.stroke();
-            ctx.globalAlpha = 1.0;
-          }
-        }
-      }
-    };
-
-    const tick = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      const isHovered = oneNationHoverRef.current;
-      const mouse = oneNationMouseRef.current;
-
-      for (const p of particles) {
-        p.x += p.vx;
-        p.y += p.vy;
-
-        if (p.x < 0 || p.x > canvas.width) p.vx *= -1;
-        if (p.y < 0 || p.y > canvas.height) p.vy *= -1;
-
-        p.phase += 0.02;
-        p.radius = p.baseRadius + Math.sin(p.phase) * 0.5;
-
-        if (isHovered) {
-          const dx = mouse.x - p.x;
-          const dy = mouse.y - p.y;
-          const dist = Math.sqrt(dx * dx + dy * dy);
-          const interactionRadius = 100;
-
-          if (dist > 0.001 && dist < interactionRadius) {
-            const fx = dx / dist;
-            const fy = dy / dist;
-            const force = (interactionRadius - dist) / interactionRadius;
-
-            p.vx += fx * force * 0.02;
-            p.vy += fy * force * 0.02;
-
-            const maxSpeed = 1.5;
-            const sp = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
-            if (sp > maxSpeed) {
-              p.vx = (p.vx / sp) * maxSpeed;
-              p.vy = (p.vy / sp) * maxSpeed;
-            }
-
-            p.radius = p.baseRadius + (force * 1.5);
-          }
-        } else {
-          p.vx *= 0.99;
-          p.vy *= 0.99;
-          if (Math.abs(p.vx) < 0.1) p.vx += (Math.random() - 0.5) * 0.05;
-          if (Math.abs(p.vy) < 0.1) p.vy += (Math.random() - 0.5) * 0.05;
-        }
-
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
-        ctx.fillStyle = p.color;
-        ctx.globalAlpha = isHovered ? 0.85 : 0.64;
-        ctx.fill();
-        ctx.globalAlpha = 1.0;
-      }
-
-      drawLines();
-      raf = requestAnimationFrame(tick);
-    };
-
-    const onResize = () => resize();
-
-    resize();
-    raf = requestAnimationFrame(tick);
-    window.addEventListener('resize', onResize);
-
-    return () => {
-      cancelAnimationFrame(raf);
-      window.removeEventListener('resize', onResize);
-    };
-  }, []);
-
-  useEffect(() => {
-    return setupConstellationEffect({
-      btn: designsBtnRef.current,
-      canvas: designsCanvasRef.current,
-      hoverRef: designsHoverRef,
-      mouseRef: designsMouseRef,
-      colors: ["#FDE68A", "#DFB142", "#B45309", "#FFF2C2"],
-      lineRgb: "255, 235, 170"
-    });
-  }, []);
-
-  useEffect(() => {
-    return setupConstellationEffect({
-      btn: creatorBtnRef.current,
-      canvas: creatorCanvasRef.current,
-      hoverRef: creatorHoverRef,
-      mouseRef: creatorMouseRef,
-      colors: ["#FFFFFF", "#E5E7EB", "#9CA3AF", "#F9FAFB"],
-      lineRgb: "255, 255, 255"
-    });
-  }, []);
-
-  useEffect(() => {
-    loadFeed();
-  }, []);
-
-  const loadFeed = async () => {
-    try {
-      const items = await listPublicAssets({ type: "image", limit: 60, fresh: true });
-      setFeed(items);
-    } catch {
-      setFeed([]);
-    }
-  };
-
-  const handleLike = async (assetId: string) => {
-    if (!user) {
-      pushNotice("Debes iniciar sesión para dar Like.");
-      return;
-    }
-
-    const now = Date.now();
-    const cooldownUntil = likeCooldownUntil[assetId] || 0;
-    if (likeBusy[assetId]) return;
-
-    if (cooldownUntil > now) {
-      pushNotice("Espera un momento antes de volver a dar Like.");
-      return;
-    }
-
-    // Bloqueo inmediato (evita doble click / spam)
-    setLikeBusy((prev) => ({ ...prev, [assetId]: true }));
-    setLikeCooldownUntil((prev) => ({ ...prev, [assetId]: now + LIKE_COOLDOWN_MS }));
-
-    try {
-      const { liked, likesCount } = await toggleLike(assetId);
-
-      setFeed((prev) =>
-        prev.map((a) =>
-          a.id === assetId
-            ? {
-                ...a,
-                likedByMe: liked,
-                likesCount,
-                likes: liked ? [user.id] : [],
-              }
-            : a
-        )
-      );
-
-      setViewer((prev) =>
-        prev && prev.id === assetId
-          ? {
-              ...prev,
-              likedByMe: liked,
-              likesCount,
-              likes: liked ? [user.id] : [],
-            }
-          : prev
-      );
-    } catch {
-      pushNotice("No se pudo dar Like. Intenta de nuevo.");
-      return;
-    } finally {
-      setLikeBusy((prev) => ({ ...prev, [assetId]: false }));
-    }
-  };
-
-  const handleComment = async (assetId: string) => {
-    if (!user) {
-      pushNotice("Debes iniciar sesión para comentar.");
-      return;
-    }
-
-    const now = Date.now();
-    const cooldownUntil = commentCooldownUntil[assetId] || 0;
-    if (commentBusy[assetId]) return;
-
-    if (cooldownUntil > now) {
-      pushNotice("Cooldown: espera 2 segundos antes de comentar de nuevo.");
-      return;
-    }
-
-    const raw = commentText[assetId] || "";
-    const validated = validateComment(raw);
-    if (!validated.ok) {
-      pushNotice(validated.reason);
-      return;
-    }
-
-    // Bloqueo inmediato (evita doble click / spam)
-    setCommentBusy((prev) => ({ ...prev, [assetId]: true }));
-    setCommentCooldownUntil((prev) => ({ ...prev, [assetId]: now + COMMENT_COOLDOWN_MS }));
-
-    try {
-      const { comment, commentsCount } = await createComment(assetId, validated.text);
-
-      setCommentText((prev) => ({ ...prev, [assetId]: "" }));
-
-      setViewerComments((prev) => [...prev, comment]);
-
-      setFeed((prev) =>
-        prev.map((a) => (a.id === assetId ? { ...a, commentsCount } : a))
-      );
-
-      setViewer((prev) =>
-        prev && prev.id === assetId ? { ...prev, commentsCount } : prev
-      );
-    } catch {
-      pushNotice("No se pudo comentar. Intenta de nuevo.");
-      return;
-    } finally {
-      setCommentBusy((prev) => ({ ...prev, [assetId]: false }));
-    }
-  };
-
-    const openViewer = async (asset: Asset) => {
-    setViewer(asset);
-    setViewerComments([]);
-    setViewerLoadingComments(true);
-
-    try {
-      const { comments, commentsCount } = await listComments(asset.id, { limit: 80, offset: 0 });
-
-      setViewerComments(comments);
-
-      setFeed((prev) =>
-        prev.map((a) => (a.id === asset.id ? { ...a, commentsCount } : a))
-      );
-
-      setViewer((prev) =>
-        prev && prev.id === asset.id ? { ...prev, commentsCount } : prev
-      );
-    } catch {
-      setViewerComments([]);
-    } finally {
-      setViewerLoadingComments(false);
-    }
-  };
-
-  const viewerRecipeInfo = useMemo(() => {
-    if (!viewer) return null;
-    const meta = (viewer as any).meta || {};
-    const modelId = typeof meta.model === 'string' ? meta.model : null;
-    const aspectRatio = typeof meta.aspectRatio === 'string' ? meta.aspectRatio : null;
-    const quality = typeof meta.quality === 'string' ? meta.quality : null;
-    const count =
-      typeof meta.count === 'number'
-        ? meta.count
-        : typeof meta.count === 'string'
-          ? parseInt(meta.count, 10)
-          : null;
-
-    return {
-      modelId,
-      aspectRatio,
-      quality,
-      count,
-      styleName: removeStylePresetBlock(viewer.prompt || '') ? 'Custom' : 'None'
-    };
-  }, [viewer]);
-
+function HomeCard({
+  eyebrow,
+  title,
+  subtitle,
+  accent,
+  icon,
+  onClick,
+  children,
+}: {
+  eyebrow: string;
+  title: string;
+  subtitle: string;
+  accent: string;
+  icon: React.ReactNode;
+  onClick: () => void;
+  children?: React.ReactNode;
+}) {
   return (
-    <div className="space-y-12 pb-20">
-      {/* Hero Section */}
-      <section className={styles.heroGrid}>
-        <button
-          ref={designsBtnRef}
-          type="button"
-          onClick={() => onNavigate(AppRoute.TOOL_GENERATOR)}
-          className={`${styles.heroCard} ${styles.heroCardRefBase} ${styles.refHeroCard} ${styles.designsTheme}`}
-          onMouseEnter={() => { designsHoverRef.current = true; }}
-          onMouseLeave={() => {
-            designsHoverRef.current = false;
-            designsMouseRef.current = { x: -1000, y: -1000 };
-          }}
-          onMouseMove={(e) => {
-            const rect = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
-            designsMouseRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-          }}
-        >
-          <canvas ref={designsCanvasRef} className={styles.refCanvas} />
-          <div className={styles.refOverlay} aria-hidden="true" />
-          <div className={`${styles.auroraBorder} ${styles.auroraDesigns}`} aria-hidden="true" />
+    <button
+      type="button"
+      onClick={onClick}
+      className="group relative w-full overflow-hidden rounded-[34px] border border-white/10 bg-[rgba(7,7,9,0.82)] p-5 text-left shadow-[0_24px_60px_rgba(0,0,0,0.42)] backdrop-blur-xl transition duration-300 hover:-translate-y-0.5 hover:border-white/15 hover:bg-[rgba(10,10,14,0.88)] md:p-7"
+    >
+      <div className={`pointer-events-none absolute inset-0 opacity-80 ${accent}`} />
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,0.08),transparent_38%,rgba(0,0,0,0.2))]" />
 
-          <div className={styles.refLogoBadge} aria-hidden="true">
-            <span className={styles.refLogoFallback}>D</span>
-            <img
-              src="/brands/designs/logo.png"
-              alt="Designs Logo"
-              className={styles.refLogo}
-              loading="lazy"
-              decoding="async"
-              onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
-            />
-          </div>
-
-          <div className={styles.refFront}>
-            <div className={styles.refTextWrap}>
-              <h2 className={styles.refKicker}>Crea con</h2>
-
-              <h1 className={styles.refTitle}>
-                <span className={styles.refGradientText}>Designs</span>
-                <span className={styles.refTitleWhite}>Studio</span>
-              </h1>
-
-              <div className={styles.refMetaLine}>
-                Generador de imágenes con presets cinematográficos y controles avanzados para resultados más consistentes.
-              </div>
-
-              <div className={styles.refActionRow}>
-                <span>Abrir Image Generator</span>
-                <svg className={styles.refArrow} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 8l4 4m0 0l-4 4m4-4H3"></path>
-                </svg>
-              </div>
-            </div>
-          </div>
-
-          <div className={styles.refBottomBorder} aria-hidden="true" />
-        </button>
-
-        <div
-          ref={creatorBtnRef}
-          className={`${styles.heroCard} ${styles.heroCardRefBase} ${styles.refHeroCard} ${styles.monoTheme}`}
-          role="button"
-          tabIndex={0}
-          onClick={() => {
-            window.localStorage.setItem("tales_profile_focus", "profile");
-            onNavigate(AppRoute.PROFILE);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              window.localStorage.setItem("tales_profile_focus", "profile");
-              onNavigate(AppRoute.PROFILE);
-            }
-          }}
-          onMouseEnter={() => { creatorHoverRef.current = true; }}
-          onMouseLeave={() => {
-            creatorHoverRef.current = false;
-            creatorMouseRef.current = { x: -1000, y: -1000 };
-          }}
-          onMouseMove={(e) => {
-            const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
-            creatorMouseRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-          }}
-        >
-          <canvas ref={creatorCanvasRef} className={styles.refCanvas} />
-          <div className={styles.refOverlay} aria-hidden="true" />
-          <div className={`${styles.auroraBorder} ${styles.auroraMono}`} aria-hidden="true" />
-
-          <div className={styles.refLogoBadge} aria-hidden="true">
-            <span className={styles.refLogoFallback}>C</span>
-            <img
-              src="/brands/creator-hub/logo.png"
-              alt="Creator Hub Logo"
-              className={styles.refLogo}
-              loading="lazy"
-              decoding="async"
-              onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
-            />
-          </div>
-
-          <div className={styles.refFront}>
-            <div className={styles.refTextWrap}>
-              <h2 className={styles.refKicker}>Tu</h2>
-
-              <h1 className={styles.refTitle}>
-                <span className={styles.refGradientText}>Creator</span>
-                <span className={styles.refTitleWhite}>Hub</span>
-              </h1>
-
-              <div className={styles.refMetaLine}>
-                {user?.username || "Creator"} · Plan activo:{" "}
-                <strong className={styles.heroInlineStrong}>{subscription?.plan_name || "Ninguno"}</strong>
-              </div>
-
-              <div className={styles.heroCreditsRow}>
-                <div>
-                  <div className={styles.heroCreditsLabel}>Credits</div>
-                  <div className={styles.heroCreditsValue}>{wallet?.generationCredits ?? 0}</div>
-                  <div className={styles.heroCreditsBreakdown}>
-                    Plan {wallet?.gen_plan_credits ?? 0} · Extra {wallet?.gen_topup_credits ?? 0} · Bonus {wallet?.gen_bonus_credits ?? 0}
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  className={styles.heroCreditsButton}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    window.localStorage.setItem("tales_account_tab", "plans");
-                    onNavigate(AppRoute.PAYWALL);
-                  }}
-                >
-                  Manage plans and extra credits
-                </button>
-              </div>
-
-              <div className={styles.refActionRow}>
-                <span>Ir a tu perfil</span>
-                <svg className={styles.refArrow} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 8l4 4m0 0l-4 4m4-4H3"></path>
-                </svg>
-              </div>
-            </div>
-          </div>
-
-          <div className={styles.refBottomBorder} aria-hidden="true" />
+      <div className="relative flex items-start justify-between gap-4">
+        <div className="max-w-[80%]">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.26em] text-white/46">{eyebrow}</div>
+          <h2 className="mt-3 text-[clamp(1.7rem,5vw,2.8rem)] font-black leading-[0.95] tracking-tight text-white">
+            {title}
+          </h2>
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-white/64 md:text-base">{subtitle}</p>
         </div>
 
-        <button
-          ref={oneNationBtnRef}
-          type="button"
-          onClick={() => onNavigate(AppRoute.STORE)}
-          className={`${styles.heroCard} ${styles.heroCardVideo} ${styles.oneNationHeroCard}`}
-          onMouseEnter={() => { oneNationHoverRef.current = true; }}
-          onMouseLeave={() => {
-            oneNationHoverRef.current = false;
-            oneNationMouseRef.current = { x: -1000, y: -1000 };
-          }}
-          onMouseMove={(e) => {
-            const rect = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
-            oneNationMouseRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-          }}
+        <div className="inline-flex h-14 w-14 shrink-0 items-center justify-center rounded-[22px] border border-white/10 bg-black/25 text-white shadow-[0_16px_36px_rgba(0,0,0,0.35)] backdrop-blur-md">
+          {icon}
+        </div>
+      </div>
+
+      {children ? <div className="relative mt-5">{children}</div> : null}
+
+      <div className="relative mt-6 flex items-center justify-between gap-3">
+        <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-white/68">
+          Open
+        </div>
+        <div className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/90 transition group-hover:translate-x-0.5 group-hover:bg-white/10">
+          <ArrowRight className="h-5 w-5" />
+        </div>
+      </div>
+    </button>
+  );
+}
+
+export default function Home({ onNavigate }: HomeProps) {
+  const { user } = useAuth();
+  const { wallet, subscription } = useWallet();
+
+  return (
+    <div className="mx-auto max-w-[1320px] space-y-5 text-white md:space-y-6">
+      <section className="space-y-4 md:space-y-5">
+        <HomeCard
+          eyebrow="Design Studio"
+          title="Crea con Design Studio"
+          subtitle="Abre tu zona principal de imagen con generador, editor, restyler, upscale y herramientas listas para producción móvil-first."
+          accent="bg-[radial-gradient(circle_at_top_left,rgba(241,225,148,0.28),transparent_42%),radial-gradient(circle_at_bottom_right,rgba(91,14,20,0.36),transparent_46%)]"
+          icon={<Wand2 className="h-6 w-6" />}
+          onClick={() => onNavigate(AppRoute.IMAGE_GEN_ROOT)}
+        />
+
+        <HomeCard
+          eyebrow="Creator Hub"
+          title="Creator Hub"
+          subtitle={
+            user
+              ? `Gestiona tu perfil, seguridad, billing y la capa de creator economy desde un solo lugar.`
+              : "Activa tu sesión para administrar perfil, seguridad, billing, créditos y próximas herramientas premium."
+          }
+          accent="bg-[radial-gradient(circle_at_top_right,rgba(110,168,255,0.22),transparent_42%),radial-gradient(circle_at_bottom_left,rgba(255,255,255,0.08),transparent_38%)]"
+          icon={<Sparkles className="h-6 w-6" />}
+          onClick={() => onNavigate(AppRoute.PROFILE)}
         >
-          <canvas ref={oneNationCanvasRef} className={styles.oneNationCanvas} />
-          <div className={styles.oneNationOverlay} aria-hidden="true" />
-          <div className={`${styles.auroraBorder} ${styles.auroraOneNation}`} aria-hidden="true" />
+          <div className="grid gap-3 md:grid-cols-[1.2fr,1fr]">
+            <div className="rounded-[26px] border border-white/10 bg-black/25 p-4 backdrop-blur-md">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/45">{user ? "Creator" : "Guest access"}</div>
+              <div className="mt-2 text-xl font-bold text-white">{user?.username || "Sign in required"}</div>
+              <div className="mt-2 text-sm leading-6 text-white/60">
+                {user
+                  ? `Plan activo: ${subscription?.plan_name || "Sin plan"}`
+                  : "Al entrar podrás ver profile, security y billing desde el sidebar y desde esta tarjeta."}
+              </div>
+            </div>
 
-          <div className={styles.oneNationLogoBadge} aria-hidden="true">
-            <img
-              src="/brands/1nation-up/logo.png"
-              alt="1NationUp Logo"
-              className={styles.oneNationLogo}
-              loading="lazy"
-              decoding="async"
-            />
-          </div>
-
-          <div className={styles.oneNationFront}>
-            <div className={styles.oneNationTextWrap}>
-              <h2 className={styles.oneNationKicker}>Explora la</h2>
-
-              <h1 className={styles.oneNationTitle}>
-                <span className={styles.oneNationGradientText}>1NationUp</span>
-                <span className={styles.oneNationTitleWhite}>Store</span>
-              </h1>
-
-              <div className={styles.oneNationActionRow}>
-                <span>Acceder a la tienda</span>
-                <svg className={styles.oneNationArrow} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 8l4 4m0 0l-4 4m4-4H3"></path>
-                </svg>
+            <div className="rounded-[26px] border border-white/10 bg-black/25 p-4 backdrop-blur-md">
+              <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-white/45">
+                <Coins className="h-4 w-4 text-[rgba(241,225,148,0.95)]" /> Credits
+              </div>
+              <div className="mt-2 text-3xl font-black tracking-tight text-white">
+                {(wallet?.generationCredits ?? 0).toLocaleString()}
+              </div>
+              <div className="mt-2 text-sm leading-6 text-white/60">
+                Plan {wallet?.gen_plan_credits ?? 0} · Extra {wallet?.gen_topup_credits ?? 0} · Bonus {wallet?.gen_bonus_credits ?? 0}
               </div>
             </div>
           </div>
+        </HomeCard>
 
-          <div className={styles.oneNationBottomBorder} aria-hidden="true" />
-        </button>
+        <HomeCard
+          eyebrow="1NationUp"
+          title="1NationUp"
+          subtitle="Explora la capa comercial del ecosistema y llévala a un formato más sólido para producto, store y monetización futura."
+          accent="bg-[radial-gradient(circle_at_top_left,rgba(255,138,61,0.18),transparent_42%),radial-gradient(circle_at_bottom_right,rgba(91,14,20,0.42),transparent_48%)]"
+          icon={<ShoppingBag className="h-6 w-6" />}
+          onClick={() => onNavigate(AppRoute.STORE)}
+        >
+          <div className="inline-flex items-center gap-2 rounded-full border border-[rgba(241,225,148,0.18)] bg-[rgba(241,225,148,0.08)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-white/76">
+            <Crown className="h-4 w-4 text-[rgba(241,225,148,0.95)]" /> Commerce layer
+          </div>
+        </HomeCard>
       </section>
 
-      {/* Community Store */}
       <section>
         <CommunityStore onNavigate={onNavigate} />
       </section>
-
-      {viewer && (
-        <div className={generatorStyles.viewerBackdrop} onClick={() => setViewer(null)}>
-          <div className={generatorStyles.viewer} onClick={(event) => event.stopPropagation()}>
-            <div className={generatorStyles.viewerTop}>
-              <div className={generatorStyles.viewerTitle}>
-                <span className={generatorStyles.viewerKicker}>COMMUNITY</span>
-                <span className={generatorStyles.viewerSub}>PUBLIC</span>
-              </div>
-              <div className={generatorStyles.viewerTopActions}>
-                <button
-                  type="button"
-                  className={generatorStyles.iconBtn}
-                  onClick={() => handleLike(viewer.id)}
-                  title={!user ? "Inicia sesión" : "Like"}
-                  disabled={
-                    !user ||
-                    Boolean(likeBusy[viewer.id]) ||
-                    (likeCooldownUntil[viewer.id] || 0) > Date.now()
-                  }
-                >
-                  ❤
-                </button>
-                <button type="button" className={generatorStyles.closeBtn} onClick={() => setViewer(null)} title="Cerrar">
-                  ✕
-                </button>
-              </div>
-            </div>
-
-            <div className={generatorStyles.viewerBody}>
-              <div className={generatorStyles.viewerImageWrap}>
-                <img className={generatorStyles.viewerImage} src={viewer.url} alt={viewer.name} />
-              </div>
-
-              <div className={generatorStyles.viewerRecipe}>
-                <div className={generatorStyles.viewerRecipeTitle}>RECIPE</div>
-                <div className={generatorStyles.recipeGrid}>
-                  <div className={generatorStyles.recipeItem}>
-                    <div className={generatorStyles.recipeLabel}>Model</div>
-                    <div className={generatorStyles.recipeValue}>
-                      {prettyModelLabel(viewerRecipeInfo?.modelId || null)}
-                    </div>
-                  </div>
-                  <div className={generatorStyles.recipeItem}>
-                    <div className={generatorStyles.recipeLabel}>Aspect</div>
-                    <div className={generatorStyles.recipeValue}>{viewerRecipeInfo?.aspectRatio || '—'}</div>
-                  </div>
-                  <div className={generatorStyles.recipeItem}>
-                    <div className={generatorStyles.recipeLabel}>Quality</div>
-                    <div className={generatorStyles.recipeValue}>{viewerRecipeInfo?.quality || '—'}</div>
-                  </div>
-                  <div className={generatorStyles.recipeItem}>
-                    <div className={generatorStyles.recipeLabel}>Count</div>
-                    <div className={generatorStyles.recipeValue}>
-                      {viewerRecipeInfo?.count != null ? String(viewerRecipeInfo.count) : '—'}
-                    </div>
-                  </div>
-                  <div className={generatorStyles.recipeItemWide}>
-                    <div className={generatorStyles.recipeLabel}>Style</div>
-                    <div className={generatorStyles.recipeValue}>{viewerRecipeInfo?.styleName || 'None'}</div>
-                  </div>
-                </div>
-
-                <div className={generatorStyles.recipeBlock}>
-                  <div className={generatorStyles.recipeLabel}>Prompt</div>
-                  <div className={generatorStyles.recipeValue}>
-                    {isUpscalerAsset(viewer) ? 'Hidden' : (removeStylePresetBlock(viewer.prompt || '') || '—')}
-                  </div>
-                </div>
-
-                <div className={styles.viewerSocial}>
-                  <div className={styles.viewerSocialHeader}>
-                    <div>
-                      <div className={styles.viewerSocialLabel}>Likes</div>
-                      <div className={styles.viewerSocialValue}>{viewer.likesCount}</div>
-                    </div>
-                    <div>
-                      <div className={styles.viewerSocialLabel}>Comments</div>
-                      <div className={styles.viewerSocialValue}>{viewer.commentsCount}</div>
-                    </div>
-                  </div>
-
-                  <div className={styles.viewerComments}>
-                    {viewerLoadingComments ? (
-                      <div className={styles.viewerComment}>
-                        <span className={styles.viewerCommentAuthor}>Loading…</span>
-                        <span className={styles.viewerCommentText}>Fetching comments</span>
-                      </div>
-                    ) : (
-                      viewerComments.map((comment) => (
-                        <div key={comment.id} className={styles.viewerComment}>
-                          <span className={styles.viewerCommentAuthor}>{comment.username}</span>
-                          <span className={styles.viewerCommentText}>{comment.text}</span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-
-                  <div className={styles.viewerCommentInput}>
-                    <input
-                      type="text"
-                      value={commentText[viewer.id] || ''}
-                      onChange={(event) =>
-                        setCommentText((prev) => ({
-                          ...prev,
-                          [viewer.id]: event.target.value.slice(0, 500),
-                        }))
-                      }
-                      placeholder="Leave a thought..."
-                      className={styles.viewerCommentField}
-                      maxLength={500}
-                    />
-                      <button
-                        type="button"
-                        onClick={() => handleComment(viewer.id)}
-                        disabled={
-                          !user ||
-                          Boolean(commentBusy[viewer.id]) ||
-                          (commentCooldownUntil[viewer.id] || 0) > Date.now() ||
-                          !commentText[viewer.id]?.trim()
-                        }
-                        className={styles.viewerCommentButton}
-                        title={!user ? "Inicia sesión" : "Anti-spam activado"}
-                      >
-                        Post
-                      </button>
-                  </div>
-                  {socialNotice && (
-                    <div className={styles.socialNotice}>{socialNotice}</div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
-};
-
-export default Home;
+}

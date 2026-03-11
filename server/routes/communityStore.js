@@ -230,14 +230,24 @@ export function createCommunityStoreRouter(ctx) {
     const listingIds = rows.map((r) => r.id).filter(Boolean);
 
     const likedSet = new Set();
+    const purchasedSet = new Set();
     if (user?.id && listingIds.length > 0) {
-      const { data: likedRows } = await supabaseAdmin
-        .from("community_listing_likes")
-        .select("listing_id")
-        .eq("user_id", user.id)
-        .in("listing_id", listingIds);
+      const [{ data: likedRows }, { data: purchasedRows }] = await Promise.all([
+        supabaseAdmin
+          .from("community_listing_likes")
+          .select("listing_id")
+          .eq("user_id", user.id)
+          .in("listing_id", listingIds),
+        supabaseAdmin
+          .from("community_purchases")
+          .select("listing_id")
+          .eq("buyer_id", user.id)
+          .eq("status", "completed")
+          .in("listing_id", listingIds),
+      ]);
 
       for (const r of likedRows || []) likedSet.add(r.listing_id);
+      for (const r of purchasedRows || []) purchasedSet.add(r.listing_id);
     }
 
     // Signed preview URLs
@@ -247,32 +257,38 @@ export function createCommunityStoreRouter(ctx) {
       previewUrlByListingId.set(r.id, url);
     }
 
-    const items = rows.map((r) => ({
-      id: r.id,
-      sellerId: r.seller_id,
-      sellerUsername: r.seller_username_snapshot || "seller",
-      sellerVerified: Boolean(r.seller_verified_snapshot),
+    const items = rows.map((r) => {
+      const ownedByMe = user?.id ? r.seller_id === user.id : false;
+      const purchasedByMe = user?.id ? purchasedSet.has(r.id) : false;
 
-      listingKind: r.listing_kind,
-      mediaTag: r.media_tag,
+      return {
+        id: r.id,
+        sellerId: r.seller_id,
+        sellerUsername: r.seller_username_snapshot || "seller",
+        sellerVerified: Boolean(r.seller_verified_snapshot),
 
-      name: r.name || "",
-      priceCredits: Number(r.price_credits) || 0,
-      description: r.description || "",
+        listingKind: r.listing_kind,
+        mediaTag: r.media_tag,
 
-      status: r.status,
+        name: r.name || "",
+        priceCredits: Number(r.price_credits) || 0,
+        description: r.description || "",
 
-      previewUrl: previewUrlByListingId.get(r.id) || null,
+        status: r.status,
 
-      createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
+        previewUrl: previewUrlByListingId.get(r.id) || null,
 
-      likesCount: Number(r.likes_count) || 0,
-      commentsCount: Number(r.comments_count) || 0,
-      salesCount: Number(r.sales_count) || 0,
+        createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
 
-      // ✅ Feed: estado de like del usuario (si está logeado)
-      likedByMe: user?.id ? likedSet.has(r.id) : false,
-    }));
+        likesCount: Number(r.likes_count) || 0,
+        commentsCount: Number(r.comments_count) || 0,
+        salesCount: Number(r.sales_count) || 0,
+
+        likedByMe: user?.id ? likedSet.has(r.id) : false,
+        ownedByMe,
+        purchasedByMe,
+      };
+    });
 
     return res.json({
       ok: true,

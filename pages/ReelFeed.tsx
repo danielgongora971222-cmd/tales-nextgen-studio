@@ -11,14 +11,24 @@ import {
   purchaseCommunityListing,
   toggleCommunityListingLike,
 } from "../services/communityStoreApi";
-import { BadgeCheck, Heart, Loader2, MessageCircle, Play, ShoppingCart, Sparkles } from "lucide-react";
+import {
+  COMMUNITY_MEDIA_OPTIONS,
+  COMMUNITY_SORT_OPTIONS,
+  DEFAULT_COMMUNITY_FEED_STATE,
+  REEL_ENTRY_KEY,
+  getActiveCommunityFilterLabel,
+  readCommunityFeedState,
+  toApiSort,
+  writeCommunityFeedState,
+  type CommunityFeedState,
+  type CommunityMediaKey,
+  type CommunitySortKey,
+} from "../services/communityFeedState";
+import { Heart, Loader2, MessageCircle, Play, Search, ShoppingCart, SlidersHorizontal, Sparkles } from "lucide-react";
 
 interface Props {
   onNavigate: (route: AppRoute) => void;
 }
-
-type FeedFilter = "all" | "image" | "video";
-type SortMode = "recent" | "top_liked" | "top_sold";
 
 type ReelItem = {
   id: string;
@@ -43,15 +53,17 @@ type ReelItem = {
 
 const PREFILL_KEY = "tales.prefill.imageGenerator";
 const PREFILL_EVENT = "tales:prefill-image-generator";
-const REEL_ENTRY_KEY = "tales.reel.initialListingId";
 
-function fmtCompact(value: any) {
-  const num = Number(value || 0);
-  return new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(num);
+function compact(value: any) {
+  return new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(Number(value || 0));
+}
+
+function avatarSeed(username?: string) {
+  return `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(String(username || "creator"))}`;
 }
 
 function timeAgo(timestamp?: number) {
-  if (!timestamp) return "Ahora";
+  if (!timestamp) return "now";
   const diff = Date.now() - Number(timestamp);
   const minute = 60_000;
   const hour = 60 * minute;
@@ -62,26 +74,19 @@ function timeAgo(timestamp?: number) {
   return `${Math.max(1, Math.floor(diff / day))}d`;
 }
 
-function sellerInitial(username?: string) {
-  return String(username || "T").trim().charAt(0).toUpperCase() || "T";
-}
-
-function clampDescription(text?: string) {
-  const clean = String(text || "").trim();
-  if (!clean) return "Sin descripción todavía.";
-  return clean;
-}
-
 export default function ReelFeed({ onNavigate }: Props) {
   const { user } = useAuth();
+
+  const [feedState, setFeedState] = useState<CommunityFeedState>(() => readCommunityFeedState());
+  const [searchDraft, setSearchDraft] = useState(() => readCommunityFeedState().searchQuery || "");
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
 
   const [items, setItems] = useState<ReelItem[]>([]);
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [mediaFilter, setMediaFilter] = useState<FeedFilter>("all");
-  const [sortMode, setSortMode] = useState<SortMode>("recent");
   const [expandedCaptionId, setExpandedCaptionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -98,21 +103,38 @@ export default function ReelFeed({ onNavigate }: Props) {
   const cardRefs = useRef<Record<string, HTMLElement | null>>({});
   const videoRefs = useRef<Record<string, HTMLVideoElement | null>>({});
 
-  const sortChips = [
-    { key: "recent" as const, label: "Recentes" },
-    { key: "top_liked" as const, label: "Top likes" },
-    { key: "top_sold" as const, label: "Top ventas" },
-  ];
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(null), 2200);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
 
-  const mediaChips = [
-    { key: "all" as const, label: "Todo" },
-    { key: "image" as const, label: "Imágenes" },
-    { key: "video" as const, label: "Videos" },
-  ];
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setFeedState((prev) => {
+        const next = { ...prev, searchQuery: searchDraft.trim() };
+        writeCommunityFeedState(next);
+        return next;
+      });
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [searchDraft]);
 
   const fetchPage = useCallback(
     async (reset: boolean) => {
       if (loading) return;
+
+      const activeState = reset ? readCommunityFeedState() : feedState;
+      const wantsMine = activeState.sortKey === "my_shop";
+
+      if (wantsMine && !user) {
+        setFeedState(DEFAULT_COMMUNITY_FEED_STATE);
+        writeCommunityFeedState(DEFAULT_COMMUNITY_FEED_STATE);
+        setSearchDraft("");
+        onNavigate(AppRoute.MY_CREATIONS);
+        return;
+      }
+
       setLoading(true);
       setError(null);
 
@@ -120,8 +142,10 @@ export default function ReelFeed({ onNavigate }: Props) {
         const response = await listCommunityListings({
           limit: 10,
           offset: reset ? 0 : items.length,
-          sort: sortMode,
-          media: mediaFilter === "all" ? "all" : mediaFilter,
+          sort: toApiSort(activeState.sortKey),
+          media: activeState.mediaKey,
+          q: activeState.searchQuery || undefined,
+          mine: wantsMine,
         });
 
         let nextItems = reset ? response.items : [...items, ...response.items];
@@ -140,14 +164,12 @@ export default function ReelFeed({ onNavigate }: Props) {
                 const focused = await getCommunityListing(reelEntryId);
                 nextItems = [focused, ...nextItems];
               } catch {
-                // no-op
+                // noop
               }
             }
           }
 
-          if (nextItems[0]?.id) {
-            setActiveId(nextItems[0].id);
-          }
+          if (nextItems[0]?.id) setActiveId(nextItems[0].id);
         }
 
         setItems(nextItems);
@@ -158,12 +180,14 @@ export default function ReelFeed({ onNavigate }: Props) {
         setLoading(false);
       }
     },
-    [items, loading, mediaFilter, sortMode]
+    [feedState, items, loading, onNavigate, user]
   );
 
   useEffect(() => {
+    setItems([]);
+    setHasMore(true);
     void fetchPage(true);
-  }, [mediaFilter, sortMode]);
+  }, [feedState.sortKey, feedState.mediaKey, feedState.searchQuery]);
 
   useEffect(() => {
     const root = feedRef.current;
@@ -176,15 +200,12 @@ export default function ReelFeed({ onNavigate }: Props) {
         for (const entry of entries) {
           const id = (entry.target as HTMLElement).dataset.listingId;
           if (!id) continue;
-
           if (!winner || entry.intersectionRatio > winner.ratio) {
             winner = { id, ratio: entry.intersectionRatio };
           }
         }
 
-        if (winner && winner.ratio >= 0.55) {
-          setActiveId(winner.id);
-        }
+        if (winner && winner.ratio >= 0.55) setActiveId(winner.id);
       },
       {
         root,
@@ -205,9 +226,7 @@ export default function ReelFeed({ onNavigate }: Props) {
       if (!video) continue;
       if (id === activeId) {
         const playPromise = video.play();
-        if (playPromise && typeof playPromise.catch === "function") {
-          playPromise.catch(() => undefined);
-        }
+        if (playPromise && typeof playPromise.catch === "function") playPromise.catch(() => undefined);
       } else {
         video.pause();
       }
@@ -221,9 +240,7 @@ export default function ReelFeed({ onNavigate }: Props) {
 
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0]?.isIntersecting) {
-          void fetchPage(false);
-        }
+        if (entries[0]?.isIntersecting) void fetchPage(false);
       },
       {
         root,
@@ -249,7 +266,6 @@ export default function ReelFeed({ onNavigate }: Props) {
       onNavigate(AppRoute.MY_CREATIONS);
       return;
     }
-
     if (busyId === listingId) return;
 
     setBusyId(listingId);
@@ -259,9 +275,7 @@ export default function ReelFeed({ onNavigate }: Props) {
       const next = await toggleCommunityListingLike(listingId);
       setItems((prev) =>
         prev.map((item) =>
-          item.id === listingId
-            ? { ...item, likedByMe: next.liked, likesCount: next.likesCount }
-            : item
+          item.id === listingId ? { ...item, likedByMe: next.liked, likesCount: next.likesCount } : item
         )
       );
       if (commentsTarget?.id === listingId) {
@@ -281,7 +295,6 @@ export default function ReelFeed({ onNavigate }: Props) {
       onNavigate(AppRoute.MY_CREATIONS);
       return;
     }
-
     if (!item.id || busyId === item.id) return;
 
     setBusyId(item.id);
@@ -289,12 +302,10 @@ export default function ReelFeed({ onNavigate }: Props) {
 
     try {
       await purchaseCommunityListing(item.id, null);
-      await refreshListing(item.id);
-
-      if (!recipeCache[item.id]) {
-        const recipe = await getCommunityListingRecipe(item.id);
-        setRecipeCache((prev) => ({ ...prev, [item.id]: recipe }));
-      }
+      const fresh = await refreshListing(item.id);
+      const recipe = await getCommunityListingRecipe(item.id);
+      setRecipeCache((prev) => ({ ...prev, [item.id]: recipe }));
+      setToast(fresh?.ownedByMe ? "Creation ready to reuse." : "Purchase completed. Recipe unlocked.");
     } catch (err: any) {
       setError(err?.message || "No se pudo completar la compra.");
     } finally {
@@ -343,9 +354,7 @@ export default function ReelFeed({ onNavigate }: Props) {
       const res = await listCommunityListingComments(item.id, { limit: 50, offset: 0 });
       setComments(res.comments);
       setItems((prev) =>
-        prev.map((entry) =>
-          entry.id === item.id ? { ...entry, commentsCount: res.commentsCount } : entry
-        )
+        prev.map((entry) => (entry.id === item.id ? { ...entry, commentsCount: res.commentsCount } : entry))
       );
       setCommentsTarget((prev) =>
         prev?.id === item.id ? { ...prev, commentsCount: res.commentsCount } : prev
@@ -360,6 +369,10 @@ export default function ReelFeed({ onNavigate }: Props) {
 
   async function submitComment() {
     if (!commentsTarget?.id || !commentDraft.trim()) return;
+    if (!user) {
+      onNavigate(AppRoute.MY_CREATIONS);
+      return;
+    }
 
     setCommentsLoading(true);
     setError(null);
@@ -383,89 +396,83 @@ export default function ReelFeed({ onNavigate }: Props) {
     }
   }
 
-  const reelHeight = useMemo(
-    () => "calc(100svh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 10.75rem)",
+  const stageHeight = useMemo(
+    () => "calc(100svh - env(safe-area-inset-bottom) - 76px)",
     []
   );
+  const bottomDock = useMemo(
+    () => "calc(env(safe-area-inset-bottom) + 84px)",
+    []
+  );
+  const activeFilterLabel = useMemo(() => getActiveCommunityFilterLabel(feedState), [feedState]);
+
+  function updateSort(sortKey: CommunitySortKey) {
+    if (sortKey === "my_shop" && !user) {
+      onNavigate(AppRoute.MY_CREATIONS);
+      return;
+    }
+    setFeedState((prev) => {
+      const next = { ...prev, sortKey };
+      writeCommunityFeedState(next);
+      return next;
+    });
+  }
+
+  function updateMedia(mediaKey: CommunityMediaKey) {
+    setFeedState((prev) => {
+      const next = { ...prev, mediaKey };
+      writeCommunityFeedState(next);
+      return next;
+    });
+  }
 
   return (
-    <div className="relative text-white">
-      <div className="sticky top-0 z-20 border-b border-white/10 bg-[linear-gradient(180deg,rgba(0,0,0,0.9),rgba(0,0,0,0.66))] px-4 py-4 backdrop-blur-xl md:px-6">
-        <div className="mx-auto flex max-w-[1320px] flex-col gap-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/44">Carrete</div>
-              <h1 className="mt-1 text-2xl font-black tracking-tight text-white md:text-3xl">Feed vertical estilo reels</h1>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-white/62">
-                Una creación por pantalla, scroll vertical, compra rápida, likes, comentarios y reuso de receta.
-              </p>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => onNavigate(AppRoute.MY_CREATIONS)}
-              className="hidden rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white/88 transition hover:bg-white/10 md:inline-flex"
-            >
-              Volver al Home
-            </button>
-          </div>
-
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex items-center gap-2 overflow-x-auto pb-1">
-              {mediaChips.map((chip) => {
-                const active = mediaFilter === chip.key;
-                return (
-                  <button
-                    key={chip.key}
-                    type="button"
-                    onClick={() => setMediaFilter(chip.key)}
-                    className={`whitespace-nowrap rounded-full border px-4 py-2 text-xs font-semibold transition ${
-                      active
-                        ? "border-[rgba(241,225,148,0.32)] bg-[rgba(241,225,148,0.14)] text-white"
-                        : "border-white/10 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white"
-                    }`}
-                  >
-                    {chip.label}
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="flex items-center gap-2 overflow-x-auto pb-1">
-              {sortChips.map((chip) => {
-                const active = sortMode === chip.key;
-                return (
-                  <button
-                    key={chip.key}
-                    type="button"
-                    onClick={() => setSortMode(chip.key)}
-                    className={`whitespace-nowrap rounded-full border px-4 py-2 text-xs font-semibold transition ${
-                      active
-                        ? "border-white/20 bg-white/14 text-white"
-                        : "border-white/10 bg-white/5 text-white/66 hover:bg-white/10 hover:text-white"
-                    }`}
-                  >
-                    {chip.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {error ? <div className="text-sm text-red-300">{error}</div> : null}
+    <div className="relative h-full text-white">
+      <div className="pointer-events-none fixed inset-x-0 top-0 z-20 flex justify-center px-4 pt-[max(env(safe-area-inset-top),12px)]">
+        <div className="pointer-events-auto flex min-h-[44px] items-center gap-6 text-sm font-semibold text-white/56">
+          <button type="button" className="border-b-2 border-white px-1 pb-2 text-white">
+            For You
+          </button>
+          <button
+            type="button"
+            onClick={() => setToast("Following llegará pronto.")}
+            className="px-1 pb-2 text-white/56 transition hover:text-white/82"
+          >
+            Following
+          </button>
+          <button
+            type="button"
+            onClick={() => setFiltersOpen(true)}
+            className="inline-flex items-center gap-2 px-1 pb-2 text-white/82 transition hover:text-white"
+          >
+            Filters
+            <SlidersHorizontal className="h-4 w-4" />
+          </button>
         </div>
       </div>
 
-      <div
-        ref={feedRef}
-        className="mx-auto max-w-[1320px] overflow-y-auto overscroll-y-contain snap-y snap-mandatory px-0"
-        style={{ height: reelHeight }}
-      >
+      {toast && !error ? (
+        <div className="fixed inset-x-0 top-[calc(env(safe-area-inset-top)+54px)] z-20 flex justify-center px-4">
+          <div className="rounded-full bg-black/55 px-4 py-2 text-xs font-semibold text-white/86 backdrop-blur-md">
+            {toast}
+          </div>
+        </div>
+      ) : null}
+
+      {error ? (
+        <div className="fixed inset-x-0 top-[calc(env(safe-area-inset-top)+54px)] z-20 flex justify-center px-4">
+          <div className="max-w-[90vw] rounded-full bg-[rgba(91,14,20,0.84)] px-4 py-2 text-xs font-semibold text-white shadow-[0_12px_32px_rgba(0,0,0,0.35)] backdrop-blur-md">
+            {error}
+          </div>
+        </div>
+      ) : null}
+
+      <div ref={feedRef} className="h-full overflow-y-auto snap-y snap-mandatory overscroll-y-contain" style={{ height: stageHeight }}>
         {items.map((item) => {
           const active = activeId === item.id;
           const expanded = expandedCaptionId === item.id;
           const purchased = Boolean(item.purchasedByMe || item.ownedByMe);
-          const buyLabel = purchased ? "Reusar receta" : "Comprar";
+          const caption = String(item.description || "").trim() || "This creation is ready to inspire, purchase or reuse later.";
 
           return (
             <article
@@ -475,10 +482,10 @@ export default function ReelFeed({ onNavigate }: Props) {
               }}
               data-listing-id={item.id}
               className="snap-start"
-              style={{ minHeight: reelHeight }}
+              style={{ height: stageHeight }}
             >
-              <div className="relative mx-auto flex h-full max-w-[1180px] items-center justify-center px-3 py-3 md:px-6 md:py-5">
-                <div className="relative h-full w-full overflow-hidden rounded-none border-y border-white/10 bg-black shadow-[0_28px_90px_rgba(0,0,0,0.55)] md:rounded-[34px] md:border md:border-white/10">
+              <div className="relative h-full w-full">
+                <div className="relative h-full w-full overflow-hidden bg-black md:mx-auto md:max-w-[430px] md:rounded-[34px] md:shadow-[0_28px_80px_rgba(0,0,0,0.55)]">
                   {item.previewUrl ? (
                     item.mediaTag === "video" ? (
                       <video
@@ -496,111 +503,99 @@ export default function ReelFeed({ onNavigate }: Props) {
                       <img src={item.previewUrl} alt={item.name || "Listing"} className="absolute inset-0 h-full w-full object-cover" />
                     )
                   ) : (
-                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(91,14,20,0.45),rgba(0,0,0,0.96))]" />
+                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(241,225,148,0.18),transparent_34%),linear-gradient(180deg,rgba(91,14,20,0.46),rgba(0,0,0,0.96))]" />
                   )}
 
-                  <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.18),rgba(0,0,0,0.22)_35%,rgba(0,0,0,0.72)_72%,rgba(0,0,0,0.94))]" />
-                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(241,225,148,0.18),transparent_24%),radial-gradient(circle_at_bottom_left,rgba(91,14,20,0.34),transparent_32%)]" />
+                  <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.18),rgba(0,0,0,0.06)_28%,rgba(0,0,0,0.18)_52%,rgba(0,0,0,0.86)_84%,rgba(0,0,0,0.98))]" />
 
-                  <div className="absolute left-4 right-4 top-4 flex items-start justify-between gap-3 md:left-6 md:right-6 md:top-6">
-                    <div className="inline-flex max-w-[75%] items-center gap-3 rounded-full border border-white/10 bg-black/35 px-3 py-2 backdrop-blur-md">
-                      <div className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/15 bg-white/10 text-sm font-black text-white">
-                        {sellerInitial(item.sellerUsername)}
-                      </div>
+                  <div className="absolute inset-x-0 top-0 h-36 bg-[linear-gradient(180deg,rgba(0,0,0,0.62),rgba(0,0,0,0))]" />
+                  <div className="absolute inset-x-0 bottom-0 h-56 bg-[linear-gradient(180deg,rgba(0,0,0,0),rgba(0,0,0,0.95))]" />
 
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2 text-sm font-semibold text-white">
-                          <span className="truncate">@{item.sellerUsername || "creator"}</span>
-                          {item.sellerVerified ? <BadgeCheck className="h-4 w-4 text-[rgba(241,225,148,0.96)]" /> : null}
-                        </div>
-                        <div className="text-xs text-white/55">
-                          {timeAgo(item.createdAt)} · {fmtCompact(item.salesCount)} ventas
-                        </div>
-                      </div>
+                  <div className="absolute right-3 z-10 flex flex-col items-center gap-4 md:right-4" style={{ bottom: bottomDock }}>
+                    <button
+                      type="button"
+                      className="flex flex-col items-center gap-1"
+                      onClick={() => setExpandedCaptionId((prev) => (prev === item.id ? null : item.id))}
+                    >
+                      <img
+                        src={avatarSeed(item.sellerUsername)}
+                        alt={item.sellerUsername || "creator"}
+                        className="h-12 w-12 rounded-full border border-white/20 bg-black/35 object-cover shadow-[0_12px_28px_rgba(0,0,0,0.32)]"
+                      />
+                      <span className="max-w-[58px] truncate text-[10px] font-semibold text-white/82">@{item.sellerUsername || "creator"}</span>
+                    </button>
+
+                    <button type="button" onClick={() => handleLike(item.id)} className="flex flex-col items-center gap-1">
+                      <span
+                        className={`inline-flex h-12 w-12 items-center justify-center rounded-full backdrop-blur-md transition ${
+                          item.likedByMe
+                            ? "bg-[rgba(241,225,148,0.16)] text-white"
+                            : "bg-black/35 text-white/92 hover:bg-black/55"
+                        }`}
+                      >
+                        {busyId === item.id ? (
+                          <Loader2 className="h-5 w-5 animate-spin" />
+                        ) : (
+                          <Heart className="h-5 w-5" fill={item.likedByMe ? "currentColor" : "none"} />
+                        )}
+                      </span>
+                      <span className="text-[11px] font-semibold text-white/84">{compact(item.likesCount)}</span>
+                    </button>
+
+                    <button type="button" onClick={() => openComments(item)} className="flex flex-col items-center gap-1">
+                      <span className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-black/35 text-white/92 backdrop-blur-md transition hover:bg-black/55">
+                        <MessageCircle className="h-5 w-5" />
+                      </span>
+                      <span className="text-[11px] font-semibold text-white/84">{compact(item.commentsCount)}</span>
+                    </button>
+
+                    <div className="rounded-full bg-black/35 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.16em] text-white/92 backdrop-blur-md">
+                      {Number(item.priceCredits || 0).toLocaleString()} cr
                     </div>
-
-                    <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/35 px-3 py-2 text-xs font-semibold text-white/72 backdrop-blur-md">
-                      {item.mediaTag === "video" ? <Play className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />}
-                      {item.mediaTag === "video" ? "Video" : "Image"}
-                    </div>
-                  </div>
-
-                  <div className="absolute bottom-[calc(env(safe-area-inset-bottom)+124px)] right-4 flex flex-col items-center gap-3 md:bottom-8 md:right-6">
-                    <button
-                      type="button"
-                      onClick={() => openComments(item)}
-                      className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-white/10 bg-black/35 text-white shadow-[0_12px_28px_rgba(0,0,0,0.3)] backdrop-blur-md transition hover:bg-black/55"
-                      title="Comentarios"
-                    >
-                      <MessageCircle className="h-5 w-5" />
-                    </button>
-                    <div className="text-center text-[11px] font-semibold text-white/82">{fmtCompact(item.commentsCount)}</div>
-
-                    <button
-                      type="button"
-                      onClick={() => handleLike(item.id)}
-                      className={`inline-flex h-12 w-12 items-center justify-center rounded-full border text-white shadow-[0_12px_28px_rgba(0,0,0,0.3)] backdrop-blur-md transition ${
-                        item.likedByMe
-                          ? "border-[rgba(241,225,148,0.26)] bg-[rgba(241,225,148,0.14)]"
-                          : "border-white/10 bg-black/35 hover:bg-black/55"
-                      }`}
-                      title={item.likedByMe ? "Quitar like" : "Dar like"}
-                    >
-                      <Heart className="h-5 w-5" fill={item.likedByMe ? "currentColor" : "none"} />
-                    </button>
-                    <div className="text-center text-[11px] font-semibold text-white/82">{fmtCompact(item.likesCount)}</div>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setExpandedCaptionId(item.id);
-                        setCommentsTarget(item);
-                      }}
-                      className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-white/10 bg-black/35 text-sm font-black text-white shadow-[0_12px_28px_rgba(0,0,0,0.3)] backdrop-blur-md transition hover:bg-black/55"
-                      title={`Ver perfil de @${item.sellerUsername || "creator"}`}
-                    >
-                      {sellerInitial(item.sellerUsername)}
-                    </button>
 
                     <button
                       type="button"
                       onClick={() => (purchased ? handleReuse(item) : handleBuy(item))}
-                      className="inline-flex min-h-[52px] min-w-[138px] items-center justify-center rounded-full border border-[rgba(241,225,148,0.34)] bg-[linear-gradient(180deg,rgba(241,225,148,0.95),rgba(201,165,76,0.95))] px-4 py-3 text-sm font-black text-black shadow-[0_18px_40px_rgba(0,0,0,0.38)] transition hover:scale-[1.02]"
+                      className={`inline-flex min-h-[54px] min-w-[136px] items-center justify-center rounded-full px-4 py-3 text-sm font-black shadow-[0_18px_40px_rgba(0,0,0,0.38)] transition ${
+                        purchased
+                          ? "bg-[linear-gradient(180deg,rgba(18,126,85,0.95),rgba(9,88,61,0.96))] text-white"
+                          : "bg-[linear-gradient(180deg,rgba(241,225,148,0.98),rgba(201,165,76,0.96))] text-black"
+                      }`}
                     >
-                      {busyId === item.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ShoppingCart className="mr-2 h-4 w-4" />}
-                      {buyLabel}
+                      {busyId === item.id ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : purchased ? (
+                        <Sparkles className="mr-2 h-4 w-4" />
+                      ) : (
+                        <ShoppingCart className="mr-2 h-4 w-4" />
+                      )}
+                      {purchased ? "Reusar receta" : "Comprar"}
                     </button>
-                    <div className="rounded-full border border-white/10 bg-black/35 px-3 py-1 text-xs font-semibold text-white/82 backdrop-blur-md">
-                      {fmtCompact(item.priceCredits)} credits
-                    </div>
                   </div>
 
-                  <div className="absolute inset-x-0 bottom-0 p-4 md:p-6">
-                    <div className="max-w-[min(100%,760px)] rounded-[26px] border border-white/10 bg-[linear-gradient(180deg,rgba(8,8,10,0.72),rgba(8,8,10,0.92))] p-4 shadow-[0_20px_50px_rgba(0,0,0,0.42)] backdrop-blur-xl md:p-5">
-                      <div className="text-xl font-black tracking-tight text-white md:text-2xl">
-                        {item.name || "Community listing"}
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => setExpandedCaptionId((prev) => (prev === item.id ? null : item.id))}
-                        className="mt-3 text-left"
-                      >
-                        <p className={`text-sm leading-6 text-white/76 ${expanded ? "" : "line-clamp-2"}`}>
-                          {clampDescription(item.description)}
-                        </p>
-                        <span className="mt-2 inline-flex text-xs font-semibold uppercase tracking-[0.18em] text-[rgba(241,225,148,0.88)]">
-                          {expanded ? "Ocultar descripción" : "Expandir descripción"}
-                        </span>
-                      </button>
-
-                      <div className="mt-4 flex items-center gap-3 text-xs text-white/52">
-                        <span>{active ? "Activo en pantalla" : "Desliza para seguir"}</span>
-                        <span>•</span>
-                        <span>{fmtCompact(item.salesCount)} ventas</span>
-                        <span>•</span>
-                        <span>{fmtCompact(item.commentsCount)} comentarios</span>
-                      </div>
+                  <div className="absolute left-4 z-10 max-w-[calc(100%-110px)] md:left-5" style={{ bottom: bottomDock }}>
+                    <div className="text-sm font-semibold text-white/84">
+                      @{item.sellerUsername || "creator"} · {timeAgo(item.createdAt)}
+                    </div>
+                    <h1 className="mt-2 text-[1.4rem] font-black leading-tight text-white">{item.name || "Community listing"}</h1>
+                    <button
+                      type="button"
+                      onClick={() => setExpandedCaptionId((prev) => (prev === item.id ? null : item.id))}
+                      className="mt-3 text-left"
+                    >
+                      <p className={`text-sm leading-6 text-white/82 ${expanded ? "" : "max-h-[4.5rem] overflow-hidden"}`}>
+                        {caption}
+                      </p>
+                      <span className="mt-2 inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/56">
+                        {expanded ? "Hide caption" : "Expand caption"}
+                      </span>
+                    </button>
+                    <div className="mt-3 flex items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-white/56">
+                      <span>{active ? "Live" : "Swipe"}</span>
+                      <span>•</span>
+                      <span>{item.mediaTag === "video" ? <Play className="inline h-3.5 w-3.5" /> : <Sparkles className="inline h-3.5 w-3.5" />} {item.mediaTag === "video" ? "Video" : item.mediaTag === "workflow" ? "Workflow" : "Image"}</span>
+                      <span>•</span>
+                      <span>{compact(item.salesCount)} sales</span>
                     </div>
                   </div>
                 </div>
@@ -609,19 +604,92 @@ export default function ReelFeed({ onNavigate }: Props) {
           );
         })}
 
-        <div ref={sentinelRef} className="h-12" />
+        <div ref={sentinelRef} className="h-10" />
 
         {loading ? (
-          <div className="flex items-center justify-center py-6 text-sm text-white/55">
+          <div className="flex items-center justify-center py-4 text-sm text-white/56">
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            Cargando más creaciones...
+            Loading more creations...
           </div>
         ) : null}
       </div>
 
+      <BottomSheet open={filtersOpen} title="Carrete Filters" onClose={() => setFiltersOpen(false)}>
+        <div className="space-y-5">
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/42">Active filter</div>
+            <div className="mt-2 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm font-semibold text-white/86">
+              {activeFilterLabel}
+            </div>
+          </div>
+
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/42">Search</div>
+            <div className="relative mt-3">
+              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/45" />
+              <input
+                value={searchDraft}
+                onChange={(event) => setSearchDraft(event.target.value)}
+                placeholder="Buscar por nombre o @creador"
+                className="w-full rounded-2xl border border-white/10 bg-white/[0.03] py-3 pl-11 pr-4 text-sm text-white outline-none transition placeholder:text-white/32 focus:border-white/20 focus:bg-white/[0.05]"
+              />
+            </div>
+          </div>
+
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/42">Sort</div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {COMMUNITY_SORT_OPTIONS.map((option) => {
+                const active = feedState.sortKey === option.key;
+                const disabled = option.key === "my_shop" && !user;
+
+                return (
+                  <button
+                    key={option.key}
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => updateSort(option.key)}
+                    className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${
+                      active
+                        ? "border-[rgba(241,225,148,0.3)] bg-[rgba(241,225,148,0.14)] text-white"
+                        : "border-white/10 bg-white/5 text-white/74 hover:bg-white/10 hover:text-white"
+                    } ${disabled ? "cursor-not-allowed opacity-50" : ""}`}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/42">Media</div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {COMMUNITY_MEDIA_OPTIONS.map((option) => {
+                const active = feedState.mediaKey === option.key;
+                return (
+                  <button
+                    key={option.key}
+                    type="button"
+                    onClick={() => updateMedia(option.key)}
+                    className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${
+                      active
+                        ? "border-white/20 bg-white/14 text-white"
+                        : "border-white/10 bg-white/5 text-white/74 hover:bg-white/10 hover:text-white"
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </BottomSheet>
+
       <BottomSheet
         open={commentsOpen}
-        title={commentsTarget ? `Comentarios · ${commentsTarget.name || "Listing"}` : "Comentarios"}
+        title={commentsTarget ? `Comments · ${commentsTarget.name || "Listing"}` : "Comments"}
         onClose={() => {
           setCommentsOpen(false);
           setCommentsTarget(null);
@@ -631,14 +699,16 @@ export default function ReelFeed({ onNavigate }: Props) {
       >
         <div className="space-y-4">
           <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-xs text-white/58">
-            {commentsTarget ? `@${commentsTarget.sellerUsername || "creator"} · ${fmtCompact(commentsTarget.commentsCount)} comentarios` : "Sin selección"}
+            {commentsTarget
+              ? `@${commentsTarget.sellerUsername || "creator"} · ${compact(commentsTarget.commentsCount)} comments`
+              : "Sin selección"}
           </div>
 
           <div className="max-h-[45svh] space-y-3 overflow-y-auto pr-1">
             {commentsLoading && comments.length === 0 ? (
-              <div className="text-sm text-white/55">Cargando comentarios...</div>
+              <div className="text-sm text-white/55">Loading comments...</div>
             ) : comments.length === 0 ? (
-              <div className="text-sm text-white/55">Todavía no hay comentarios.</div>
+              <div className="text-sm text-white/55">No comments yet.</div>
             ) : (
               comments.map((comment) => (
                 <div key={comment.id} className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3">

@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { CheckCircle2, Loader2, Sparkles, XCircle } from "lucide-react";
 import { useGenerationQueue } from "../contexts/GenerationQueueContext";
 
 function statusLabel(status: string) {
@@ -14,101 +15,111 @@ export default function GenerationQueueWidget() {
   const { jobs, activeCount, maxActive, cancelJob, removeJob, clearFinished } = useGenerationQueue();
   const [open, setOpen] = useState(false);
 
-  const sorted = useMemo(() => {
-    return [...jobs].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-  }, [jobs]);
+  const sorted = useMemo(() => [...jobs].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)), [jobs]);
+  const visibleJobs = sorted.slice(0, 6);
+  const finishedCount = jobs.filter(
+    (job) => job.status === "succeeded" || job.status === "failed" || job.status === "canceled"
+  ).length;
 
-  const top = sorted.slice(0, 8);
-
-  const hasFinished = jobs.some((j) => j.status === "succeeded" || j.status === "failed" || j.status === "canceled");
+  if (!open && jobs.length === 0) return null;
 
   return (
-    <div className="fixed bottom-[calc(env(safe-area-inset-bottom)+5.75rem)] right-4 z-50 md:bottom-[calc(env(safe-area-inset-bottom)+6rem)]">
+    <div className="fixed bottom-[calc(env(safe-area-inset-bottom)+5.4rem)] right-3 z-50 md:bottom-[calc(env(safe-area-inset-bottom)+5.75rem)] md:right-4">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="glass-panel border border-white/10 rounded-2xl px-4 py-3 shadow-2xl hover:scale-[1.02] transition-transform"
+        onClick={() => setOpen((value) => !value)}
+        className="inline-flex min-h-[46px] items-center gap-3 rounded-full border border-white/10 bg-[rgba(10,10,12,0.84)] px-3 py-2 text-white shadow-[0_14px_34px_rgba(0,0,0,0.34)] backdrop-blur-xl transition hover:bg-[rgba(15,15,18,0.92)]"
         title="Generation Queue"
       >
-        <div className="flex items-center gap-3">
-          <span className="font-mono text-xs tracking-widest text-white/80">QUEUE</span>
-          <span className="text-xs text-white/60">
-            {activeCount}/{maxActive}
+        <span className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/5">
+          {activeCount > 0 ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+        </span>
+
+        <span className="flex flex-col items-start leading-none">
+          <span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/42">Queue</span>
+          <span className="mt-1 text-sm font-semibold text-white/88">
+            {activeCount > 0 ? `${activeCount}/${maxActive} active` : `${jobs.length} total`}
           </span>
-          <span className="w-2 h-2 rounded-full bg-white/70" />
-        </div>
+        </span>
       </button>
 
-      {open && (
-        <div className="mt-3 w-[360px] max-w-[90vw] glass-panel border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
-          <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between">
+      {open ? (
+        <div className="mt-3 w-[340px] max-w-[88vw] overflow-hidden rounded-[28px] border border-white/10 bg-[rgba(8,8,10,0.94)] shadow-[0_26px_60px_rgba(0,0,0,0.44)] backdrop-blur-2xl">
+          <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-4">
             <div>
-              <div className="text-sm font-bold tracking-tight">Generations</div>
-              <div className="text-[11px] text-white/50">Max active: {maxActive}. Active now: {activeCount}.</div>
+              <div className="text-sm font-black tracking-tight text-white">Generation Queue</div>
+              <div className="mt-1 text-[11px] text-white/48">
+                {activeCount} active · {finishedCount} finished · max {maxActive}
+              </div>
             </div>
 
-            {hasFinished && (
+            {finishedCount > 0 ? (
               <button
                 type="button"
                 onClick={clearFinished}
-                className="text-[11px] px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20 transition-colors"
+                className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold text-white/76 transition hover:bg-white/10"
               >
                 Clear finished
               </button>
-            )}
+            ) : null}
           </div>
 
-          {top.length === 0 ? (
-            <div className="p-4 text-sm text-white/50">No jobs yet.</div>
+          {visibleJobs.length === 0 ? (
+            <div className="px-4 py-5 text-sm text-white/52">No generations yet.</div>
           ) : (
-            <div className="max-h-[340px] overflow-auto">
-              {top.map((j) => (
-                <div key={j.id} className="px-4 py-3 border-b border-white/5">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="text-[12px] font-semibold truncate">{j.label}</div>
-                      <div className="mt-1 flex items-center gap-2">
-                        <span className="text-[11px] text-white/60">{statusLabel(j.status)}</span>
-                        {j.progressText && j.status === "running" && (
-                          <span className="text-[11px] text-white/40 truncate">{j.progressText}</span>
-                        )}
+            <div className="max-h-[360px] overflow-y-auto">
+              {visibleJobs.map((job) => {
+                const isFinished =
+                  job.status === "succeeded" || job.status === "failed" || job.status === "canceled";
+
+                return (
+                  <div key={job.id} className="border-b border-white/6 px-4 py-4 last:border-b-0">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-semibold text-white">{job.label}</div>
+                        <div className="mt-2 flex items-center gap-2 text-[11px] text-white/58">
+                          {job.status === "succeeded" ? (
+                            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-300" />
+                          ) : job.status === "failed" || job.status === "canceled" ? (
+                            <XCircle className="h-3.5 w-3.5 text-rose-300" />
+                          ) : (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin text-white/74" />
+                          )}
+                          <span>{statusLabel(job.status)}</span>
+                          {job.progressText && job.status === "running" ? (
+                            <span className="truncate text-white/42">· {job.progressText}</span>
+                          ) : null}
+                        </div>
+                        {job.error ? <div className="mt-2 text-[11px] text-rose-200/78">{job.error}</div> : null}
                       </div>
 
-                      {j.status === "failed" && j.error && (
-                        <div className="mt-2 text-[11px] text-red-200/80 whitespace-pre-wrap">{j.error}</div>
-                      )}
-                    </div>
-
-                    <div className="flex items-center gap-2 shrink-0">
-                      {(j.status === "queued" || j.status === "running") && (
-                        <button
-                          type="button"
-                          onClick={() => cancelJob(j.id)}
-                          className="text-[11px] px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 transition-colors"
-                        >
-                          Cancel
-                        </button>
-                      )}
-                      {(j.status === "succeeded" || j.status === "failed" || j.status === "canceled") && (
-                        <button
-                          type="button"
-                          onClick={() => removeJob(j.id)}
-                          className="text-[11px] px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 transition-colors"
-                        >
-                          Remove
-                        </button>
-                      )}
+                      <div className="shrink-0">
+                        {isFinished ? (
+                          <button
+                            type="button"
+                            onClick={() => removeJob(job.id)}
+                            className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold text-white/76 transition hover:bg-white/10"
+                          >
+                            Remove
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => cancelJob(job.id)}
+                            className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold text-white/76 transition hover:bg-white/10"
+                          >
+                            Cancel
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
-              {jobs.length > top.length && (
-                <div className="px-4 py-3 text-[11px] text-white/40">Showing latest {top.length} of {jobs.length}.</div>
-              )}
+                );
+              })}
             </div>
           )}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
