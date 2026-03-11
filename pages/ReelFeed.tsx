@@ -24,7 +24,19 @@ import {
   type CommunityMediaKey,
   type CommunitySortKey,
 } from "../services/communityFeedState";
-import { Heart, Loader2, MessageCircle, Play, Search, ShoppingCart, SlidersHorizontal, Sparkles } from "lucide-react";
+import {
+  Heart,
+  Loader2,
+  MessageCircle,
+  Play,
+  Plus,
+  Search,
+  Send,
+  ShoppingCart,
+  SlidersHorizontal,
+  Sparkles,
+  X,
+} from "lucide-react";
 
 interface Props {
   onNavigate: (route: AppRoute) => void;
@@ -74,6 +86,23 @@ function timeAgo(timestamp?: number) {
   return `${Math.max(1, Math.floor(diff / day))}d`;
 }
 
+function shortCaption(text?: string) {
+  const value = String(text || "").trim() || "This creation is ready to inspire your next recipe.";
+  if (value.length <= 22) return value;
+  return `${value.slice(0, 22).trimEnd()}...`;
+}
+
+function mergeUniqueListings(base: ReelItem[], incoming: ReelItem[]) {
+  const seen = new Set<string>();
+  const out: ReelItem[] = [];
+  for (const item of [...base, ...incoming]) {
+    if (!item?.id || seen.has(item.id)) continue;
+    seen.add(item.id);
+    out.push(item);
+  }
+  return out;
+}
+
 export default function ReelFeed({ onNavigate }: Props) {
   const { user } = useAuth();
 
@@ -81,20 +110,22 @@ export default function ReelFeed({ onNavigate }: Props) {
   const [searchDraft, setSearchDraft] = useState(() => readCommunityFeedState().searchQuery || "");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const [items, setItems] = useState<ReelItem[]>([]);
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(false);
-  const [busyId, setBusyId] = useState<string | null>(null);
+  const [likeBusyId, setLikeBusyId] = useState<string | null>(null);
+  const [actionBusyId, setActionBusyId] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [expandedCaptionId, setExpandedCaptionId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [commentsTarget, setCommentsTarget] = useState<ReelItem | null>(null);
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [comments, setComments] = useState<Comment[]>([]);
   const [commentDraft, setCommentDraft] = useState("");
+  const [replyTarget, setReplyTarget] = useState<Comment | null>(null);
 
   const [recipeCache, setRecipeCache] = useState<Record<string, any>>({});
 
@@ -102,6 +133,7 @@ export default function ReelFeed({ onNavigate }: Props) {
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const cardRefs = useRef<Record<string, HTMLElement | null>>({});
   const videoRefs = useRef<Record<string, HTMLVideoElement | null>>({});
+  const commentInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!toast) return;
@@ -148,13 +180,12 @@ export default function ReelFeed({ onNavigate }: Props) {
           mine: wantsMine,
         });
 
-        let nextItems = reset ? response.items : [...items, ...response.items];
+        let nextItems = reset ? response.items : mergeUniqueListings(items, response.items);
 
         if (reset) {
           const reelEntryId = window.localStorage.getItem(REEL_ENTRY_KEY);
           if (reelEntryId) {
             window.localStorage.removeItem(REEL_ENTRY_KEY);
-
             const existingIndex = nextItems.findIndex((item: ReelItem) => item.id === reelEntryId);
             if (existingIndex > 0) {
               const [focused] = nextItems.splice(existingIndex, 1);
@@ -168,19 +199,18 @@ export default function ReelFeed({ onNavigate }: Props) {
               }
             }
           }
-
-          if (nextItems[0]?.id) setActiveId(nextItems[0].id);
         }
 
         setItems(nextItems);
         setHasMore(Boolean(response.hasMore));
+        if (nextItems[0]?.id && (reset || !activeId)) setActiveId(nextItems[0].id);
       } catch (err: any) {
         setError(err?.message || "No se pudo cargar el carrete.");
       } finally {
         setLoading(false);
       }
     },
-    [feedState, items, loading, onNavigate, user]
+    [activeId, feedState, items, loading, onNavigate, user]
   );
 
   useEffect(() => {
@@ -224,14 +254,14 @@ export default function ReelFeed({ onNavigate }: Props) {
   useEffect(() => {
     for (const [id, video] of Object.entries(videoRefs.current)) {
       if (!video) continue;
-      if (id === activeId) {
+      if (id === activeId && !commentsOpen) {
         const playPromise = video.play();
         if (playPromise && typeof playPromise.catch === "function") playPromise.catch(() => undefined);
       } else {
         video.pause();
       }
     }
-  }, [activeId, items]);
+  }, [activeId, commentsOpen, items]);
 
   useEffect(() => {
     const root = feedRef.current;
@@ -266,9 +296,9 @@ export default function ReelFeed({ onNavigate }: Props) {
       onNavigate(AppRoute.MY_CREATIONS);
       return;
     }
-    if (busyId === listingId) return;
+    if (likeBusyId === listingId) return;
 
-    setBusyId(listingId);
+    setLikeBusyId(listingId);
     setError(null);
 
     try {
@@ -286,7 +316,7 @@ export default function ReelFeed({ onNavigate }: Props) {
     } catch (err: any) {
       setError(err?.message || "No se pudo actualizar el like.");
     } finally {
-      setBusyId(null);
+      setLikeBusyId(null);
     }
   }
 
@@ -295,9 +325,9 @@ export default function ReelFeed({ onNavigate }: Props) {
       onNavigate(AppRoute.MY_CREATIONS);
       return;
     }
-    if (!item.id || busyId === item.id) return;
+    if (!item.id || actionBusyId === item.id) return;
 
-    setBusyId(item.id);
+    setActionBusyId(item.id);
     setError(null);
 
     try {
@@ -309,14 +339,14 @@ export default function ReelFeed({ onNavigate }: Props) {
     } catch (err: any) {
       setError(err?.message || "No se pudo completar la compra.");
     } finally {
-      setBusyId(null);
+      setActionBusyId(null);
     }
   }
 
   async function handleReuse(item: ReelItem) {
     if (!item.id || (!item.purchasedByMe && !item.ownedByMe)) return;
 
-    setBusyId(item.id);
+    setActionBusyId(item.id);
     setError(null);
 
     try {
@@ -339,7 +369,7 @@ export default function ReelFeed({ onNavigate }: Props) {
     } catch (err: any) {
       setError(err?.message || "No se pudo cargar la receta.");
     } finally {
-      setBusyId(null);
+      setActionBusyId(null);
     }
   }
 
@@ -347,18 +377,16 @@ export default function ReelFeed({ onNavigate }: Props) {
     setCommentsTarget(item);
     setCommentsOpen(true);
     setCommentDraft("");
+    setReplyTarget(null);
     setCommentsLoading(true);
     setError(null);
 
     try {
       const res = await listCommunityListingComments(item.id, { limit: 50, offset: 0 });
       setComments(res.comments);
-      setItems((prev) =>
-        prev.map((entry) => (entry.id === item.id ? { ...entry, commentsCount: res.commentsCount } : entry))
-      );
-      setCommentsTarget((prev) =>
-        prev?.id === item.id ? { ...prev, commentsCount: res.commentsCount } : prev
-      );
+      setItems((prev) => prev.map((entry) => (entry.id === item.id ? { ...entry, commentsCount: res.commentsCount } : entry)));
+      setCommentsTarget((prev) => (prev?.id === item.id ? { ...prev, commentsCount: res.commentsCount } : prev));
+      window.setTimeout(() => commentInputRef.current?.focus(), 120);
     } catch (err: any) {
       setComments([]);
       setError(err?.message || "No se pudieron cargar los comentarios.");
@@ -381,10 +409,9 @@ export default function ReelFeed({ onNavigate }: Props) {
       const res = await createCommunityListingComment(commentsTarget.id, commentDraft.trim());
       setComments((prev) => [...prev, res.comment]);
       setCommentDraft("");
+      setReplyTarget(null);
       setItems((prev) =>
-        prev.map((entry) =>
-          entry.id === commentsTarget.id ? { ...entry, commentsCount: res.commentsCount } : entry
-        )
+        prev.map((entry) => (entry.id === commentsTarget.id ? { ...entry, commentsCount: res.commentsCount } : entry))
       );
       setCommentsTarget((prev) =>
         prev?.id === commentsTarget.id ? { ...prev, commentsCount: res.commentsCount } : prev
@@ -396,14 +423,23 @@ export default function ReelFeed({ onNavigate }: Props) {
     }
   }
 
-  const stageHeight = useMemo(
-    () => "calc(100svh - env(safe-area-inset-bottom) - 76px)",
-    []
-  );
-  const bottomDock = useMemo(
-    () => "calc(env(safe-area-inset-bottom) + 84px)",
-    []
-  );
+  function triggerReply(comment: Comment) {
+    setReplyTarget(comment);
+    const next = `@${comment.username} `;
+    setCommentDraft((prev) => (prev.startsWith(next) ? prev : next));
+    window.setTimeout(() => commentInputRef.current?.focus(), 60);
+  }
+
+  function closeComments() {
+    setCommentsOpen(false);
+    setCommentsTarget(null);
+    setComments([]);
+    setCommentDraft("");
+    setReplyTarget(null);
+  }
+
+  const stageHeight = useMemo(() => "calc(100svh - env(safe-area-inset-bottom) - 74px)", []);
+  const bottomDock = useMemo(() => "calc(env(safe-area-inset-bottom) + 64px)", []);
   const activeFilterLabel = useMemo(() => getActiveCommunityFilterLabel(feedState), [feedState]);
 
   function updateSort(sortKey: CommunitySortKey) {
@@ -429,21 +465,21 @@ export default function ReelFeed({ onNavigate }: Props) {
   return (
     <div className="relative h-full text-white">
       <div className="pointer-events-none fixed inset-x-0 top-0 z-20 flex justify-center px-4 pt-[max(env(safe-area-inset-top),12px)]">
-        <div className="pointer-events-auto flex min-h-[44px] items-center gap-6 text-sm font-semibold text-white/56">
-          <button type="button" className="border-b-2 border-white px-1 pb-2 text-white">
+        <div className="pointer-events-auto flex min-h-[42px] items-center gap-5 rounded-full bg-black/18 px-4 text-sm font-semibold text-white/64 backdrop-blur-md">
+          <button type="button" className="border-b-2 border-white px-1 pb-1.5 text-white">
             For You
           </button>
           <button
             type="button"
             onClick={() => setToast("Following llegará pronto.")}
-            className="px-1 pb-2 text-white/56 transition hover:text-white/82"
+            className="px-1 pb-1.5 text-white/56 transition hover:text-white/82"
           >
             Following
           </button>
           <button
             type="button"
             onClick={() => setFiltersOpen(true)}
-            className="inline-flex items-center gap-2 px-1 pb-2 text-white/82 transition hover:text-white"
+            className="inline-flex items-center gap-1.5 px-1 pb-1.5 text-white/82 transition hover:text-white"
           >
             Filters
             <SlidersHorizontal className="h-4 w-4" />
@@ -452,7 +488,7 @@ export default function ReelFeed({ onNavigate }: Props) {
       </div>
 
       {toast && !error ? (
-        <div className="fixed inset-x-0 top-[calc(env(safe-area-inset-top)+54px)] z-20 flex justify-center px-4">
+        <div className="fixed inset-x-0 top-[calc(env(safe-area-inset-top)+52px)] z-20 flex justify-center px-4">
           <div className="rounded-full bg-black/55 px-4 py-2 text-xs font-semibold text-white/86 backdrop-blur-md">
             {toast}
           </div>
@@ -460,7 +496,7 @@ export default function ReelFeed({ onNavigate }: Props) {
       ) : null}
 
       {error ? (
-        <div className="fixed inset-x-0 top-[calc(env(safe-area-inset-top)+54px)] z-20 flex justify-center px-4">
+        <div className="fixed inset-x-0 top-[calc(env(safe-area-inset-top)+52px)] z-20 flex justify-center px-4">
           <div className="max-w-[90vw] rounded-full bg-[rgba(91,14,20,0.84)] px-4 py-2 text-xs font-semibold text-white shadow-[0_12px_32px_rgba(0,0,0,0.35)] backdrop-blur-md">
             {error}
           </div>
@@ -472,7 +508,8 @@ export default function ReelFeed({ onNavigate }: Props) {
           const active = activeId === item.id;
           const expanded = expandedCaptionId === item.id;
           const purchased = Boolean(item.purchasedByMe || item.ownedByMe);
-          const caption = String(item.description || "").trim() || "This creation is ready to inspire, purchase or reuse later.";
+          const fullCaption = String(item.description || "").trim() || "This creation is ready to inspire your next recipe.";
+          const captionPreview = shortCaption(fullCaption);
 
           return (
             <article
@@ -488,52 +525,68 @@ export default function ReelFeed({ onNavigate }: Props) {
                 <div className="relative h-full w-full overflow-hidden bg-black md:mx-auto md:max-w-[430px] md:rounded-[34px] md:shadow-[0_28px_80px_rgba(0,0,0,0.55)]">
                   {item.previewUrl ? (
                     item.mediaTag === "video" ? (
-                      <video
-                        ref={(node) => {
-                          videoRefs.current[item.id] = node;
-                        }}
-                        src={item.previewUrl}
-                        muted
-                        loop
-                        playsInline
-                        preload="metadata"
-                        className="absolute inset-0 h-full w-full object-cover"
-                      />
+                      <>
+                        <video
+                          src={item.previewUrl}
+                          muted
+                          loop
+                          playsInline
+                          preload="metadata"
+                          className="absolute inset-0 h-full w-full scale-110 object-cover opacity-50 blur-2xl"
+                        />
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <video
+                            ref={(node) => {
+                              videoRefs.current[item.id] = node;
+                            }}
+                            src={item.previewUrl}
+                            muted
+                            loop
+                            playsInline
+                            preload="metadata"
+                            className="h-full w-full object-contain"
+                          />
+                        </div>
+                      </>
                     ) : (
-                      <img src={item.previewUrl} alt={item.name || "Listing"} className="absolute inset-0 h-full w-full object-cover" />
+                      <>
+                        <img
+                          src={item.previewUrl}
+                          alt={item.name || "Listing"}
+                          className="absolute inset-0 h-full w-full scale-110 object-cover opacity-45 blur-2xl"
+                        />
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <img src={item.previewUrl} alt={item.name || "Listing"} className="h-full w-full object-contain" />
+                        </div>
+                      </>
                     )
                   ) : (
                     <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(241,225,148,0.18),transparent_34%),linear-gradient(180deg,rgba(91,14,20,0.46),rgba(0,0,0,0.96))]" />
                   )}
 
-                  <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.18),rgba(0,0,0,0.06)_28%,rgba(0,0,0,0.18)_52%,rgba(0,0,0,0.86)_84%,rgba(0,0,0,0.98))]" />
+                  <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.34),rgba(0,0,0,0.06)_26%,rgba(0,0,0,0.12)_54%,rgba(0,0,0,0.82)_84%,rgba(0,0,0,0.96))]" />
+                  <div className="absolute inset-x-0 top-0 h-28 bg-[linear-gradient(180deg,rgba(0,0,0,0.62),rgba(0,0,0,0))]" />
+                  <div className="absolute inset-x-0 bottom-0 h-44 bg-[linear-gradient(180deg,rgba(0,0,0,0),rgba(0,0,0,0.95))]" />
 
-                  <div className="absolute inset-x-0 top-0 h-36 bg-[linear-gradient(180deg,rgba(0,0,0,0.62),rgba(0,0,0,0))]" />
-                  <div className="absolute inset-x-0 bottom-0 h-56 bg-[linear-gradient(180deg,rgba(0,0,0,0),rgba(0,0,0,0.95))]" />
-
-                  <div className="absolute right-3 z-10 flex flex-col items-center gap-4 md:right-4" style={{ bottom: bottomDock }}>
-                    <button
-                      type="button"
-                      className="flex flex-col items-center gap-1"
-                      onClick={() => setExpandedCaptionId((prev) => (prev === item.id ? null : item.id))}
-                    >
+                  <div className="absolute right-2 z-10 flex flex-col items-center gap-3 md:right-3" style={{ bottom: bottomDock }}>
+                    <button type="button" className="relative inline-flex h-12 w-12 items-center justify-center" title="Creator profile próximamente">
                       <img
                         src={avatarSeed(item.sellerUsername)}
                         alt={item.sellerUsername || "creator"}
                         className="h-12 w-12 rounded-full border border-white/20 bg-black/35 object-cover shadow-[0_12px_28px_rgba(0,0,0,0.32)]"
                       />
-                      <span className="max-w-[58px] truncate text-[10px] font-semibold text-white/82">@{item.sellerUsername || "creator"}</span>
+                      <span className="absolute -bottom-1 left-1/2 inline-flex h-5 w-5 -translate-x-1/2 items-center justify-center rounded-full border border-white/25 bg-[rgba(241,225,148,0.95)] text-black shadow-[0_8px_18px_rgba(0,0,0,0.28)]">
+                        <Plus className="h-3 w-3" />
+                      </span>
                     </button>
 
                     <button type="button" onClick={() => handleLike(item.id)} className="flex flex-col items-center gap-1">
                       <span
-                        className={`inline-flex h-12 w-12 items-center justify-center rounded-full backdrop-blur-md transition ${
-                          item.likedByMe
-                            ? "bg-[rgba(241,225,148,0.16)] text-white"
-                            : "bg-black/35 text-white/92 hover:bg-black/55"
+                        className={`inline-flex h-11 w-11 items-center justify-center rounded-full backdrop-blur-md transition ${
+                          item.likedByMe ? "bg-[rgba(241,225,148,0.16)] text-white" : "bg-black/35 text-white/92 hover:bg-black/55"
                         }`}
                       >
-                        {busyId === item.id ? (
+                        {actionBusyId === item.id ? (
                           <Loader2 className="h-5 w-5 animate-spin" />
                         ) : (
                           <Heart className="h-5 w-5" fill={item.likedByMe ? "currentColor" : "none"} />
@@ -543,59 +596,69 @@ export default function ReelFeed({ onNavigate }: Props) {
                     </button>
 
                     <button type="button" onClick={() => openComments(item)} className="flex flex-col items-center gap-1">
-                      <span className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-black/35 text-white/92 backdrop-blur-md transition hover:bg-black/55">
+                      <span className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-black/35 text-white/92 backdrop-blur-md transition hover:bg-black/55">
                         <MessageCircle className="h-5 w-5" />
                       </span>
                       <span className="text-[11px] font-semibold text-white/84">{compact(item.commentsCount)}</span>
                     </button>
 
-                    <div className="rounded-full bg-black/35 px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.16em] text-white/92 backdrop-blur-md">
+                    <div className="animate-pulse text-[15px] font-black text-[rgba(241,225,148,0.98)] drop-shadow-[0_0_12px_rgba(241,225,148,0.4)]">
                       {Number(item.priceCredits || 0).toLocaleString()} cr
                     </div>
 
                     <button
                       type="button"
                       onClick={() => (purchased ? handleReuse(item) : handleBuy(item))}
-                      className={`inline-flex min-h-[54px] min-w-[136px] items-center justify-center rounded-full px-4 py-3 text-sm font-black shadow-[0_18px_40px_rgba(0,0,0,0.38)] transition ${
+                      className={`inline-flex min-h-[56px] w-[82px] flex-col items-center justify-center rounded-[18px] px-2 py-3 text-center text-[10px] font-black leading-[1.05] shadow-[0_18px_40px_rgba(0,0,0,0.38)] transition ${
                         purchased
                           ? "bg-[linear-gradient(180deg,rgba(18,126,85,0.95),rgba(9,88,61,0.96))] text-white"
                           : "bg-[linear-gradient(180deg,rgba(241,225,148,0.98),rgba(201,165,76,0.96))] text-black"
                       }`}
                     >
-                      {busyId === item.id ? (
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      {actionBusyId === item.id ? (
+                        <Loader2 className="mb-1 h-4 w-4 animate-spin" />
                       ) : purchased ? (
-                        <Sparkles className="mr-2 h-4 w-4" />
+                        <Sparkles className="mb-1 h-4 w-4" />
                       ) : (
-                        <ShoppingCart className="mr-2 h-4 w-4" />
+                        <ShoppingCart className="mb-1 h-4 w-4" />
                       )}
-                      {purchased ? "Reusar receta" : "Comprar"}
+                      <span>{purchased ? "Reusar receta" : "Comprar"}</span>
                     </button>
                   </div>
 
-                  <div className="absolute left-4 z-10 max-w-[calc(100%-110px)] md:left-5" style={{ bottom: bottomDock }}>
-                    <div className="text-sm font-semibold text-white/84">
-                      @{item.sellerUsername || "creator"} · {timeAgo(item.createdAt)}
-                    </div>
-                    <h1 className="mt-2 text-[1.4rem] font-black leading-tight text-white">{item.name || "Community listing"}</h1>
-                    <button
-                      type="button"
-                      onClick={() => setExpandedCaptionId((prev) => (prev === item.id ? null : item.id))}
-                      className="mt-3 text-left"
-                    >
-                      <p className={`text-sm leading-6 text-white/82 ${expanded ? "" : "max-h-[4.5rem] overflow-hidden"}`}>
-                        {caption}
-                      </p>
-                      <span className="mt-2 inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/56">
-                        {expanded ? "Hide caption" : "Expand caption"}
-                      </span>
-                    </button>
-                    <div className="mt-3 flex items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-white/56">
-                      <span>{active ? "Live" : "Swipe"}</span>
-                      <span>•</span>
-                      <span>{item.mediaTag === "video" ? <Play className="inline h-3.5 w-3.5" /> : <Sparkles className="inline h-3.5 w-3.5" />} {item.mediaTag === "video" ? "Video" : item.mediaTag === "workflow" ? "Workflow" : "Image"}</span>
-                      <span>•</span>
-                      <span>{compact(item.salesCount)} sales</span>
+                  <div className="absolute left-4 z-10 md:left-5" style={{ bottom: bottomDock }}>
+                    <div className="max-w-[min(30ch,calc(100vw-108px))] md:max-w-[30ch]">
+                      <div className="text-sm font-semibold text-white/84">
+                        @{item.sellerUsername || "creator"} · {timeAgo(item.createdAt)}
+                      </div>
+                      <h1 className="mt-1 text-[1.1rem] font-black leading-tight text-white md:text-[1.25rem]">
+                        {item.name || "Community listing"}
+                      </h1>
+
+                      <div className="mt-2 rounded-2xl bg-black/18 px-0 py-0 text-sm text-white/84 backdrop-blur-sm">
+                        <div
+                          className={`pr-2 leading-5 ${expanded ? "max-h-[7.8rem] overflow-y-auto" : "overflow-hidden"}`}
+                          style={{ maxWidth: "30ch" }}
+                        >
+                          {expanded ? fullCaption : captionPreview}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setExpandedCaptionId((prev) => (prev === item.id ? null : item.id))}
+                          className="mt-1 text-[12px] font-medium text-white/72"
+                        >
+                          {expanded ? "show less" : "show more"}
+                        </button>
+                      </div>
+
+                      <div className="mt-2 flex items-center gap-2 text-[11px] font-semibold text-white/56">
+                        <span>{active ? "Live" : "Swipe"}</span>
+                        <span>•</span>
+                        <span className="inline-flex items-center gap-1">
+                          {item.mediaTag === "video" ? <Play className="h-3.5 w-3.5" /> : <Sparkles className="h-3.5 w-3.5" />}
+                          {item.mediaTag === "video" ? "Video" : item.mediaTag === "workflow" ? "Workflow" : "Image"}
+                        </span>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -604,7 +667,7 @@ export default function ReelFeed({ onNavigate }: Props) {
           );
         })}
 
-        <div ref={sentinelRef} className="h-10" />
+        <div ref={sentinelRef} className="h-8" />
 
         {loading ? (
           <div className="flex items-center justify-center py-4 text-sm text-white/56">
@@ -614,7 +677,7 @@ export default function ReelFeed({ onNavigate }: Props) {
         ) : null}
       </div>
 
-      <BottomSheet open={filtersOpen} title="Carrete Filters" onClose={() => setFiltersOpen(false)}>
+      <BottomSheet open={filtersOpen} title="Filters" onClose={() => setFiltersOpen(false)}>
         <div className="space-y-5">
           <div>
             <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/42">Active filter</div>
@@ -687,68 +750,111 @@ export default function ReelFeed({ onNavigate }: Props) {
         </div>
       </BottomSheet>
 
-      <BottomSheet
-        open={commentsOpen}
-        title={commentsTarget ? `Comments · ${commentsTarget.name || "Listing"}` : "Comments"}
-        onClose={() => {
-          setCommentsOpen(false);
-          setCommentsTarget(null);
-          setComments([]);
-          setCommentDraft("");
-        }}
-      >
-        <div className="space-y-4">
-          <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-xs text-white/58">
-            {commentsTarget
-              ? `@${commentsTarget.sellerUsername || "creator"} · ${compact(commentsTarget.commentsCount)} comments`
-              : "Sin selección"}
-          </div>
-
-          <div className="max-h-[45svh] space-y-3 overflow-y-auto pr-1">
-            {commentsLoading && comments.length === 0 ? (
-              <div className="text-sm text-white/55">Loading comments...</div>
-            ) : comments.length === 0 ? (
-              <div className="text-sm text-white/55">No comments yet.</div>
-            ) : (
-              comments.map((comment) => (
-                <div key={comment.id} className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3">
-                  <div className="text-sm font-semibold text-white">@{comment.username}</div>
-                  <div className="mt-2 text-sm leading-6 text-white/72">{comment.text}</div>
+      {commentsOpen ? (
+        <div className="fixed inset-0 z-[130]">
+          <div className="absolute inset-0 bg-black/62" onClick={closeComments} />
+          <div className="absolute inset-x-0 bottom-0 max-h-[78svh] overflow-hidden rounded-t-[30px] bg-white text-neutral-900 shadow-[0_-28px_80px_rgba(0,0,0,0.45)]">
+            <div className="flex items-center justify-between border-b border-black/8 px-4 py-4">
+              <div>
+                <div className="text-sm font-black">Comments</div>
+                <div className="mt-1 text-xs text-black/50">
+                  {commentsTarget ? `@${commentsTarget.sellerUsername || "creator"} · ${compact(commentsTarget.commentsCount)} comments` : "No selection"}
                 </div>
-              ))
-            )}
-          </div>
-
-          {user ? (
-            <div className="space-y-3">
-              <textarea
-                value={commentDraft}
-                onChange={(event) => setCommentDraft(event.target.value)}
-                rows={3}
-                placeholder="Escribe tu comentario..."
-                className="w-full rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white outline-none transition focus:border-white/20 focus:bg-white/[0.05]"
-              />
+              </div>
               <button
                 type="button"
-                onClick={submitComment}
-                disabled={!commentDraft.trim() || commentsLoading}
-                className="inline-flex min-h-[46px] items-center justify-center rounded-full border border-[rgba(241,225,148,0.34)] bg-[rgba(241,225,148,0.16)] px-5 text-sm font-bold text-white transition hover:bg-[rgba(241,225,148,0.22)] disabled:cursor-not-allowed disabled:opacity-55"
+                onClick={closeComments}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-black/5 text-black/70 transition hover:bg-black/10"
               >
-                {commentsLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <MessageCircle className="mr-2 h-4 w-4" />}
-                Publicar comentario
+                <X className="h-5 w-5" />
               </button>
             </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => onNavigate(AppRoute.MY_CREATIONS)}
-              className="inline-flex min-h-[46px] items-center justify-center rounded-full border border-white/10 bg-white/5 px-5 text-sm font-semibold text-white/88 transition hover:bg-white/10"
-            >
-              Inicia sesión para comentar
-            </button>
-          )}
+
+            <div className="max-h-[calc(78svh-126px)] overflow-y-auto px-4 pb-24 pt-2">
+              {commentsLoading && comments.length === 0 ? (
+                <div className="py-6 text-sm text-black/55">Loading comments...</div>
+              ) : comments.length === 0 ? (
+                <div className="py-6 text-sm text-black/55">No comments yet.</div>
+              ) : (
+                comments.map((comment) => (
+                  <div key={comment.id} className="border-b border-black/6 py-3 last:border-b-0">
+                    <div className="flex items-start gap-3">
+                      <img
+                        src={avatarSeed(comment.username)}
+                        alt={comment.username}
+                        className="mt-0.5 h-9 w-9 rounded-full border border-black/8 object-cover"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 text-sm">
+                          <span className="truncate font-semibold text-black">@{comment.username}</span>
+                          <span className="text-[11px] text-black/38">{timeAgo(comment.timestamp)}</span>
+                        </div>
+                        <div className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-black/72">{comment.text}</div>
+                        <button
+                          type="button"
+                          onClick={() => triggerReply(comment)}
+                          className="mt-2 text-[12px] font-semibold text-black/45 transition hover:text-black/72"
+                        >
+                          Reply
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="absolute inset-x-0 bottom-0 border-t border-black/8 bg-white px-4 pb-[max(env(safe-area-inset-bottom),12px)] pt-3">
+              {replyTarget ? (
+                <div className="mb-2 flex items-center justify-between gap-3 rounded-full bg-black/5 px-3 py-2 text-[12px] text-black/58">
+                  <span className="truncate">Replying to @{replyTarget.username}</span>
+                  <button type="button" onClick={() => setReplyTarget(null)} className="font-semibold text-black/50">
+                    Clear
+                  </button>
+                </div>
+              ) : null}
+
+              {user ? (
+                <div className="flex items-center gap-3">
+                  <img src={user.avatarUrl} alt={user.username} className="h-10 w-10 rounded-full border border-black/8 object-cover" />
+                  <div className="flex min-w-0 flex-1 items-center gap-2 rounded-full border border-black/10 bg-black/[0.03] px-3 py-2.5">
+                    <input
+                      ref={commentInputRef}
+                      value={commentDraft}
+                      onChange={(event) => setCommentDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          void submitComment();
+                        }
+                      }}
+                      placeholder="Write a comment"
+                      className="min-w-0 flex-1 bg-transparent text-sm text-black outline-none placeholder:text-black/32"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void submitComment()}
+                      disabled={!commentDraft.trim() || commentsLoading}
+                      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-35"
+                      aria-label="Enviar comentario"
+                    >
+                      {commentsLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => onNavigate(AppRoute.MY_CREATIONS)}
+                  className="inline-flex min-h-[46px] w-full items-center justify-center rounded-full border border-black/10 bg-black/5 px-5 text-sm font-semibold text-black/88 transition hover:bg-black/10"
+                >
+                  Inicia sesión para comentar
+                </button>
+              )}
+            </div>
+          </div>
         </div>
-      </BottomSheet>
+      ) : null}
     </div>
   );
 }

@@ -214,49 +214,52 @@ export default function CommunityStore({ onNavigate }: Props) {
   }
 
   return (
-    <section className="rounded-[34px] border border-white/10 bg-[rgba(7,7,9,0.74)] p-4 text-white shadow-[0_24px_60px_rgba(0,0,0,0.42)] backdrop-blur-xl md:p-6">
-      <div className="flex flex-col gap-4">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-white/44">Community Store</div>
-            <h2 className="mt-2 text-[clamp(1.6rem,4vw,2.6rem)] font-black leading-none tracking-tight text-white">
+    <section className="rounded-[30px] border border-white/10 bg-[rgba(7,7,9,0.72)] p-4 text-white shadow-[0_24px_60px_rgba(0,0,0,0.42)] backdrop-blur-xl md:p-5">
+      <div className="flex flex-col gap-3 md:gap-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-white/42 md:text-[11px]">Community Store</div>
+            <h2 className="mt-2 text-[clamp(1.45rem,3.6vw,2.3rem)] font-black leading-none tracking-tight text-white">
               Community Store
             </h2>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-white/62 md:text-base">
-              Descubre creaciones en venta, entra al carrete vertical desde cualquier listing y filtra por orden, media o creador.
-            </p>
           </div>
 
-          <div className="flex shrink-0 items-center gap-2">
-            <button
-              type="button"
-              onClick={() => onNavigate(AppRoute.MY_TRADES)}
-              className="inline-flex min-h-[44px] items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white/90 transition hover:bg-white/10"
-            >
-              <ArrowRightLeft className="h-4 w-4" />
-              <span className="hidden sm:inline">My Trades</span>
-            </button>
+          <button
+            type="button"
+            onClick={() => onNavigate(AppRoute.MY_TRADES)}
+            className="inline-flex min-h-[42px] shrink-0 items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white/90 transition hover:bg-white/10"
+          >
+            <ArrowRightLeft className="h-4 w-4" />
+            <span>My Trades</span>
+          </button>
+        </div>
 
-            <button
-              type="button"
-              onClick={() => setFiltersOpen((value) => !value)}
-              className="inline-flex min-h-[44px] items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-white/90 transition hover:bg-white/10"
-            >
-              <SlidersHorizontal className="h-4 w-4" />
-              <span className="max-w-[120px] truncate">{activeFilterLabel}</span>
-            </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setFiltersOpen((value) => !value)}
+            className={`inline-flex min-h-[42px] max-w-full items-center gap-2 rounded-full border px-3 py-2 text-sm font-semibold transition ${
+              filtersOpen
+                ? "border-[rgba(241,225,148,0.28)] bg-[rgba(241,225,148,0.12)] text-white"
+                : "border-white/10 bg-white/5 text-white/90 hover:bg-white/10"
+            }`}
+          >
+            <SlidersHorizontal className="h-4 w-4 shrink-0" />
+            <span className="max-w-[180px] truncate sm:max-w-[260px]">{activeFilterLabel}</span>
+          </button>
 
-            <button
-              type="button"
-              onClick={() => setSearchOpen((value) => !value)}
-              className={`inline-flex h-11 w-11 items-center justify-center rounded-full border transition ${
-                searchOpen ? "border-white/20 bg-white/12 text-white" : "border-white/10 bg-white/5 text-white/88 hover:bg-white/10"
-              }`}
-              aria-label="Buscar"
-            >
-              <Search className="h-4 w-4" />
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => setSearchOpen((value) => !value)}
+            className={`inline-flex h-[42px] w-[42px] items-center justify-center rounded-full border transition ${
+              searchOpen
+                ? "border-white/20 bg-white/12 text-white"
+                : "border-white/10 bg-white/5 text-white/88 hover:bg-white/10"
+            }`}
+            aria-label="Buscar"
+          >
+            <Search className="h-4 w-4" />
+          </button>
         </div>
 
         {searchOpen ? (
@@ -266,16 +269,16 @@ export default function CommunityStore({ onNavigate }: Props) {
               value={searchInput}
               onChange={(event) => setSearchInput(event.target.value)}
               placeholder="Buscar por nombre o @creador"
-              className="w-full rounded-[24px] border border-white/10 bg-black/25 py-3 pl-11 pr-4 text-sm text-white outline-none transition placeholder:text-white/32 focus:border-white/20 focus:bg-black/35"
+              className="w-full rounded-[22px] border border-white/10 bg-black/25 py-3 pl-11 pr-4 text-sm text-white outline-none transition placeholder:text-white/32 focus:border-white/20 focus:bg-black/35"
             />
           </div>
         ) : null}
 
         {filtersOpen ? (
-          <div className="grid gap-4 rounded-[28px] border border-white/10 bg-black/25 p-4 md:grid-cols-[1.3fr,1fr]">
+          <div className="grid gap-3 rounded-[24px] border border-white/10 bg-black/25 p-3 md:grid-cols-[1.2fr,1fr] md:p-4">
             <div>
-              <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/42">Sort</div>
-              <div className="mt-3 flex flex-wrap gap-2">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/42 md:text-[11px]">Sort</div>
+              <div className="mt-2 flex flex-wrap gap-2">
                 {COMMUNITY_SORT_OPTIONS.map((option) => {
                   const active = feedState.sortKey === option.key;
                   const disabled = option.key === "my_shop" && !user;
@@ -286,7 +289,7 @@ export default function CommunityStore({ onNavigate }: Props) {
                       type="button"
                       disabled={disabled}
                       onClick={() => updateSort(option.key)}
-                      className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${
+                      className={`rounded-full border px-3 py-2 text-[13px] font-semibold transition ${
                         active
                           ? "border-[rgba(241,225,148,0.3)] bg-[rgba(241,225,148,0.14)] text-white"
                           : "border-white/10 bg-white/5 text-white/74 hover:bg-white/10 hover:text-white"
@@ -300,8 +303,8 @@ export default function CommunityStore({ onNavigate }: Props) {
             </div>
 
             <div>
-              <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/42">Media</div>
-              <div className="mt-3 flex flex-wrap gap-2">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/42 md:text-[11px]">Media</div>
+              <div className="mt-2 flex flex-wrap gap-2">
                 {COMMUNITY_MEDIA_OPTIONS.map((option) => {
                   const active = feedState.mediaKey === option.key;
                   return (
@@ -309,7 +312,7 @@ export default function CommunityStore({ onNavigate }: Props) {
                       key={option.key}
                       type="button"
                       onClick={() => updateMedia(option.key)}
-                      className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${
+                      className={`rounded-full border px-3 py-2 text-[13px] font-semibold transition ${
                         active
                           ? "border-white/20 bg-white/14 text-white"
                           : "border-white/10 bg-white/5 text-white/74 hover:bg-white/10 hover:text-white"

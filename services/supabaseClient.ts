@@ -30,8 +30,8 @@ export async function getFreshSession() {
   const current = await rawGetSession();
   const session = current.data.session;
 
-  if (!session) return current;
-  if (!shouldRefreshSession(session)) return current;
+  const mustRefresh = !session || shouldRefreshSession(session);
+  if (!mustRefresh) return current;
 
   try {
     const refreshed = await rawRefreshSession();

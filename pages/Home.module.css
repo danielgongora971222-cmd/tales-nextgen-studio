@@ -2,11 +2,20 @@
   display: grid;
   gap: 18px;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: stretch;
 }
 
 @media (max-width: 1024px) {
   .heroGrid {
-    grid-template-columns: 1fr;
+    gap: 12px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .heroGrid {
+    gap: 8px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
@@ -775,4 +784,108 @@
 .monoTheme .heroCreditsButton:hover {
   background: rgba(255,255,255,0.14);
   border-color: rgba(255,255,255,0.26);
+}
+
+
+@media (max-width: 960px) {
+  .heroCard {
+    min-height: 196px;
+    border-radius: 24px;
+  }
+
+  .refFront,
+  .oneNationFront {
+    padding-left: 14px;
+    padding-right: 14px;
+    padding-top: 56px;
+    padding-bottom: 16px;
+  }
+
+  .refTitle,
+  .oneNationTitle {
+    font-size: clamp(16px, 3vw, 30px);
+    gap: 4px;
+  }
+
+  .refMetaLine,
+  .heroCreditsBreakdown,
+  .heroCopy {
+    display: none;
+  }
+
+  .heroCreditsButton {
+    padding: 8px 12px;
+    font-size: 10px;
+  }
+}
+
+@media (max-width: 640px) {
+  .heroCard,
+  .heroCardRefBase,
+  .oneNationHeroCard {
+    min-height: 154px;
+    border-radius: 20px;
+  }
+
+  .refLogoBadge,
+  .oneNationLogoBadge {
+    top: 8px;
+    left: 10px;
+    width: 34px;
+    height: 34px;
+    border-radius: 12px;
+    padding: 4px;
+  }
+
+  .refFront,
+  .oneNationFront {
+    padding-left: 10px;
+    padding-right: 10px;
+    padding-top: 44px;
+    padding-bottom: 12px;
+  }
+
+  .refKicker,
+  .oneNationKicker {
+    font-size: 9px;
+    letter-spacing: 0.12em;
+    margin-bottom: 4px;
+  }
+
+  .refTitle,
+  .oneNationTitle {
+    font-size: clamp(12px, 3.9vw, 18px);
+    line-height: 1.02;
+    gap: 2px;
+  }
+
+  .refTitleWhite {
+    margin-left: 0;
+  }
+
+  .refActionRow,
+  .oneNationActionRow {
+    margin-top: 8px;
+    gap: 6px;
+    font-size: 9px;
+    letter-spacing: 0.08em;
+  }
+
+  .heroCreditsRow {
+    gap: 8px;
+  }
+
+  .heroCreditsLabel {
+    font-size: 9px;
+  }
+
+  .heroCreditsValue {
+    font-size: 16px;
+  }
+
+  .heroCreditsButton {
+    padding: 6px 10px;
+    font-size: 9px;
+    max-width: none;
+  }
 }

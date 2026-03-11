@@ -24,27 +24,21 @@ export default function GenerationQueueWidget() {
   if (!open && jobs.length === 0) return null;
 
   return (
-    <div className="fixed bottom-[calc(env(safe-area-inset-bottom)+5.4rem)] right-3 z-50 md:bottom-[calc(env(safe-area-inset-bottom)+5.75rem)] md:right-4">
+    <div className="fixed bottom-[calc(env(safe-area-inset-bottom)+5.25rem)] right-3 z-50 md:bottom-[calc(env(safe-area-inset-bottom)+5.6rem)] md:right-4">
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="inline-flex min-h-[46px] items-center gap-3 rounded-full border border-white/10 bg-[rgba(10,10,12,0.84)] px-3 py-2 text-white shadow-[0_14px_34px_rgba(0,0,0,0.34)] backdrop-blur-xl transition hover:bg-[rgba(15,15,18,0.92)]"
+        className="relative inline-flex h-12 w-12 items-center justify-center rounded-2xl border border-white/10 bg-[rgba(10,10,12,0.78)] text-white shadow-[0_14px_30px_rgba(0,0,0,0.3)] backdrop-blur-xl transition hover:bg-[rgba(15,15,18,0.9)]"
         title="Generation Queue"
       >
-        <span className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/5">
-          {activeCount > 0 ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-        </span>
-
-        <span className="flex flex-col items-start leading-none">
-          <span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/42">Queue</span>
-          <span className="mt-1 text-sm font-semibold text-white/88">
-            {activeCount > 0 ? `${activeCount}/${maxActive} active` : `${jobs.length} total`}
-          </span>
+        {activeCount > 0 ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+        <span className="absolute -right-1 -top-1 inline-flex min-w-[20px] items-center justify-center rounded-full bg-[rgba(241,225,148,0.98)] px-1.5 py-0.5 text-[10px] font-black text-black shadow-[0_8px_18px_rgba(0,0,0,0.28)]">
+          {activeCount > 0 ? activeCount : jobs.length}
         </span>
       </button>
 
       {open ? (
-        <div className="mt-3 w-[340px] max-w-[88vw] overflow-hidden rounded-[28px] border border-white/10 bg-[rgba(8,8,10,0.94)] shadow-[0_26px_60px_rgba(0,0,0,0.44)] backdrop-blur-2xl">
+        <div className="mt-3 w-[320px] max-w-[84vw] overflow-hidden rounded-[26px] border border-white/10 bg-[rgba(8,8,10,0.94)] shadow-[0_26px_60px_rgba(0,0,0,0.44)] backdrop-blur-2xl">
           <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-4">
             <div>
               <div className="text-sm font-black tracking-tight text-white">Generation Queue</div>
@@ -59,7 +53,7 @@ export default function GenerationQueueWidget() {
                 onClick={clearFinished}
                 className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold text-white/76 transition hover:bg-white/10"
               >
-                Clear finished
+                Clear
               </button>
             ) : null}
           </div>
@@ -67,7 +61,7 @@ export default function GenerationQueueWidget() {
           {visibleJobs.length === 0 ? (
             <div className="px-4 py-5 text-sm text-white/52">No generations yet.</div>
           ) : (
-            <div className="max-h-[360px] overflow-y-auto">
+            <div className="max-h-[340px] overflow-y-auto">
               {visibleJobs.map((job) => {
                 const isFinished =
                   job.status === "succeeded" || job.status === "failed" || job.status === "canceled";

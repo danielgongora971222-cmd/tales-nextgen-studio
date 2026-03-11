@@ -1,133 +1,420 @@
-import React from "react";
-import { ArrowRight, Coins, Crown, ShoppingBag, Sparkles, Wand2 } from "lucide-react";
+import React, { useEffect, useRef } from "react";
 import { AppRoute } from "../types";
 import { useAuth } from "../contexts/AuthContext";
 import { useWallet } from "../contexts/WalletContext";
+import styles from "./Home.module.css";
 import CommunityStore from "./CommunityStore";
+import OneNationUpIcon from "../components/brand/OneNationUpIcon";
 
 interface HomeProps {
   onNavigate: (route: AppRoute) => void;
 }
 
-function HomeCard({
-  eyebrow,
-  title,
-  subtitle,
-  accent,
-  icon,
-  onClick,
-  children,
-}: {
-  eyebrow: string;
-  title: string;
-  subtitle: string;
-  accent: string;
-  icon: React.ReactNode;
-  onClick: () => void;
-  children?: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="group relative w-full overflow-hidden rounded-[34px] border border-white/10 bg-[rgba(7,7,9,0.82)] p-5 text-left shadow-[0_24px_60px_rgba(0,0,0,0.42)] backdrop-blur-xl transition duration-300 hover:-translate-y-0.5 hover:border-white/15 hover:bg-[rgba(10,10,14,0.88)] md:p-7"
-    >
-      <div className={`pointer-events-none absolute inset-0 opacity-80 ${accent}`} />
-      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,0.08),transparent_38%,rgba(0,0,0,0.2))]" />
+type ConstellationEffectOptions = {
+  btn: HTMLElement | null;
+  canvas: HTMLCanvasElement | null;
+  hoverRef: React.MutableRefObject<boolean>;
+  mouseRef: React.MutableRefObject<{ x: number; y: number }>;
+  colors: string[];
+  lineRgb: string;
+};
 
-      <div className="relative flex items-start justify-between gap-4">
-        <div className="max-w-[80%]">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.26em] text-white/46">{eyebrow}</div>
-          <h2 className="mt-3 text-[clamp(1.7rem,5vw,2.8rem)] font-black leading-[0.95] tracking-tight text-white">
-            {title}
-          </h2>
-          <p className="mt-3 max-w-2xl text-sm leading-6 text-white/64 md:text-base">{subtitle}</p>
-        </div>
+function setupConstellationEffect(opts: ConstellationEffectOptions) {
+  const { btn, canvas, hoverRef, mouseRef, colors, lineRgb } = opts;
 
-        <div className="inline-flex h-14 w-14 shrink-0 items-center justify-center rounded-[22px] border border-white/10 bg-black/25 text-white shadow-[0_16px_36px_rgba(0,0,0,0.35)] backdrop-blur-md">
-          {icon}
-        </div>
-      </div>
+  if (!btn || !canvas) return () => {};
 
-      {children ? <div className="relative mt-5">{children}</div> : null}
+  const prefersReducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+  if (prefersReducedMotion) return () => {};
 
-      <div className="relative mt-6 flex items-center justify-between gap-3">
-        <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-white/68">
-          Open
-        </div>
-        <div className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white/90 transition group-hover:translate-x-0.5 group-hover:bg-white/10">
-          <ArrowRight className="h-5 w-5" />
-        </div>
-      </div>
-    </button>
-  );
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return () => {};
+
+  let particles: Array<{
+    x: number;
+    y: number;
+    vx: number;
+    vy: number;
+    baseRadius: number;
+    radius: number;
+    color: string;
+    phase: number;
+  }> = [];
+
+  let raf = 0;
+
+  const resize = () => {
+    const w = btn.offsetWidth;
+    const h = btn.offsetHeight;
+    canvas.width = Math.max(1, Math.floor(w));
+    canvas.height = Math.max(1, Math.floor(h));
+
+    particles = [];
+    const count = Math.max(14, Math.floor((canvas.width * canvas.height) / 4200));
+
+    for (let i = 0; i < count; i++) {
+      particles.push({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        vx: (Math.random() - 0.5) * 0.45,
+        vy: (Math.random() - 0.5) * 0.45,
+        baseRadius: Math.random() * 1.3 + 0.45,
+        radius: 1,
+        color: colors[Math.floor(Math.random() * colors.length)],
+        phase: Math.random() * Math.PI * 2,
+      });
+    }
+  };
+
+  const drawLines = () => {
+    const isHovered = hoverRef.current;
+    const mouse = mouseRef.current;
+    const connectionDistance = isHovered ? 105 : 80;
+
+    for (let i = 0; i < particles.length; i++) {
+      for (let j = i + 1; j < particles.length; j++) {
+        const dx = particles[i].x - particles[j].x;
+        const dy = particles[i].y - particles[j].y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (dist < connectionDistance) {
+          ctx.beginPath();
+          let opacity = 1 - dist / connectionDistance;
+          opacity *= isHovered ? 0.6 : 0.22;
+          ctx.strokeStyle = `rgba(${lineRgb}, ${opacity})`;
+          ctx.lineWidth = 1;
+          ctx.moveTo(particles[i].x, particles[i].y);
+          ctx.lineTo(particles[j].x, particles[j].y);
+          ctx.stroke();
+        }
+      }
+
+      if (isHovered) {
+        const mdx = particles[i].x - mouse.x;
+        const mdy = particles[i].y - mouse.y;
+        const mdist = Math.sqrt(mdx * mdx + mdy * mdy);
+
+        if (mdist < 120) {
+          ctx.beginPath();
+          const mOpacity = 1 - mdist / 120;
+          ctx.strokeStyle = particles[i].color;
+          ctx.globalAlpha = mOpacity * 0.78;
+          ctx.lineWidth = 1.35;
+          ctx.moveTo(particles[i].x, particles[i].y);
+          ctx.lineTo(mouse.x, mouse.y);
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+        }
+      }
+    }
+  };
+
+  const tick = () => {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const isHovered = hoverRef.current;
+    const mouse = mouseRef.current;
+
+    for (const p of particles) {
+      p.x += p.vx;
+      p.y += p.vy;
+
+      if (p.x < 0 || p.x > canvas.width) p.vx *= -1;
+      if (p.y < 0 || p.y > canvas.height) p.vy *= -1;
+
+      p.phase += 0.02;
+      p.radius = p.baseRadius + Math.sin(p.phase) * 0.45;
+
+      if (isHovered) {
+        const dx = mouse.x - p.x;
+        const dy = mouse.y - p.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const interactionRadius = 96;
+
+        if (dist > 0.001 && dist < interactionRadius) {
+          const fx = dx / dist;
+          const fy = dy / dist;
+          const force = (interactionRadius - dist) / interactionRadius;
+          p.vx += fx * force * 0.018;
+          p.vy += fy * force * 0.018;
+
+          const maxSpeed = 1.25;
+          const sp = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+          if (sp > maxSpeed) {
+            p.vx = (p.vx / sp) * maxSpeed;
+            p.vy = (p.vy / sp) * maxSpeed;
+          }
+
+          p.radius = p.baseRadius + force * 1.2;
+        }
+      } else {
+        p.vx *= 0.992;
+        p.vy *= 0.992;
+      }
+
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+      ctx.fillStyle = p.color;
+      ctx.globalAlpha = isHovered ? 0.82 : 0.55;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+    drawLines();
+    raf = requestAnimationFrame(tick);
+  };
+
+  resize();
+  raf = requestAnimationFrame(tick);
+
+  const onResize = () => resize();
+  window.addEventListener("resize", onResize);
+
+  return () => {
+    cancelAnimationFrame(raf);
+    window.removeEventListener("resize", onResize);
+  };
+}
+
+function compactUsername(username?: string) {
+  const raw = String(username || "Creator").trim() || "Creator";
+  if (raw.length <= 12) return raw;
+  return `${raw.slice(0, 12)}…`;
 }
 
 export default function Home({ onNavigate }: HomeProps) {
   const { user } = useAuth();
   const { wallet, subscription } = useWallet();
 
+  const designsBtnRef = useRef<HTMLButtonElement | null>(null);
+  const designsCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const designsHoverRef = useRef(false);
+  const designsMouseRef = useRef({ x: -1000, y: -1000 });
+
+  const creatorBtnRef = useRef<HTMLDivElement | null>(null);
+  const creatorCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const creatorHoverRef = useRef(false);
+  const creatorMouseRef = useRef({ x: -1000, y: -1000 });
+
+  const oneNationBtnRef = useRef<HTMLButtonElement | null>(null);
+  const oneNationCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const oneNationHoverRef = useRef(false);
+  const oneNationMouseRef = useRef({ x: -1000, y: -1000 });
+
+  useEffect(() => {
+    return setupConstellationEffect({
+      btn: designsBtnRef.current,
+      canvas: designsCanvasRef.current,
+      hoverRef: designsHoverRef,
+      mouseRef: designsMouseRef,
+      colors: ["#FDE68A", "#DFB142", "#B45309", "#FFF2C2"],
+      lineRgb: "255, 235, 170",
+    });
+  }, []);
+
+  useEffect(() => {
+    return setupConstellationEffect({
+      btn: creatorBtnRef.current,
+      canvas: creatorCanvasRef.current,
+      hoverRef: creatorHoverRef,
+      mouseRef: creatorMouseRef,
+      colors: ["#FFFFFF", "#E5E7EB", "#9CA3AF", "#F9FAFB"],
+      lineRgb: "255, 255, 255",
+    });
+  }, []);
+
+  useEffect(() => {
+    return setupConstellationEffect({
+      btn: oneNationBtnRef.current,
+      canvas: oneNationCanvasRef.current,
+      hoverRef: oneNationHoverRef,
+      mouseRef: oneNationMouseRef,
+      colors: ["#7EAAED", "#DFB142", "#DE6C53", "#7D45A9"],
+      lineRgb: "180, 200, 255",
+    });
+  }, []);
+
+  const username = compactUsername(user?.username);
+  const activePlan = subscription?.plan_name || "No plan";
+  const credits = Number(wallet?.generationCredits ?? 0).toLocaleString();
+
   return (
-    <div className="mx-auto max-w-[1320px] space-y-5 text-white md:space-y-6">
-      <section className="space-y-4 md:space-y-5">
-        <HomeCard
-          eyebrow="Design Studio"
-          title="Crea con Design Studio"
-          subtitle="Abre tu zona principal de imagen con generador, editor, restyler, upscale y herramientas listas para producción móvil-first."
-          accent="bg-[radial-gradient(circle_at_top_left,rgba(241,225,148,0.28),transparent_42%),radial-gradient(circle_at_bottom_right,rgba(91,14,20,0.36),transparent_46%)]"
-          icon={<Wand2 className="h-6 w-6" />}
+    <div className="space-y-8 pb-4 md:space-y-10">
+      <section className={styles.heroGrid}>
+        <button
+          ref={designsBtnRef}
+          type="button"
           onClick={() => onNavigate(AppRoute.IMAGE_GEN_ROOT)}
-        />
-
-        <HomeCard
-          eyebrow="Creator Hub"
-          title="Creator Hub"
-          subtitle={
-            user
-              ? `Gestiona tu perfil, seguridad, billing y la capa de creator economy desde un solo lugar.`
-              : "Activa tu sesión para administrar perfil, seguridad, billing, créditos y próximas herramientas premium."
-          }
-          accent="bg-[radial-gradient(circle_at_top_right,rgba(110,168,255,0.22),transparent_42%),radial-gradient(circle_at_bottom_left,rgba(255,255,255,0.08),transparent_38%)]"
-          icon={<Sparkles className="h-6 w-6" />}
-          onClick={() => onNavigate(AppRoute.PROFILE)}
+          className={`${styles.heroCard} ${styles.heroCardRefBase} ${styles.refHeroCard} ${styles.designsTheme}`}
+          onMouseEnter={() => {
+            designsHoverRef.current = true;
+          }}
+          onMouseLeave={() => {
+            designsHoverRef.current = false;
+            designsMouseRef.current = { x: -1000, y: -1000 };
+          }}
+          onMouseMove={(event) => {
+            const rect = event.currentTarget.getBoundingClientRect();
+            designsMouseRef.current = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+          }}
         >
-          <div className="grid gap-3 md:grid-cols-[1.2fr,1fr]">
-            <div className="rounded-[26px] border border-white/10 bg-black/25 p-4 backdrop-blur-md">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-white/45">{user ? "Creator" : "Guest access"}</div>
-              <div className="mt-2 text-xl font-bold text-white">{user?.username || "Sign in required"}</div>
-              <div className="mt-2 text-sm leading-6 text-white/60">
-                {user
-                  ? `Plan activo: ${subscription?.plan_name || "Sin plan"}`
-                  : "Al entrar podrás ver profile, security y billing desde el sidebar y desde esta tarjeta."}
-              </div>
-            </div>
+          <canvas ref={designsCanvasRef} className={styles.refCanvas} />
+          <div className={styles.refOverlay} aria-hidden="true" />
+          <div className={styles.refLogoBadge} aria-hidden="true">
+            <span className={styles.refLogoFallback}>D</span>
+            <img
+              src="/brands/designs/logo.png"
+              alt="Designs Studio"
+              className={styles.refLogo}
+              loading="lazy"
+              decoding="async"
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).style.display = "none";
+              }}
+            />
+          </div>
 
-            <div className="rounded-[26px] border border-white/10 bg-black/25 p-4 backdrop-blur-md">
-              <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-white/45">
-                <Coins className="h-4 w-4 text-[rgba(241,225,148,0.95)]" /> Credits
-              </div>
-              <div className="mt-2 text-3xl font-black tracking-tight text-white">
-                {(wallet?.generationCredits ?? 0).toLocaleString()}
-              </div>
-              <div className="mt-2 text-sm leading-6 text-white/60">
-                Plan {wallet?.gen_plan_credits ?? 0} · Extra {wallet?.gen_topup_credits ?? 0} · Bonus {wallet?.gen_bonus_credits ?? 0}
+          <div className={styles.refFront}>
+            <div className={styles.refTextWrap}>
+              <h2 className={styles.refKicker}>Crea con</h2>
+              <h1 className={styles.refTitle}>
+                <span className={styles.refGradientText}>Designs</span>
+                <span className={styles.refTitleWhite}>Studio</span>
+              </h1>
+              <div className={styles.refActionRow}>
+                <span>Open</span>
+                <svg className={styles.refArrow} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 8l4 4m0 0l-4 4m4-4H3" />
+                </svg>
               </div>
             </div>
           </div>
-        </HomeCard>
 
-        <HomeCard
-          eyebrow="1NationUp"
-          title="1NationUp"
-          subtitle="Explora la capa comercial del ecosistema y llévala a un formato más sólido para producto, store y monetización futura."
-          accent="bg-[radial-gradient(circle_at_top_left,rgba(255,138,61,0.18),transparent_42%),radial-gradient(circle_at_bottom_right,rgba(91,14,20,0.42),transparent_48%)]"
-          icon={<ShoppingBag className="h-6 w-6" />}
+          <div className={styles.refBottomBorder} aria-hidden="true" />
+        </button>
+
+        <div
+          ref={creatorBtnRef}
+          className={`${styles.heroCard} ${styles.heroCardRefBase} ${styles.refHeroCard} ${styles.monoTheme}`}
+          role="button"
+          tabIndex={0}
+          onClick={() => {
+            window.localStorage.setItem("tales_profile_focus", "profile");
+            onNavigate(AppRoute.PROFILE);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              window.localStorage.setItem("tales_profile_focus", "profile");
+              onNavigate(AppRoute.PROFILE);
+            }
+          }}
+          onMouseEnter={() => {
+            creatorHoverRef.current = true;
+          }}
+          onMouseLeave={() => {
+            creatorHoverRef.current = false;
+            creatorMouseRef.current = { x: -1000, y: -1000 };
+          }}
+          onMouseMove={(event) => {
+            const rect = (event.currentTarget as HTMLDivElement).getBoundingClientRect();
+            creatorMouseRef.current = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+          }}
+        >
+          <canvas ref={creatorCanvasRef} className={styles.refCanvas} />
+          <div className={styles.refOverlay} aria-hidden="true" />
+          <div className={styles.refLogoBadge} aria-hidden="true">
+            <span className={styles.refLogoFallback}>C</span>
+            <img
+              src="/brands/creator-hub/logo.png"
+              alt="Creator"
+              className={styles.refLogo}
+              loading="lazy"
+              decoding="async"
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).style.display = "none";
+              }}
+            />
+          </div>
+
+          <div className={styles.refFront}>
+            <div className={styles.refTextWrap}>
+              <h2 className={styles.refKicker}>Your space</h2>
+              <h1 className={styles.refTitle} title={user?.username || "Creator"}>
+                <span className={styles.refGradientText}>{username}</span>
+              </h1>
+
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/74">
+                <span className="rounded-full border border-white/10 bg-white/10 px-3 py-1.5">{credits} credits</span>
+                <span className="rounded-full border border-white/10 bg-white/6 px-3 py-1.5">{activePlan}</span>
+              </div>
+
+              <div className="mt-3 flex items-center gap-2">
+                <button
+                  type="button"
+                  className={styles.heroCreditsButton}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    window.localStorage.setItem("tales_account_tab", "plans");
+                    onNavigate(AppRoute.PAYWALL);
+                  }}
+                >
+                  Manage
+                </button>
+              </div>
+
+              <div className={styles.refActionRow}>
+                <span>Profile</span>
+                <svg className={styles.refArrow} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 8l4 4m0 0l-4 4m4-4H3" />
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          <div className={styles.refBottomBorder} aria-hidden="true" />
+        </div>
+
+        <button
+          ref={oneNationBtnRef}
+          type="button"
           onClick={() => onNavigate(AppRoute.STORE)}
+          className={`${styles.heroCard} ${styles.heroCardVideo} ${styles.oneNationHeroCard}`}
+          onMouseEnter={() => {
+            oneNationHoverRef.current = true;
+          }}
+          onMouseLeave={() => {
+            oneNationHoverRef.current = false;
+            oneNationMouseRef.current = { x: -1000, y: -1000 };
+          }}
+          onMouseMove={(event) => {
+            const rect = event.currentTarget.getBoundingClientRect();
+            oneNationMouseRef.current = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+          }}
         >
-          <div className="inline-flex items-center gap-2 rounded-full border border-[rgba(241,225,148,0.18)] bg-[rgba(241,225,148,0.08)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-white/76">
-            <Crown className="h-4 w-4 text-[rgba(241,225,148,0.95)]" /> Commerce layer
+          <canvas ref={oneNationCanvasRef} className={styles.oneNationCanvas} />
+          <div className={styles.oneNationOverlay} aria-hidden="true" />
+          <div className={styles.oneNationLogoBadge} aria-hidden="true">
+            <OneNationUpIcon className={styles.oneNationLogo} alt="1NationUp" />
           </div>
-        </HomeCard>
+
+          <div className={styles.oneNationFront}>
+            <div className={styles.oneNationTextWrap}>
+              <h2 className={styles.oneNationKicker}>Explore</h2>
+              <h1 className={styles.oneNationTitle}>
+                <span className={styles.oneNationGradientText}>1NationUp</span>
+              </h1>
+              <div className={styles.oneNationActionRow}>
+                <span>Open</span>
+                <svg className={styles.oneNationArrow} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 8l4 4m0 0l-4 4m4-4H3" />
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          <div className={styles.oneNationBottomBorder} aria-hidden="true" />
+        </button>
       </section>
 
       <section>
