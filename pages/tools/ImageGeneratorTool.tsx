@@ -1,7 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, History, ImagePlus, Layers3, Palette, PanelRightClose, PanelRightOpen, RefreshCcw, Sparkles, UserRound } from "lucide-react";
 import styles from "./ImageGeneratorTool.module.css";
-import ui from "./ImageGeneratorTool.redesign.module.css";
 import { generateImageBatch, type PromptReference, type ImageGenQuality } from "../../services/geminiService";
 import { MentionTextarea, type MentionItem } from "../../components/MentionTextarea";
 import {
@@ -587,7 +585,7 @@ function getActiveCaps(modelId: string) {
   return MODEL_CAPS[modelId] || MODEL_CAPS[DEFAULT_IMAGE_GENERATOR_MODEL];
 }
 
-type Panel = null | "elements" | "reference" | "background" | "model" | "parameters" | "styles";
+type Panel = null | "reference" | "model" | "parameters" | "styles";
 type RefSlot = "char1" | "char2" | "char3" | "background";
 
 const SLOT_LABEL: Record<RefSlot, string> = {
@@ -1080,9 +1078,6 @@ useEffect(() => {
   const [pickerQuery, setPickerQuery] = useState("");
 
   const [viewer, setViewer] = useState<Asset | null>(null);
-  const [historySidebarExpanded, setHistorySidebarExpanded] = useState(false);
-  const historyInitRef = useRef(false);
-  const latestHistoryIdRef = useRef<string | null>(null);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const draftLoadedRef = useRef(false);
@@ -2290,22 +2285,14 @@ const promptReferences: PromptReference[] = useMemo(() => {
     return () => document.removeEventListener("mousedown", onDown);
   }, [panel]);
 
-  // ESC cierra paneles y repliega historial
+  // ESC cierra viewer
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key !== "Escape") return;
-      if (panel) {
-        setPanel(null);
-        setPickerSlot(null);
-        return;
-      }
-      if (historySidebarExpanded) {
-        setHistorySidebarExpanded(false);
-      }
+      if (e.key === "Escape") setViewer(null);
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [panel, historySidebarExpanded]);
+  }, []);
 
   const refLibraryAssets = useMemo(() => {
     return refLibraryTab === "purchased" ? purchasedAssets : history;
@@ -2339,86 +2326,6 @@ const promptReferences: PromptReference[] = useMemo(() => {
       { label: "Style", value: recipeStyleName },
     ];
   }, [model, aspectRatio, count, quality, refs, recipeStyleName]);
-
-  const selectedCharacterRefs = useMemo(() => {
-    return [refs.char1, refs.char2, refs.char3].filter(Boolean) as Asset[];
-  }, [refs.char1, refs.char2, refs.char3]);
-
-  const selectedElementItems = useMemo(() => {
-    return (selectedElementAssetIds || [])
-      .map((id) => elements.find((el) => el.id === id))
-      .filter(Boolean) as ElementItem[];
-  }, [selectedElementAssetIds, elements]);
-
-  const visibleReferenceSlots = useMemo<RefSlot[]>(() => {
-    const visible: RefSlot[] = ["char1"];
-    if (refs.char1) visible.push("char2");
-    if (refs.char2) visible.push("char3");
-    return visible;
-  }, [refs.char1, refs.char2]);
-
-  const filteredElementCards = useMemo(() => {
-    const q = (elementAllQuery || "").trim().toLowerCase();
-    if (!q) return elements;
-    return elements.filter((el) => String(el?.name || "").toLowerCase().includes(q));
-  }, [elements, elementAllQuery]);
-
-  const historySidebarItems = useMemo(() => history.slice(0, 24), [history]);
-
-  const activeHistoryIndex = useMemo(() => {
-    if (!viewer) return -1;
-    return history.findIndex((asset) => asset.id === viewer.id);
-  }, [viewer, history]);
-
-  const openHistoryAsset = useCallback((asset: Asset) => {
-    setViewer(asset);
-    setHistorySidebarExpanded(true);
-  }, []);
-
-  const handleSidebarToggle = useCallback(() => {
-    if (!historySidebarExpanded && !viewer && history[0]) {
-      setViewer(history[0]);
-    }
-    setHistorySidebarExpanded((prev) => !prev);
-  }, [historySidebarExpanded, viewer, history]);
-
-  const showPreviousHistory = useCallback(() => {
-    if (activeHistoryIndex > 0) {
-      setViewer(history[activeHistoryIndex - 1]);
-    }
-  }, [activeHistoryIndex, history]);
-
-  const showNextHistory = useCallback(() => {
-    if (activeHistoryIndex >= 0 && activeHistoryIndex < history.length - 1) {
-      setViewer(history[activeHistoryIndex + 1]);
-    }
-  }, [activeHistoryIndex, history]);
-
-  useEffect(() => {
-    if (isLoadingHistory) return;
-
-    const latestId = history[0]?.id || null;
-
-    if (!historyInitRef.current) {
-      historyInitRef.current = true;
-      latestHistoryIdRef.current = latestId;
-      if (!viewer && history[0]) setViewer(history[0]);
-      return;
-    }
-
-    if (latestId && latestId !== latestHistoryIdRef.current) {
-      latestHistoryIdRef.current = latestId;
-      setViewer(history[0]);
-      setHistorySidebarExpanded(true);
-      return;
-    }
-
-    latestHistoryIdRef.current = latestId;
-
-    if (viewer && !history.some((item) => item.id === viewer.id)) {
-      setViewer(history[0] || null);
-    }
-  }, [history, isLoadingHistory, viewer]);
 
   function setRefSlot(slot: RefSlot, asset: Asset | null) {
     setRefs((prev) => {
@@ -2668,9 +2575,10 @@ const promptReferences: PromptReference[] = useMemo(() => {
         const nextCount = Math.min(historyVisibleCount, next.length);
         setHistoryVisibleCount(nextCount);
         setVisibleHistory(next.slice(0, nextCount));
-        if (viewer?.id === asset.id) setViewer(next[0] || null);
         return next;
       });
+
+      if (viewer?.id === asset.id) setViewer(null);
     } catch (e: any) {
       setError(e?.message || "No se pudo eliminar.");
     }
@@ -2833,1083 +2741,968 @@ const promptReferences: PromptReference[] = useMemo(() => {
   return (
     <div
       ref={rootRef}
-      className={ui.root}
+      className={styles.root}
       onMouseMove={handleRootMouseMove}
       onMouseLeave={handleRootMouseLeave}
     >
-      <div className={ui.layout}>
-        <section className={ui.workspace}>
-          <div className={ui.workspaceScroll}>
-            <div className={ui.heroCard}>
-              <div className={ui.heroTop}>
-                <div className={ui.heroCopy}>
-                  <span className={ui.eyebrow}>Image Generation Suite</span>
-                  <h1 className={ui.toolTitle}>Image Generator</h1>
-                  <p className={ui.toolSubtitle}>
-                    Flujo mobile-first para construir la generación desde bloques claros: Element/Person,
-                    referencias, background, estilo, prompt y parámetros. El historial vive ahora en el
-                    lateral derecho para revisar recetas y navegar entre resultados sin tapar el trabajo.
-                  </p>
-                </div>
+      {/* HISTORIAL (único contenido visible arriba) */}
+      <div className={styles.stage}>
+        <div className={styles.historyHeader}>
+          <div className={styles.historyTitle}>
+            <span className={styles.kicker}>IMAGE GENERATOR</span>
+            <div className={styles.historyMeta}>
+              {isLoadingHistory ? (
+                <span className={styles.subKicker}>Loading history...</span>
+              ) : (
+                <>
+                  <span className={styles.subKicker}>History</span>
+                  <span className={styles.historyCount}>{history.length}</span>
+                </>
+              )}
+            </div>
+          </div>
 
-                <div className={ui.heroActions}>
-                  <button className={ui.heroButton} onClick={reloadHistory} type="button" disabled={isLoadingHistory}>
-                    <RefreshCcw size={16} />
-                    {isLoadingHistory ? "Refreshing..." : "Refresh"}
-                  </button>
-                  <button className={ui.mobileHistoryButton} type="button" onClick={handleSidebarToggle}>
-                    <History size={16} />
-                    History ({history.length})
-                  </button>
-                </div>
+          <button className={styles.ghostBtn} onClick={reloadHistory} type="button" disabled={isLoadingHistory}>
+            Refresh
+          </button>
+        </div>
+
+        <div className={styles.historyGrid}>
+          {history.length === 0 && pendingSlots.length === 0 ? (
+            <div className={styles.emptyState}>
+              <div className={styles.emptyAnimator}>
+                <div className={styles.emptyGrid} />
+                <div className={styles.emptyGlow} />
+                <div className={styles.emptyScan} />
+                <div className={styles.emptyOrb} />
               </div>
-
-              <div className={ui.heroStats}>
-                <div className={ui.heroStat}>
-                  <span className={ui.heroStatLabel}>Recent generations</span>
-                  <strong className={ui.heroStatValue}>{history.length}</strong>
-                </div>
-                <div className={ui.heroStat}>
-                  <span className={ui.heroStatLabel}>Active jobs</span>
-                  <strong className={ui.heroStatValue}>{activeToolJobsCount} in this tool · {activeGlobalJobsCount} total</strong>
-                </div>
-                <div className={ui.heroStat}>
-                  <span className={ui.heroStatLabel}>Estimated cost</span>
-                  <strong className={ui.heroStatValue}>{estimatedCostCredits} credits</strong>
-                </div>
+              <div className={styles.emptyCopy}>
+                <div className={styles.emptyCode}>NO GENERATIONS</div>
+                <div className={styles.emptyText}>Genera tu primera imagen para ver el historial aquí.</div>
               </div>
             </div>
-
-            <div className={ui.selectorGrid}>
-              <button
-                type="button"
-                className={`${ui.selectorCard} ${panel === "elements" ? ui.selectorCardActive : ""}`}
-                onClick={() => {
-                  setPickerSlot(null);
-                  setPanel((p) => (p === "elements" ? null : "elements"));
-                }}
-              >
-                <span className={ui.selectorIcon}>
-                  <UserRound size={22} />
-                </span>
-                <span className={ui.selectorLabel}>Create/Select Element</span>
-                <span className={ui.selectorMeta}>
-                  {selectedElementItems.length > 0
-                    ? `${selectedElementItems.length} selected`
-                    : "Create a new element or pick one from your library."}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                className={`${ui.selectorCard} ${panel === "reference" ? ui.selectorCardActive : ""}`}
-                onClick={() => {
-                  setPickerSlot(null);
-                  setPanel((p) => (p === "reference" ? null : "reference"));
-                }}
-              >
-                <span className={ui.selectorIcon}>
-                  <Layers3 size={22} />
-                </span>
-                <span className={ui.selectorLabel}>Reference</span>
-                <span className={ui.selectorMeta}>
-                  {selectedCharacterRefs.length > 0
-                    ? `${selectedCharacterRefs.length} reference${selectedCharacterRefs.length === 1 ? "" : "s"} selected`
-                    : "Pick or upload up to 3 character references."}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                className={`${ui.selectorCard} ${panel === "background" ? ui.selectorCardActive : ""}`}
-                onClick={() => {
-                  setPickerSlot(null);
-                  setPanel((p) => (p === "background" ? null : "background"));
-                }}
-              >
-                <span className={ui.selectorIcon}>
-                  <ImagePlus size={22} />
-                </span>
-                <span className={ui.selectorLabel}>Background</span>
-                <span className={ui.selectorMeta}>
-                  {refs.background ? "Background ready" : "Pick or upload a background reference."}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                className={`${ui.selectorCard} ${panel === "styles" ? ui.selectorCardActive : ""}`}
-                onClick={() => {
-                  setPickerSlot(null);
-                  setPanel((p) => (p === "styles" ? null : "styles"));
-                }}
-              >
-                <span className={ui.selectorIcon}>
-                  <Palette size={22} />
-                </span>
-                <span className={ui.selectorLabel}>Styles</span>
-                <span className={ui.selectorMeta}>{selectedStylePreset?.name || "Choose the visual direction for this generation."}</span>
-              </button>
-            </div>
-
-            {(selectedElementItems.length > 0 || selectedCharacterRefs.length > 0 || refs.background || selectedStylePreset) && (
-              <div className={ui.selectionSummary}>
-                {selectedElementItems.length > 0 && (
-                  <div className={ui.summaryCard}>
-                    <div className={ui.summaryTitle}>Selected Elements</div>
-                    <div className={ui.summaryThumbRow}>
-                      {selectedElementItems.map((el) => (
-                        <div key={el.id} className={ui.summaryTag} title={el.name}>
-                          <img className={ui.summaryThumb} src={el.previewUrl || el.url} alt={el.name} />
-                          <span>{el.name}</span>
-                        </div>
-                      ))}
-                    </div>
+          ) : (
+            <div className={styles.grid}>
+              {pendingSlots.map((id) => (
+                <div key={id} className={`${styles.tile} ${styles.tilePending}`} aria-label="Generating...">
+                  <div className={styles.pendingFrame}>
+                    <div className={styles.pendingShimmer} />
+                    <div className={styles.pendingSpinner} />
+                    <div className={styles.pendingLabel}>GENERATING</div>
                   </div>
-                )}
-
-                {selectedCharacterRefs.length > 0 && (
-                  <div className={ui.summaryCard}>
-                    <div className={ui.summaryTitle}>References</div>
-                    <div className={ui.summaryThumbRow}>
-                      {selectedCharacterRefs.map((asset, idx) => (
-                        <div key={asset.id} className={ui.summaryTag} title={asset.name}>
-                          <img className={ui.summaryThumb} src={asset.url} alt={asset.name} />
-                          <span>Ref {idx + 1}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {refs.background && (
-                  <div className={ui.summaryCard}>
-                    <div className={ui.summaryTitle}>Background</div>
-                    <div className={ui.summaryThumbRow}>
-                      <div className={ui.summaryTag} title={refs.background.name}>
-                        <img className={ui.summaryThumb} src={refs.background.url} alt={refs.background.name} />
-                        <span>{refs.background.name || "Background"}</span>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {selectedStylePreset && (
-                  <div className={ui.summaryCard}>
-                    <div className={ui.summaryTitle}>Style preset</div>
-                    <div className={ui.summaryThumbRow}>
-                      <div className={ui.summaryTag}>
-                        <Sparkles size={14} />
-                        <span>{selectedStylePreset.name}</span>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {panel && (
-              <div ref={popoverRef} className={ui.inlinePanel}>
-                {panel === "elements" && (
-                  <div className={ui.inlinePanelBody}>
-                    <div className={ui.inlinePanelHeader}>
-                      <div className={ui.inlinePanelTitleGroup}>
-                        <div className={ui.inlinePanelKicker}>Element / Person</div>
-                        <div className={ui.inlinePanelTitle}>Create or select a consistent element</div>
-                      </div>
-                      <div className={ui.inlinePanelActions}>
-                        <button
-                          type="button"
-                          className={styles.smallBtn}
-                          onClick={() => {
-                            setElementCtaActive(false);
-                            setIsElementCreateOpen(true);
-                          }}
-                        >
-                          Create new
-                        </button>
-                        {elements.length > 0 && (
-                          <button type="button" className={styles.smallBtnGhost} onClick={() => setIsElementAllOpen(true)}>
-                            Manage library
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className={ui.inlinePanelTopRow}>
-                      <div className={ui.inlinePanelMeta}>Selected: {selectedElementAssetIds.length}/5</div>
-                      <input
-                        className={styles.search}
-                        value={elementAllQuery}
-                        onChange={(e) => setElementAllQuery(e.target.value)}
-                        placeholder="Search elements..."
-                      />
-                    </div>
-
-                    {selectedElementItems.length > 0 && (
-                      <div className={ui.inlineSelectedStrip}>
-                        {selectedElementItems.map((el) => {
-                          const token = (el?.id ? elementTokenById.get(el.id) : null) || makeElementTag(el.name) || "";
-                          return (
-                            <div key={el.id} className={ui.selectedPill}>
-                              <img className={ui.selectedPillThumb} src={el.previewUrl || el.url} alt={el.name} />
-                              <span className={ui.selectedPillLabel}>{el.name}</span>
-                              <button
-                                type="button"
-                                className={ui.selectedPillRemove}
-                                onClick={() => {
-                                  if (token) removePromptToken(token);
-                                  setSelectedElementAssetIds((prev) => prev.filter((id) => id !== el.id));
-                                }}
-                                aria-label={`Remove ${el.name}`}
-                              >
-                                ×
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-
-                    {filteredElementCards.length > 0 ? (
-                      <div className={ui.elementCardGrid}>
-                        {filteredElementCards.slice(0, 18).map((el) => {
-                          const active = selectedElementAssetIds.includes(el.id);
-                          const token = (el?.id ? elementTokenById.get(el.id) : null) || makeElementTag(el.name) || "";
-                          return (
-                            <button
-                              key={el.id}
-                              type="button"
-                              className={`${ui.elementCard} ${active ? ui.elementCardActive : ""}`}
-                              onClick={() => {
-                                if (active) {
-                                  if (token) removePromptToken(token);
-                                  setSelectedElementAssetIds((prev) => prev.filter((id) => id !== el.id));
-                                  return;
-                                }
-                                setSelectedElementAssetIds((prev) => {
-                                  if (prev.includes(el.id)) return prev;
-                                  if (prev.length >= 5) {
-                                    setError("Kling permite seleccionar máximo 5 Elements a la vez.");
-                                    return prev;
-                                  }
-                                  return [el.id, ...prev].slice(0, 5);
-                                });
-                              }}
-                            >
-                              <img className={ui.elementCardImage} src={el.previewUrl || el.url} alt={el.name} />
-                              <div className={ui.elementCardMeta}>
-                                <div className={ui.elementCardName}>{el.name}</div>
-                                <div className={ui.elementCardState}>{active ? "Selected" : "Tap to select"}</div>
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div className={ui.inlineEmpty}>
-                        {elements.length === 0
-                          ? "No elements yet. Create your first Element/Person to keep characters and objects consistent."
-                          : "No elements match your search."}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {panel === "reference" && (
-                  <div className={ui.inlinePanelBody}>
-                    <div className={ui.inlinePanelHeader}>
-                      <div className={ui.inlinePanelTitleGroup}>
-                        <div className={ui.inlinePanelKicker}>Reference</div>
-                        <div className={ui.inlinePanelTitle}>Character references</div>
-                      </div>
-                    </div>
-
-                    <div className={styles.refSlots}>
-                      {visibleReferenceSlots.map((slot) => {
-                        const asset = refs[slot];
-                        return (
-                          <div key={slot} className={styles.refSlot}>
-                            <div className={styles.refSlotLeft}>
-                              <div className={styles.refSlotLabel}>{SLOT_LABEL[slot]}</div>
-                              <div className={styles.refSlotThumb}>
-                                {asset ? <img src={asset.url} alt={asset.name} /> : <div className={styles.refSlotEmpty}>EMPTY</div>}
-                              </div>
-                            </div>
-
-                            <div className={styles.refSlotRight}>
-                              <button
-                                type="button"
-                                className={styles.smallBtn}
-                                onClick={() => {
-                                  setPickerSlot(slot);
-                                  setPickerQuery("");
-                                }}
-                              >
-                                Pick
-                              </button>
-
-                              <label className={styles.smallBtn}>
-                                Upload
-                                <input
-                                  type="file"
-                                  accept="image/*"
-                                  style={{ display: "none" }}
-                                  onChange={(e) => {
-                                    const f = e.target.files?.[0];
-                                    if (f) handleUploadToSlot(slot, f);
-                                    e.currentTarget.value = "";
-                                  }}
-                                />
-                              </label>
-
-                              <button
-                                type="button"
-                                className={styles.smallBtnGhost}
-                                onClick={() => setRefSlot(slot, null)}
-                                disabled={!asset}
-                              >
-                                Clear
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {pickerSlot && pickerSlot !== "background" && (
-                      <div className={styles.pickerArea}>
-                        <div className={styles.pickerTop}>
-                          <div className={styles.pickerTitle}>Pick for: {SLOT_LABEL[pickerSlot]}</div>
-                          <button type="button" className={styles.smallBtnGhost} onClick={() => setPickerSlot(null)}>
-                            Close
-                          </button>
-                        </div>
-
-                        <div className={styles.pickerTabs}>
-                          <button
-                            type="button"
-                            className={`${styles.smallBtnGhost} ${refLibraryTab === "history" ? styles.smallBtnGhostActive : ""}`}
-                            onClick={() => setRefLibraryTab("history")}
-                          >
-                            My history
-                          </button>
-                          <button
-                            type="button"
-                            className={`${styles.smallBtnGhost} ${refLibraryTab === "purchased" ? styles.smallBtnGhostActive : ""}`}
-                            onClick={() => setRefLibraryTab("purchased")}
-                          >
-                            Purchased assets
-                          </button>
-                        </div>
-
-                        <input
-                          className={styles.search}
-                          placeholder={refLibraryTab === "purchased" ? "Search in purchased assets..." : "Search in history..."}
-                          value={pickerQuery}
-                          onChange={(e) => setPickerQuery(e.target.value)}
-                        />
-
-                        <div className={styles.pickerGrid}>
-                          {filteredPickerAssets.map((asset) => (
-                            <button
-                              key={asset.id}
-                              type="button"
-                              className={styles.pickerTile}
-                              onClick={() => {
-                                setRefSlot(pickerSlot, asset);
-                                setPickerSlot(null);
-                                setPanel(null);
-                              }}
-                            >
-                              <img src={asset.url} alt={asset.name} />
-                              <div className={styles.pickerTileMeta}>
-                                <div className={styles.pickerTileCap}>{removeStylePresetBlock(asset.prompt || "") || asset.name}</div>
-                                {asset.accessSource === "purchased" ? (
-                                  <span className={styles.pickerTileBadge}>Purchased</span>
-                                ) : null}
-                              </div>
-                            </button>
-                          ))}
-
-                          {filteredPickerAssets.length === 0 ? (
-                            <div className={styles.pickerEmpty}>
-                              {refLibraryTab === "purchased"
-                                ? "Aún no tienes assets comprados en Community Store."
-                                : "No images found in your history."}
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {panel === "background" && (
-                  <div className={ui.inlinePanelBody}>
-                    <div className={ui.inlinePanelHeader}>
-                      <div className={ui.inlinePanelTitleGroup}>
-                        <div className={ui.inlinePanelKicker}>Background</div>
-                        <div className={ui.inlinePanelTitle}>Scene background reference</div>
-                      </div>
-                    </div>
-
-                    <div className={styles.refSlots}>
-                      <div className={styles.refSlot}>
-                        <div className={styles.refSlotLeft}>
-                          <div className={styles.refSlotLabel}>Background</div>
-                          <div className={styles.refSlotThumb}>
-                            {refs.background ? (
-                              <img src={refs.background.url} alt={refs.background.name} />
-                            ) : (
-                              <div className={styles.refSlotEmpty}>EMPTY</div>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className={styles.refSlotRight}>
-                          <button
-                            type="button"
-                            className={styles.smallBtn}
-                            onClick={() => {
-                              setPickerSlot("background");
-                              setPickerQuery("");
-                            }}
-                          >
-                            Pick
-                          </button>
-
-                          <label className={styles.smallBtn}>
-                            Upload
-                            <input
-                              type="file"
-                              accept="image/*"
-                              style={{ display: "none" }}
-                              onChange={(e) => {
-                                const f = e.target.files?.[0];
-                                if (f) handleUploadToSlot("background", f);
-                                e.currentTarget.value = "";
-                              }}
-                            />
-                          </label>
-
-                          <button
-                            type="button"
-                            className={styles.smallBtnGhost}
-                            onClick={() => setRefSlot("background", null)}
-                            disabled={!refs.background}
-                          >
-                            Clear
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-
-                    {pickerSlot === "background" && (
-                      <div className={styles.pickerArea}>
-                        <div className={styles.pickerTop}>
-                          <div className={styles.pickerTitle}>Pick for: Background</div>
-                          <button type="button" className={styles.smallBtnGhost} onClick={() => setPickerSlot(null)}>
-                            Close
-                          </button>
-                        </div>
-
-                        <div className={styles.pickerTabs}>
-                          <button
-                            type="button"
-                            className={`${styles.smallBtnGhost} ${refLibraryTab === "history" ? styles.smallBtnGhostActive : ""}`}
-                            onClick={() => setRefLibraryTab("history")}
-                          >
-                            My history
-                          </button>
-                          <button
-                            type="button"
-                            className={`${styles.smallBtnGhost} ${refLibraryTab === "purchased" ? styles.smallBtnGhostActive : ""}`}
-                            onClick={() => setRefLibraryTab("purchased")}
-                          >
-                            Purchased assets
-                          </button>
-                        </div>
-
-                        <input
-                          className={styles.search}
-                          placeholder={refLibraryTab === "purchased" ? "Search in purchased assets..." : "Search in history..."}
-                          value={pickerQuery}
-                          onChange={(e) => setPickerQuery(e.target.value)}
-                        />
-
-                        <div className={styles.pickerGrid}>
-                          {filteredPickerAssets.map((asset) => (
-                            <button
-                              key={asset.id}
-                              type="button"
-                              className={styles.pickerTile}
-                              onClick={() => {
-                                setRefSlot("background", asset);
-                                setPickerSlot(null);
-                                setPanel(null);
-                              }}
-                            >
-                              <img src={asset.url} alt={asset.name} />
-                              <div className={styles.pickerTileMeta}>
-                                <div className={styles.pickerTileCap}>{removeStylePresetBlock(asset.prompt || "") || asset.name}</div>
-                                {asset.accessSource === "purchased" ? (
-                                  <span className={styles.pickerTileBadge}>Purchased</span>
-                                ) : null}
-                              </div>
-                            </button>
-                          ))}
-
-                          {filteredPickerAssets.length === 0 ? (
-                            <div className={styles.pickerEmpty}>
-                              {refLibraryTab === "purchased"
-                                ? "Aún no tienes assets comprados en Community Store."
-                                : "No images found in your history."}
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {panel === "styles" && (
-                  <div className={ui.inlinePanelBody}>
-                    <div className={ui.inlinePanelHeader}>
-                      <div className={ui.inlinePanelTitleGroup}>
-                        <div className={ui.inlinePanelKicker}>Styles</div>
-                        <div className={ui.inlinePanelTitle}>Select the visual direction</div>
-                      </div>
-                      <div className={ui.inlinePanelActions}>
-                        <button
-                          type="button"
-                          className={styles.smallBtnGhost}
-                          onClick={() => {
-                            setSelectedStyleId(null);
-                            setPanel(null);
-                          }}
-                        >
-                          Clear style
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className={styles.presetGrid}>
-                      {STYLE_PRESETS.map((preset) => {
-                        const active = selectedStyleId === preset.id;
-                        return (
-                          <button
-                            key={preset.id}
-                            type="button"
-                            className={`${styles.presetCard} ${active ? styles.presetCardActive : ""}`}
-                            onClick={() => {
-                              setSelectedStyleId(preset.id);
-                              setPanel(null);
-                            }}
-                          >
-                            <div className={styles.presetCover}>
-                              {preset.coverUrl ? <img src={preset.coverUrl} alt={preset.name} /> : <div className={styles.presetCoverEmpty} />}
-                              {Array.isArray(preset.exampleUrls) && preset.exampleUrls.length > 0 ? (
-                                <div className={styles.presetHoverExamples}>
-                                  {preset.exampleUrls.slice(0, 4).map((url, idx) => (
-                                    <div key={`${preset.id}_${idx}_${url}`} className={styles.presetHoverExample}>
-                                      <img src={url} alt={`${preset.name} example ${idx + 1}`} />
-                                      <span className={styles.presetHoverBadge}>{idx + 1}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                              ) : null}
-                            </div>
-                            <div className={styles.presetName}>{preset.name}</div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                {panel === "model" && (
-                  <div className={ui.inlinePanelBody}>
-                    <div className={ui.inlinePanelHeader}>
-                      <div className={ui.inlinePanelTitleGroup}>
-                        <div className={ui.inlinePanelKicker}>Model</div>
-                        <div className={ui.inlinePanelTitle}>Pick the engine for this run</div>
-                      </div>
-                    </div>
-
-                    <div className={styles.formRow}>
-                      <label className={styles.formLabel}>Model</label>
-                      <div className={styles.modelGrid}>
-                        {modelGroups.map((group) => (
-                          <div key={group.label} className={styles.modelGroup}>
-                            <div className={styles.modelGroupLabel}>{group.label}</div>
-                            <div className={styles.modelGroupOptions}>
-                              {group.options.map((opt) => (
-                                <button
-                                  key={opt.value}
-                                  type="button"
-                                  className={`${styles.modelOption} ${model === opt.value ? styles.modelOptionActive : ""}`}
-                                  onClick={() => handleModelSelect(opt.value)}
-                                >
-                                  {opt.label}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {panel === "parameters" && (
-                  <div className={ui.inlinePanelBody}>
-                    <div className={ui.inlinePanelHeader}>
-                      <div className={ui.inlinePanelTitleGroup}>
-                        <div className={ui.inlinePanelKicker}>Parameters</div>
-                        <div className={ui.inlinePanelTitle}>Tune output format and batch settings</div>
-                      </div>
-                    </div>
-
-                    <div className={styles.paramGrid}>
-                      <div className={styles.formRow}>
-                        <label className={styles.formLabel}>Aspect Ratio</label>
-                        <select
-                          className={styles.select}
-                          value={aspectRatio}
-                          onChange={(e) => {
-                            setAspectRatio(e.target.value);
-                            setPanel(null);
-                          }}
-                        >
-                          {aspectRatioOptions.map((ar) => (
-                            <option key={ar.value} value={ar.value}>
-                              {ar.label}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div className={styles.formRow}>
-                        <label className={styles.formLabel}>Count</label>
-                        <select
-                          className={styles.select}
-                          value={count}
-                          disabled={activeCaps.countOptions.length === 1}
-                          onChange={(e) => {
-                            setCount(Number(e.target.value));
-                            setPanel(null);
-                          }}
-                        >
-                          {activeCaps.countOptions.map((n) => (
-                            <option key={n} value={n}>
-                              {n}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div className={styles.formRow}>
-                        <label className={styles.formLabel}>Grid</label>
-                        <select
-                          className={styles.select}
-                          value={gridMode}
-                          onChange={(e) => {
-                            setGridMode(e.target.value);
-                            setPanel(null);
-                          }}
-                        >
-                          {GRID_OPTIONS.map((opt) => (
-                            <option key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div className={styles.formRow}>
-                        <label className={styles.formLabel}>Quality</label>
-                        <select
-                          className={styles.select}
-                          value={quality}
-                          onChange={(e) => {
-                            setQuality(e.target.value as Quality);
-                            setPanel(null);
-                          }}
-                        >
-                          {getActiveCaps(model).qualities.map((q) => (
-                            <option key={q} value={q}>
-                              {q}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      {supportsGoogleSearchGrounding(model) && (
-                        <div className={styles.formRow}>
-                          <label className={styles.formLabel}>Web Grounding</label>
-                          <button
-                            type="button"
-                            className={`${styles.modelOption} ${googleSearchGrounding ? styles.modelOptionActive : ""}`}
-                            onClick={() => {
-                              setGoogleSearchGrounding((prev) => !prev);
-                              setPanel(null);
-                            }}
-                          >
-                            {googleSearchGrounding ? "Enabled" : "Disabled"}
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div className={ui.promptCard}>
-              <div className={ui.sectionHeader}>
-                <div className={ui.sectionHeaderCopy}>
-                  <div className={ui.sectionKicker}>Prompt</div>
-                  <div className={ui.sectionTitle}>Describe what you want to generate</div>
                 </div>
-                <div className={ui.sectionMeta}>Use @ mentions only when you need to call a specific selected element.</div>
-              </div>
+              ))}
 
-              {selectedElementItems.length > 0 && (
-                <div className={ui.inlineSelectedStrip}>
-                  {selectedElementItems.map((el) => {
-                    const token = (el?.id ? elementTokenById.get(el.id) : null) || makeElementTag(el.name) || "";
-                    return (
-                      <div key={el.id} className={ui.selectedPill}>
-                        <img className={ui.selectedPillThumb} src={el.previewUrl || el.url} alt={el.name} />
-                        <span className={ui.selectedPillLabel}>{el.name}</span>
-                        <button
-                          type="button"
-                          className={ui.selectedPillRemove}
-                          onClick={() => {
-                            if (token) removePromptToken(token);
-                            setSelectedElementAssetIds((prev) => prev.filter((id) => id !== el.id));
-                          }}
-                          aria-label={`Remove ${el.name}`}
-                        >
-                          ×
-                        </button>
-                      </div>
-                    );
-                  })}
+              {visibleHistory.map((asset) => {
+                const caption = removeStylePresetBlock(asset.prompt || "") || asset.name || "—";
+                return (
+                  <div
+                    key={asset.id}
+                    role="button"
+                    tabIndex={0}
+                    className={styles.tile}
+                    onClick={() => setViewer(asset)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setViewer(asset);
+                      }
+                    }}
+                    title="Click para ver detalles"
+                  >
+                    <img
+                      className={styles.tileImg}
+                      src={asset.url}
+                      alt={asset.name}
+                      loading="lazy"
+                      decoding="async"
+                      onLoad={(e) => rememberImgDims(asset.id, e.currentTarget)}
+                    />
+
+                    <div className={styles.tileMeta}>
+                      <span className={styles.tileCaption}>{caption}</span>
+                      {asset.isPublic && <span className={styles.publicTag}>PUBLIC</span>}
+                    </div>
+
+                    {/* Hover actions */}
+                    <div className={styles.tileActions} onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        className={styles.iconBtn}
+                        title="1NationUp Store"
+                        onClick={() => window.dispatchEvent(new CustomEvent("tales:open-store", { detail: { asset } }))}
+                      >
+                        <OneNationUpIcon size={18} />
+                      </button>
+
+                      <button
+                        type="button"
+                        className={`${styles.iconBtn} ${styles.iconBtnHeart} ${asset.likedByMe ? styles.iconBtnHeartActive : ""}`}
+                        title={asset.likedByMe ? "Quitar Like" : "Dar Like"}
+                        disabled={Boolean(likeBusyById[asset.id])}
+                        onClick={async () => {
+                          if (!user) {
+                            setError("Debes iniciar sesión para dar Like.");
+                            return;
+                          }
+                          if (likeBusyById[asset.id]) return;
+
+                          setLikeBusyById((p) => ({ ...p, [asset.id]: true }));
+                          try {
+                        const res = await toggleLike(asset.id);
+
+                        // ✅ Favoritos (MyCreations usa localStorage tales.favoriteAssets)
+                        try {
+                          const raw = localStorage.getItem("tales.favoriteAssets");
+                          const arr: string[] = raw ? JSON.parse(raw) : [];
+                          const set = new Set(Array.isArray(arr) ? arr : []);
+
+                          if (res.liked) set.add(asset.id);
+                          else set.delete(asset.id);
+
+                          const next = Array.from(set);
+                          localStorage.setItem("tales.favoriteAssets", JSON.stringify(next));
+                          window.dispatchEvent(new CustomEvent("tales:favorites-updated", { detail: { ids: next } }));
+                        } catch {
+                          // si falla localStorage, no bloqueamos el like
+                        }
+
+                        setHistory((prev) =>
+                          prev.map((a) =>
+                            a.id === asset.id ? { ...a, likedByMe: res.liked, likesCount: res.likesCount } : a
+                          )
+                        );
+
+                            setVisibleHistory((prev) =>
+                              prev.map((a) =>
+                                a.id === asset.id ? { ...a, likedByMe: res.liked, likesCount: res.likesCount } : a
+                              )
+                            );
+
+                            setViewer((v) => (v && v.id === asset.id ? { ...v, likedByMe: res.liked, likesCount: res.likesCount } : v));
+                          } catch (e: any) {
+                            setError(e?.message || "No se pudo actualizar el Like.");
+                          } finally {
+                            setLikeBusyById((p) => ({ ...p, [asset.id]: false }));
+                          }
+                        }}
+                      >
+                        <Icon name="heart" />
+                      </button>
+
+                      <button
+                        type="button"
+                        className={`${styles.iconBtn} ${styles.iconBtnMoney}`}
+                        title="Vender / Administrar listing"
+                        onClick={() => handleTogglePublish(asset)}
+                      >
+                        <Icon name="money" />
+                      </button>
+
+                      <button
+                        type="button"
+                        className={styles.iconBtn}
+                        title="Descargar"
+                        onClick={() => handleDownload(asset)}
+                      >
+                        <Icon name="download" />
+                      </button>
+
+                      <button
+                        type="button"
+                        className={styles.iconBtnDanger}
+                        title="Eliminar"
+                        onClick={() => handleDelete(asset)}
+                      >
+                        <Icon name="trash" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {hasMoreHistory && (
+            <div className={styles.historyLoadMoreWrap}>
+              <button
+                type="button"
+                className={styles.loadMoreBtn}
+                onClick={handleLoadMoreHistory}
+                disabled={isLoadingMoreHistory}
+              >
+                {isLoadingMoreHistory ? "Cargando..." : "Cargar más"}
+              </button>
+              <div className={styles.loadMoreHint}>
+                Mostrando {visibleHistory.length} de {history.length}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* DOCK / BARRA DE PROMPT */}
+      <div className={styles.dockWrap}>
+        <div className={styles.dock}>
+          {(refs.char1 || refs.char2 || refs.char3 || refs.background) && (
+            <div className={styles.refThumbStrip}>
+              {refs.char1 && (
+                <div className={styles.refMini} title="Reference 1">
+                  <img src={refs.char1.url} alt="char1" />
+                  <span className={styles.refMiniIcon}>R1</span>
+                  <button
+                    type="button"
+                    className={styles.refMiniRemove}
+                    aria-label="Remove Reference 1"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setRefSlot("char1", null);
+                    }}
+                  >
+                    ×
+                  </button>
                 </div>
               )}
 
-              <MentionTextarea
-                value={prompt}
-                onChange={setPrompt}
-                placeholder="Describe the scene, subject, camera feeling, lighting, mood and any instructions for the selected elements..."
-                rows={4}
-                textareaClassName={`${styles.prompt} ${ui.promptTextarea}`}
-                items={promptMentionItems}
-                onSelectItem={(it) => {
-                  if (it?.kind !== "element") return;
-
-                  const already = (selectedElementAssetIds || []).includes(it.id);
-                  if (already) return;
-
-                  if ((selectedElementAssetIds || []).length >= 5) {
-                    setError("No puedes usar más de 5 Elements a la vez. Quita uno y vuelve a intentar.");
-                    return false;
-                  }
-
-                  setSelectedElementAssetIds((prev) => [...(prev || []), it.id].slice(0, 5));
-                }}
-              />
-
-              <div className={ui.promptFooter}>
-                <div className={ui.costBlock}>
-                  <span className={ui.costLabel}>Estimated cost</span>
-                  <strong className={ui.costValue}>{estimatedCostCredits} credits</strong>
-                  {(toolLimitReached || totalLimitReached) && (
-                    <span className={ui.limitNotice}>
-                      {toolLimitReached
-                        ? "Máximo 2 generaciones activas en esta herramienta."
-                        : "Máximo 4 generaciones de imagen activas en total."}
-                    </span>
-                  )}
+              {refs.char2 && (
+                <div className={styles.refMini} title="Reference 2">
+                  <img src={refs.char2.url} alt="char2" />
+                  <span className={styles.refMiniIcon}>R2</span>
+                  <button
+                    type="button"
+                    className={styles.refMiniRemove}
+                    aria-label="Remove Reference 2"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setRefSlot("char2", null);
+                    }}
+                  >
+                    ×
+                  </button>
                 </div>
+              )}
 
+              {refs.char3 && (
+                <div className={styles.refMini} title="Reference 3">
+                  <img src={refs.char3.url} alt="char3" />
+                  <span className={styles.refMiniIcon}>R3</span>
+                  <button
+                    type="button"
+                    className={styles.refMiniRemove}
+                    aria-label="Remove Reference 3"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setRefSlot("char3", null);
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
+
+              {refs.background && (
+                <div className={styles.refMini} title="Background">
+                  <img src={refs.background.url} alt="background" />
+                  <span className={styles.refMiniIcon}>BG</span>
+                  <button
+                    type="button"
+                    className={styles.refMiniRemove}
+                    aria-label="Remove Background"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setRefSlot("background", null);
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+          <div className={styles.promptRow}>
+            <div className={styles.promptInputWrap}>
+              <div className={styles.klingDock} onMouseEnter={handleElementHoverStart} onMouseLeave={handleElementHoverEnd}>
+                <div className={`${styles.klingTooltip} ${isElementHovering ? styles.klingTooltipVisible : ""}`}>
+                  Crear Elemento Consistente
+                </div>
+                {/* Botón 1x1 */}
                 <button
                   type="button"
-                  className={`${styles.generateBtn} ${ui.generateBtnWide}`}
-                  disabled={isSubmitting || !prompt.trim() || toolLimitReached || totalLimitReached}
+                  className={`${styles.klingElementBtn} ${elementCtaActive ? styles.klingElementBtnCta : ""}`}
                   onClick={() => {
-                    void handleGenerate();
+                    setElementCtaActive(false); // apaga CTA al click
+                    setIsElementCreateOpen(true);
                   }}
-                  data-loading={isSubmitting ? "true" : "false"}
-                  title={
-                    toolLimitReached
-                      ? "Límite por herramienta: 2 generaciones activas."
-                      : totalLimitReached
-                        ? "Límite global: 4 generaciones de imagen activas."
-                        : undefined
-                  }
+                  title="Element/Person"
+                  aria-label="Element/Person"
                 >
+                  {/* ícono persona */}
+                  <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                    <path
+                      fill="currentColor"
+                      d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm0 2c-4.4 0-8 2.24-8 5v2h16v-2c0-2.76-3.6-5-8-5z"
+                    />
+                  </svg>
+
+                  {/* badge con número si hay selección */}
+                  {selectedElementAssetIds.length > 0 && (
+                    <span className={styles.klingBadge}>{selectedElementAssetIds.length}</span>
+                  )}
+                </button>
+
+                {/* Popover al hover */}
+                <div className={`${styles.klingPopover} ${isElementHovering ? styles.klingPopoverVisible : ""}`}>
+                  <div className={styles.klingPopoverTop}>
+                    <button
+                      type="button"
+                      className={styles.klingAllBtn}
+                      onClick={() => setIsElementAllOpen(true)}
+                      title="Ver todos tus Elements"
+                    >
+                      All
+                    </button>
+
+                    {elements.length > 0 ? (
+                      <div className={styles.klingPopoverThumbRow}>
+                        {elements.slice(0, 6).map((el) => {
+                          const active = selectedElementAssetIds.includes(el.id);
+                          const src = el.previewUrl || el.url || "";
+                          return (
+                            <div key={el.id} className={styles.klingThumbWrap}>
+                              <button
+                                type="button"
+                                className={`${styles.klingThumbBtn} ${active ? styles.klingThumbBtnActive : ""}`}
+                                onClick={() => {
+                                  setSelectedElementAssetIds((prev) => {
+                                    const has = prev.includes(el.id);
+                                    const tag = (el?.id ? elementTokenById.get(el.id) : null) || makeElementTag(el.name);
+
+                                    if (has) {
+                                      if (tag) appendPromptTag(tag);
+                                      return prev;
+                                    }
+                                    if (prev.length >= 5) {
+                                      setError("Máximo 5 Elements a la vez.");
+                                      return prev;
+                                    }
+                                    if (tag) appendPromptTag(tag);
+                                    return [el.id, ...prev].slice(0, 5);
+                                  });
+                                }}
+                                title={el.name}
+                                aria-label={el.name}
+                              >
+                                {src ? <img src={src} alt={el.name} className={styles.klingThumbImg} /> : null}
+                              </button>
+                              {active && (
+                                <button
+                                  type="button"
+                                  className={styles.klingThumbRemove}
+                                  onClick={() => {
+                                    const tag = (el?.id ? elementTokenById.get(el.id) : null) || makeElementTag(el.name);
+                                    if (tag) removePromptToken(tag);
+                                    setSelectedElementAssetIds((prev) => prev.filter((x) => x !== el.id));
+                                  }}
+                                  aria-label={`Deselect ${el.name}`}
+                                >
+                                  ×
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
+                    </div>
+                    ) : (
+                      <div className={styles.klingEmpty}>No elements yet</div>
+                    )}
+                  </div>
+                </div>
+              </div>           
+
+              <div className={styles.promptEditor}>
+                <MentionTextarea
+                  value={prompt}
+                  onChange={setPrompt}
+                  placeholder="Escribe tu prompt y comienza a crear..."
+                  rows={2}
+                  textareaClassName={styles.prompt}
+                  items={promptMentionItems}
+                  onSelectItem={(it) => {
+                    if (it?.kind !== "element") return;
+
+                    const already = (selectedElementAssetIds || []).includes(it.id);
+                    if (already) return;
+
+                    if ((selectedElementAssetIds || []).length >= 5) {
+                      setError("No puedes usar más de 5 Elements a la vez. Quita uno y vuelve a intentar.");
+                      return false;
+                    }
+
+                    setSelectedElementAssetIds((prev) => [...(prev || []), it.id].slice(0, 5));
+                  }}
+                />
+              </div>
+            </div>
+
+            <div className={styles.generateCol}>
+              <button
+                type="button"
+                className={styles.generateBtn}
+                disabled={isSubmitting || !prompt.trim() || toolLimitReached || totalLimitReached}
+                onClick={() => {
+                  void handleGenerate();
+                }}
+                data-loading={isSubmitting ? "true" : "false"}
+                title={
+                  toolLimitReached
+                    ? "Límite por herramienta: 2 generaciones activas."
+                    : totalLimitReached
+                      ? "Límite global: 4 generaciones de imagen activas."
+                      : undefined
+                }
+              >
                   <span className={styles.generateLabel}>{isSubmitting ? "GENERATING" : "GENERATE"}</span>
                   {isSubmitting && <span className={styles.generateSpinner} aria-hidden="true" />}
                 </button>
-              </div>
-            </div>
-
-            <div className={ui.parameterRail}>
-              <button
-                type="button"
-                className={`${ui.parameterButton} ${panel === "model" ? ui.parameterButtonActive : ""}`}
-                onClick={() => {
-                  setPickerSlot(null);
-                  setPanel((p) => (p === "model" ? null : "model"));
-                }}
-              >
-                <span className={ui.parameterLabel}>Model</span>
-                <span className={ui.parameterValue}>{modelLabel}</span>
-              </button>
-
-              <button
-                type="button"
-                className={`${ui.parameterButton} ${panel === "parameters" ? ui.parameterButtonActive : ""}`}
-                onClick={() => {
-                  setPickerSlot(null);
-                  setPanel((p) => (p === "parameters" ? null : "parameters"));
-                }}
-              >
-                <span className={ui.parameterLabel}>Parameters</span>
-                <span className={ui.parameterValue}>{paramsLabel}</span>
-              </button>
-            </div>
-
-            <div className={ui.setupCard}>
-              <div className={ui.sectionHeader}>
-                <div className={ui.sectionHeaderCopy}>
-                  <div className={ui.sectionKicker}>Current setup</div>
-                  <div className={ui.sectionTitle}>Everything selected for this run</div>
+                <div style={{ marginTop: 8, fontSize: 12, color: "rgba(255,255,255,0.65)", textAlign: "center" }}>
+                  Coste estimado: <b>{estimatedCostCredits}</b> créditos
                 </div>
-              </div>
-
-              <div className={ui.setupGrid}>
-                {recipeChips.map((chip) => (
-                  <div key={chip.label} className={ui.setupChip}>
-                    <span className={ui.setupChipLabel}>{chip.label}</span>
-                    <strong className={ui.setupChipValue}>{chip.value || "—"}</strong>
+                {(toolLimitReached || totalLimitReached) && (
+                  <div style={{ marginTop: 6, fontSize: 11, color: "rgba(255,220,220,0.82)", textAlign: "center" }}>
+                    {toolLimitReached
+                      ? "Máximo 2 generaciones activas en esta herramienta."
+                      : "Máximo 4 generaciones de imagen activas en total."}
                   </div>
-                ))}
-              </div>
+                )}
             </div>
           </div>
-        </section>
 
-        <aside className={`${ui.historyAside} ${historySidebarExpanded ? ui.historyAsideExpanded : ""}`}>
-          <div className={ui.historyRail}>
-            <button type="button" className={ui.historyToggle} onClick={handleSidebarToggle}>
-              {historySidebarExpanded ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
-              <span className={ui.historyToggleLabel}>History</span>
+          <div className={styles.controlsRow}>
+            <button
+              type="button"
+              className={`${styles.controlBtn} ${panel === "reference" ? styles.controlBtnActive : ""}`}
+              onClick={() => {
+                setPanel((p) => (p === "reference" ? null : "reference"));
+                setPickerSlot(null);
+              }}
+            >
+              <span>Reference</span>
+              <span className={styles.controlBtnMeta}>{refLabel}</span>
             </button>
 
-            <div className={ui.railThumbList}>
-              {pendingSlots.map((id) => (
-                <div key={id} className={ui.railThumbPending} aria-label="Generating">
-                  <span>Gen</span>
-                </div>
-              ))}
+            <button
+              type="button"
+              className={`${styles.controlBtn} ${panel === "model" ? styles.controlBtnActive : ""}`}
+              onClick={() => setPanel((p) => (p === "model" ? null : "model"))}
+            >
+              <span>Model</span>
+              <span className={styles.controlBtnMeta}>{modelLabel}</span>
+            </button>
 
-              {historySidebarItems.map((asset, index) => (
-                <button
-                  key={asset.id}
-                  type="button"
-                  className={`${ui.railThumb} ${viewer?.id === asset.id ? ui.railThumbActive : ""}`}
-                  onClick={() => openHistoryAsset(asset)}
-                  title={removeStylePresetBlock(asset.prompt || "") || asset.name}
-                >
-                  <img src={asset.url} alt={asset.name} loading="lazy" decoding="async" onLoad={(e) => rememberImgDims(asset.id, e.currentTarget)} />
-                  <span className={ui.railThumbBadge}>{index + 1}</span>
-                </button>
-              ))}
+            <button
+              type="button"
+              className={`${styles.controlBtn} ${panel === "parameters" ? styles.controlBtnActive : ""}`}
+              onClick={() => setPanel((p) => (p === "parameters" ? null : "parameters"))}
+            >
+              <span>Parameters</span>
+              <span className={styles.controlBtnMeta}>{paramsLabel}</span>
+            </button>
 
-              {historySidebarItems.length === 0 && pendingSlots.length === 0 && <div className={ui.railEmpty}>No history yet</div>}
-            </div>
+            <button
+              type="button"
+              className={`${styles.controlBtn} ${panel === "styles" ? styles.controlBtnActive : ""}`}
+              onClick={() => setPanel((p) => (p === "styles" ? null : "styles"))}
+            >
+              <span>styles</span>
+              <span className={styles.controlBtnMeta}>{styleLabel}</span>
+            </button>
           </div>
 
-          {historySidebarExpanded && <button type="button" className={ui.historyBackdrop} onClick={() => setHistorySidebarExpanded(false)} aria-label="Close history panel" />}
-
-          <div className={`${ui.historyPanel} ${historySidebarExpanded ? ui.historyPanelOpen : ""}`}>
-            <div className={ui.historyPanelHeader}>
-              <div>
-                <div className={ui.historyPanelCount}>Generation History</div>
-                <div className={ui.historyPanelTitle}>Recent results and recipes</div>
-              </div>
-              <button type="button" className={ui.heroButton} onClick={() => setHistorySidebarExpanded(false)}>
-                Close
-              </button>
-            </div>
-
-            <div className={ui.historyPanelBody}>
-              {viewer ? (
-                <>
-                  <div className={`${ui.selectedImageWrap} ${viewerPortrait ? ui.selectedImageWrapPortrait : ""}`}>
-                    <img className={ui.selectedImage} src={viewer.url} alt={viewer.name} />
-                  </div>
-
-                  <div className={ui.selectedImageCaption}>{removeStylePresetBlock(viewer.prompt || "") || viewer.name || "Generated image"}</div>
-
-                  <div className={ui.viewerActionRow}>
-                    <button className={styles.iconBtn} type="button" title="Copiar prompt" onClick={() => copyToClipboard(viewer.prompt || "")}>
-                      <Icon name="copy" />
-                    </button>
-                    <button className={styles.iconBtn} type="button" title="Reusar prompt" onClick={() => reusePromptFromAsset(viewer)}>
-                      <Icon name="reuse" />
-                    </button>
-                    <button
-                      className={`${styles.iconBtn} ${styles.iconBtnMoney}`}
-                      type="button"
-                      title="Vender / Administrar listing"
-                      onClick={() => handleTogglePublish(viewer)}
-                    >
-                      <Icon name="money" />
-                    </button>
-                    <button className={styles.iconBtn} type="button" title="1NationUp Store" onClick={() => window.dispatchEvent(new CustomEvent("tales:open-store", { detail: { asset: viewer } }))}>
-                      <OneNationUpIcon size={18} />
-                    </button>
-                    <button className={styles.iconBtn} type="button" title="Descargar" onClick={() => handleDownload(viewer)}>
-                      <Icon name="download" />
-                    </button>
-                    <button className={styles.iconBtnDanger} type="button" title="Eliminar" onClick={() => handleDelete(viewer)}>
-                      <Icon name="trash" />
+          {/* POPOVERS */}
+          {panel && (
+            <div ref={popoverRef} className={styles.popover}>
+              {/* Reference */}
+              {panel === "reference" && (
+                <div className={styles.popoverInner}>
+                  <div className={styles.popoverHeader}>
+                    <div className={styles.popoverTitle}>Reference</div>
+                    <button className={styles.closeBtn} onClick={() => setPanel(null)} type="button">
+                      <Icon name="close" />
                     </button>
                   </div>
 
-                  <div className={ui.viewerNav}>
-                    <button type="button" className={ui.viewerNavButton} onClick={showPreviousHistory} disabled={activeHistoryIndex <= 0}>
-                      <ChevronLeft size={18} />
-                    </button>
-                    <div className={ui.viewerNavMeta}>
-                      {activeHistoryIndex >= 0 ? `${activeHistoryIndex + 1} / ${history.length}` : `1 / ${history.length}`}
-                    </div>
-                    <button
-                      type="button"
-                      className={ui.viewerNavButton}
-                      onClick={showNextHistory}
-                      disabled={activeHistoryIndex === -1 || activeHistoryIndex >= history.length - 1}
-                    >
-                      <ChevronRight size={18} />
-                    </button>
-                  </div>
-
-                  <div className={ui.viewerRecipeCard}>
-                    <div className={ui.recipeBlock}>
-                      <div className={ui.sectionKicker}>Recipe</div>
-                      <div className={styles.recipeGrid}>
-                        <div className={styles.recipeItem}>
-                          <div className={styles.recipeLabel}>Model</div>
-                          <div className={styles.recipeValue}>{prettyModelLabel(viewerRecipeInfo?.modelId || null)}</div>
-                        </div>
-
-                        <div className={styles.recipeItem}>
-                          <div className={styles.recipeLabel}>Aspect</div>
-                          <div className={styles.recipeValue}>{viewerRecipeInfo?.aspectRatio || "—"}</div>
-                        </div>
-
-                        <div className={styles.recipeItem}>
-                          <div className={styles.recipeLabel}>Quality</div>
-                          <div className={styles.recipeValue}>{viewerRecipeInfo?.quality || "—"}</div>
-                        </div>
-
-                        <div className={styles.recipeItem}>
-                          <div className={styles.recipeLabel}>Count</div>
-                          <div className={styles.recipeValue}>{viewerRecipeInfo?.count != null ? String(viewerRecipeInfo.count) : "—"}</div>
-                        </div>
-
-                        <div className={styles.recipeItem}>
-                          <div className={styles.recipeLabel}>Grid</div>
-                          <div className={styles.recipeValue}>{viewerRecipeInfo?.gridMode || "none"}</div>
-                        </div>
-
-                        <div className={styles.recipeItem}>
-                          <div className={styles.recipeLabel}>Web</div>
-                          <div className={styles.recipeValue}>{viewerRecipeInfo?.googleSearchGrounding ? "On" : "Off"}</div>
-                        </div>
-
-                        <div className={styles.recipeItemWide}>
-                          <div className={styles.recipeLabel}>Style</div>
-                          <div className={styles.recipeValue}>{viewerRecipeInfo?.styleName || "None"}</div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className={ui.recipeBlock}>
-                      <div className={ui.sectionKicker}>References used</div>
-                      <div className={styles.recipeRefStrip}>
-                        {(viewerRecipeInfo?.refs?.chars?.length || 0) > 0 ? (
-                          viewerRecipeInfo!.refs.chars.map((asset, idx) => (
-                            <div key={asset.id} className={styles.recipeRefThumb} title={`Character ${idx + 1}`}>
-                              <img src={asset.url} alt={`Character ${idx + 1}`} />
-                              <span className={styles.recipeRefTag}>C{idx + 1}</span>
+                  <div className={styles.refSlots}>
+                    {(() => {
+                      const visible: RefSlot[] = ["char1"];
+                      if (refs.char1) visible.push("char2");
+                      if (refs.char2) visible.push("char3");
+                      visible.push("background");
+                      return visible;
+                    })().map((slot) => {
+                      const a = refs[slot];
+                      return (
+                        <div key={slot} className={styles.refSlot}>
+                          <div className={styles.refSlotLeft}>
+                            <div className={styles.refSlotLabel}>{SLOT_LABEL[slot]}</div>
+                            <div className={styles.refSlotThumb}>
+                              {a ? <img src={a.url} alt={a.name} /> : <div className={styles.refSlotEmpty}>EMPTY</div>}
                             </div>
-                          ))
-                        ) : (
-                          <div className={styles.recipeEmpty}>No saved refs (legacy)</div>
-                        )}
-
-                        {(viewerRecipeInfo?.refs?.elements?.length || 0) > 0
-                          ? viewerRecipeInfo!.refs.elements.map((asset, idx) => (
-                              <div key={asset.id} className={styles.recipeRefThumb} title={`Element ${idx + 1}`}>
-                                <img src={asset.url} alt={`Element ${idx + 1}`} />
-                                <span className={styles.recipeRefTag}>E{idx + 1}</span>
-                              </div>
-                            ))
-                          : null}
-
-                        {viewerRecipeInfo?.refs?.bg ? (
-                          <div className={styles.recipeRefThumb} title="Background">
-                            <img src={viewerRecipeInfo.refs.bg.url} alt="Background" />
-                            <span className={styles.recipeRefTag}>BG</span>
                           </div>
-                        ) : null}
 
-                        {viewerRecipeInfo?.refs?.style ? (
-                          <div className={styles.recipeRefThumb} title="Style reference">
-                            <img src={viewerRecipeInfo.refs.style.url} alt="Style reference" />
-                            <span className={styles.recipeRefTag}>STYLE</span>
+                          <div className={styles.refSlotRight}>
+                            <button
+                              type="button"
+                              className={styles.smallBtn}
+                              onClick={() => {
+                                setPickerSlot(slot);
+                                setPickerQuery("");
+                              }}
+                            >
+                              Pick
+                            </button>
+
+                            <label className={styles.smallBtn}>
+                              Upload
+                              <input
+                                type="file"
+                                accept="image/*"
+                                style={{ display: "none" }}
+                                onChange={(e) => {
+                                  const f = e.target.files?.[0];
+                                  if (f) handleUploadToSlot(slot, f);
+                                  e.currentTarget.value = "";
+                                }}
+                              />
+                            </label>
+
+                            <button
+                              type="button"
+                              className={styles.smallBtnGhost}
+                              onClick={() => setRefSlot(slot, null)}
+                              disabled={!a}
+                            >
+                              Clear
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {pickerSlot && (
+                    <div className={styles.pickerArea}>
+                      <div className={styles.pickerTop}>
+                        <div className={styles.pickerTitle}>Pick for: {SLOT_LABEL[pickerSlot]}</div>
+                        <button
+                          type="button"
+                          className={styles.smallBtnGhost}
+                          onClick={() => setPickerSlot(null)}
+                        >
+                          Close
+                        </button>
+                      </div>
+
+                      <div className={styles.pickerTabs}>
+                        <button
+                          type="button"
+                          className={`${styles.smallBtnGhost} ${refLibraryTab === "history" ? styles.smallBtnGhostActive : ""}`}
+                          onClick={() => setRefLibraryTab("history")}
+                        >
+                          My history
+                        </button>
+                        <button
+                          type="button"
+                          className={`${styles.smallBtnGhost} ${refLibraryTab === "purchased" ? styles.smallBtnGhostActive : ""}`}
+                          onClick={() => setRefLibraryTab("purchased")}
+                        >
+                          Purchased assets
+                        </button>
+                      </div>
+
+                      <input
+                        className={styles.search}
+                        placeholder={refLibraryTab === "purchased" ? "Search in purchased assets..." : "Search in history..."}
+                        value={pickerQuery}
+                        onChange={(e) => setPickerQuery(e.target.value)}
+                      />
+
+                      <div className={styles.pickerGrid}>
+                        {filteredPickerAssets.map((a) => (
+                          <button
+                            key={a.id}
+                            type="button"
+                            className={styles.pickerTile}
+                            onClick={() => {
+                              setRefSlot(pickerSlot, a);
+                              setPickerSlot(null);
+                              setPanel(null); // auto-close al seleccionar
+                            }}
+                          >
+                            <img src={a.url} alt={a.name} />
+                            <div className={styles.pickerTileMeta}>
+                              <div className={styles.pickerTileCap}>
+                                {removeStylePresetBlock(a.prompt || "") || a.name}
+                              </div>
+                              {a.accessSource === "purchased" ? (
+                                <span className={styles.pickerTileBadge}>Purchased</span>
+                              ) : null}
+                            </div>
+                          </button>
+                        ))}
+
+                        {filteredPickerAssets.length === 0 ? (
+                          <div className={styles.pickerEmpty}>
+                            {refLibraryTab === "purchased"
+                              ? "Aún no tienes assets comprados en Community Store."
+                              : "No images found in your history."}
                           </div>
                         ) : null}
                       </div>
                     </div>
+                  )}
+                </div>
+              )}
 
-                    <div className={ui.recipePrompt}>
-                      <div className={ui.sectionKicker}>Prompt</div>
-                      <div className={styles.recipeValue}>{removeStylePresetBlock(viewer.prompt || "") || "—"}</div>
+              {/* Model */}
+              {panel === "model" && (
+                <div className={styles.popoverInner}>
+                  <div className={styles.popoverHeader}>
+                    <div className={styles.popoverTitle}>Model</div>
+                    <button className={styles.closeBtn} onClick={() => setPanel(null)} type="button">
+                      <Icon name="close" />
+                    </button>
+                  </div>
+
+                  <div className={styles.formRow}>
+                    <label className={styles.formLabel}>Model</label>
+                    <div className={styles.modelGrid}>
+                      {modelGroups.map((group) => (
+                        <div key={group.label} className={styles.modelGroup}>
+                          <div className={styles.modelGroupLabel}>{group.label}</div>
+                          <div className={styles.modelGroupOptions}>
+                            {group.options.map((opt) => (
+                              <button
+                                key={opt.value}
+                                type="button"
+                                className={`${styles.modelOption} ${model === opt.value ? styles.modelOptionActive : ""}`}
+                                onClick={() => handleModelSelect(opt.value)}
+                              >
+                                {opt.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Parameters */}
+              {panel === "parameters" && (
+                <div className={styles.popoverInner}>
+                  <div className={styles.popoverHeader}>
+                    <div className={styles.popoverTitle}>Parameters</div>
+                    <button className={styles.closeBtn} onClick={() => setPanel(null)} type="button">
+                      <Icon name="close" />
+                    </button>
+                  </div>
+
+                  <div className={styles.paramGrid}>
+                    <div className={styles.formRow}>
+                      <label className={styles.formLabel}>Aspect Ratio</label>
+                      <select
+                        className={styles.select}
+                        value={aspectRatio}
+                        onChange={(e) => {
+                          setAspectRatio(e.target.value);
+                          setPanel(null); // auto-close
+                        }}
+                      >
+                        {aspectRatioOptions.map((ar) => (
+                          <option key={ar.value} value={ar.value}>
+                            {ar.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className={styles.formRow}>
+                      <label className={styles.formLabel}>Count</label>
+                      <select
+                        className={styles.select}
+                        value={count}
+                        disabled={activeCaps.countOptions.length === 1}
+                        onChange={(e) => {
+                          setCount(Number(e.target.value));
+                          setPanel(null); // auto-close
+                        }}
+                      >
+                        {activeCaps.countOptions.map((n) => (
+                          <option key={n} value={n}>
+                            {n}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className={styles.formRow}>
+                      <label className={styles.formLabel}>Grid</label>
+                      <select
+                        className={styles.select}
+                        value={gridMode}
+                        onChange={(e) => {
+                          setGridMode(e.target.value);
+                          setPanel(null);
+                        }}
+                      >
+                        {GRID_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className={styles.formRow}>
+                      <label className={styles.formLabel}>Quality</label>
+                      <select
+                        className={styles.select}
+                        value={quality}
+                        onChange={(e) => {
+                          setQuality(e.target.value as Quality);
+                          setPanel(null); // auto-close
+                        }}
+                      >
+                        {getActiveCaps(model).qualities.map((q) => (
+                          <option key={q} value={q}>
+                            {q}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {supportsGoogleSearchGrounding(model) && (
+                      <div className={styles.formRow}>
+                        <label className={styles.formLabel}>Web Grounding</label>
+                        <button
+                          type="button"
+                          className={`${styles.modelOption} ${googleSearchGrounding ? styles.modelOptionActive : ""}`}
+                          onClick={() => {
+                            setGoogleSearchGrounding((prev) => !prev);
+                            setPanel(null);
+                          }}
+                        >
+                          {googleSearchGrounding ? "Enabled" : "Disabled"}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Styles (solo este selector) */}
+              {panel === "styles" && (
+                <div className={styles.popoverInner}>
+                  <div className={styles.popoverHeader}>
+                    <div className={styles.popoverTitle}>Styles</div>
+                    <div className={styles.headerRight}>
+                      <button
+                        type="button"
+                        className={styles.smallBtnGhost}
+                        onClick={() => {
+                          setSelectedStyleId(null);
+                          setPanel(null);
+                        }}
+                      >
+                        Clear
+                      </button>
+
+                      <button className={styles.closeBtn} onClick={() => setPanel(null)} type="button">
+                        <Icon name="close" />
+                      </button>
                     </div>
                   </div>
 
-                  <div className={ui.recipeThumbScroller}>
-                    {historySidebarItems.map((asset) => (
-                      <button
-                        key={asset.id}
-                        type="button"
-                        className={`${ui.recipeThumbButton} ${viewer.id === asset.id ? ui.recipeThumbButtonActive : ""}`}
-                        onClick={() => setViewer(asset)}
-                      >
-                        <img className={ui.recipeThumbImage} src={asset.url} alt={asset.name} loading="lazy" decoding="async" />
-                        <div className={ui.recipeThumbCaption}>{asset.name || "Generation"}</div>
-                      </button>
-                    ))}
+                  <div className={styles.presetGrid}>
+                    {STYLE_PRESETS.map((p) => {
+                      const active = selectedStyleId === p.id;
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          className={`${styles.presetCard} ${active ? styles.presetCardActive : ""}`}
+                          onClick={() => {
+                            setSelectedStyleId(p.id);
+                            setPanel(null); // auto-close
+                          }}
+                        >
+                          <div className={styles.presetCover}>
+                            {p.coverUrl ? <img src={p.coverUrl} alt={p.name} /> : <div className={styles.presetCoverEmpty} />}
+
+                            {Array.isArray(p.exampleUrls) && p.exampleUrls.length > 0 ? (
+                              <div className={styles.presetHoverExamples}>
+                                {p.exampleUrls.slice(0, 4).map((url, idx) => (
+                                  <div key={`${p.id}_${idx}_${url}`} className={styles.presetHoverExample}>
+                                    <img src={url} alt={`${p.name} example ${idx + 1}`} />
+                                    <span className={styles.presetHoverBadge}>{idx + 1}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
+                          <div className={styles.presetName}>{p.name}</div>
+                        </button>
+                      );
+                    })}
                   </div>
-                </>
-              ) : (
-                <div className={ui.historyEmptyPanel}>
-                  Selecciona una miniatura del lateral para ver la imagen grande, la receta y navegar entre generaciones.
                 </div>
               )}
             </div>
-          </div>
-        </aside>
+          )}
+        </div>
       </div>
 
-      {/* =============================== */}
+      {/* VIEWER OVERLAY (al click en imagen) */}
+      {viewer && (
+        <div className={styles.viewerBackdrop} onClick={() => setViewer(null)}>
+          <div className={styles.viewer} onClick={(e) => e.stopPropagation()}>
+            <div className={styles.viewerTop}>
+              <div className={styles.viewerTitle}>
+                <span className={styles.viewerKicker}>GENERATION</span>
+                <span className={styles.viewerSub}>{viewer.isPublic ? "PUBLIC" : "PRIVATE"}</span>
+              </div>
+
+              <div className={styles.viewerTopActions}>
+                <button className={styles.iconBtn} type="button" title="Copiar prompt" onClick={() => copyToClipboard(viewer.prompt || "")}>
+                  <Icon name="copy" />
+                </button>
+
+                <button className={styles.iconBtn} type="button" title="Reusar prompt" onClick={() => reusePromptFromAsset(viewer)}>
+                  <Icon name="reuse" />
+                </button>
+
+                <button className={`${styles.iconBtn} ${styles.iconBtnMoney}`} type="button" title="Vender / Administrar listing" onClick={() => handleTogglePublish(viewer)}>
+                  <Icon name="money" />
+                </button>
+
+                <button className={styles.iconBtn} type="button" title="Descargar" onClick={() => handleDownload(viewer)}>
+                  <Icon name="download" />
+                </button>
+
+                <button className={styles.iconBtnDanger} type="button" title="Eliminar" onClick={() => handleDelete(viewer)}>
+                  <Icon name="trash" />
+                </button>
+
+                <button className={styles.closeBtn} type="button" onClick={() => setViewer(null)} title="Cerrar">
+                  <Icon name="close" />
+                </button>
+              </div>
+            </div>
+
+            <div className={styles.viewerBody}>
+              <div className={styles.viewerImageWrap}>
+                <img className={styles.viewerImage} src={viewer.url} alt={viewer.name} />
+              </div>
+
+              <div className={styles.viewerRecipe}>
+                <div className={styles.viewerRecipeTitle}>RECIPE</div>
+
+                <div className={styles.recipeGrid}>
+                  <div className={styles.recipeItem}>
+                    <div className={styles.recipeLabel}>Model</div>
+                    <div className={styles.recipeValue}>
+                      {prettyModelLabel(viewerRecipeInfo?.modelId || null)}
+                    </div>
+                  </div>
+
+                  <div className={styles.recipeItem}>
+                    <div className={styles.recipeLabel}>Aspect</div>
+                    <div className={styles.recipeValue}>{viewerRecipeInfo?.aspectRatio || "—"}</div>
+                  </div>
+
+                  <div className={styles.recipeItem}>
+                    <div className={styles.recipeLabel}>Quality</div>
+                    <div className={styles.recipeValue}>{viewerRecipeInfo?.quality || "—"}</div>
+                  </div>
+
+                  <div className={styles.recipeItem}>
+                    <div className={styles.recipeLabel}>Count</div>
+                    <div className={styles.recipeValue}>
+                      {viewerRecipeInfo?.count != null ? String(viewerRecipeInfo.count) : "—"}
+                    </div>
+                  </div>
+
+                  <div className={styles.recipeItem}>
+                    <div className={styles.recipeLabel}>Grid</div>
+                    <div className={styles.recipeValue}>{viewerRecipeInfo?.gridMode || "none"}</div>
+                  </div>
+
+                  <div className={styles.recipeItem}>
+                    <div className={styles.recipeLabel}>Web</div>
+                    <div className={styles.recipeValue}>{viewerRecipeInfo?.googleSearchGrounding ? "On" : "Off"}</div>
+                  </div>
+
+                  <div className={styles.recipeItemWide}>
+                    <div className={styles.recipeLabel}>Style</div>
+                    <div className={styles.recipeValue}>{viewerRecipeInfo?.styleName || "None"}</div>
+                  </div>
+                </div>
+
+                <div className={styles.recipeRefs}>
+                  <div className={styles.recipeLabel}>References</div>
+
+                  <div className={styles.recipeRefStrip}>
+                    {(viewerRecipeInfo?.refs?.chars?.length || 0) > 0 ? (
+                      viewerRecipeInfo!.refs.chars.map((a, i) => (
+                        <div key={a.id} className={styles.recipeRefThumb} title={`Character ${i + 1}`}>
+                          <img src={a.url} alt={`Character ${i + 1}`} />
+                          <span className={styles.recipeRefTag}>C{i + 1}</span>
+                        </div>
+                      ))
+                    ) : (
+                      <div className={styles.recipeEmpty}>No saved refs (legacy)</div>
+                    )}
+
+                    {(viewerRecipeInfo?.refs?.elements?.length || 0) > 0
+                      ? viewerRecipeInfo!.refs.elements.map((a, i) => (
+                          <div key={a.id} className={styles.recipeRefThumb} title={`Element ${i + 1}`}>
+                            <img src={a.url} alt={`Element ${i + 1}`} />
+                            <span className={styles.recipeRefTag}>E{i + 1}</span>
+                          </div>
+                        ))
+                      : null}
+
+                    {viewerRecipeInfo?.refs?.bg ? (
+                      <div className={styles.recipeRefThumb} title="Background">
+                        <img src={viewerRecipeInfo.refs.bg.url} alt="Background" />
+                        <span className={styles.recipeRefTag}>BG</span>
+                      </div>
+                    ) : null}
+
+                    {viewerRecipeInfo?.refs?.style ? (
+                      <div className={styles.recipeRefThumb} title="Style reference">
+                        <img src={viewerRecipeInfo.refs.style.url} alt="Style reference" />
+                        <span className={styles.recipeRefTag}>STYLE</span>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className={styles.recipeBlock}>
+                  <div className={styles.recipeLabel}>Prompt</div>
+                  <div className={styles.recipeValue}>
+                    {removeStylePresetBlock(viewer.prompt || "") || "—"}
+                  </div>
+                </div>
+
+                
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+            {/* =============================== */}
       {/* KLING: Create Element modal */}
       {/* =============================== */}
       {isElementCreateOpen && (
