@@ -12,7 +12,7 @@ import {
 import { useAuth } from "../../contexts/AuthContext";
 import { usePendingImageToolJobs } from "../../hooks/usePendingImageToolJobs";
 import { supabase } from "../../services/supabaseClient";
-import { Asset, GeminiModel, AppRoute } from "../../types";
+import { Asset, GeminiModel } from "../../types";
 import ErrorModal from "../../components/ErrorModal";
 import { STYLE_PRESETS } from "../../config/presets/restyle";
 import {
@@ -32,8 +32,6 @@ import {
   GRID_OPTIONS,
   supportsGoogleSearchGrounding,
 } from "../../config/imageGenerationShared.js";
-
-import { TOOLS_REGISTRY } from "../../config/tools";
 
 
 type Quality = "" | ImageGenQuality;
@@ -587,7 +585,7 @@ function getActiveCaps(modelId: string) {
   return MODEL_CAPS[modelId] || MODEL_CAPS[DEFAULT_IMAGE_GENERATOR_MODEL];
 }
 
-type Panel = null | "reference" | "background" | "model" | "parameters" | "styles" | "elements";
+type Panel = null | "reference" | "model" | "parameters" | "styles";
 type RefSlot = "char1" | "char2" | "char3" | "background";
 
 const SLOT_LABEL: Record<RefSlot, string> = {
@@ -804,32 +802,7 @@ function safeJsonParse(raw: string): any | null {
   }
 }
 
-const IMAGE_TOOL_SWITCH_ROUTES = new Set<AppRoute>([
-  AppRoute.TOOL_GENERATOR,
-  AppRoute.TOOL_EDITOR,
-  AppRoute.TOOL_RESTYLER,
-  AppRoute.TOOL_LIGHTROOM,
-  AppRoute.TOOL_FACESWAP,
-  AppRoute.TOOL_UPSCALER,
-  AppRoute.TOOL_ANGLES,
-  AppRoute.TOOL_COLLAGE,
-]);
-
-function truncateLabel(text: string, max = 30) {
-  const normalized = (text || "").replace(/\s+/g, " ").trim();
-  if (normalized.length <= max) return normalized;
-  return `${normalized.slice(0, max).trimEnd()}…`;
-}
-
-interface ImageGeneratorToolProps {
-  onNavigate?: (route: AppRoute) => void;
-  currentRoute?: AppRoute;
-}
-
-const ImageGeneratorTool: React.FC<ImageGeneratorToolProps> = ({
-  onNavigate,
-  currentRoute = AppRoute.TOOL_GENERATOR,
-}) => {
+const ImageGeneratorTool: React.FC = () => {
   const { user } = useAuth();
 
   // Historial: mostramos 12 al inicio y cargamos de a 9 con botón "Cargar más"
@@ -976,14 +949,6 @@ useEffect(() => {
   const activeCaps = useMemo(() => getActiveCaps(model), [model]);
   const modelLabel = activeCaps.label;
   const paramsLabel = `${aspectRatio} • ${quality} • x${count} • Grid ${gridMode}${googleSearchGrounding ? " • Web" : ""}`;
-  const imageToolOptions = useMemo(
-    () => TOOLS_REGISTRY.filter((tool) => IMAGE_TOOL_SWITCH_ROUTES.has(tool.route)),
-    []
-  );
-  const currentTool = useMemo(
-    () => imageToolOptions.find((tool) => tool.route === currentRoute) || imageToolOptions[0] || null,
-    [imageToolOptions, currentRoute]
-  );
 
   const estimatedCostCredits = useMemo(() => {
     const refCount =
@@ -1111,10 +1076,6 @@ useEffect(() => {
   const [panel, setPanel] = useState<Panel>(null);
   const [pickerSlot, setPickerSlot] = useState<RefSlot | null>(null);
   const [pickerQuery, setPickerQuery] = useState("");
-  const [toolMenuOpen, setToolMenuOpen] = useState(false);
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const [historyViewMode, setHistoryViewMode] = useState<"generation" | "recipe">("generation");
-  const [historyPromptExpanded, setHistoryPromptExpanded] = useState(false);
 
   const [viewer, setViewer] = useState<Asset | null>(null);
 
@@ -2324,46 +2285,14 @@ const promptReferences: PromptReference[] = useMemo(() => {
     return () => document.removeEventListener("mousedown", onDown);
   }, [panel]);
 
+  // ESC cierra viewer
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        if (toolMenuOpen) {
-          setToolMenuOpen(false);
-          return;
-        }
-        if (panel) {
-          setPanel(null);
-          setPickerSlot(null);
-          return;
-        }
-        if (historyOpen) {
-          setHistoryOpen(false);
-          return;
-        }
-        setViewer(null);
-      }
-
-      if (historyOpen && e.key === "ArrowLeft") {
-        e.preventDefault();
-        setViewer((prev) => {
-          const currentIndex = prev ? history.findIndex((asset) => asset.id === prev.id) : 0;
-          const nextIndex = Math.max(0, (currentIndex >= 0 ? currentIndex : 0) - 1);
-          return history[nextIndex] || prev;
-        });
-      }
-
-      if (historyOpen && e.key === "ArrowRight") {
-        e.preventDefault();
-        setViewer((prev) => {
-          const currentIndex = prev ? history.findIndex((asset) => asset.id === prev.id) : -1;
-          const nextIndex = Math.min(history.length - 1, (currentIndex >= 0 ? currentIndex : -1) + 1);
-          return history[nextIndex] || prev;
-        });
-      }
+      if (e.key === "Escape") setViewer(null);
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [history, historyOpen, panel, toolMenuOpen]);
+  }, []);
 
   const refLibraryAssets = useMemo(() => {
     return refLibraryTab === "purchased" ? purchasedAssets : history;
@@ -2378,63 +2307,6 @@ const promptReferences: PromptReference[] = useMemo(() => {
       return (a.name || "").toLowerCase().includes(q) || caption.includes(q);
     });
   }, [refLibraryAssets, pickerQuery]);
-
-  const selectedElements = useMemo(() => {
-    const byId = new Map<string, ElementItem>();
-    for (const el of [...elements, ...externalElements]) {
-      if (!el?.id) continue;
-      byId.set(el.id, el);
-    }
-    return (selectedElementAssetIds || [])
-      .map((id) => byId.get(id))
-      .filter((item): item is ElementItem => Boolean(item));
-  }, [elements, externalElements, selectedElementAssetIds]);
-
-  const dockHistoryItems = useMemo(() => {
-    const pending = pendingSlots.map((id) => ({ kind: "pending" as const, id }));
-    const assets = history.map((asset) => ({ kind: "asset" as const, asset }));
-    return [...pending, ...assets].slice(0, 3);
-  }, [history, pendingSlots]);
-
-  const historyCurrentIndex = useMemo(() => {
-    if (!viewer) return history.length ? 0 : -1;
-    return history.findIndex((asset) => asset.id === viewer.id);
-  }, [history, viewer]);
-
-  const viewerPromptClean = useMemo(() => removeStylePresetBlock(viewer?.prompt || "").trim(), [viewer]);
-
-  useEffect(() => {
-    if (!history.length) {
-      setViewer(null);
-      return;
-    }
-
-    setViewer((prev) => {
-      if (!prev) return history[0];
-      return history.find((asset) => asset.id === prev.id) || history[0];
-    });
-  }, [history]);
-
-  useEffect(() => {
-    setHistoryPromptExpanded(false);
-    setHistoryViewMode("generation");
-  }, [viewer?.id]);
-
-  function openHistoryPreview(asset?: Asset | null) {
-    if (asset) {
-      setViewer(asset);
-    } else if (!viewer && history[0]) {
-      setViewer(history[0]);
-    }
-    setHistoryOpen(true);
-  }
-
-  function moveHistory(delta: number) {
-    if (!history.length) return;
-    const baseIndex = historyCurrentIndex >= 0 ? historyCurrentIndex : 0;
-    const nextIndex = Math.max(0, Math.min(history.length - 1, baseIndex + delta));
-    setViewer(history[nextIndex]);
-  }
 
   const recipeStyleName = useMemo(() => {
     return getStyleNameFromPromptOrSelection({ prompt, selectedStyleId });
@@ -2866,9 +2738,6 @@ const promptReferences: PromptReference[] = useMemo(() => {
     setViewer(null);
   }
 
-  const selectedReferenceCount = [refs.char1, refs.char2, refs.char3].filter(Boolean).length;
-  const hasHistoryContent = history.length > 0 || pendingSlots.length > 0;
-
   return (
     <div
       ref={rootRef}
@@ -2876,1034 +2745,964 @@ const promptReferences: PromptReference[] = useMemo(() => {
       onMouseMove={handleRootMouseMove}
       onMouseLeave={handleRootMouseLeave}
     >
-      <div className={styles.mobileStudioShell}>
-        <div className={styles.mobileHeader}>
-          <button
-            type="button"
-            className={styles.headerIconButton}
-            onClick={() => onNavigate?.(AppRoute.HOME)}
-            aria-label="Close tool"
-            title="Close tool"
-          >
-            <Icon name="close" />
-          </button>
+      {/* HISTORIAL (único contenido visible arriba) */}
+      <div className={styles.stage}>
+        <div className={styles.historyHeader}>
+          <div className={styles.historyTitle}>
+            <span className={styles.kicker}>IMAGE GENERATOR</span>
+            <div className={styles.historyMeta}>
+              {isLoadingHistory ? (
+                <span className={styles.subKicker}>Loading history...</span>
+              ) : (
+                <>
+                  <span className={styles.subKicker}>History</span>
+                  <span className={styles.historyCount}>{history.length}</span>
+                </>
+              )}
+            </div>
+          </div>
 
-          <button
-            type="button"
-            className={styles.headerTitleButton}
-            onClick={() => setToolMenuOpen(true)}
-            aria-label="Change image tool"
-            title="Change image tool"
-          >
-            <span className={styles.headerTitleText}>
-              {truncateLabel((currentTool?.label || "Image Generator").replace(/^General\s+/i, ""), 24)}
-            </span>
-            <span className={styles.headerChevron}>▾</span>
-          </button>
-
-          <button
-            type="button"
-            className={styles.headerModelButton}
-            onClick={() => {
-              setPickerSlot(null);
-              setPanel("model");
-            }}
-            aria-label="Change model"
-            title="Change model"
-          >
-            <span className={styles.headerModelText}>{truncateLabel(modelLabel, 20)}</span>
-            <span className={styles.headerChevron}>▾</span>
+          <button className={styles.ghostBtn} onClick={reloadHistory} type="button" disabled={isLoadingHistory}>
+            Refresh
           </button>
         </div>
 
-        <div className={styles.mobileContent}>
-          <div className={styles.quickActionGrid}>
-            <button
-              type="button"
-              className={`${styles.quickActionButton} ${panel === "elements" ? styles.quickActionButtonActive : ""}`}
-              onClick={() => {
-                setPickerSlot(null);
-                setPanel("elements");
-              }}
-            >
-              <span>Create / Select Element</span>
-              {selectedElementAssetIds.length > 0 ? (
-                <strong className={styles.quickActionBadge}>{selectedElementAssetIds.length}</strong>
-              ) : null}
-            </button>
-
-            <button
-              type="button"
-              className={`${styles.quickActionButton} ${panel === "reference" ? styles.quickActionButtonActive : ""}`}
-              onClick={() => {
-                setPickerSlot(null);
-                setPanel("reference");
-              }}
-            >
-              <span>Reference</span>
-              {selectedReferenceCount > 0 ? (
-                <strong className={styles.quickActionBadge}>{selectedReferenceCount}</strong>
-              ) : null}
-            </button>
-
-            <button
-              type="button"
-              className={`${styles.quickActionButton} ${panel === "background" ? styles.quickActionButtonActive : ""}`}
-              onClick={() => {
-                setPickerSlot(null);
-                setPanel("background");
-              }}
-            >
-              <span>Background</span>
-              {refs.background ? <strong className={styles.quickActionBadge}>1</strong> : null}
-            </button>
-
-            <button
-              type="button"
-              className={`${styles.quickActionButton} ${panel === "styles" ? styles.quickActionButtonActive : ""}`}
-              onClick={() => {
-                setPickerSlot(null);
-                setPanel("styles");
-              }}
-            >
-              <span>Styles</span>
-              {selectedStylePreset ? <strong className={styles.quickActionBadge}>1</strong> : null}
-            </button>
-          </div>
-
-          <div className={styles.promptSurface}>
-            <MentionTextarea
-              value={prompt}
-              onChange={setPrompt}
-              placeholder="Escribe tu prompt y comienza a crear..."
-              rows={6}
-              textareaClassName={styles.mobilePromptTextarea}
-              items={promptMentionItems}
-              onSelectItem={(it) => {
-                if (it?.kind !== "element") return;
-
-                const already = (selectedElementAssetIds || []).includes(it.id);
-                if (already) return;
-
-                if ((selectedElementAssetIds || []).length >= 5) {
-                  setError("No puedes usar más de 5 Elements a la vez. Quita uno y vuelve a intentar.");
-                  return false;
-                }
-
-                setSelectedElementAssetIds((prev) => [...(prev || []), it.id].slice(0, 5));
-              }}
-            />
-          </div>
-
-          {selectedReferenceCount > 0 || refs.background || selectedStylePreset || selectedElements.length > 0 ? (
-            <div className={styles.selectionStrip}>
-              {(["char1", "char2", "char3"] as RefSlot[]).map((slot) => {
-                const asset = refs[slot];
-                if (!asset) return null;
-                return (
-                  <button
-                    key={slot}
-                    type="button"
-                    className={styles.selectionCard}
-                    onClick={() => {
-                      setPickerSlot(null);
-                      setPanel("reference");
-                    }}
-                  >
-                    <div className={styles.selectionThumbWrap}>
-                      <img src={asset.url} alt={asset.name} className={styles.selectionThumb} />
-                      <span className={styles.selectionChip}>{slot === "char1" ? "R1" : slot === "char2" ? "R2" : "R3"}</span>
-                    </div>
-                    <span className={styles.selectionName}>{truncateLabel(asset.name || SLOT_LABEL[slot], 18)}</span>
-                    <span
-                      role="button"
-                      tabIndex={0}
-                      className={styles.selectionRemove}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setRefSlot(slot, null);
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          setRefSlot(slot, null);
-                        }
-                      }}
-                    >
-                      ×
-                    </span>
-                  </button>
-                );
-              })}
-
-              {refs.background ? (
-                <button
-                  type="button"
-                  className={styles.selectionCard}
-                  onClick={() => {
-                    setPickerSlot(null);
-                    setPanel("background");
-                  }}
-                >
-                  <div className={styles.selectionThumbWrap}>
-                    <img src={refs.background.url} alt={refs.background.name} className={styles.selectionThumb} />
-                    <span className={styles.selectionChip}>BG</span>
+        <div className={styles.historyGrid}>
+          {history.length === 0 && pendingSlots.length === 0 ? (
+            <div className={styles.emptyState}>
+              <div className={styles.emptyAnimator}>
+                <div className={styles.emptyGrid} />
+                <div className={styles.emptyGlow} />
+                <div className={styles.emptyScan} />
+                <div className={styles.emptyOrb} />
+              </div>
+              <div className={styles.emptyCopy}>
+                <div className={styles.emptyCode}>NO GENERATIONS</div>
+                <div className={styles.emptyText}>Genera tu primera imagen para ver el historial aquí.</div>
+              </div>
+            </div>
+          ) : (
+            <div className={styles.grid}>
+              {pendingSlots.map((id) => (
+                <div key={id} className={`${styles.tile} ${styles.tilePending}`} aria-label="Generating...">
+                  <div className={styles.pendingFrame}>
+                    <div className={styles.pendingShimmer} />
+                    <div className={styles.pendingSpinner} />
+                    <div className={styles.pendingLabel}>GENERATING</div>
                   </div>
-                  <span className={styles.selectionName}>{truncateLabel(refs.background.name || "Background", 18)}</span>
-                  <span
+                </div>
+              ))}
+
+              {visibleHistory.map((asset) => {
+                const caption = removeStylePresetBlock(asset.prompt || "") || asset.name || "—";
+                return (
+                  <div
+                    key={asset.id}
                     role="button"
                     tabIndex={0}
-                    className={styles.selectionRemove}
+                    className={styles.tile}
+                    onClick={() => setViewer(asset)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setViewer(asset);
+                      }
+                    }}
+                    title="Click para ver detalles"
+                  >
+                    <img
+                      className={styles.tileImg}
+                      src={asset.url}
+                      alt={asset.name}
+                      loading="lazy"
+                      decoding="async"
+                      onLoad={(e) => rememberImgDims(asset.id, e.currentTarget)}
+                    />
+
+                    <div className={styles.tileMeta}>
+                      <span className={styles.tileCaption}>{caption}</span>
+                      {asset.isPublic && <span className={styles.publicTag}>PUBLIC</span>}
+                    </div>
+
+                    {/* Hover actions */}
+                    <div className={styles.tileActions} onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        className={styles.iconBtn}
+                        title="1NationUp Store"
+                        onClick={() => window.dispatchEvent(new CustomEvent("tales:open-store", { detail: { asset } }))}
+                      >
+                        <OneNationUpIcon size={18} />
+                      </button>
+
+                      <button
+                        type="button"
+                        className={`${styles.iconBtn} ${styles.iconBtnHeart} ${asset.likedByMe ? styles.iconBtnHeartActive : ""}`}
+                        title={asset.likedByMe ? "Quitar Like" : "Dar Like"}
+                        disabled={Boolean(likeBusyById[asset.id])}
+                        onClick={async () => {
+                          if (!user) {
+                            setError("Debes iniciar sesión para dar Like.");
+                            return;
+                          }
+                          if (likeBusyById[asset.id]) return;
+
+                          setLikeBusyById((p) => ({ ...p, [asset.id]: true }));
+                          try {
+                        const res = await toggleLike(asset.id);
+
+                        // ✅ Favoritos (MyCreations usa localStorage tales.favoriteAssets)
+                        try {
+                          const raw = localStorage.getItem("tales.favoriteAssets");
+                          const arr: string[] = raw ? JSON.parse(raw) : [];
+                          const set = new Set(Array.isArray(arr) ? arr : []);
+
+                          if (res.liked) set.add(asset.id);
+                          else set.delete(asset.id);
+
+                          const next = Array.from(set);
+                          localStorage.setItem("tales.favoriteAssets", JSON.stringify(next));
+                          window.dispatchEvent(new CustomEvent("tales:favorites-updated", { detail: { ids: next } }));
+                        } catch {
+                          // si falla localStorage, no bloqueamos el like
+                        }
+
+                        setHistory((prev) =>
+                          prev.map((a) =>
+                            a.id === asset.id ? { ...a, likedByMe: res.liked, likesCount: res.likesCount } : a
+                          )
+                        );
+
+                            setVisibleHistory((prev) =>
+                              prev.map((a) =>
+                                a.id === asset.id ? { ...a, likedByMe: res.liked, likesCount: res.likesCount } : a
+                              )
+                            );
+
+                            setViewer((v) => (v && v.id === asset.id ? { ...v, likedByMe: res.liked, likesCount: res.likesCount } : v));
+                          } catch (e: any) {
+                            setError(e?.message || "No se pudo actualizar el Like.");
+                          } finally {
+                            setLikeBusyById((p) => ({ ...p, [asset.id]: false }));
+                          }
+                        }}
+                      >
+                        <Icon name="heart" />
+                      </button>
+
+                      <button
+                        type="button"
+                        className={`${styles.iconBtn} ${styles.iconBtnMoney}`}
+                        title="Vender / Administrar listing"
+                        onClick={() => handleTogglePublish(asset)}
+                      >
+                        <Icon name="money" />
+                      </button>
+
+                      <button
+                        type="button"
+                        className={styles.iconBtn}
+                        title="Descargar"
+                        onClick={() => handleDownload(asset)}
+                      >
+                        <Icon name="download" />
+                      </button>
+
+                      <button
+                        type="button"
+                        className={styles.iconBtnDanger}
+                        title="Eliminar"
+                        onClick={() => handleDelete(asset)}
+                      >
+                        <Icon name="trash" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {hasMoreHistory && (
+            <div className={styles.historyLoadMoreWrap}>
+              <button
+                type="button"
+                className={styles.loadMoreBtn}
+                onClick={handleLoadMoreHistory}
+                disabled={isLoadingMoreHistory}
+              >
+                {isLoadingMoreHistory ? "Cargando..." : "Cargar más"}
+              </button>
+              <div className={styles.loadMoreHint}>
+                Mostrando {visibleHistory.length} de {history.length}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* DOCK / BARRA DE PROMPT */}
+      <div className={styles.dockWrap}>
+        <div className={styles.dock}>
+          {(refs.char1 || refs.char2 || refs.char3 || refs.background) && (
+            <div className={styles.refThumbStrip}>
+              {refs.char1 && (
+                <div className={styles.refMini} title="Reference 1">
+                  <img src={refs.char1.url} alt="char1" />
+                  <span className={styles.refMiniIcon}>R1</span>
+                  <button
+                    type="button"
+                    className={styles.refMiniRemove}
+                    aria-label="Remove Reference 1"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setRefSlot("char1", null);
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
+
+              {refs.char2 && (
+                <div className={styles.refMini} title="Reference 2">
+                  <img src={refs.char2.url} alt="char2" />
+                  <span className={styles.refMiniIcon}>R2</span>
+                  <button
+                    type="button"
+                    className={styles.refMiniRemove}
+                    aria-label="Remove Reference 2"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setRefSlot("char2", null);
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
+
+              {refs.char3 && (
+                <div className={styles.refMini} title="Reference 3">
+                  <img src={refs.char3.url} alt="char3" />
+                  <span className={styles.refMiniIcon}>R3</span>
+                  <button
+                    type="button"
+                    className={styles.refMiniRemove}
+                    aria-label="Remove Reference 3"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setRefSlot("char3", null);
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
+
+              {refs.background && (
+                <div className={styles.refMini} title="Background">
+                  <img src={refs.background.url} alt="background" />
+                  <span className={styles.refMiniIcon}>BG</span>
+                  <button
+                    type="button"
+                    className={styles.refMiniRemove}
+                    aria-label="Remove Background"
                     onClick={(e) => {
                       e.stopPropagation();
                       setRefSlot("background", null);
                     }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        setRefSlot("background", null);
-                      }
-                    }}
                   >
                     ×
-                  </span>
-                </button>
-              ) : null}
-
-              {selectedStylePreset ? (
-                <button
-                  type="button"
-                  className={styles.selectionCard}
-                  onClick={() => {
-                    setPickerSlot(null);
-                    setPanel("styles");
-                  }}
-                >
-                  <div className={styles.selectionThumbWrap}>
-                    {selectedStylePreset.coverUrl ? (
-                      <img src={selectedStylePreset.coverUrl} alt={selectedStylePreset.name} className={styles.selectionThumb} />
-                    ) : (
-                      <div className={styles.selectionThumbPlaceholder}>STYLE</div>
-                    )}
-                    <span className={styles.selectionChip}>STYLE</span>
-                  </div>
-                  <span className={styles.selectionName}>{truncateLabel(selectedStylePreset.name, 18)}</span>
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    className={styles.selectionRemove}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSelectedStyleId(null);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        setSelectedStyleId(null);
-                      }
-                    }}
-                  >
-                    ×
-                  </span>
-                </button>
-              ) : null}
-
-              {selectedElements.map((el) => (
-                <button
-                  key={el.id}
-                  type="button"
-                  className={styles.selectionCard}
-                  onClick={() => {
-                    setPickerSlot(null);
-                    setPanel("elements");
-                  }}
-                >
-                  <div className={styles.selectionThumbWrap}>
-                    {el.previewUrl || el.url ? (
-                      <img src={el.previewUrl || el.url} alt={el.name} className={styles.selectionThumb} />
-                    ) : (
-                      <div className={styles.selectionThumbPlaceholder}>EL</div>
-                    )}
-                    <span className={styles.selectionChip}>EL</span>
-                  </div>
-                  <span className={styles.selectionName}>{truncateLabel(el.name || "Element", 18)}</span>
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    className={styles.selectionRemove}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSelectedElementAssetIds((prev) => prev.filter((id) => id !== el.id));
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        setSelectedElementAssetIds((prev) => prev.filter((id) => id !== el.id));
-                      }
-                    }}
-                  >
-                    ×
-                  </span>
-                </button>
-              ))}
-            </div>
-          ) : null}
-
-          {toolLimitReached || totalLimitReached ? (
-            <div className={styles.limitBanner}>
-              {toolLimitReached ? "2 generaciones activas en esta herramienta" : "4 generaciones de imagen activas en total"}
-            </div>
-          ) : null}
-        </div>
-
-        <div className={styles.footerBar}>
-          <button
-            type="button"
-            className={`${styles.footerParamsButton} ${panel === "parameters" ? styles.footerParamsButtonActive : ""}`}
-            onClick={() => {
-              setPickerSlot(null);
-              setPanel("parameters");
-            }}
-          >
-            <span className={styles.footerParamsLabel}>Parameters</span>
-            <span className={styles.footerParamsValue}>{paramsLabel}</span>
-          </button>
-
-          <div className={styles.generateCluster}>
-            <div className={styles.creditBadge}>{estimatedCostCredits} credits</div>
-            <button
-              type="button"
-              className={styles.generatePrimary}
-              disabled={isSubmitting || !prompt.trim() || toolLimitReached || totalLimitReached}
-              onClick={() => {
-                void handleGenerate();
-              }}
-              data-loading={isSubmitting ? "true" : "false"}
-              title={
-                toolLimitReached
-                  ? "Límite por herramienta: 2 generaciones activas."
-                  : totalLimitReached
-                    ? "Límite global: 4 generaciones de imagen activas."
-                    : undefined
-              }
-            >
-              <span>{isSubmitting ? "Generating" : "Generate"}</span>
-              {isSubmitting ? <span className={styles.generatePrimarySpinner} aria-hidden="true" /> : null}
-            </button>
-          </div>
-        </div>
-
-        {hasHistoryContent ? (
-          <button
-            type="button"
-            className={styles.historyDock}
-            onClick={() => openHistoryPreview()}
-            aria-label="Open history"
-          >
-            <span className={styles.historyDockTitle}>History</span>
-            <span className={styles.historyDockCount}>{history.length}</span>
-            <div className={styles.historyDockStack}>
-              {dockHistoryItems.map((item) => {
-                if (item.kind === "pending") {
-                  return (
-                    <span key={item.id} className={`${styles.historyDockThumb} ${styles.historyDockThumbPending}`}>
-                      <span className={styles.historyDockPulse} />
-                    </span>
-                  );
-                }
-
-                return (
-                  <span key={item.asset.id} className={styles.historyDockThumb}>
-                    <img src={item.asset.url} alt={item.asset.name} />
-                  </span>
-                );
-              })}
-            </div>
-          </button>
-        ) : null}
-      </div>
-
-      {toolMenuOpen ? (
-        <div
-          className={styles.fullscreenOverlay}
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setToolMenuOpen(false);
-          }}
-        >
-          <div className={styles.fullscreenSheet} onMouseDown={(e) => e.stopPropagation()}>
-            <div className={styles.fullscreenHeader}>
-              <button type="button" className={styles.headerIconButton} onClick={() => setToolMenuOpen(false)}>
-                <Icon name="close" />
-              </button>
-              <div className={styles.fullscreenTitle}>Tools</div>
-              <div className={styles.fullscreenHeaderSpacer} />
-            </div>
-
-            <div className={styles.fullscreenBody}>
-              <div className={styles.toolsMenuGrid}>
-                {imageToolOptions.map((tool) => (
-                  <button
-                    key={tool.route}
-                    type="button"
-                    className={`${styles.toolsMenuCard} ${tool.route === currentRoute ? styles.toolsMenuCardActive : ""}`}
-                    onClick={() => {
-                      setToolMenuOpen(false);
-                      setPanel(null);
-                      if (onNavigate) onNavigate(tool.route);
-                    }}
-                  >
-                    <span className={styles.toolsMenuName}>{tool.label}</span>
-                    {tool.route === currentRoute ? <span className={styles.toolsMenuStatus}>Current</span> : null}
                   </button>
-                ))}
+                </div>
+              )}
+            </div>
+          )}
+          <div className={styles.promptRow}>
+            <div className={styles.promptInputWrap}>
+              <div className={styles.klingDock} onMouseEnter={handleElementHoverStart} onMouseLeave={handleElementHoverEnd}>
+                <div className={`${styles.klingTooltip} ${isElementHovering ? styles.klingTooltipVisible : ""}`}>
+                  Crear Elemento Consistente
+                </div>
+                {/* Botón 1x1 */}
+                <button
+                  type="button"
+                  className={`${styles.klingElementBtn} ${elementCtaActive ? styles.klingElementBtnCta : ""}`}
+                  onClick={() => {
+                    setElementCtaActive(false); // apaga CTA al click
+                    setIsElementCreateOpen(true);
+                  }}
+                  title="Element/Person"
+                  aria-label="Element/Person"
+                >
+                  {/* ícono persona */}
+                  <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                    <path
+                      fill="currentColor"
+                      d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm0 2c-4.4 0-8 2.24-8 5v2h16v-2c0-2.76-3.6-5-8-5z"
+                    />
+                  </svg>
+
+                  {/* badge con número si hay selección */}
+                  {selectedElementAssetIds.length > 0 && (
+                    <span className={styles.klingBadge}>{selectedElementAssetIds.length}</span>
+                  )}
+                </button>
+
+                {/* Popover al hover */}
+                <div className={`${styles.klingPopover} ${isElementHovering ? styles.klingPopoverVisible : ""}`}>
+                  <div className={styles.klingPopoverTop}>
+                    <button
+                      type="button"
+                      className={styles.klingAllBtn}
+                      onClick={() => setIsElementAllOpen(true)}
+                      title="Ver todos tus Elements"
+                    >
+                      All
+                    </button>
+
+                    {elements.length > 0 ? (
+                      <div className={styles.klingPopoverThumbRow}>
+                        {elements.slice(0, 6).map((el) => {
+                          const active = selectedElementAssetIds.includes(el.id);
+                          const src = el.previewUrl || el.url || "";
+                          return (
+                            <div key={el.id} className={styles.klingThumbWrap}>
+                              <button
+                                type="button"
+                                className={`${styles.klingThumbBtn} ${active ? styles.klingThumbBtnActive : ""}`}
+                                onClick={() => {
+                                  setSelectedElementAssetIds((prev) => {
+                                    const has = prev.includes(el.id);
+                                    const tag = (el?.id ? elementTokenById.get(el.id) : null) || makeElementTag(el.name);
+
+                                    if (has) {
+                                      if (tag) appendPromptTag(tag);
+                                      return prev;
+                                    }
+                                    if (prev.length >= 5) {
+                                      setError("Máximo 5 Elements a la vez.");
+                                      return prev;
+                                    }
+                                    if (tag) appendPromptTag(tag);
+                                    return [el.id, ...prev].slice(0, 5);
+                                  });
+                                }}
+                                title={el.name}
+                                aria-label={el.name}
+                              >
+                                {src ? <img src={src} alt={el.name} className={styles.klingThumbImg} /> : null}
+                              </button>
+                              {active && (
+                                <button
+                                  type="button"
+                                  className={styles.klingThumbRemove}
+                                  onClick={() => {
+                                    const tag = (el?.id ? elementTokenById.get(el.id) : null) || makeElementTag(el.name);
+                                    if (tag) removePromptToken(tag);
+                                    setSelectedElementAssetIds((prev) => prev.filter((x) => x !== el.id));
+                                  }}
+                                  aria-label={`Deselect ${el.name}`}
+                                >
+                                  ×
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
+                    </div>
+                    ) : (
+                      <div className={styles.klingEmpty}>No elements yet</div>
+                    )}
+                  </div>
+                </div>
+              </div>           
+
+              <div className={styles.promptEditor}>
+                <MentionTextarea
+                  value={prompt}
+                  onChange={setPrompt}
+                  placeholder="Escribe tu prompt y comienza a crear..."
+                  rows={2}
+                  textareaClassName={styles.prompt}
+                  items={promptMentionItems}
+                  onSelectItem={(it) => {
+                    if (it?.kind !== "element") return;
+
+                    const already = (selectedElementAssetIds || []).includes(it.id);
+                    if (already) return;
+
+                    if ((selectedElementAssetIds || []).length >= 5) {
+                      setError("No puedes usar más de 5 Elements a la vez. Quita uno y vuelve a intentar.");
+                      return false;
+                    }
+
+                    setSelectedElementAssetIds((prev) => [...(prev || []), it.id].slice(0, 5));
+                  }}
+                />
               </div>
             </div>
-          </div>
-        </div>
-      ) : null}
 
-      {panel ? (
-        <div
-          className={styles.fullscreenOverlay}
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) {
-              setPanel(null);
-              setPickerSlot(null);
-            }
-          }}
-        >
-          <div ref={popoverRef} className={styles.fullscreenSheet} onMouseDown={(e) => e.stopPropagation()}>
-            <div className={styles.fullscreenHeader}>
+            <div className={styles.generateCol}>
               <button
                 type="button"
-                className={styles.headerIconButton}
+                className={styles.generateBtn}
+                disabled={isSubmitting || !prompt.trim() || toolLimitReached || totalLimitReached}
                 onClick={() => {
-                  setPanel(null);
-                  setPickerSlot(null);
+                  void handleGenerate();
                 }}
+                data-loading={isSubmitting ? "true" : "false"}
+                title={
+                  toolLimitReached
+                    ? "Límite por herramienta: 2 generaciones activas."
+                    : totalLimitReached
+                      ? "Límite global: 4 generaciones de imagen activas."
+                      : undefined
+                }
               >
-                <Icon name="close" />
-              </button>
-              <div className={styles.fullscreenTitle}>
-                {panel === "model"
-                  ? "Model"
-                  : panel === "parameters"
-                    ? "Parameters"
-                    : panel === "styles"
-                      ? "Styles"
-                      : panel === "elements"
-                        ? "Create / Select Element"
-                        : pickerSlot
-                          ? SLOT_LABEL[pickerSlot]
-                          : panel === "background"
-                            ? "Background"
-                            : "Reference"}
-              </div>
-              <div className={styles.fullscreenHeaderActions}>
-                {panel === "styles" && selectedStyleId ? (
-                  <button
-                    type="button"
-                    className={styles.sheetGhostAction}
-                    onClick={() => {
-                      setSelectedStyleId(null);
-                      setPanel(null);
-                    }}
-                  >
-                    Clear
-                  </button>
-                ) : null}
-                {panel === "parameters" ? (
-                  <button
-                    type="button"
-                    className={styles.sheetGhostAction}
-                    onClick={() => {
-                      setPanel(null);
-                      setPickerSlot(null);
-                    }}
-                  >
-                    Done
-                  </button>
-                ) : null}
-              </div>
-            </div>
-
-            <div className={styles.fullscreenBody}>
-              {panel === "elements" ? (
-                <div className={styles.elementsPanel}>
-                  <div className={styles.elementsPanelStrip}>
-                    {selectedElements.length > 0 ? (
-                      selectedElements.map((el) => (
-                        <button key={el.id} type="button" className={styles.selectionCard}>
-                          <div className={styles.selectionThumbWrap}>
-                            {el.previewUrl || el.url ? (
-                              <img src={el.previewUrl || el.url} alt={el.name} className={styles.selectionThumb} />
-                            ) : (
-                              <div className={styles.selectionThumbPlaceholder}>EL</div>
-                            )}
-                            <span className={styles.selectionChip}>EL</span>
-                          </div>
-                          <span className={styles.selectionName}>{truncateLabel(el.name || "Element", 18)}</span>
-                          <span
-                            role="button"
-                            tabIndex={0}
-                            className={styles.selectionRemove}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedElementAssetIds((prev) => prev.filter((id) => id !== el.id));
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" || e.key === " ") {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                setSelectedElementAssetIds((prev) => prev.filter((id) => id !== el.id));
-                              }
-                            }}
-                          >
-                            ×
-                          </span>
-                        </button>
-                      ))
-                    ) : (
-                      <div className={styles.emptySelectionCard}>No elements selected</div>
-                    )}
-                  </div>
-
-                  <div className={styles.elementsActionGrid}>
-                    <button
-                      type="button"
-                      className={styles.panelPrimaryButton}
-                      onClick={() => {
-                        setPanel(null);
-                        setIsElementCreateOpen(true);
-                      }}
-                    >
-                      Create element
-                    </button>
-
-                    <button
-                      type="button"
-                      className={styles.panelSecondaryButton}
-                      onClick={() => {
-                        setPanel(null);
-                        setIsElementAllOpen(true);
-                      }}
-                    >
-                      Select element
-                    </button>
-                  </div>
+                  <span className={styles.generateLabel}>{isSubmitting ? "GENERATING" : "GENERATE"}</span>
+                  {isSubmitting && <span className={styles.generateSpinner} aria-hidden="true" />}
+                </button>
+                <div style={{ marginTop: 8, fontSize: 12, color: "rgba(255,255,255,0.65)", textAlign: "center" }}>
+                  Coste estimado: <b>{estimatedCostCredits}</b> créditos
                 </div>
-              ) : null}
-
-              {(panel === "reference" || panel === "background") && pickerSlot ? (
-                <>
-                  <div className={styles.pickerTabs}>
-                    <button
-                      type="button"
-                      className={`${styles.smallBtnGhost} ${refLibraryTab === "history" ? styles.smallBtnGhostActive : ""}`}
-                      onClick={() => setRefLibraryTab("history")}
-                    >
-                      My history
-                    </button>
-                    <button
-                      type="button"
-                      className={`${styles.smallBtnGhost} ${refLibraryTab === "purchased" ? styles.smallBtnGhostActive : ""}`}
-                      onClick={() => setRefLibraryTab("purchased")}
-                    >
-                      Purchased
-                    </button>
+                {(toolLimitReached || totalLimitReached) && (
+                  <div style={{ marginTop: 6, fontSize: 11, color: "rgba(255,220,220,0.82)", textAlign: "center" }}>
+                    {toolLimitReached
+                      ? "Máximo 2 generaciones activas en esta herramienta."
+                      : "Máximo 4 generaciones de imagen activas en total."}
                   </div>
-
-                  <input
-                    className={styles.search}
-                    placeholder={refLibraryTab === "purchased" ? "Search purchased assets..." : "Search history..."}
-                    value={pickerQuery}
-                    onChange={(e) => setPickerQuery(e.target.value)}
-                  />
-
-                  <div className={styles.pickerGrid}>
-                    {filteredPickerAssets.map((asset) => (
-                      <button
-                        key={asset.id}
-                        type="button"
-                        className={styles.pickerTile}
-                        onClick={() => {
-                          setRefSlot(pickerSlot, asset);
-                          setPickerSlot(null);
-                          setPanel(null);
-                        }}
-                      >
-                        <img src={asset.url} alt={asset.name} />
-                        <div className={styles.pickerTileMeta}>
-                          <div className={styles.pickerTileCap}>{truncateLabel(removeStylePresetBlock(asset.prompt || "") || asset.name, 42)}</div>
-                          {asset.accessSource === "purchased" ? <span className={styles.pickerTileBadge}>Purchased</span> : null}
-                        </div>
-                      </button>
-                    ))}
-
-                    {filteredPickerAssets.length === 0 ? (
-                      <div className={styles.pickerEmpty}>
-                        {refLibraryTab === "purchased" ? "No purchased assets" : "No images found"}
-                      </div>
-                    ) : null}
-                  </div>
-                </>
-              ) : null}
-
-              {panel === "reference" && !pickerSlot ? (
-                <div className={styles.referencePanelGrid}>
-                  {(["char1", "char2", "char3"] as RefSlot[]).map((slot) => {
-                    const asset = refs[slot];
-                    return (
-                      <div key={slot} className={styles.referenceSlotCard}>
-                        <button
-                          type="button"
-                          className={styles.referenceSlotPreview}
-                          onClick={() => {
-                            setPickerSlot(slot);
-                            setPickerQuery("");
-                          }}
-                        >
-                          {asset ? <img src={asset.url} alt={asset.name} /> : <span>{SLOT_LABEL[slot]}</span>}
-                          <span className={styles.referenceSlotTag}>{slot === "char1" ? "R1" : slot === "char2" ? "R2" : "R3"}</span>
-                        </button>
-                        <div className={styles.referenceSlotActions}>
-                          <button
-                            type="button"
-                            className={styles.panelSecondaryButton}
-                            onClick={() => {
-                              setPickerSlot(slot);
-                              setPickerQuery("");
-                            }}
-                          >
-                            Library
-                          </button>
-                          <label className={styles.panelSecondaryButton}>
-                            Upload
-                            <input
-                              type="file"
-                              accept="image/*"
-                              hidden
-                              onChange={(e) => {
-                                const file = e.target.files?.[0];
-                                if (file) handleUploadToSlot(slot, file);
-                                e.currentTarget.value = "";
-                              }}
-                            />
-                          </label>
-                          <button
-                            type="button"
-                            className={styles.sheetGhostAction}
-                            onClick={() => setRefSlot(slot, null)}
-                            disabled={!asset}
-                          >
-                            Clear
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : null}
-
-              {panel === "background" && !pickerSlot ? (
-                <div className={styles.referencePanelGrid}>
-                  <div className={styles.referenceSlotCard}>
-                    <button
-                      type="button"
-                      className={styles.referenceSlotPreview}
-                      onClick={() => {
-                        setPickerSlot("background");
-                        setPickerQuery("");
-                      }}
-                    >
-                      {refs.background ? <img src={refs.background.url} alt={refs.background.name} /> : <span>Background</span>}
-                      <span className={styles.referenceSlotTag}>BG</span>
-                    </button>
-                    <div className={styles.referenceSlotActions}>
-                      <button
-                        type="button"
-                        className={styles.panelSecondaryButton}
-                        onClick={() => {
-                          setPickerSlot("background");
-                          setPickerQuery("");
-                        }}
-                      >
-                        Library
-                      </button>
-                      <label className={styles.panelSecondaryButton}>
-                        Upload
-                        <input
-                          type="file"
-                          accept="image/*"
-                          hidden
-                          onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            if (file) handleUploadToSlot("background", file);
-                            e.currentTarget.value = "";
-                          }}
-                        />
-                      </label>
-                      <button
-                        type="button"
-                        className={styles.sheetGhostAction}
-                        onClick={() => setRefSlot("background", null)}
-                        disabled={!refs.background}
-                      >
-                        Clear
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-
-              {panel === "model" ? (
-                <div className={styles.modelGrid}>
-                  {modelGroups.map((group) => (
-                    <div key={group.label} className={styles.modelGroup}>
-                      <div className={styles.modelGroupLabel}>{group.label}</div>
-                      <div className={styles.modelGroupOptions}>
-                        {group.options.map((opt) => (
-                          <button
-                            key={opt.value}
-                            type="button"
-                            className={`${styles.modelOption} ${model === opt.value ? styles.modelOptionActive : ""}`}
-                            onClick={() => handleModelSelect(opt.value)}
-                          >
-                            {opt.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-
-              {panel === "parameters" ? (
-                <div className={styles.parameterSections}>
-                  <div className={styles.parameterSection}>
-                    <div className={styles.parameterSectionTitle}>Aspect ratio</div>
-                    <div className={styles.optionPillGrid}>
-                      {aspectRatioOptions.map((ar) => (
-                        <button
-                          key={ar.value}
-                          type="button"
-                          className={`${styles.optionPill} ${aspectRatio === ar.value ? styles.optionPillActive : ""}`}
-                          onClick={() => setAspectRatio(ar.value)}
-                        >
-                          {ar.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className={styles.parameterSection}>
-                    <div className={styles.parameterSectionTitle}>Count</div>
-                    <div className={styles.optionPillGrid}>
-                      {activeCaps.countOptions.map((n) => (
-                        <button
-                          key={n}
-                          type="button"
-                          className={`${styles.optionPill} ${count === n ? styles.optionPillActive : ""}`}
-                          onClick={() => setCount(n)}
-                        >
-                          {n}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className={styles.parameterSection}>
-                    <div className={styles.parameterSectionTitle}>Grid</div>
-                    <div className={styles.optionPillGrid}>
-                      {GRID_OPTIONS.map((opt) => (
-                        <button
-                          key={opt.value}
-                          type="button"
-                          className={`${styles.optionPill} ${gridMode === opt.value ? styles.optionPillActive : ""}`}
-                          onClick={() => setGridMode(opt.value)}
-                        >
-                          {opt.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className={styles.parameterSection}>
-                    <div className={styles.parameterSectionTitle}>Quality</div>
-                    <div className={styles.optionPillGrid}>
-                      {getActiveCaps(model).qualities.map((q) => (
-                        <button
-                          key={q}
-                          type="button"
-                          className={`${styles.optionPill} ${quality === q ? styles.optionPillActive : ""}`}
-                          onClick={() => setQuality(q as Quality)}
-                        >
-                          {q}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {supportsGoogleSearchGrounding(model) ? (
-                    <div className={styles.parameterSection}>
-                      <div className={styles.parameterSectionTitle}>Web grounding</div>
-                      <div className={styles.optionPillGrid}>
-                        <button
-                          type="button"
-                          className={`${styles.optionPill} ${googleSearchGrounding ? styles.optionPillActive : ""}`}
-                          onClick={() => setGoogleSearchGrounding(true)}
-                        >
-                          On
-                        </button>
-                        <button
-                          type="button"
-                          className={`${styles.optionPill} ${!googleSearchGrounding ? styles.optionPillActive : ""}`}
-                          onClick={() => setGoogleSearchGrounding(false)}
-                        >
-                          Off
-                        </button>
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-
-              {panel === "styles" ? (
-                <div className={styles.presetGrid}>
-                  {STYLE_PRESETS.map((preset) => {
-                    const active = selectedStyleId === preset.id;
-                    return (
-                      <button
-                        key={preset.id}
-                        type="button"
-                        className={`${styles.presetCard} ${active ? styles.presetCardActive : ""}`}
-                        onClick={() => {
-                          setSelectedStyleId(preset.id);
-                          setPanel(null);
-                        }}
-                      >
-                        <div className={styles.presetCover}>
-                          {preset.coverUrl ? <img src={preset.coverUrl} alt={preset.name} /> : <div className={styles.presetCoverEmpty} />}
-                        </div>
-                        <div className={styles.presetName}>{preset.name}</div>
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : null}
+                )}
             </div>
           </div>
-        </div>
-      ) : null}
 
-      {historyOpen ? (
-        <div
-          className={styles.fullscreenOverlay}
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setHistoryOpen(false);
-          }}
-        >
-          <div className={`${styles.fullscreenSheet} ${styles.historyFullscreenSheet}`} onMouseDown={(e) => e.stopPropagation()}>
-            <div className={styles.fullscreenHeader}>
-              <button type="button" className={styles.headerIconButton} onClick={() => setHistoryOpen(false)}>
-                <Icon name="close" />
-              </button>
+          <div className={styles.controlsRow}>
+            <button
+              type="button"
+              className={`${styles.controlBtn} ${panel === "reference" ? styles.controlBtnActive : ""}`}
+              onClick={() => {
+                setPanel((p) => (p === "reference" ? null : "reference"));
+                setPickerSlot(null);
+              }}
+            >
+              <span>Reference</span>
+              <span className={styles.controlBtnMeta}>{refLabel}</span>
+            </button>
 
-              <div className={styles.historyToggleGroup}>
-                <button
-                  type="button"
-                  className={`${styles.historyToggleButton} ${historyViewMode === "generation" ? styles.historyToggleButtonActive : ""}`}
-                  onClick={() => setHistoryViewMode("generation")}
-                >
-                  Generation
-                </button>
-                <button
-                  type="button"
-                  className={`${styles.historyToggleButton} ${historyViewMode === "recipe" ? styles.historyToggleButtonActive : ""}`}
-                  onClick={() => setHistoryViewMode("recipe")}
-                >
-                  Recipe
-                </button>
-              </div>
+            <button
+              type="button"
+              className={`${styles.controlBtn} ${panel === "model" ? styles.controlBtnActive : ""}`}
+              onClick={() => setPanel((p) => (p === "model" ? null : "model"))}
+            >
+              <span>Model</span>
+              <span className={styles.controlBtnMeta}>{modelLabel}</span>
+            </button>
 
-              <div className={styles.historyTopActions}>
-                {viewer ? (
-                  <>
-                    <button className={styles.iconBtn} type="button" title="Reusar prompt" onClick={() => reusePromptFromAsset(viewer)}>
-                      <Icon name="reuse" />
+            <button
+              type="button"
+              className={`${styles.controlBtn} ${panel === "parameters" ? styles.controlBtnActive : ""}`}
+              onClick={() => setPanel((p) => (p === "parameters" ? null : "parameters"))}
+            >
+              <span>Parameters</span>
+              <span className={styles.controlBtnMeta}>{paramsLabel}</span>
+            </button>
+
+            <button
+              type="button"
+              className={`${styles.controlBtn} ${panel === "styles" ? styles.controlBtnActive : ""}`}
+              onClick={() => setPanel((p) => (p === "styles" ? null : "styles"))}
+            >
+              <span>styles</span>
+              <span className={styles.controlBtnMeta}>{styleLabel}</span>
+            </button>
+          </div>
+
+          {/* POPOVERS */}
+          {panel && (
+            <div ref={popoverRef} className={styles.popover}>
+              {/* Reference */}
+              {panel === "reference" && (
+                <div className={styles.popoverInner}>
+                  <div className={styles.popoverHeader}>
+                    <div className={styles.popoverTitle}>Reference</div>
+                    <button className={styles.closeBtn} onClick={() => setPanel(null)} type="button">
+                      <Icon name="close" />
                     </button>
-                    <button className={styles.iconBtn} type="button" title="Descargar" onClick={() => handleDownload(viewer)}>
-                      <Icon name="download" />
-                    </button>
-                    <button className={styles.iconBtnDanger} type="button" title="Eliminar" onClick={() => handleDelete(viewer)}>
-                      <Icon name="trash" />
-                    </button>
-                  </>
-                ) : null}
-              </div>
-            </div>
-
-            <div className={styles.historyFullscreenBody}>
-              {viewer ? (
-                <div className={`${styles.historyHero} ${viewerPortrait ? styles.historyHeroPortrait : ""}`}>
-                  {history.length > 1 ? (
-                    <button
-                      type="button"
-                      className={`${styles.historyNavButton} ${styles.historyNavButtonLeft}`}
-                      onClick={() => moveHistory(-1)}
-                      aria-label="Previous generation"
-                    >
-                      ‹
-                    </button>
-                  ) : null}
-
-                  <div className={styles.historyHeroInner}>
-                    {historyViewMode === "generation" ? (
-                      <>
-                        <div className={styles.historyHeroMedia}>
-                          <img className={styles.historyHeroImage} src={viewer.url} alt={viewer.name} onLoad={(e) => rememberImgDims(viewer.id, e.currentTarget)} />
-                        </div>
-                        <div className={styles.historyPromptLine}>
-                          <span className={styles.historyPromptValue}>
-                            {historyPromptExpanded ? viewerPromptClean || "—" : truncateLabel(viewerPromptClean || "", 30) || "—"}
-                          </span>
-                          {viewerPromptClean.length > 30 ? (
-                            <button
-                              type="button"
-                              className={styles.inlineToggleButton}
-                              onClick={() => setHistoryPromptExpanded((prev) => !prev)}
-                            >
-                              {historyPromptExpanded ? "Less" : "More"}
-                            </button>
-                          ) : null}
-                        </div>
-                      </>
-                    ) : (
-                      <div className={styles.historyRecipePane}>
-                        <div className={styles.historyRecipeGrid}>
-                          <div className={styles.historyRecipeItem}>
-                            <span>Model</span>
-                            <strong>{prettyModelLabel(viewerRecipeInfo?.modelId || null)}</strong>
-                          </div>
-                          <div className={styles.historyRecipeItem}>
-                            <span>Aspect</span>
-                            <strong>{viewerRecipeInfo?.aspectRatio || "—"}</strong>
-                          </div>
-                          <div className={styles.historyRecipeItem}>
-                            <span>Quality</span>
-                            <strong>{viewerRecipeInfo?.quality || "—"}</strong>
-                          </div>
-                          <div className={styles.historyRecipeItem}>
-                            <span>Count</span>
-                            <strong>{viewerRecipeInfo?.count != null ? String(viewerRecipeInfo.count) : "—"}</strong>
-                          </div>
-                          <div className={styles.historyRecipeItem}>
-                            <span>Grid</span>
-                            <strong>{viewerRecipeInfo?.gridMode || "none"}</strong>
-                          </div>
-                          <div className={styles.historyRecipeItem}>
-                            <span>Web</span>
-                            <strong>{viewerRecipeInfo?.googleSearchGrounding ? "On" : "Off"}</strong>
-                          </div>
-                          <div className={`${styles.historyRecipeItem} ${styles.historyRecipeItemWide}`}>
-                            <span>Style</span>
-                            <strong>{viewerRecipeInfo?.styleName || "None"}</strong>
-                          </div>
-                        </div>
-
-                        <div className={styles.historyRecipeRefs}>
-                          {(viewerRecipeInfo?.refs?.chars || []).map((asset, idx) => (
-                            <div key={`${asset.id}-char-${idx}`} className={styles.recipeRefThumb}>
-                              <img src={asset.url} alt={`Character ${idx + 1}`} />
-                              <span className={styles.recipeRefTag}>R{idx + 1}</span>
-                            </div>
-                          ))}
-
-                          {(viewerRecipeInfo?.refs?.elements || []).map((asset, idx) => (
-                            <div key={`${asset.id}-element-${idx}`} className={styles.recipeRefThumb}>
-                              <img src={asset.url} alt={`Element ${idx + 1}`} />
-                              <span className={styles.recipeRefTag}>EL</span>
-                            </div>
-                          ))}
-
-                          {viewerRecipeInfo?.refs?.bg ? (
-                            <div className={styles.recipeRefThumb}>
-                              <img src={viewerRecipeInfo.refs.bg.url} alt="Background" />
-                              <span className={styles.recipeRefTag}>BG</span>
-                            </div>
-                          ) : null}
-
-                          {viewerRecipeInfo?.refs?.style ? (
-                            <div className={styles.recipeRefThumb}>
-                              <img src={viewerRecipeInfo.refs.style.url} alt="Style" />
-                              <span className={styles.recipeRefTag}>STYLE</span>
-                            </div>
-                          ) : null}
-
-                          {!(viewerRecipeInfo?.refs?.chars?.length || viewerRecipeInfo?.refs?.elements?.length || viewerRecipeInfo?.refs?.bg || viewerRecipeInfo?.refs?.style) ? (
-                            <div className={styles.recipeEmpty}>No saved refs</div>
-                          ) : null}
-                        </div>
-                      </div>
-                    )}
                   </div>
 
-                  {history.length > 1 ? (
-                    <button
-                      type="button"
-                      className={`${styles.historyNavButton} ${styles.historyNavButtonRight}`}
-                      onClick={() => moveHistory(1)}
-                      aria-label="Next generation"
-                    >
-                      ›
-                    </button>
-                  ) : null}
-                </div>
-              ) : (
-                <div className={styles.pendingHistoryHero}>
-                  <div className={styles.pendingSpinner} />
-                  <span>Generating...</span>
+                  <div className={styles.refSlots}>
+                    {(() => {
+                      const visible: RefSlot[] = ["char1"];
+                      if (refs.char1) visible.push("char2");
+                      if (refs.char2) visible.push("char3");
+                      visible.push("background");
+                      return visible;
+                    })().map((slot) => {
+                      const a = refs[slot];
+                      return (
+                        <div key={slot} className={styles.refSlot}>
+                          <div className={styles.refSlotLeft}>
+                            <div className={styles.refSlotLabel}>{SLOT_LABEL[slot]}</div>
+                            <div className={styles.refSlotThumb}>
+                              {a ? <img src={a.url} alt={a.name} /> : <div className={styles.refSlotEmpty}>EMPTY</div>}
+                            </div>
+                          </div>
+
+                          <div className={styles.refSlotRight}>
+                            <button
+                              type="button"
+                              className={styles.smallBtn}
+                              onClick={() => {
+                                setPickerSlot(slot);
+                                setPickerQuery("");
+                              }}
+                            >
+                              Pick
+                            </button>
+
+                            <label className={styles.smallBtn}>
+                              Upload
+                              <input
+                                type="file"
+                                accept="image/*"
+                                style={{ display: "none" }}
+                                onChange={(e) => {
+                                  const f = e.target.files?.[0];
+                                  if (f) handleUploadToSlot(slot, f);
+                                  e.currentTarget.value = "";
+                                }}
+                              />
+                            </label>
+
+                            <button
+                              type="button"
+                              className={styles.smallBtnGhost}
+                              onClick={() => setRefSlot(slot, null)}
+                              disabled={!a}
+                            >
+                              Clear
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {pickerSlot && (
+                    <div className={styles.pickerArea}>
+                      <div className={styles.pickerTop}>
+                        <div className={styles.pickerTitle}>Pick for: {SLOT_LABEL[pickerSlot]}</div>
+                        <button
+                          type="button"
+                          className={styles.smallBtnGhost}
+                          onClick={() => setPickerSlot(null)}
+                        >
+                          Close
+                        </button>
+                      </div>
+
+                      <div className={styles.pickerTabs}>
+                        <button
+                          type="button"
+                          className={`${styles.smallBtnGhost} ${refLibraryTab === "history" ? styles.smallBtnGhostActive : ""}`}
+                          onClick={() => setRefLibraryTab("history")}
+                        >
+                          My history
+                        </button>
+                        <button
+                          type="button"
+                          className={`${styles.smallBtnGhost} ${refLibraryTab === "purchased" ? styles.smallBtnGhostActive : ""}`}
+                          onClick={() => setRefLibraryTab("purchased")}
+                        >
+                          Purchased assets
+                        </button>
+                      </div>
+
+                      <input
+                        className={styles.search}
+                        placeholder={refLibraryTab === "purchased" ? "Search in purchased assets..." : "Search in history..."}
+                        value={pickerQuery}
+                        onChange={(e) => setPickerQuery(e.target.value)}
+                      />
+
+                      <div className={styles.pickerGrid}>
+                        {filteredPickerAssets.map((a) => (
+                          <button
+                            key={a.id}
+                            type="button"
+                            className={styles.pickerTile}
+                            onClick={() => {
+                              setRefSlot(pickerSlot, a);
+                              setPickerSlot(null);
+                              setPanel(null); // auto-close al seleccionar
+                            }}
+                          >
+                            <img src={a.url} alt={a.name} />
+                            <div className={styles.pickerTileMeta}>
+                              <div className={styles.pickerTileCap}>
+                                {removeStylePresetBlock(a.prompt || "") || a.name}
+                              </div>
+                              {a.accessSource === "purchased" ? (
+                                <span className={styles.pickerTileBadge}>Purchased</span>
+                              ) : null}
+                            </div>
+                          </button>
+                        ))}
+
+                        {filteredPickerAssets.length === 0 ? (
+                          <div className={styles.pickerEmpty}>
+                            {refLibraryTab === "purchased"
+                              ? "Aún no tienes assets comprados en Community Store."
+                              : "No images found in your history."}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
-              <div className={styles.historyThumbRail}>
-                {history.map((asset) => {
-                  const active = viewer?.id === asset.id;
-                  return (
-                    <button
-                      key={asset.id}
-                      type="button"
-                      className={`${styles.historyThumbCard} ${active ? styles.historyThumbCardActive : ""}`}
-                      onClick={() => setViewer(asset)}
-                    >
-                      <div className={styles.historyThumbMedia}>
-                        <img src={asset.url} alt={asset.name} />
-                      </div>
-                      <span className={styles.historyThumbPrompt}>{truncateLabel(removeStylePresetBlock(asset.prompt || "") || asset.name, 30) || "—"}</span>
+              {/* Model */}
+              {panel === "model" && (
+                <div className={styles.popoverInner}>
+                  <div className={styles.popoverHeader}>
+                    <div className={styles.popoverTitle}>Model</div>
+                    <button className={styles.closeBtn} onClick={() => setPanel(null)} type="button">
+                      <Icon name="close" />
                     </button>
-                  );
-                })}
-
-                {pendingSlots.map((id) => (
-                  <div key={id} className={`${styles.historyThumbCard} ${styles.historyThumbCardPending}`}>
-                    <div className={styles.pendingFrame}>
-                      <div className={styles.pendingShimmer} />
-                      <div className={styles.pendingSpinner} />
-                    </div>
-                    <span className={styles.historyThumbPrompt}>Generating...</span>
                   </div>
-                ))}
+
+                  <div className={styles.formRow}>
+                    <label className={styles.formLabel}>Model</label>
+                    <div className={styles.modelGrid}>
+                      {modelGroups.map((group) => (
+                        <div key={group.label} className={styles.modelGroup}>
+                          <div className={styles.modelGroupLabel}>{group.label}</div>
+                          <div className={styles.modelGroupOptions}>
+                            {group.options.map((opt) => (
+                              <button
+                                key={opt.value}
+                                type="button"
+                                className={`${styles.modelOption} ${model === opt.value ? styles.modelOptionActive : ""}`}
+                                onClick={() => handleModelSelect(opt.value)}
+                              >
+                                {opt.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Parameters */}
+              {panel === "parameters" && (
+                <div className={styles.popoverInner}>
+                  <div className={styles.popoverHeader}>
+                    <div className={styles.popoverTitle}>Parameters</div>
+                    <button className={styles.closeBtn} onClick={() => setPanel(null)} type="button">
+                      <Icon name="close" />
+                    </button>
+                  </div>
+
+                  <div className={styles.paramGrid}>
+                    <div className={styles.formRow}>
+                      <label className={styles.formLabel}>Aspect Ratio</label>
+                      <select
+                        className={styles.select}
+                        value={aspectRatio}
+                        onChange={(e) => {
+                          setAspectRatio(e.target.value);
+                          setPanel(null); // auto-close
+                        }}
+                      >
+                        {aspectRatioOptions.map((ar) => (
+                          <option key={ar.value} value={ar.value}>
+                            {ar.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className={styles.formRow}>
+                      <label className={styles.formLabel}>Count</label>
+                      <select
+                        className={styles.select}
+                        value={count}
+                        disabled={activeCaps.countOptions.length === 1}
+                        onChange={(e) => {
+                          setCount(Number(e.target.value));
+                          setPanel(null); // auto-close
+                        }}
+                      >
+                        {activeCaps.countOptions.map((n) => (
+                          <option key={n} value={n}>
+                            {n}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className={styles.formRow}>
+                      <label className={styles.formLabel}>Grid</label>
+                      <select
+                        className={styles.select}
+                        value={gridMode}
+                        onChange={(e) => {
+                          setGridMode(e.target.value);
+                          setPanel(null);
+                        }}
+                      >
+                        {GRID_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className={styles.formRow}>
+                      <label className={styles.formLabel}>Quality</label>
+                      <select
+                        className={styles.select}
+                        value={quality}
+                        onChange={(e) => {
+                          setQuality(e.target.value as Quality);
+                          setPanel(null); // auto-close
+                        }}
+                      >
+                        {getActiveCaps(model).qualities.map((q) => (
+                          <option key={q} value={q}>
+                            {q}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {supportsGoogleSearchGrounding(model) && (
+                      <div className={styles.formRow}>
+                        <label className={styles.formLabel}>Web Grounding</label>
+                        <button
+                          type="button"
+                          className={`${styles.modelOption} ${googleSearchGrounding ? styles.modelOptionActive : ""}`}
+                          onClick={() => {
+                            setGoogleSearchGrounding((prev) => !prev);
+                            setPanel(null);
+                          }}
+                        >
+                          {googleSearchGrounding ? "Enabled" : "Disabled"}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Styles (solo este selector) */}
+              {panel === "styles" && (
+                <div className={styles.popoverInner}>
+                  <div className={styles.popoverHeader}>
+                    <div className={styles.popoverTitle}>Styles</div>
+                    <div className={styles.headerRight}>
+                      <button
+                        type="button"
+                        className={styles.smallBtnGhost}
+                        onClick={() => {
+                          setSelectedStyleId(null);
+                          setPanel(null);
+                        }}
+                      >
+                        Clear
+                      </button>
+
+                      <button className={styles.closeBtn} onClick={() => setPanel(null)} type="button">
+                        <Icon name="close" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className={styles.presetGrid}>
+                    {STYLE_PRESETS.map((p) => {
+                      const active = selectedStyleId === p.id;
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          className={`${styles.presetCard} ${active ? styles.presetCardActive : ""}`}
+                          onClick={() => {
+                            setSelectedStyleId(p.id);
+                            setPanel(null); // auto-close
+                          }}
+                        >
+                          <div className={styles.presetCover}>
+                            {p.coverUrl ? <img src={p.coverUrl} alt={p.name} /> : <div className={styles.presetCoverEmpty} />}
+
+                            {Array.isArray(p.exampleUrls) && p.exampleUrls.length > 0 ? (
+                              <div className={styles.presetHoverExamples}>
+                                {p.exampleUrls.slice(0, 4).map((url, idx) => (
+                                  <div key={`${p.id}_${idx}_${url}`} className={styles.presetHoverExample}>
+                                    <img src={url} alt={`${p.name} example ${idx + 1}`} />
+                                    <span className={styles.presetHoverBadge}>{idx + 1}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
+                          <div className={styles.presetName}>{p.name}</div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* VIEWER OVERLAY (al click en imagen) */}
+      {viewer && (
+        <div className={styles.viewerBackdrop} onClick={() => setViewer(null)}>
+          <div className={styles.viewer} onClick={(e) => e.stopPropagation()}>
+            <div className={styles.viewerTop}>
+              <div className={styles.viewerTitle}>
+                <span className={styles.viewerKicker}>GENERATION</span>
+                <span className={styles.viewerSub}>{viewer.isPublic ? "PUBLIC" : "PRIVATE"}</span>
+              </div>
+
+              <div className={styles.viewerTopActions}>
+                <button className={styles.iconBtn} type="button" title="Copiar prompt" onClick={() => copyToClipboard(viewer.prompt || "")}>
+                  <Icon name="copy" />
+                </button>
+
+                <button className={styles.iconBtn} type="button" title="Reusar prompt" onClick={() => reusePromptFromAsset(viewer)}>
+                  <Icon name="reuse" />
+                </button>
+
+                <button className={`${styles.iconBtn} ${styles.iconBtnMoney}`} type="button" title="Vender / Administrar listing" onClick={() => handleTogglePublish(viewer)}>
+                  <Icon name="money" />
+                </button>
+
+                <button className={styles.iconBtn} type="button" title="Descargar" onClick={() => handleDownload(viewer)}>
+                  <Icon name="download" />
+                </button>
+
+                <button className={styles.iconBtnDanger} type="button" title="Eliminar" onClick={() => handleDelete(viewer)}>
+                  <Icon name="trash" />
+                </button>
+
+                <button className={styles.closeBtn} type="button" onClick={() => setViewer(null)} title="Cerrar">
+                  <Icon name="close" />
+                </button>
+              </div>
+            </div>
+
+            <div className={styles.viewerBody}>
+              <div className={styles.viewerImageWrap}>
+                <img className={styles.viewerImage} src={viewer.url} alt={viewer.name} />
+              </div>
+
+              <div className={styles.viewerRecipe}>
+                <div className={styles.viewerRecipeTitle}>RECIPE</div>
+
+                <div className={styles.recipeGrid}>
+                  <div className={styles.recipeItem}>
+                    <div className={styles.recipeLabel}>Model</div>
+                    <div className={styles.recipeValue}>
+                      {prettyModelLabel(viewerRecipeInfo?.modelId || null)}
+                    </div>
+                  </div>
+
+                  <div className={styles.recipeItem}>
+                    <div className={styles.recipeLabel}>Aspect</div>
+                    <div className={styles.recipeValue}>{viewerRecipeInfo?.aspectRatio || "—"}</div>
+                  </div>
+
+                  <div className={styles.recipeItem}>
+                    <div className={styles.recipeLabel}>Quality</div>
+                    <div className={styles.recipeValue}>{viewerRecipeInfo?.quality || "—"}</div>
+                  </div>
+
+                  <div className={styles.recipeItem}>
+                    <div className={styles.recipeLabel}>Count</div>
+                    <div className={styles.recipeValue}>
+                      {viewerRecipeInfo?.count != null ? String(viewerRecipeInfo.count) : "—"}
+                    </div>
+                  </div>
+
+                  <div className={styles.recipeItem}>
+                    <div className={styles.recipeLabel}>Grid</div>
+                    <div className={styles.recipeValue}>{viewerRecipeInfo?.gridMode || "none"}</div>
+                  </div>
+
+                  <div className={styles.recipeItem}>
+                    <div className={styles.recipeLabel}>Web</div>
+                    <div className={styles.recipeValue}>{viewerRecipeInfo?.googleSearchGrounding ? "On" : "Off"}</div>
+                  </div>
+
+                  <div className={styles.recipeItemWide}>
+                    <div className={styles.recipeLabel}>Style</div>
+                    <div className={styles.recipeValue}>{viewerRecipeInfo?.styleName || "None"}</div>
+                  </div>
+                </div>
+
+                <div className={styles.recipeRefs}>
+                  <div className={styles.recipeLabel}>References</div>
+
+                  <div className={styles.recipeRefStrip}>
+                    {(viewerRecipeInfo?.refs?.chars?.length || 0) > 0 ? (
+                      viewerRecipeInfo!.refs.chars.map((a, i) => (
+                        <div key={a.id} className={styles.recipeRefThumb} title={`Character ${i + 1}`}>
+                          <img src={a.url} alt={`Character ${i + 1}`} />
+                          <span className={styles.recipeRefTag}>C{i + 1}</span>
+                        </div>
+                      ))
+                    ) : (
+                      <div className={styles.recipeEmpty}>No saved refs (legacy)</div>
+                    )}
+
+                    {(viewerRecipeInfo?.refs?.elements?.length || 0) > 0
+                      ? viewerRecipeInfo!.refs.elements.map((a, i) => (
+                          <div key={a.id} className={styles.recipeRefThumb} title={`Element ${i + 1}`}>
+                            <img src={a.url} alt={`Element ${i + 1}`} />
+                            <span className={styles.recipeRefTag}>E{i + 1}</span>
+                          </div>
+                        ))
+                      : null}
+
+                    {viewerRecipeInfo?.refs?.bg ? (
+                      <div className={styles.recipeRefThumb} title="Background">
+                        <img src={viewerRecipeInfo.refs.bg.url} alt="Background" />
+                        <span className={styles.recipeRefTag}>BG</span>
+                      </div>
+                    ) : null}
+
+                    {viewerRecipeInfo?.refs?.style ? (
+                      <div className={styles.recipeRefThumb} title="Style reference">
+                        <img src={viewerRecipeInfo.refs.style.url} alt="Style reference" />
+                        <span className={styles.recipeRefTag}>STYLE</span>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className={styles.recipeBlock}>
+                  <div className={styles.recipeLabel}>Prompt</div>
+                  <div className={styles.recipeValue}>
+                    {removeStylePresetBlock(viewer.prompt || "") || "—"}
+                  </div>
+                </div>
+
+                
               </div>
             </div>
           </div>
         </div>
-      ) : null}
+      )}
 
-      {/* =============================== */}
+            {/* =============================== */}
       {/* KLING: Create Element modal */}
       {/* =============================== */}
       {isElementCreateOpen && (
