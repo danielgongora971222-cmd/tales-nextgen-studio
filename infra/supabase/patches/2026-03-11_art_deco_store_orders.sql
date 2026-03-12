@@ -202,4 +202,20 @@ create trigger set_store_orders_updated_at
   before update on public.store_orders
   for each row execute procedure public.set_updated_at();
 
+-- =====================================================
+-- REFRESH PUBLIC CATALOG VIEW
+-- select * en vistas fija las columnas al momento de crearla,
+-- así que al añadir price_usd/currency/art_deco_payload debemos recrearla.
+-- =====================================================
+drop view if exists public.community_listings_public_catalog;
+
+create view public.community_listings_public_catalog as
+select l.*
+from public.community_listings l
+where l.status = 'active'
+  and public.billing_user_can_sell_now(l.seller_id);
+
+revoke all on table public.community_listings_public_catalog from PUBLIC, anon, authenticated;
+grant select on table public.community_listings_public_catalog to service_role;
+
 commit;

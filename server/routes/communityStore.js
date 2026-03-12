@@ -257,6 +257,93 @@ export function createCommunityStoreRouter(ctx) {
     return typeof candidate === "string" && candidate.startsWith("data:image/") ? candidate : null;
   }
 
+  const LISTING_SELECT_BASE = [
+    "id",
+    "name",
+    "seller_id",
+    "seller_username_snapshot",
+    "seller_verified_snapshot",
+    "listing_kind",
+    "media_tag",
+    "price_credits",
+    "description",
+    "status",
+    "preview_asset_id",
+    "created_at",
+    "likes_count",
+    "comments_count",
+    "sales_count",
+  ].join(", ");
+
+  const LISTING_SELECT_ART_DECO = ["price_usd", "currency", "art_deco_payload"].join(", ");
+  const LISTING_SELECT_FULL = `${LISTING_SELECT_BASE}, ${LISTING_SELECT_ART_DECO}`;
+
+  function isMissingPublicCatalogArtDecoColumn(error) {
+    const message = String(error?.message || "").toLowerCase();
+    return (
+      message.includes("community_listings_public_catalog")
+      && (message.includes("price_usd") || message.includes("currency") || message.includes("art_deco_payload"))
+    );
+  }
+
+  function applyListingsQueryShape(query, { media, seller, qSearch, sort, offset, limit }) {
+    let next = query.eq("status", "active");
+
+    if (media === "image" || media === "video" || media === "workflow") {
+      next = next.eq("media_tag", media);
+    }
+
+    if (seller) {
+      next = next.ilike("seller_username_snapshot", `%${seller}%`);
+    }
+
+    if (qSearch) {
+      const term = qSearch.startsWith("@") ? qSearch.slice(1) : qSearch;
+      next = next.or(`name.ilike.%${term}%,seller_username_snapshot.ilike.%${term}%`);
+    }
+
+    if (sort === "top_liked") {
+      next = next.order("likes_count", { ascending: false }).order("created_at", { ascending: false });
+    } else if (sort === "top_sold") {
+      next = next.order("sales_count", { ascending: false }).order("created_at", { ascending: false });
+    } else if (sort === "top_commented") {
+      next = next.order("comments_count", { ascending: false }).order("created_at", { ascending: false });
+    } else if (sort === "oldest") {
+      next = next.order("created_at", { ascending: true });
+    } else {
+      next = next.order("created_at", { ascending: false });
+    }
+
+    return next.range(offset, offset + limit - 1);
+  }
+
+  async function enrichLegacyCatalogRows(rows) {
+    const safeRows = Array.isArray(rows) ? rows : [];
+    const listingIds = safeRows.map((row) => row?.id).filter(Boolean);
+    const extrasById = new Map();
+
+    if (listingIds.length > 0) {
+      const { data: extras } = await supabaseAdmin
+        .from("community_listings")
+        .select(`id, ${LISTING_SELECT_ART_DECO}`)
+        .in("id", listingIds);
+
+      for (const extra of extras || []) {
+        extrasById.set(extra.id, extra);
+      }
+    }
+
+    return safeRows.map((row) => {
+      const extra = extrasById.get(row.id);
+      return {
+        ...row,
+        price_usd: extra?.price_usd ?? row.price_usd ?? 0,
+        currency: extra?.currency ?? row.currency ?? "USD",
+        art_deco_payload: extra?.art_deco_payload ?? row.art_deco_payload ?? null,
+      };
+    });
+  }
+
   // LISTINGS PUBLICOS (paginado)
   router.get("/community-store/listings", async (req, res) => {
     const limit = clampInt(req.query.limit, 1, 48, 12);
@@ -279,47 +366,50 @@ export function createCommunityStoreRouter(ctx) {
     if (sort === "most_commented") sort = "top_commented";
     if (sort === "best_seller") sort = "top_sold";
 
-    let q = supabaseAdmin
-      .from(mine ? "community_listings" : "community_listings_public_catalog")
-      .select(
-        "id, name, seller_id, seller_username_snapshot, seller_verified_snapshot, listing_kind, media_tag, price_credits, price_usd, currency, art_deco_payload, description, status, preview_asset_id, created_at, likes_count, comments_count, sales_count"
-      )
-      .eq("status", "active");
+    const queryShape = { media, seller, qSearch, sort, offset, limit };
+
+    let data = null;
+    let error = null;
 
     if (mine) {
       if (!user?.id) return err(res, 401, "AUTH_REQUIRED", "Necesitas iniciar sesión para ver tus listings.");
-      q = q.eq("seller_id", user.id);
-    }
 
-    if (media === "image" || media === "video" || media === "workflow") {
-      q = q.eq("media_tag", media);
-    }
+      const result = await applyListingsQueryShape(
+        supabaseAdmin
+          .from("community_listings")
+          .select(LISTING_SELECT_FULL)
+          .eq("seller_id", user.id),
+        queryShape
+      );
 
-    if (seller) {
-      q = q.ilike("seller_username_snapshot", `%${seller}%`);
-    }
-
-    if (qSearch) {
-      // Buscar por nombre del listing o por @creador
-      const term = qSearch.startsWith("@") ? qSearch.slice(1) : qSearch;
-      q = q.or(`name.ilike.%${term}%,seller_username_snapshot.ilike.%${term}%`);
-    }
-
-    if (sort === "top_liked") {
-      q = q.order("likes_count", { ascending: false }).order("created_at", { ascending: false });
-    } else if (sort === "top_sold") {
-      q = q.order("sales_count", { ascending: false }).order("created_at", { ascending: false });
-    } else if (sort === "top_commented") {
-      q = q.order("comments_count", { ascending: false }).order("created_at", { ascending: false });
-    } else if (sort === "oldest") {
-      q = q.order("created_at", { ascending: true });
+      data = result.data;
+      error = result.error;
     } else {
-      q = q.order("created_at", { ascending: false });
+      const primaryResult = await applyListingsQueryShape(
+        supabaseAdmin
+          .from("community_listings_public_catalog")
+          .select(LISTING_SELECT_FULL),
+        queryShape
+      );
+
+      data = primaryResult.data;
+      error = primaryResult.error;
+
+      if (error && isMissingPublicCatalogArtDecoColumn(error)) {
+        const legacyResult = await applyListingsQueryShape(
+          supabaseAdmin
+            .from("community_listings_public_catalog")
+            .select(LISTING_SELECT_BASE),
+          queryShape
+        );
+
+        if (legacyResult.error) return err(res, 500, "DB_QUERY_FAILED", legacyResult.error.message);
+
+        data = await enrichLegacyCatalogRows(legacyResult.data || []);
+        error = null;
+      }
     }
 
-    q = q.range(offset, offset + limit - 1);
-
-    const { data, error } = await q;
     if (error) return err(res, 500, "DB_QUERY_FAILED", error.message);
 
     const rows = data || [];
