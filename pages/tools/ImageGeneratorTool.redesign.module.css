@@ -1,0 +1,958 @@
+.root {
+  --burgundy: #5b0e14;
+  --burgundy-glow: rgba(91, 14, 20, 0.38);
+  --sand: #f1e194;
+  --sand-soft: rgba(241, 225, 148, 0.18);
+  --panel-bg: rgba(12, 7, 8, 0.78);
+  --panel-bg-strong: rgba(8, 5, 6, 0.9);
+  --panel-border: rgba(241, 225, 148, 0.14);
+  --panel-highlight: rgba(255, 255, 255, 0.08);
+  --text-main: rgba(255, 248, 230, 0.96);
+  --text-muted: rgba(255, 255, 255, 0.62);
+  --shadow-lg: 0 28px 70px rgba(0, 0, 0, 0.46);
+  --shadow-md: 0 18px 40px rgba(0, 0, 0, 0.34);
+  position: relative;
+  width: 100%;
+  height: calc(100dvh - 20px);
+  min-height: 640px;
+  padding: 12px;
+  overflow: hidden;
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at var(--mx, 50%) var(--my, 22%), rgba(241, 225, 148, 0.12), transparent 24%),
+    radial-gradient(circle at 18% 20%, rgba(91, 14, 20, 0.3), transparent 32%),
+    radial-gradient(circle at 80% 12%, rgba(241, 225, 148, 0.12), transparent 28%),
+    linear-gradient(180deg, #070305 0%, #030102 100%);
+  color: var(--text-main);
+}
+
+.root::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    radial-gradient(1px 1px at 12% 18%, rgba(255, 255, 255, 0.62), transparent),
+    radial-gradient(1px 1px at 28% 74%, rgba(255, 255, 255, 0.48), transparent),
+    radial-gradient(1px 1px at 42% 34%, rgba(255, 255, 255, 0.62), transparent),
+    radial-gradient(1px 1px at 68% 10%, rgba(255, 255, 255, 0.5), transparent),
+    radial-gradient(1px 1px at 82% 66%, rgba(255, 255, 255, 0.42), transparent),
+    radial-gradient(1px 1px at 92% 38%, rgba(255, 255, 255, 0.54), transparent);
+  background-size: 260px 260px;
+  opacity: 0.24;
+  pointer-events: none;
+}
+
+.layout {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  height: 100%;
+  min-height: 0;
+}
+
+.workspace {
+  min-width: 0;
+  min-height: 0;
+  border-radius: 26px;
+  border: 1px solid var(--panel-border);
+  background: linear-gradient(180deg, rgba(18, 11, 13, 0.92), rgba(8, 5, 6, 0.8));
+  box-shadow: var(--shadow-lg), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.workspaceScroll {
+  height: 100%;
+  overflow: auto;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.heroCard,
+.inlinePanel,
+.promptCard,
+.setupCard,
+.historyPanel {
+  border-radius: 24px;
+  border: 1px solid var(--panel-border);
+  background: linear-gradient(180deg, rgba(17, 10, 12, 0.92), rgba(8, 5, 6, 0.82));
+  box-shadow: var(--shadow-md), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.heroCard {
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.heroTop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.heroCopy {
+  min-width: 0;
+}
+
+.eyebrow,
+.sectionKicker,
+.inlinePanelKicker,
+.historyPanelCount {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(241, 225, 148, 0.9);
+}
+
+.toolTitle {
+  margin: 8px 0 0;
+  font-size: clamp(1.75rem, 2vw + 1rem, 2.45rem);
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+
+.toolSubtitle {
+  margin: 10px 0 0;
+  max-width: 780px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.heroActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.heroButton,
+.mobileHistoryButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(241, 225, 148, 0.18);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-main);
+  cursor: pointer;
+  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+
+.heroButton:hover,
+.mobileHistoryButton:hover {
+  transform: translateY(-1px);
+  border-color: rgba(241, 225, 148, 0.28);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.heroStats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.heroStat {
+  border-radius: 18px;
+  border: 1px solid rgba(241, 225, 148, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 14px;
+  min-width: 0;
+}
+
+.heroStatLabel,
+.parameterLabel,
+.setupChipLabel,
+.selectorMeta,
+.sectionMeta,
+.inlinePanelMeta,
+.costLabel,
+.railEmpty,
+.recipeThumbCaption {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.heroStatValue,
+.parameterValue,
+.setupChipValue,
+.costValue {
+  display: block;
+  margin-top: 6px;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.selectorGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.selectorCard {
+  min-height: 140px;
+  padding: 16px 14px;
+  border-radius: 22px;
+  border: 1px solid rgba(241, 225, 148, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 10px;
+  cursor: pointer;
+  text-align: left;
+  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+}
+
+.selectorCard:hover {
+  transform: translateY(-2px);
+  border-color: rgba(241, 225, 148, 0.25);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.selectorCardActive {
+  border-color: rgba(241, 225, 148, 0.38);
+  background: linear-gradient(180deg, rgba(91, 14, 20, 0.36), rgba(255, 255, 255, 0.05));
+  box-shadow: 0 0 0 1px rgba(241, 225, 148, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.selectorIcon {
+  width: 48px;
+  height: 48px;
+  border-radius: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(241, 225, 148, 0.08);
+  color: rgba(241, 225, 148, 0.9);
+}
+
+.selectorLabel {
+  display: block;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.selectionSummary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.summaryCard {
+  border-radius: 20px;
+  border: 1px solid rgba(241, 225, 148, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.summaryTitle,
+.sectionTitle,
+.inlinePanelTitle,
+.historyPanelTitle {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.summaryThumbRow,
+.inlineSelectedStrip {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.summaryThumb,
+.selectedPillThumb,
+.recipeThumbImage {
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.summaryTag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(241, 225, 148, 0.14);
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 12px;
+  color: var(--text-main);
+}
+
+.inlinePanel {
+  overflow: hidden;
+}
+
+.inlinePanelBody {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.inlinePanelHeader,
+.sectionHeader,
+.historyPanelHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.inlinePanelTitleGroup,
+.sectionHeaderCopy {
+  min-width: 0;
+}
+
+.inlinePanelActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.inlinePanelTopRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.inlineEmpty,
+.historyEmptyPanel {
+  border-radius: 18px;
+  border: 1px dashed rgba(241, 225, 148, 0.16);
+  padding: 18px;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.elementCardGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.elementCard {
+  border-radius: 18px;
+  border: 1px solid rgba(241, 225, 148, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  cursor: pointer;
+  text-align: left;
+  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+
+.elementCard:hover {
+  transform: translateY(-1px);
+  border-color: rgba(241, 225, 148, 0.24);
+}
+
+.elementCardActive {
+  border-color: rgba(241, 225, 148, 0.34);
+  background: rgba(91, 14, 20, 0.28);
+}
+
+.elementCardImage {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.elementCardMeta {
+  min-width: 0;
+}
+
+.elementCardName {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.3;
+  word-break: break-word;
+}
+
+.elementCardState {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.selectedPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 10px 8px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(241, 225, 148, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.selectedPillLabel {
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.selectedPillRemove {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: none;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-main);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.promptCard,
+.setupCard {
+  padding: 18px;
+}
+
+.promptCard {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.promptTextarea {
+  width: 100%;
+  min-height: 136px !important;
+  height: 136px !important;
+  border-radius: 20px !important;
+  padding: 18px !important;
+}
+
+.promptTextarea:focus-within {
+  min-height: 176px !important;
+  height: 176px !important;
+}
+
+.promptFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.costBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.generateBtnWide {
+  min-width: 200px;
+}
+
+.limitNotice {
+  font-size: 12px;
+  color: rgba(255, 214, 214, 0.86);
+}
+
+.parameterRail {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.parameterButton {
+  min-height: 74px;
+  padding: 14px 16px;
+  border-radius: 20px;
+  border: 1px solid rgba(241, 225, 148, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+
+.parameterButton:hover {
+  transform: translateY(-1px);
+  border-color: rgba(241, 225, 148, 0.24);
+}
+
+.parameterButtonActive {
+  border-color: rgba(241, 225, 148, 0.34);
+  background: rgba(91, 14, 20, 0.28);
+}
+
+.setupGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.setupChip {
+  border-radius: 18px;
+  border: 1px solid rgba(241, 225, 148, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 12px;
+  min-width: 0;
+}
+
+.historyAside {
+  position: relative;
+  display: flex;
+  gap: 12px;
+  min-height: 0;
+}
+
+.historyAsideExpanded {}
+
+.historyRail {
+  width: 86px;
+  border-radius: 24px;
+  border: 1px solid var(--panel-border);
+  background: linear-gradient(180deg, rgba(16, 10, 12, 0.96), rgba(8, 5, 6, 0.9));
+  box-shadow: var(--shadow-md), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  padding: 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.historyToggle {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 74px;
+  border-radius: 20px;
+  border: 1px solid rgba(241, 225, 148, 0.14);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-main);
+  cursor: pointer;
+}
+
+.historyToggleLabel {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(241, 225, 148, 0.85);
+}
+
+.railThumbList {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-right: 2px;
+}
+
+.railThumb,
+.railThumbPending {
+  width: 100%;
+  aspect-ratio: 0.8;
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(241, 225, 148, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  position: relative;
+  cursor: pointer;
+}
+
+.railThumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.railThumbActive {
+  border-color: rgba(241, 225, 148, 0.35);
+  box-shadow: 0 0 0 1px rgba(241, 225, 148, 0.14);
+}
+
+.railThumbPending {
+  display: grid;
+  place-items: center;
+  color: rgba(241, 225, 148, 0.9);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.railThumbPending::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(120deg, transparent 12%, rgba(241, 225, 148, 0.18) 50%, transparent 88%);
+  transform: translateX(-100%);
+  animation: railShimmer 1.4s linear infinite;
+}
+
+@keyframes railShimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+.railThumbBadge {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.66);
+  border: 1px solid rgba(241, 225, 148, 0.18);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.railEmpty {
+  text-align: center;
+  padding: 10px 2px;
+}
+
+.historyBackdrop {
+  display: none;
+}
+
+.historyPanel {
+  width: 0;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(10px);
+  overflow: hidden;
+  transition: width 0.22s ease, opacity 0.22s ease, transform 0.22s ease;
+}
+
+.historyPanelOpen {
+  width: min(440px, calc(100vw - 210px));
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+
+.historyPanelHeader {
+  padding: 16px 16px 0;
+}
+
+.historyPanelBody {
+  padding: 14px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+  height: calc(100% - 74px);
+  overflow: auto;
+}
+
+.selectedImageWrap {
+  width: 100%;
+  max-height: 300px;
+  border-radius: 22px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.34);
+  border: 1px solid rgba(241, 225, 148, 0.12);
+}
+
+.selectedImageWrapPortrait {
+  max-height: 380px;
+}
+
+.selectedImage {
+  width: 100%;
+  height: 100%;
+  max-height: inherit;
+  object-fit: contain;
+  display: block;
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.selectedImageCaption {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.viewerActionRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.viewerNav {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.viewerNavButton {
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  border: 1px solid rgba(241, 225, 148, 0.14);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-main);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.viewerNavButton:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.viewerNavMeta {
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.viewerRecipeCard {
+  border-radius: 20px;
+  border: 1px solid rgba(241, 225, 148, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.recipeBlock,
+.recipePrompt {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.recipeThumbScroller {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.recipeThumbButton {
+  width: 86px;
+  flex: 0 0 86px;
+  border-radius: 16px;
+  border: 1px solid rgba(241, 225, 148, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 6px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.recipeThumbButtonActive {
+  border-color: rgba(241, 225, 148, 0.34);
+  background: rgba(91, 14, 20, 0.28);
+}
+
+.recipeThumbImage {
+  width: 100%;
+  height: 82px;
+  object-fit: cover;
+  border-radius: 12px;
+  margin-bottom: 6px;
+}
+
+.mobileHistoryButton {
+  display: none;
+}
+
+@media (max-width: 1200px) {
+  .selectorGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .selectionSummary,
+  .setupGrid,
+  .heroStats,
+  .elementCardGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .historyPanelOpen {
+    width: min(420px, calc(100vw - 180px));
+  }
+}
+
+@media (max-width: 980px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr) 80px;
+  }
+
+  .historyAside {
+    position: relative;
+  }
+
+  .historyBackdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.58);
+    backdrop-filter: blur(6px);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+    z-index: 20;
+  }
+
+  .historyPanel {
+    position: fixed;
+    top: max(env(safe-area-inset-top), 12px);
+    right: 12px;
+    bottom: calc(env(safe-area-inset-bottom) + 92px);
+    width: min(440px, calc(100vw - 24px));
+    max-width: calc(100vw - 24px);
+    z-index: 30;
+    transform: translateX(calc(100% + 16px));
+    opacity: 0;
+  }
+
+  .historyPanelOpen {
+    width: min(440px, calc(100vw - 24px));
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  .historyAsideExpanded .historyBackdrop {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .heroTop,
+  .inlinePanelTopRow,
+  .promptFooter,
+  .sectionHeader,
+  .historyPanelHeader {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .heroActions {
+    justify-content: stretch;
+  }
+
+  .heroButton,
+  .mobileHistoryButton,
+  .generateBtnWide {
+    width: 100%;
+  }
+
+  .mobileHistoryButton {
+    display: inline-flex;
+  }
+}
+
+@media (max-width: 720px) {
+  .root {
+    height: auto;
+    min-height: calc(100dvh - 20px);
+  }
+
+  .layout {
+    grid-template-columns: minmax(0, 1fr) 74px;
+    gap: 10px;
+  }
+
+  .workspaceScroll,
+  .promptCard,
+  .setupCard,
+  .heroCard,
+  .inlinePanelBody,
+  .historyPanelBody,
+  .historyPanelHeader {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .selectorGrid,
+  .selectionSummary,
+  .parameterRail,
+  .setupGrid,
+  .heroStats,
+  .elementCardGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .selectorCard {
+    min-height: 118px;
+  }
+
+  .historyRail {
+    width: 74px;
+    padding: 10px 8px;
+  }
+
+  .historyToggle {
+    min-height: 66px;
+    border-radius: 18px;
+  }
+
+  .railThumb,
+  .railThumbPending {
+    border-radius: 16px;
+  }
+
+  .promptTextarea {
+    min-height: 124px !important;
+    height: 124px !important;
+  }
+
+  .promptTextarea:focus-within {
+    min-height: 164px !important;
+    height: 164px !important;
+  }
+
+  .viewerActionRow {
+    justify-content: space-between;
+  }
+}
