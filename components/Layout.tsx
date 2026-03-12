@@ -148,7 +148,8 @@ export default function Layout({
     currentRoute === AppRoute.TOOL_EXTEND_VIDEO ||
     currentRoute === AppRoute.TOOL_MOTION_CONTROL;
 
-  const plusActive = useMemo(() => isImageZone || isVideoZone, [isImageZone, isVideoZone]);
+  const isToolRoute = isImageZone || isVideoZone;
+  const plusActive = useMemo(() => isToolRoute, [isToolRoute]);
 
   function goProfileTab(tab: "profile" | "security" | "billing") {
     window.localStorage.setItem("tales_profile_focus", tab);
@@ -197,6 +198,8 @@ export default function Layout({
     ? "mx-auto max-w-[1360px] px-3 pb-[calc(env(safe-area-inset-bottom)+118px)] pt-[calc(env(safe-area-inset-top)+86px)] md:px-6 md:pb-[132px] md:pt-[calc(env(safe-area-inset-top)+94px)]"
     : isReel
     ? "h-full px-0 pb-0 pt-0"
+    : isToolRoute
+    ? "mx-auto max-w-[1600px] px-0 pb-0 pt-0 md:px-0 md:pb-0 md:pt-0"
     : "mx-auto max-w-[1600px] px-3 pb-[calc(env(safe-area-inset-bottom)+118px)] pt-[max(env(safe-area-inset-top),14px)] md:px-6 md:pb-[132px] md:pt-[max(env(safe-area-inset-top),18px)]";
 
   return (
@@ -358,53 +361,55 @@ export default function Layout({
         <div className={mainPaddingClass}>{children}</div>
       </main>
 
-      <nav className="pointer-events-none fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-[rgba(6,6,8,0.92)] shadow-[0_-18px_40px_rgba(0,0,0,0.45)] backdrop-blur-2xl">
-        <div className="mx-auto flex max-w-[920px] items-end justify-between gap-2 px-2 pt-2 pb-[max(env(safe-area-inset-bottom),10px)] md:px-5">
-          {bottomItems.slice(0, 2).map((item) => (
+      {!isToolRoute ? (
+        <nav className="pointer-events-none fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-[rgba(6,6,8,0.92)] shadow-[0_-18px_40px_rgba(0,0,0,0.45)] backdrop-blur-2xl">
+          <div className="mx-auto flex max-w-[920px] items-end justify-between gap-2 px-2 pt-2 pb-[max(env(safe-area-inset-bottom),10px)] md:px-5">
+            {bottomItems.slice(0, 2).map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                onClick={item.onClick}
+                className={`pointer-events-auto flex min-w-0 flex-1 flex-col items-center gap-1 rounded-[20px] px-2 py-2 text-[11px] font-semibold transition ${
+                  item.active ? "bg-white/10 text-white" : "text-white/58 hover:bg-white/5 hover:text-white"
+                }`}
+              >
+                {item.icon}
+                <span className="truncate">{item.label}</span>
+              </button>
+            ))}
+
             <button
-              key={item.key}
               type="button"
-              onClick={item.onClick}
-              className={`pointer-events-auto flex min-w-0 flex-1 flex-col items-center gap-1 rounded-[20px] px-2 py-2 text-[11px] font-semibold transition ${
-                item.active ? "bg-white/10 text-white" : "text-white/58 hover:bg-white/5 hover:text-white"
+              onClick={() => setCreateSheetOpen(true)}
+              className={`pointer-events-auto -mt-5 inline-flex h-16 w-16 shrink-0 items-center justify-center rounded-full border text-white shadow-[0_18px_44px_rgba(0,0,0,0.48)] transition ${
+                plusActive
+                  ? "border-[rgba(241,225,148,0.34)] bg-[rgba(241,225,148,0.18)]"
+                  : "border-white/10 bg-white/10 hover:bg-white/14"
               }`}
+              aria-label="Crear"
+              title="Crear"
             >
-              {item.icon}
-              <span className="truncate">{item.label}</span>
+              <Plus className="h-7 w-7" />
             </button>
-          ))}
 
-          <button
-            type="button"
-            onClick={() => setCreateSheetOpen(true)}
-            className={`pointer-events-auto -mt-5 inline-flex h-16 w-16 shrink-0 items-center justify-center rounded-full border text-white shadow-[0_18px_44px_rgba(0,0,0,0.48)] transition ${
-              plusActive
-                ? "border-[rgba(241,225,148,0.34)] bg-[rgba(241,225,148,0.18)]"
-                : "border-white/10 bg-white/10 hover:bg-white/14"
-            }`}
-            aria-label="Crear"
-            title="Crear"
-          >
-            <Plus className="h-7 w-7" />
-          </button>
+            {bottomItems.slice(2).map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                onClick={item.onClick}
+                className={`pointer-events-auto flex min-w-0 flex-1 flex-col items-center gap-1 rounded-[20px] px-2 py-2 text-[11px] font-semibold transition ${
+                  item.active ? "bg-white/10 text-white" : "text-white/58 hover:bg-white/5 hover:text-white"
+                }`}
+              >
+                {item.icon}
+                <span className="truncate">{item.label}</span>
+              </button>
+            ))}
+          </div>
+        </nav>
+      ) : null}
 
-          {bottomItems.slice(2).map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              onClick={item.onClick}
-              className={`pointer-events-auto flex min-w-0 flex-1 flex-col items-center gap-1 rounded-[20px] px-2 py-2 text-[11px] font-semibold transition ${
-                item.active ? "bg-white/10 text-white" : "text-white/58 hover:bg-white/5 hover:text-white"
-              }`}
-            >
-              {item.icon}
-              <span className="truncate">{item.label}</span>
-            </button>
-          ))}
-        </div>
-      </nav>
-
-      {user && !isReel ? <GenerationQueueWidget /> : null}
+      {user && !isReel && !isToolRoute ? <GenerationQueueWidget /> : null}
 
       <BottomSheet open={createSheetOpen} title="Create" onClose={() => setCreateSheetOpen(false)}>
         <div className="space-y-3 pb-2">

@@ -252,7 +252,7 @@ const AppContent: React.FC = () => {
       case AppRoute.IMAGE_GEN_ROOT:
         return <ImageGenHub onNavigate={navigate} />;
       case AppRoute.TOOL_GENERATOR:
-        return <ImageGeneratorTool />;
+        return <ImageGeneratorTool onNavigate={routeWithReset} currentRoute={route} />;
       case AppRoute.TOOL_RESTYLER:
         return <RestylerTool />;
       case AppRoute.TOOL_LIGHTROOM:
