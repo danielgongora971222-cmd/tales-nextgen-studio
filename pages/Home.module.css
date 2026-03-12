@@ -1,21 +1,26 @@
 .heroGrid {
   display: grid;
   gap: 18px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: stretch;
+}
+
+.heroCreatorCard {
+  grid-column: 1 / -1;
+  min-height: 248px;
 }
 
 @media (max-width: 1024px) {
   .heroGrid {
     gap: 12px;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 720px) {
   .heroGrid {
-    gap: 8px;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    grid-template-columns: 1fr;
   }
 }
 
@@ -32,14 +37,15 @@
   display: flex;
   align-items: flex-end;
   transition: transform 0.3s ease, box-shadow 0.3s ease;
-  box-shadow: 0 18px 40px rgba(0,0,0,0.4);
-}
-
-.heroCard:hover {
   transform: translateY(-4px);
   box-shadow:
     0 24px 54px rgba(0,0,0,0.55),
     0 0 36px var(--card-glow);
+}
+
+.heroCard:hover {
+  transform: translateY(0);
+  box-shadow: 0 18px 40px rgba(0,0,0,0.4);
 }
 
 .heroCard::before {
@@ -192,9 +198,13 @@
 
   /* Fondo “hero-card” del TXT :contentReference[oaicite:1]{index=1} */
   background: linear-gradient(145deg, rgba(15,15,15,0.9) 0%, rgba(5,5,5,0.95) 100%);
-  box-shadow: 0 10px 40px rgba(0,0,0,0.8), inset 0 1px 1px rgba(255,255,255,0.05);
+  box-shadow:
+    0 20px 50px -10px rgba(125, 69, 169, 0.4),
+    0 0 20px rgba(126, 170, 237, 0.2),
+    inset 0 1px 2px rgba(255,255,255,0.15);
   backdrop-filter: blur(10px);
-  border: 1px solid rgba(255,255,255,0.05);
+  border: 1px solid rgba(126, 170, 237, 0.3);
+  transform: translateY(-8px) scale(1.02);
 
   /* Aislamiento: evitamos que el card base empuje layout raro */
   transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1),
@@ -202,14 +212,11 @@
               border-color 0.5s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Hover del TXT :contentReference[oaicite:2]{index=2} */
+/* Hover invertido */
 .heroCardVideo:hover {
-  transform: translateY(-8px) scale(1.02);
-  box-shadow:
-    0 20px 50px -10px rgba(125, 69, 169, 0.4),
-    0 0 20px rgba(126, 170, 237, 0.2),
-    inset 0 1px 2px rgba(255,255,255,0.15);
-  border-color: rgba(126, 170, 237, 0.3);
+  transform: translateY(0) scale(1);
+  box-shadow: 0 10px 40px rgba(0,0,0,0.8), inset 0 1px 1px rgba(255,255,255,0.05);
+  border-color: rgba(255,255,255,0.05);
 }
 
 /* 🔥 CLAVE: Desactivar pseudo-elementos del card base (.heroCard::before/::after) SOLO en este botón */
@@ -238,13 +245,14 @@
 
   border-radius: 16px;
   background: rgba(10, 10, 14, 0.72);
-  border: 1px solid rgba(255,255,255,0.10);
+  border: 1px solid rgba(126,170,237,0.22);
   box-shadow:
-    inset 0 0 18px rgba(255,255,255,0.04),
-    0 0 18px rgba(126,170,237,0.10);
+    inset 0 0 22px rgba(255,255,255,0.05),
+    0 0 28px rgba(125,69,169,0.16);
 
   overflow: hidden;
   padding: 6px;
+  transform: translateY(-1px) scale(1.05) rotate(1.5deg);
 
   transition: transform 0.5s ease, box-shadow 0.5s ease, border-color 0.5s ease;
 }
@@ -258,11 +266,11 @@
 }
 
 .heroCardVideo:hover .oneNationLogoBadge {
-  transform: translateY(-1px) scale(1.05) rotate(1.5deg);
-  border-color: rgba(126,170,237,0.22);
+  transform: none;
+  border-color: rgba(255,255,255,0.10);
   box-shadow:
-    inset 0 0 22px rgba(255,255,255,0.05),
-    0 0 28px rgba(125,69,169,0.16);
+    inset 0 0 18px rgba(255,255,255,0.04),
+    0 0 18px rgba(126,170,237,0.10);
 }
 
 .oneNationCanvas {
@@ -272,12 +280,12 @@
   height: 100%;
   z-index: 0;
   pointer-events: none;
-  opacity: 0.8;
+  opacity: 1;
   transition: opacity 0.5s ease;
 }
 
 .heroCardVideo:hover .oneNationCanvas {
-  opacity: 1;
+  opacity: 0.8;
 }
 
 .oneNationOverlay {
@@ -325,12 +333,12 @@
   margin-left: 0;
   min-width: 0;          /* 🔥 permite que el texto haga wrap correctamente dentro de flex */
   max-width: 100%;
-  transform: translateX(0);
+  transform: translateX(8px);
   transition: transform 0.5s ease;
 }
 
 .heroCardVideo:hover .oneNationTextWrap {
-  transform: translateX(8px);
+  transform: translateX(0);
 }
 
 .oneNationKicker {
@@ -340,12 +348,12 @@
   letter-spacing: 0.2em;
   text-transform: uppercase;
   margin: 0 0 6px 0;
-  opacity: 0.82;
+  opacity: 1;
   transition: opacity 0.3s ease;
 }
 
 .heroCardVideo:hover .oneNationKicker {
-  opacity: 1;
+  opacity: 0.82;
 }
 
 .oneNationTitle {
@@ -406,8 +414,8 @@
   font-weight: 500;
 
   color: rgba(147, 197, 253, 1);
-  opacity: 0;
-  transform: translateX(-16px);
+  opacity: 1;
+  transform: translateX(0);
   transition: all 0.5s ease;
 
   /* evita que se desborde */
@@ -416,17 +424,18 @@
 }
 
 .heroCardVideo:hover .oneNationActionRow {
-  opacity: 1;
-  transform: translateX(0);
+  opacity: 0;
+  transform: translateX(-16px);
 }
 
 .oneNationArrow {
   width: 20px;
   height: 20px;
+  animation: oneNationArrowPulse 1s ease-in-out infinite;
 }
 
 .heroCardVideo:hover .oneNationArrow {
-  animation: oneNationArrowPulse 1s ease-in-out infinite;
+  animation: none;
 }
 
 @keyframes oneNationArrowPulse {
@@ -449,12 +458,12 @@
     rgba(125,69,169,0.95),
     transparent
   );
-  opacity: 0;
+  opacity: 1;
   transition: opacity 0.7s ease;
 }
 
 .heroCardVideo:hover .oneNationBottomBorder {
-  opacity: 1;
+  opacity: 0;
 }
 
 /* ===============================
@@ -466,9 +475,13 @@
 .heroCardRefBase {
   /* Base limpia (sin neblina): similar a 1NationUp */
   background: linear-gradient(145deg, rgba(15,15,15,0.9) 0%, rgba(5,5,5,0.95) 100%);
-  box-shadow: 0 10px 40px rgba(0,0,0,0.8), inset 0 1px 1px rgba(255,255,255,0.05);
+  box-shadow:
+    0 20px 50px -10px var(--ref-glow-2, rgba(125, 69, 169, 0.4)),
+    0 0 20px var(--ref-glow-1, rgba(126, 170, 237, 0.2)),
+    inset 0 1px 2px rgba(255,255,255,0.15);
   backdrop-filter: blur(8px);
-  border: 1px solid rgba(255,255,255,0.06);
+  border: 1px solid var(--ref-border-hover, rgba(255,255,255,0.22));
+  transform: translateY(-8px) scale(1.02);
 
   transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1),
               box-shadow 0.5s cubic-bezier(0.4, 0, 0.2, 1),
@@ -476,12 +489,9 @@
 }
 
 .heroCardRefBase:hover {
-  transform: translateY(-8px) scale(1.02);
-  box-shadow:
-    0 20px 50px -10px var(--ref-glow-2, rgba(125, 69, 169, 0.4)),
-    0 0 20px var(--ref-glow-1, rgba(126, 170, 237, 0.2)),
-    inset 0 1px 2px rgba(255,255,255,0.15);
-  border-color: var(--ref-border-hover, rgba(255,255,255,0.22));
+  transform: translateY(0) scale(1);
+  box-shadow: 0 10px 40px rgba(0,0,0,0.8), inset 0 1px 1px rgba(255,255,255,0.05);
+  border-color: rgba(255,255,255,0.06);
 }
 
 /* Desactiva los pseudo-elementos base de .heroCard (matrix/border) para que NO ensucien */
@@ -503,12 +513,12 @@
   height: 100%;
   z-index: 0;
   pointer-events: none;
-  opacity: 0.78;
+  opacity: 1;
   transition: opacity 0.5s ease;
 }
 
 .heroCardRefBase:hover .refCanvas {
-  opacity: 1;
+  opacity: 0.78;
 }
 
 .refOverlay {
@@ -539,23 +549,24 @@
 
   border-radius: 16px;
   background: rgba(10, 10, 14, 0.72);
-  border: 1px solid rgba(255,255,255,0.10);
+  border: 1px solid color-mix(in srgb, var(--ref-accent-1) 32%, rgba(255,255,255,0.10));
   box-shadow:
-    inset 0 0 18px rgba(255,255,255,0.04),
-    0 0 18px color-mix(in srgb, var(--ref-accent-1) 18%, transparent);
+    inset 0 0 22px rgba(255,255,255,0.05),
+    0 0 28px color-mix(in srgb, var(--ref-accent-1) 22%, transparent);
 
   overflow: hidden;
   padding: 6px;
+  transform: translateY(-1px) scale(1.05) rotate(1.5deg);
 
   transition: transform 0.5s ease, box-shadow 0.5s ease, border-color 0.5s ease;
 }
 
 .heroCardRefBase:hover .refLogoBadge {
-  transform: translateY(-1px) scale(1.05) rotate(1.5deg);
-  border-color: color-mix(in srgb, var(--ref-accent-1) 32%, rgba(255,255,255,0.10));
+  transform: none;
+  border-color: rgba(255,255,255,0.10);
   box-shadow:
-    inset 0 0 22px rgba(255,255,255,0.05),
-    0 0 28px color-mix(in srgb, var(--ref-accent-1) 22%, transparent);
+    inset 0 0 18px rgba(255,255,255,0.04),
+    0 0 18px color-mix(in srgb, var(--ref-accent-1) 18%, transparent);
 }
 
 .refLogoFallback {
@@ -600,12 +611,12 @@
 .refTextWrap {
   min-width: 0;
   max-width: 100%;
-  transform: translateX(0);
+  transform: translateX(8px);
   transition: transform 0.5s ease;
 }
 
 .heroCardRefBase:hover .refTextWrap {
-  transform: translateX(8px);
+  transform: translateX(0);
 }
 
 .refKicker {
@@ -615,12 +626,12 @@
   letter-spacing: 0.2em;
   text-transform: uppercase;
   margin: 0 0 6px 0;
-  opacity: 0.82;
+  opacity: 1;
   transition: opacity 0.3s ease;
 }
 
 .heroCardRefBase:hover .refKicker {
-  opacity: 1;
+  opacity: 0.82;
 }
 
 .refTitle {
@@ -688,8 +699,8 @@
   font-weight: 500;
 
   color: var(--ref-action-color, rgba(147, 197, 253, 1));
-  opacity: 0.42;
-  transform: translateX(-8px);
+  opacity: 1;
+  transform: translateX(0);
   transition: all 0.5s ease;
 
   max-width: 100%;
@@ -697,17 +708,18 @@
 }
 
 .heroCardRefBase:hover .refActionRow {
-  opacity: 1;
-  transform: translateX(0);
+  opacity: 0.42;
+  transform: translateX(-8px);
 }
 
 .refArrow {
   width: 20px;
   height: 20px;
+  animation: refArrowPulse 1s ease-in-out infinite;
 }
 
 .heroCardRefBase:hover .refArrow {
-  animation: refArrowPulse 1s ease-in-out infinite;
+  animation: none;
 }
 
 @keyframes refArrowPulse {
@@ -732,12 +744,12 @@
     transparent
   );
 
-  opacity: 0;
+  opacity: 1;
   transition: opacity 0.7s ease;
 }
 
 .heroCardRefBase:hover .refBottomBorder {
-  opacity: 1;
+  opacity: 0;
 }
 
 .designsTheme {
@@ -825,6 +837,10 @@
   .oneNationHeroCard {
     min-height: 154px;
     border-radius: 20px;
+  }
+
+  .heroCreatorCard {
+    min-height: 170px;
   }
 
   .refLogoBadge,

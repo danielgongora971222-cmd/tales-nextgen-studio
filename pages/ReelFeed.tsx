@@ -583,7 +583,7 @@ export default function ReelFeed({ onNavigate }: Props) {
                     <button type="button" onClick={() => handleLike(item.id)} className="flex flex-col items-center gap-1">
                       <span
                         className={`inline-flex h-11 w-11 items-center justify-center rounded-full backdrop-blur-md transition ${
-                          item.likedByMe ? "bg-[rgba(241,225,148,0.16)] text-white" : "bg-black/35 text-white/92 hover:bg-black/55"
+                          item.likedByMe ? "bg-[rgba(255,77,109,0.16)] text-[#ff4d6d]" : "bg-black/35 text-white/92 hover:bg-black/55"
                         }`}
                       >
                         {actionBusyId === item.id ? (

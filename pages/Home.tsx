@@ -188,17 +188,17 @@ export default function Home({ onNavigate }: HomeProps) {
 
   const designsBtnRef = useRef<HTMLButtonElement | null>(null);
   const designsCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const designsHoverRef = useRef(false);
+  const designsHoverRef = useRef(true);
   const designsMouseRef = useRef({ x: -1000, y: -1000 });
 
   const creatorBtnRef = useRef<HTMLDivElement | null>(null);
   const creatorCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const creatorHoverRef = useRef(false);
+  const creatorHoverRef = useRef(true);
   const creatorMouseRef = useRef({ x: -1000, y: -1000 });
 
   const oneNationBtnRef = useRef<HTMLButtonElement | null>(null);
   const oneNationCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const oneNationHoverRef = useRef(false);
+  const oneNationHoverRef = useRef(true);
   const oneNationMouseRef = useRef({ x: -1000, y: -1000 });
 
   useEffect(() => {
@@ -241,16 +241,98 @@ export default function Home({ onNavigate }: HomeProps) {
   return (
     <div className="space-y-8 pb-4 md:space-y-10">
       <section className={styles.heroGrid}>
+        <div
+          ref={creatorBtnRef}
+          className={`${styles.heroCard} ${styles.heroCardRefBase} ${styles.refHeroCard} ${styles.monoTheme} ${styles.heroCreatorCard}`}
+          role="button"
+          tabIndex={0}
+          onClick={() => {
+            window.localStorage.setItem("tales_profile_focus", "profile");
+            onNavigate(AppRoute.PROFILE);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              window.localStorage.setItem("tales_profile_focus", "profile");
+              onNavigate(AppRoute.PROFILE);
+            }
+          }}
+          onMouseEnter={() => {
+            creatorHoverRef.current = false;
+          }}
+          onMouseLeave={() => {
+            creatorHoverRef.current = true;
+            creatorMouseRef.current = { x: -1000, y: -1000 };
+          }}
+          onMouseMove={(event) => {
+            const rect = (event.currentTarget as HTMLDivElement).getBoundingClientRect();
+            creatorMouseRef.current = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+          }}
+        >
+          <canvas ref={creatorCanvasRef} className={styles.refCanvas} />
+          <div className={styles.refOverlay} aria-hidden="true" />
+          <div className={styles.refLogoBadge} aria-hidden="true">
+            <span className={styles.refLogoFallback}>C</span>
+            <img
+              src="/brands/creator-hub/logo.png"
+              alt="Creator"
+              className={styles.refLogo}
+              loading="lazy"
+              decoding="async"
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).style.display = "none";
+              }}
+            />
+          </div>
+
+          <div className={styles.refFront}>
+            <div className={styles.refTextWrap}>
+              <h2 className={styles.refKicker}>Your Space</h2>
+              <h1 className={styles.refTitle} title={user?.username || "Creator"}>
+                <span className={styles.refGradientText}>{username}</span>
+              </h1>
+
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/74">
+                <span className="rounded-full border border-white/10 bg-white/10 px-3 py-1.5">{credits} credits</span>
+                <span className="rounded-full border border-white/10 bg-white/6 px-3 py-1.5">{activePlan}</span>
+              </div>
+
+              <div className="mt-3 flex items-center gap-2">
+                <button
+                  type="button"
+                  className={styles.heroCreditsButton}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    window.localStorage.setItem("tales_account_tab", "plans");
+                    onNavigate(AppRoute.PAYWALL);
+                  }}
+                >
+                  Manage
+                </button>
+              </div>
+
+              <div className={styles.refActionRow}>
+                <span>Profile</span>
+                <svg className={styles.refArrow} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 8l4 4m0 0l-4 4m4-4H3" />
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          <div className={styles.refBottomBorder} aria-hidden="true" />
+        </div>
+
         <button
           ref={designsBtnRef}
           type="button"
           onClick={() => onNavigate(AppRoute.IMAGE_GEN_ROOT)}
           className={`${styles.heroCard} ${styles.heroCardRefBase} ${styles.refHeroCard} ${styles.designsTheme}`}
           onMouseEnter={() => {
-            designsHoverRef.current = true;
+            designsHoverRef.current = false;
           }}
           onMouseLeave={() => {
-            designsHoverRef.current = false;
+            designsHoverRef.current = true;
             designsMouseRef.current = { x: -1000, y: -1000 };
           }}
           onMouseMove={(event) => {
@@ -293,98 +375,16 @@ export default function Home({ onNavigate }: HomeProps) {
           <div className={styles.refBottomBorder} aria-hidden="true" />
         </button>
 
-        <div
-          ref={creatorBtnRef}
-          className={`${styles.heroCard} ${styles.heroCardRefBase} ${styles.refHeroCard} ${styles.monoTheme}`}
-          role="button"
-          tabIndex={0}
-          onClick={() => {
-            window.localStorage.setItem("tales_profile_focus", "profile");
-            onNavigate(AppRoute.PROFILE);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              window.localStorage.setItem("tales_profile_focus", "profile");
-              onNavigate(AppRoute.PROFILE);
-            }
-          }}
-          onMouseEnter={() => {
-            creatorHoverRef.current = true;
-          }}
-          onMouseLeave={() => {
-            creatorHoverRef.current = false;
-            creatorMouseRef.current = { x: -1000, y: -1000 };
-          }}
-          onMouseMove={(event) => {
-            const rect = (event.currentTarget as HTMLDivElement).getBoundingClientRect();
-            creatorMouseRef.current = { x: event.clientX - rect.left, y: event.clientY - rect.top };
-          }}
-        >
-          <canvas ref={creatorCanvasRef} className={styles.refCanvas} />
-          <div className={styles.refOverlay} aria-hidden="true" />
-          <div className={styles.refLogoBadge} aria-hidden="true">
-            <span className={styles.refLogoFallback}>C</span>
-            <img
-              src="/brands/creator-hub/logo.png"
-              alt="Creator"
-              className={styles.refLogo}
-              loading="lazy"
-              decoding="async"
-              onError={(e) => {
-                (e.currentTarget as HTMLImageElement).style.display = "none";
-              }}
-            />
-          </div>
-
-          <div className={styles.refFront}>
-            <div className={styles.refTextWrap}>
-              <h2 className={styles.refKicker}>Your space</h2>
-              <h1 className={styles.refTitle} title={user?.username || "Creator"}>
-                <span className={styles.refGradientText}>{username}</span>
-              </h1>
-
-              <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/74">
-                <span className="rounded-full border border-white/10 bg-white/10 px-3 py-1.5">{credits} credits</span>
-                <span className="rounded-full border border-white/10 bg-white/6 px-3 py-1.5">{activePlan}</span>
-              </div>
-
-              <div className="mt-3 flex items-center gap-2">
-                <button
-                  type="button"
-                  className={styles.heroCreditsButton}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    window.localStorage.setItem("tales_account_tab", "plans");
-                    onNavigate(AppRoute.PAYWALL);
-                  }}
-                >
-                  Manage
-                </button>
-              </div>
-
-              <div className={styles.refActionRow}>
-                <span>Profile</span>
-                <svg className={styles.refArrow} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 8l4 4m0 0l-4 4m4-4H3" />
-                </svg>
-              </div>
-            </div>
-          </div>
-
-          <div className={styles.refBottomBorder} aria-hidden="true" />
-        </div>
-
         <button
           ref={oneNationBtnRef}
           type="button"
           onClick={() => onNavigate(AppRoute.STORE)}
           className={`${styles.heroCard} ${styles.heroCardVideo} ${styles.oneNationHeroCard}`}
           onMouseEnter={() => {
-            oneNationHoverRef.current = true;
+            oneNationHoverRef.current = false;
           }}
           onMouseLeave={() => {
-            oneNationHoverRef.current = false;
+            oneNationHoverRef.current = true;
             oneNationMouseRef.current = { x: -1000, y: -1000 };
           }}
           onMouseMove={(event) => {

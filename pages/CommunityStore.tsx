@@ -3,12 +3,9 @@ import {
   ArrowRight,
   ArrowRightLeft,
   Heart,
-  Image as ImageIcon,
   Loader2,
   Search,
   SlidersHorizontal,
-  Sparkles,
-  Video,
 } from "lucide-react";
 import { AppRoute } from "../types";
 import { useAuth } from "../contexts/AuthContext";
@@ -26,6 +23,7 @@ import {
   type CommunityMediaKey,
   type CommunitySortKey,
 } from "../services/communityFeedState";
+import styles from "./CommunityStore.module.css";
 
 interface Props {
   onNavigate: (route: AppRoute) => void;
@@ -52,13 +50,6 @@ type ListingItem = {
 function compact(value: any) {
   const num = Number(value || 0);
   return new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(num);
-}
-
-function truncate(text?: string, max = 110) {
-  const value = String(text || "").trim();
-  if (!value) return "Preset y receta listos para verse mejor en carrete o reusar después de la compra.";
-  if (value.length <= max) return value;
-  return `${value.slice(0, max).trim()}…`;
 }
 
 function avatarSeed(username?: string) {
@@ -330,94 +321,82 @@ export default function CommunityStore({ onNavigate }: Props) {
         {error ? <div className="text-sm text-rose-300">{error}</div> : null}
       </div>
 
-      <div className="mt-5 grid grid-cols-2 gap-3 md:mt-6 md:grid-cols-3 xl:grid-cols-4">
+      <div className={styles.feedGrid}>
         {items.map((item) => {
           const purchased = Boolean(item.purchasedByMe || item.ownedByMe);
           const busyLike = Boolean(busyLikeById[item.id]);
+          const listingTitle = (item.name || "Community listing").trim() || "Community listing";
+          const sellerName = item.sellerUsername || "creator";
 
           return (
-            <article
-              key={item.id}
-              role="button"
-              tabIndex={0}
-              onClick={() => openInReel(item.id)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  openInReel(item.id);
-                }
-              }}
-              className="group relative min-h-[260px] overflow-hidden rounded-[28px] border border-white/10 bg-black/35 shadow-[0_16px_40px_rgba(0,0,0,0.35)] transition duration-300 hover:-translate-y-0.5 hover:border-white/15"
-            >
-              {item.previewUrl ? (
-                item.mediaTag === "video" ? (
-                  <video
-                    src={item.previewUrl}
-                    muted
-                    playsInline
-                    preload="metadata"
-                    className="absolute inset-0 h-full w-full object-cover"
-                  />
+            <article key={item.id} className={styles.card}>
+              <button
+                type="button"
+                className={styles.mediaButton}
+                onClick={() => openInReel(item.id)}
+                aria-label={`Ver ${listingTitle}`}
+              >
+                {item.previewUrl ? (
+                  item.mediaTag === "video" ? (
+                    <video
+                      src={item.previewUrl}
+                      muted
+                      playsInline
+                      preload="metadata"
+                      className={styles.media}
+                    />
+                  ) : (
+                    <img src={item.previewUrl} alt={listingTitle} className={styles.media} loading="lazy" decoding="async" />
+                  )
                 ) : (
-                  <img src={item.previewUrl} alt={item.name || "Listing"} className="absolute inset-0 h-full w-full object-cover" />
-                )
-              ) : (
-                <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(241,225,148,0.22),transparent_36%),linear-gradient(180deg,rgba(91,14,20,0.42),rgba(0,0,0,0.92))]" />
-              )}
+                  <div className={styles.mediaFallback}>
+                    <span>Vista previa no disponible</span>
+                  </div>
+                )}
+              </button>
 
-              <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.1),rgba(0,0,0,0.18)_35%,rgba(0,0,0,0.74)_76%,rgba(0,0,0,0.95))]" />
-
-              <div className="absolute left-3 right-3 top-3 flex items-start justify-between gap-3">
-                <div className="inline-flex min-w-0 max-w-[72%] items-center gap-2 rounded-full bg-black/35 px-2 py-2 text-xs font-semibold text-white/86 backdrop-blur-md">
-                  <img
-                    src={avatarSeed(item.sellerUsername)}
-                    alt={item.sellerUsername || "creator"}
-                    className="h-7 w-7 rounded-full border border-white/15 bg-black/25 object-cover"
-                  />
-                  <span className="truncate">@{item.sellerUsername || "creator"}</span>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={(event) => void handleLike(event, item.id)}
-                  disabled={busyLike}
-                  className={`inline-flex h-10 w-10 items-center justify-center rounded-full border backdrop-blur-md transition ${
-                    item.likedByMe
-                      ? "border-[rgba(241,225,148,0.3)] bg-[rgba(241,225,148,0.16)] text-white"
-                      : "border-white/10 bg-black/35 text-white/88 hover:bg-black/50"
-                  } ${busyLike ? "opacity-70" : ""}`}
-                  aria-label={item.likedByMe ? "Quitar like" : "Dar like"}
-                >
-                  {busyLike ? <Loader2 className="h-4 w-4 animate-spin" /> : <Heart className="h-4 w-4" fill={item.likedByMe ? "currentColor" : "none"} />}
-                </button>
-              </div>
-
-              <div className="absolute left-3 right-3 bottom-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="inline-flex items-center gap-2 rounded-full bg-black/35 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/74 backdrop-blur-md">
-                    {item.mediaTag === "video" ? <Video className="h-3.5 w-3.5" /> : item.mediaTag === "workflow" ? <Sparkles className="h-3.5 w-3.5" /> : <ImageIcon className="h-3.5 w-3.5" />}
-                    {item.mediaTag === "video" ? "Video" : item.mediaTag === "workflow" ? "Workflow" : "Image"}
+              <div className={styles.cardBody}>
+                <div className={styles.sellerRow}>
+                  <div className={styles.sellerIdentity}>
+                    <img
+                      src={avatarSeed(sellerName)}
+                      alt={sellerName}
+                      className={styles.avatar}
+                      loading="lazy"
+                      decoding="async"
+                    />
+                    <span className={styles.sellerName}>@{sellerName}</span>
                   </div>
 
-                  <div className="rounded-full bg-[rgba(241,225,148,0.18)] px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.18em] text-white">
-                    {purchased ? "Purchased" : `${Number(item.priceCredits || 0).toLocaleString()} credits`}
-                  </div>
+                  {purchased ? <span className={`${styles.statePill} ${styles.statePillOwned}`}>Comprado</span> : null}
                 </div>
 
-                <div className="mt-3">
-                  <div className="text-lg font-black tracking-tight text-white">{item.name || "Community listing"}</div>
-                  <p className="mt-2 text-sm leading-5 text-white/74">{truncate(item.description)}</p>
-                </div>
+                <h3 className={styles.title}>{listingTitle}</h3>
 
-                <div className="mt-4 flex items-center justify-between gap-3">
-                  <div className="text-xs text-white/54">
-                    {compact(item.likesCount)} likes · {compact(item.commentsCount)} comments · {compact(item.salesCount)} sales
-                  </div>
+                <div className={styles.actionsRow}>
+                  <span className={`${styles.pricePill} ${purchased ? styles.pricePillOwned : ""}`}>
+                    {purchased ? "Comprado" : `${Number(item.priceCredits || 0).toLocaleString()} créditos`}
+                  </span>
 
-                  <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/6 px-3 py-2 text-xs font-semibold text-white/82 backdrop-blur-md transition group-hover:bg-white/10">
-                    Open in Carrete
+                  <button
+                    type="button"
+                    onClick={(event) => void handleLike(event, item.id)}
+                    disabled={busyLike}
+                    className={`${styles.likeButton} ${item.likedByMe ? styles.likeButtonActive : ""} ${busyLike ? styles.likeButtonBusy : ""}`}
+                    aria-label={item.likedByMe ? "Quitar like" : "Dar like"}
+                  >
+                    {busyLike ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Heart className="h-4 w-4" fill={item.likedByMe ? "currentColor" : "none"} />
+                    )}
+                    <span>{compact(item.likesCount)}</span>
+                  </button>
+
+                  <button type="button" className={styles.buyButton} onClick={() => openInReel(item.id)}>
+                    <span>Ir a comprar</span>
                     <ArrowRight className="h-4 w-4" />
-                  </div>
+                  </button>
                 </div>
               </div>
             </article>
