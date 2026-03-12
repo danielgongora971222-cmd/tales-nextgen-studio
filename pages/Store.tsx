@@ -1,8 +1,7 @@
 import React from "react";
-import { AppRoute, Asset } from "../types";
+import { AppRoute, Asset, StorePrefill } from "../types";
 import StoreNewUI from "./StoreNewUI";
 
-type StorePrefill = { asset?: Asset | null };
 
 interface StoreProps {
   onNavigate: (route: AppRoute) => void;

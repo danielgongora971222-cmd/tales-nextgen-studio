@@ -8,7 +8,7 @@ import Store from "./pages/Store";
 import CommunityStore from "./pages/CommunityStore";
 import MyTrades from "./pages/MyTrades";
 import SellListingModal from "./components/SellListingModal";
-import type { Asset } from "./types";
+import type { Asset, StorePrefill } from "./types";
 import ImageGeneratorTool from "./pages/tools/ImageGeneratorTool";
 import Profile from "./pages/Profile";
 import RestylerTool from "./pages/tools/RestylerTool";
@@ -47,7 +47,7 @@ const AppContent: React.FC = () => {
   const [route, setRoute] = useState<AppRoute>(AppRoute.HOME);
   const [authModalOpen, setAuthModalOpen] = useState(false);
 
-  const [storePrefill, setStorePrefill] = useState<{ asset?: any | null }>({ asset: null });
+  const [storePrefill, setStorePrefill] = useState<StorePrefill>({ asset: null, artDecoListing: null });
   const [upscalerPrefill, setUpscalerPrefill] = useState<any | null>(null);
 
   const [sellOpen, setSellOpen] = useState<boolean>(false);
@@ -102,7 +102,8 @@ const AppContent: React.FC = () => {
   useEffect(() => {
     const onOpenStore = (ev: any) => {
       const asset = ev?.detail?.asset || null;
-      setStorePrefill({ asset });
+      const artDecoListing = ev?.detail?.artDecoListing || null;
+      setStorePrefill({ asset, artDecoListing });
       navigate(AppRoute.STORE);
     };
 
@@ -214,7 +215,7 @@ const AppContent: React.FC = () => {
   };
 
   const routeWithReset = (nextRoute: AppRoute) => {
-    setStorePrefill({ asset: null });
+    setStorePrefill({ asset: null, artDecoListing: null });
     navigate(nextRoute);
   };
 
@@ -230,7 +231,7 @@ const AppContent: React.FC = () => {
             prefill={storePrefill}
             onRequestUpscale={(asset) => {
               setUpscalerPrefill(asset);
-              setStorePrefill({ asset: null });
+              setStorePrefill({ asset: null, artDecoListing: null });
               navigate(AppRoute.TOOL_UPSCALER);
             }}
           />

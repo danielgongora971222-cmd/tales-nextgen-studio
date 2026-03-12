@@ -35,8 +35,11 @@ type ListingItem = {
   sellerUsername?: string;
   sellerVerified?: boolean;
   mediaTag?: string;
+  listingKind?: string;
   name?: string;
   priceCredits?: number;
+  priceUsd?: number;
+  currency?: string;
   description?: string;
   previewUrl?: string | null;
   likesCount?: number;
@@ -54,6 +57,14 @@ function compact(value: any) {
 
 function avatarSeed(username?: string) {
   return `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(String(username || "creator"))}`;
+}
+
+function formatListingPrice(item: ListingItem) {
+  if (item.listingKind === 'art_deco') {
+    const amount = Number(item.priceUsd || 0);
+    return amount > 0 ? `$${amount.toFixed(2)} ${item.currency || 'USD'}` : 'Art Deco';
+  }
+  return `${Number(item.priceCredits || 0).toLocaleString()} créditos`;
 }
 
 export default function CommunityStore({ onNavigate }: Props) {
@@ -368,14 +379,14 @@ export default function CommunityStore({ onNavigate }: Props) {
                     <span className={styles.sellerName}>@{sellerName}</span>
                   </div>
 
-                  {purchased ? <span className={`${styles.statePill} ${styles.statePillOwned}`}>Comprado</span> : null}
+                  {item.listingKind === 'art_deco' ? <span className={`${styles.statePill} ${styles.statePillOwned}`}>{item.ownedByMe ? 'Tu Art Deco' : 'Art Deco'}</span> : purchased ? <span className={`${styles.statePill} ${styles.statePillOwned}`}>Comprado</span> : null}
                 </div>
 
                 <h3 className={styles.title}>{listingTitle}</h3>
 
                 <div className={styles.actionsRow}>
                   <span className={`${styles.pricePill} ${purchased ? styles.pricePillOwned : ""}`}>
-                    {purchased ? "Comprado" : `${Number(item.priceCredits || 0).toLocaleString()} créditos`}
+                    {purchased && item.listingKind !== 'art_deco' ? 'Comprado' : formatListingPrice(item)}
                   </span>
 
                   <button
@@ -394,7 +405,7 @@ export default function CommunityStore({ onNavigate }: Props) {
                   </button>
 
                   <button type="button" className={styles.buyButton} onClick={() => openInReel(item.id)}>
-                    <span>Ir a comprar</span>
+                    <span>{item.listingKind === 'art_deco' ? 'Ver compra física' : 'Ir a comprar'}</span>
                     <ArrowRight className="h-4 w-4" />
                   </button>
                 </div>

@@ -157,6 +157,116 @@ export function createTradesRouter(ctx) {
     return map;
   }
 
+  router.get("/trades/art-deco/summary", async (req, res) => {
+    const { user, error } = await requireUser(req);
+    if (error) return res.status(401).json({ ok: false, error });
+
+    const emptySummary = { ordersCount: 0, grossRevenueUsd: 0, baseServiceUsd: 0, sellerProfitUsd: 0 };
+
+    let buyerRows = [];
+    let sellerRows = [];
+    try {
+      const [buyerResp, sellerResp] = await Promise.all([
+        supabaseAdmin
+          .from("store_orders")
+          .select("id, art_deco_listing_id, seller_id, sale_price_usd, base_service_price_usd, seller_profit_usd, currency, status, payload, created_at")
+          .eq("buyer_id", user.id)
+          .eq("order_kind", "art_deco")
+          .order("created_at", { ascending: false })
+          .range(0, 49),
+        supabaseAdmin
+          .from("store_orders")
+          .select("id, art_deco_listing_id, buyer_id, sale_price_usd, base_service_price_usd, seller_profit_usd, currency, status, payload, created_at")
+          .eq("seller_id", user.id)
+          .eq("order_kind", "art_deco")
+          .order("created_at", { ascending: false })
+          .range(0, 49),
+      ]);
+
+      if (buyerResp.error) throw buyerResp.error;
+      if (sellerResp.error) throw sellerResp.error;
+      buyerRows = Array.isArray(buyerResp.data) ? buyerResp.data : [];
+      sellerRows = Array.isArray(sellerResp.data) ? sellerResp.data : [];
+    } catch (e) {
+      const code = String(e?.code || "");
+      const msg = String(e?.message || "").toLowerCase();
+      const missing = code === "42P01" || msg.includes("does not exist") || msg.includes("relation");
+      if (!missing) return err(res, 500, "DB_QUERY_FAILED", e?.message || "No se pudo cargar Art Deco trades.");
+      return res.json({ ok: true, buyerOrders: [], sellerOrders: [], sellerSummary: emptySummary });
+    }
+
+    const listingIds = [...new Set([...buyerRows, ...sellerRows].map((row) => row.art_deco_listing_id).filter(Boolean))];
+    const listingMap = new Map();
+    if (listingIds.length > 0) {
+      const { data: listingRows, error: listingErr } = await supabaseAdmin
+        .from("community_listings")
+        .select("id, name, preview_asset_id, art_deco_payload")
+        .in("id", listingIds);
+      if (listingErr) return err(res, 500, "DB_QUERY_FAILED", listingErr.message);
+
+      const previewMap = await resolveAssetPreviewMap((listingRows || []).map((row) => row.preview_asset_id));
+      for (const row of listingRows || []) {
+        const payload = row.art_deco_payload && typeof row.art_deco_payload === "object" ? row.art_deco_payload : {};
+        listingMap.set(row.id, {
+          name: row.name || "Art Deco listing",
+          previewUrl: typeof payload?.croppedImageDataUrl === "string" && payload.croppedImageDataUrl.startsWith("data:image/")
+            ? payload.croppedImageDataUrl
+            : (row.preview_asset_id ? previewMap.get(row.preview_asset_id) || null : null),
+          payload,
+        });
+      }
+    }
+
+    const buyerOrders = buyerRows.map((row) => {
+      const listing = listingMap.get(row.art_deco_listing_id) || {};
+      const payload = row.payload && typeof row.payload === "object" ? row.payload : {};
+      return {
+        id: row.id,
+        listingId: row.art_deco_listing_id,
+        name: listing.name || payload?.assetName || "Art Deco order",
+        previewUrl: listing.previewUrl || payload?.croppedImageDataUrl || payload?.assetUrl || null,
+        materialLabel: payload?.materialLabel || null,
+        sizeLabel: payload?.size?.label || null,
+        salePriceUsd: asNumber(row.sale_price_usd),
+        currency: row.currency || "USD",
+        status: row.status || "created",
+        createdAt: toMillis(row.created_at) || Date.now(),
+      };
+    });
+
+    const sellerOrders = sellerRows.map((row) => {
+      const listing = listingMap.get(row.art_deco_listing_id) || {};
+      const payload = row.payload && typeof row.payload === "object" ? row.payload : {};
+      return {
+        id: row.id,
+        listingId: row.art_deco_listing_id,
+        name: listing.name || payload?.assetName || "Art Deco sale",
+        previewUrl: listing.previewUrl || payload?.croppedImageDataUrl || payload?.assetUrl || null,
+        materialLabel: payload?.materialLabel || null,
+        sizeLabel: payload?.size?.label || null,
+        salePriceUsd: asNumber(row.sale_price_usd),
+        baseServiceUsd: asNumber(row.base_service_price_usd),
+        sellerProfitUsd: asNumber(row.seller_profit_usd),
+        currency: row.currency || "USD",
+        status: row.status || "created",
+        createdAt: toMillis(row.created_at) || Date.now(),
+      };
+    });
+
+    const sellerSummary = sellerOrders.reduce(
+      (acc, row) => {
+        acc.ordersCount += 1;
+        acc.grossRevenueUsd += asNumber(row.salePriceUsd);
+        acc.baseServiceUsd += asNumber(row.baseServiceUsd);
+        acc.sellerProfitUsd += asNumber(row.sellerProfitUsd);
+        return acc;
+      },
+      { ...emptySummary }
+    );
+
+    return res.json({ ok: true, buyerOrders, sellerOrders, sellerSummary });
+  });
+
   router.get("/trades/buyer/purchases", async (req, res) => {
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });

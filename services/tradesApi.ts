@@ -88,3 +88,20 @@ export async function getTradesDashboard(
     alerts: Array.isArray(data.alerts) ? data.alerts : [],
   };
 }
+
+export async function getArtDecoTradesSummary() {
+  const headers = await authHeaders();
+  const resp = await fetch(apiUrl(`/api/trades/art-deco/summary`), { method: "GET", headers });
+  const raw = await resp.text();
+  const data = parseJsonOrThrow(raw);
+
+  if (!resp.ok || data?.ok === false) {
+    throw new Error(data?.error?.message || `Art Deco trades failed (${resp.status})`);
+  }
+
+  return {
+    buyerOrders: Array.isArray(data.buyerOrders) ? data.buyerOrders : [],
+    sellerOrders: Array.isArray(data.sellerOrders) ? data.sellerOrders : [],
+    sellerSummary: data.sellerSummary || null,
+  };
+}

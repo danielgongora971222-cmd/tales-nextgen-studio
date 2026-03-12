@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { AppRoute, Comment } from "../types";
 import BottomSheet from "../components/BottomSheet";
 import { useAuth } from "../contexts/AuthContext";
@@ -51,6 +52,9 @@ type ReelItem = {
   mediaTag?: string;
   name?: string;
   priceCredits?: number;
+  priceUsd?: number;
+  currency?: string;
+  artDecoPayload?: any;
   description?: string;
   status?: string;
   previewUrl?: string | null;
@@ -92,6 +96,14 @@ function shortCaption(text?: string) {
   return `${value.slice(0, 22).trimEnd()}...`;
 }
 
+function formatListingPrice(item: ReelItem) {
+  if (item.listingKind === 'art_deco') {
+    const amount = Number(item.priceUsd || item.artDecoPayload?.pricing?.salePrice || 0);
+    return amount > 0 ? `$${amount.toFixed(2)}` : 'Art Deco';
+  }
+  return `${Number(item.priceCredits || 0).toLocaleString()} cr`;
+}
+
 function mergeUniqueListings(base: ReelItem[], incoming: ReelItem[]) {
   const seen = new Set<string>();
   const out: ReelItem[] = [];
@@ -126,6 +138,7 @@ export default function ReelFeed({ onNavigate }: Props) {
   const [comments, setComments] = useState<Comment[]>([]);
   const [commentDraft, setCommentDraft] = useState("");
   const [replyTarget, setReplyTarget] = useState<Comment | null>(null);
+  const [artDecoConfirm, setArtDecoConfirm] = useState<ReelItem | null>(null);
 
   const [recipeCache, setRecipeCache] = useState<Record<string, any>>({});
 
@@ -133,13 +146,22 @@ export default function ReelFeed({ onNavigate }: Props) {
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const cardRefs = useRef<Record<string, HTMLElement | null>>({});
   const videoRefs = useRef<Record<string, HTMLVideoElement | null>>({});
-  const commentInputRef = useRef<HTMLInputElement | null>(null);
+  const commentInputRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     if (!toast) return;
     const timer = window.setTimeout(() => setToast(null), 2200);
     return () => window.clearTimeout(timer);
   }, [toast]);
+
+  useEffect(() => {
+    if (!commentsOpen && !artDecoConfirm) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [commentsOpen, artDecoConfirm]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -327,6 +349,11 @@ export default function ReelFeed({ onNavigate }: Props) {
     }
     if (!item.id || actionBusyId === item.id) return;
 
+    if (item.listingKind === 'art_deco') {
+      setArtDecoConfirm(item);
+      return;
+    }
+
     setActionBusyId(item.id);
     setError(null);
 
@@ -338,6 +365,22 @@ export default function ReelFeed({ onNavigate }: Props) {
       setToast(fresh?.ownedByMe ? "Creation ready to reuse." : "Purchase completed. Recipe unlocked.");
     } catch (err: any) {
       setError(err?.message || "No se pudo completar la compra.");
+    } finally {
+      setActionBusyId(null);
+    }
+  }
+
+  async function confirmArtDecoPurchase() {
+    if (!artDecoConfirm?.id) return;
+    setActionBusyId(artDecoConfirm.id);
+    setError(null);
+    try {
+      const fresh = await getCommunityListing(artDecoConfirm.id);
+      setArtDecoConfirm(null);
+      window.dispatchEvent(new CustomEvent('tales:open-store', { detail: { artDecoListing: fresh } }));
+      onNavigate(AppRoute.STORE);
+    } catch (err: any) {
+      setError(err?.message || 'No se pudo abrir la compra Art Deco.');
     } finally {
       setActionBusyId(null);
     }
@@ -603,7 +646,7 @@ export default function ReelFeed({ onNavigate }: Props) {
                     </button>
 
                     <div className="animate-pulse text-[15px] font-black text-[rgba(241,225,148,0.98)] drop-shadow-[0_0_12px_rgba(241,225,148,0.4)]">
-                      {Number(item.priceCredits || 0).toLocaleString()} cr
+                      {formatListingPrice(item)}
                     </div>
 
                     <button
@@ -622,7 +665,7 @@ export default function ReelFeed({ onNavigate }: Props) {
                       ) : (
                         <ShoppingCart className="mb-1 h-4 w-4" />
                       )}
-                      <span>{purchased ? "Reusar receta" : "Comprar"}</span>
+                      <span>{purchased ? "Reusar receta" : item.listingKind === 'art_deco' ? 'Comprar físico' : 'Comprar'}</span>
                     </button>
                   </div>
 
@@ -656,7 +699,7 @@ export default function ReelFeed({ onNavigate }: Props) {
                         <span>•</span>
                         <span className="inline-flex items-center gap-1">
                           {item.mediaTag === "video" ? <Play className="h-3.5 w-3.5" /> : <Sparkles className="h-3.5 w-3.5" />}
-                          {item.mediaTag === "video" ? "Video" : item.mediaTag === "workflow" ? "Workflow" : "Image"}
+                          {item.listingKind === 'art_deco' ? 'Art Deco' : item.mediaTag === "video" ? "Video" : item.mediaTag === "workflow" ? "Workflow" : "Image"}
                         </span>
                       </div>
                     </div>
@@ -750,111 +793,122 @@ export default function ReelFeed({ onNavigate }: Props) {
         </div>
       </BottomSheet>
 
-      {commentsOpen ? (
-        <div className="fixed inset-0 z-[130]">
-          <div className="absolute inset-0 bg-black/62" onClick={closeComments} />
-          <div className="absolute inset-x-0 bottom-0 max-h-[78svh] overflow-hidden rounded-t-[30px] bg-white text-neutral-900 shadow-[0_-28px_80px_rgba(0,0,0,0.45)]">
-            <div className="flex items-center justify-between border-b border-black/8 px-4 py-4">
-              <div>
-                <div className="text-sm font-black">Comments</div>
-                <div className="mt-1 text-xs text-black/50">
-                  {commentsTarget ? `@${commentsTarget.sellerUsername || "creator"} · ${compact(commentsTarget.commentsCount)} comments` : "No selection"}
+      {commentsOpen
+        ? createPortal(
+            <div className="fixed inset-0 z-[130]">
+              <div className="absolute inset-0 bg-black/62" onClick={closeComments} />
+              <div className="absolute inset-x-0 bottom-0 max-h-[82svh] overflow-hidden rounded-t-[30px] bg-white text-neutral-900 shadow-[0_-28px_80px_rgba(0,0,0,0.45)]" onClick={(event) => event.stopPropagation()}>
+                <div className="flex items-center justify-between border-b border-black/8 px-4 py-4">
+                  <div>
+                    <div className="text-sm font-black">Comments</div>
+                    <div className="mt-1 text-xs text-black/50">
+                      {commentsTarget ? `@${commentsTarget.sellerUsername || "creator"} · ${compact(commentsTarget.commentsCount)} comments` : "No selection"}
+                    </div>
+                  </div>
+                  <button type="button" onClick={closeComments} className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-black/5 text-black/70 transition hover:bg-black/10">
+                    <X className="h-5 w-5" />
+                  </button>
                 </div>
-              </div>
-              <button
-                type="button"
-                onClick={closeComments}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-black/5 text-black/70 transition hover:bg-black/10"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
 
-            <div className="max-h-[calc(78svh-126px)] overflow-y-auto px-4 pb-24 pt-2">
-              {commentsLoading && comments.length === 0 ? (
-                <div className="py-6 text-sm text-black/55">Loading comments...</div>
-              ) : comments.length === 0 ? (
-                <div className="py-6 text-sm text-black/55">No comments yet.</div>
-              ) : (
-                comments.map((comment) => (
-                  <div key={comment.id} className="border-b border-black/6 py-3 last:border-b-0">
-                    <div className="flex items-start gap-3">
-                      <img
-                        src={avatarSeed(comment.username)}
-                        alt={comment.username}
-                        className="mt-0.5 h-9 w-9 rounded-full border border-black/8 object-cover"
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2 text-sm">
-                          <span className="truncate font-semibold text-black">@{comment.username}</span>
-                          <span className="text-[11px] text-black/38">{timeAgo(comment.timestamp)}</span>
+                <div className="max-h-[calc(82svh-170px)] overflow-y-auto px-4 pb-24 pt-2">
+                  {commentsLoading && comments.length === 0 ? (
+                    <div className="py-6 text-sm text-black/55">Loading comments...</div>
+                  ) : comments.length === 0 ? (
+                    <div className="py-6 text-sm text-black/55">No comments yet.</div>
+                  ) : (
+                    comments.map((comment) => (
+                      <div key={comment.id} className="border-b border-black/6 py-3 last:border-b-0">
+                        <div className="flex items-start gap-3">
+                          <img src={avatarSeed(comment.username)} alt={comment.username} className="mt-0.5 h-9 w-9 rounded-full border border-black/8 object-cover" />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 text-sm">
+                              <span className="truncate font-semibold text-black">@{comment.username}</span>
+                              <span className="text-[11px] text-black/38">{timeAgo(comment.timestamp)}</span>
+                            </div>
+                            <div className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-black/72">{comment.text}</div>
+                            <button type="button" onClick={() => triggerReply(comment)} className="mt-2 text-[12px] font-semibold text-black/45 transition hover:text-black/72">
+                              Reply
+                            </button>
+                          </div>
                         </div>
-                        <div className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-black/72">{comment.text}</div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <div className="absolute inset-x-0 bottom-0 border-t border-black/8 bg-white px-4 pb-[max(env(safe-area-inset-bottom),12px)] pt-3">
+                  {replyTarget ? (
+                    <div className="mb-2 flex items-center justify-between gap-3 rounded-full bg-black/5 px-3 py-2 text-[12px] text-black/58">
+                      <span className="truncate">Replying to @{replyTarget.username}</span>
+                      <button type="button" onClick={() => setReplyTarget(null)} className="font-semibold text-black/50">
+                        Clear
+                      </button>
+                    </div>
+                  ) : null}
+
+                  {user ? (
+                    <div className="flex items-end gap-3">
+                      <img src={user.avatarUrl} alt={user.username} className="h-10 w-10 rounded-full border border-black/8 object-cover" />
+                      <div className="flex min-w-0 flex-1 items-end gap-2 rounded-[24px] border border-black/10 bg-black/[0.03] px-3 py-2.5">
+                        <textarea
+                          ref={commentInputRef}
+                          value={commentDraft}
+                          rows={1}
+                          onChange={(event) => setCommentDraft(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" && !event.shiftKey) {
+                              event.preventDefault();
+                              void submitComment();
+                            }
+                          }}
+                          placeholder="Write a comment"
+                          className="min-h-[24px] max-h-28 min-w-0 flex-1 resize-none bg-transparent text-sm text-black outline-none placeholder:text-black/32"
+                        />
                         <button
                           type="button"
-                          onClick={() => triggerReply(comment)}
-                          className="mt-2 text-[12px] font-semibold text-black/45 transition hover:text-black/72"
+                          onClick={() => void submitComment()}
+                          disabled={!commentDraft.trim() || commentsLoading}
+                          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-35"
+                          aria-label="Enviar comentario"
                         >
-                          Reply
+                          {commentsLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                         </button>
                       </div>
                     </div>
-                  </div>
-                ))
-              )}
-            </div>
-
-            <div className="absolute inset-x-0 bottom-0 border-t border-black/8 bg-white px-4 pb-[max(env(safe-area-inset-bottom),12px)] pt-3">
-              {replyTarget ? (
-                <div className="mb-2 flex items-center justify-between gap-3 rounded-full bg-black/5 px-3 py-2 text-[12px] text-black/58">
-                  <span className="truncate">Replying to @{replyTarget.username}</span>
-                  <button type="button" onClick={() => setReplyTarget(null)} className="font-semibold text-black/50">
-                    Clear
-                  </button>
-                </div>
-              ) : null}
-
-              {user ? (
-                <div className="flex items-center gap-3">
-                  <img src={user.avatarUrl} alt={user.username} className="h-10 w-10 rounded-full border border-black/8 object-cover" />
-                  <div className="flex min-w-0 flex-1 items-center gap-2 rounded-full border border-black/10 bg-black/[0.03] px-3 py-2.5">
-                    <input
-                      ref={commentInputRef}
-                      value={commentDraft}
-                      onChange={(event) => setCommentDraft(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.preventDefault();
-                          void submitComment();
-                        }
-                      }}
-                      placeholder="Write a comment"
-                      className="min-w-0 flex-1 bg-transparent text-sm text-black outline-none placeholder:text-black/32"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => void submitComment()}
-                      disabled={!commentDraft.trim() || commentsLoading}
-                      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-35"
-                      aria-label="Enviar comentario"
-                    >
-                      {commentsLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                  ) : (
+                    <button type="button" onClick={() => onNavigate(AppRoute.MY_CREATIONS)} className="inline-flex min-h-[46px] w-full items-center justify-center rounded-full border border-black/10 bg-black/5 px-5 text-sm font-semibold text-black/88 transition hover:bg-black/10">
+                      Inicia sesión para comentar
                     </button>
-                  </div>
+                  )}
                 </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => onNavigate(AppRoute.MY_CREATIONS)}
-                  className="inline-flex min-h-[46px] w-full items-center justify-center rounded-full border border-black/10 bg-black/5 px-5 text-sm font-semibold text-black/88 transition hover:bg-black/10"
-                >
-                  Inicia sesión para comentar
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      ) : null}
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
+
+      {artDecoConfirm
+        ? createPortal(
+            <div className="fixed inset-0 z-[135] flex items-end justify-center px-4 pb-[max(env(safe-area-inset-bottom),16px)] pt-6">
+              <div className="absolute inset-0 bg-black/72" onClick={() => setArtDecoConfirm(null)} />
+              <div className="relative w-full max-w-md rounded-[28px] border border-white/10 bg-[#0b0b10] p-5 text-white shadow-[0_28px_80px_rgba(0,0,0,0.55)]">
+                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-[#f1e194]">Art Deco físico</div>
+                <h3 className="mt-3 text-xl font-black leading-tight">¿Seguro que deseas comprar este Art Deco?</h3>
+                <p className="mt-3 text-sm leading-6 text-white/72">Continuar te llevará al flujo completo de 1NationUp para confirmar producción, entrega y pago. Esta compra corresponde a una creación real y física que fabricaremos o enviaremos según tu solicitud final.</p>
+                <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm">
+                  <div className="font-semibold text-white">{artDecoConfirm.name || 'Art Deco listing'}</div>
+                  <div className="mt-1 text-white/62">Precio publicado: {formatListingPrice(artDecoConfirm)}</div>
+                  <div className="mt-2 text-white/52">El creador ya fijó material, medida y encuadre. Tú completarás los datos de entrega y pago antes de confirmar.</div>
+                </div>
+                <div className="mt-5 grid grid-cols-2 gap-3">
+                  <button type="button" onClick={() => setArtDecoConfirm(null)} className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-white/80 transition hover:bg-white/10">Cancelar</button>
+                  <button type="button" onClick={() => void confirmArtDecoPurchase()} disabled={actionBusyId === artDecoConfirm.id} className="rounded-2xl bg-[linear-gradient(180deg,rgba(241,225,148,0.98),rgba(201,165,76,0.96))] px-4 py-3 text-sm font-black text-black transition hover:brightness-105 disabled:opacity-60">{actionBusyId === artDecoConfirm.id ? 'Abriendo...' : 'Continuar'}</button>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   );
 }

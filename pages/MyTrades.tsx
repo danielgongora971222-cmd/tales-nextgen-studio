@@ -19,7 +19,7 @@ import {
 import { AppRoute } from "../types";
 import { getWalletMe, listMyCashouts, listEarningsHistory, requestCashout, transferEarningsToGeneration } from "../services/walletApi";
 import { getMyReferralCodes, getMyReferralSummary } from "../services/referralsApi";
-import { getBuyerPurchases, getTradesDashboard } from "../services/tradesApi";
+import { getArtDecoTradesSummary, getBuyerPurchases, getTradesDashboard } from "../services/tradesApi";
 import EarningsActionsModal from "@/components/EarningsActionsModal";
 import EarningsHistoryModal from "@/components/EarningsHistoryModal";
 
@@ -56,6 +56,10 @@ function formatSecondaryValue(credits: number, unit: DisplayUnit, usdMicrosPerCr
 function formatDateTime(value?: number | null) {
   if (!value) return "—";
   return new Date(value).toLocaleString();
+}
+
+function formatUsdMoney(value: number, currency = 'USD') {
+  return `${currency} ${Number(value || 0).toFixed(2)}`;
 }
 
 function csvEscape(value: unknown) {
@@ -130,6 +134,9 @@ export default function MyTrades({ onNavigate }: Props) {
   const [buyerOffset, setBuyerOffset] = useState(0);
   const [buyerHasMore, setBuyerHasMore] = useState(true);
   const [buyerLoading, setBuyerLoading] = useState(false);
+  const [artDecoSummary, setArtDecoSummary] = useState<any | null>(null);
+  const [artDecoLoading, setArtDecoLoading] = useState(false);
+  const [artDecoError, setArtDecoError] = useState<string | null>(null);
 
   const [sellerDashboard, setSellerDashboard] = useState<any | null>(null);
   const [sellerDashboardLoading, setSellerDashboardLoading] = useState(false);
@@ -325,6 +332,7 @@ export default function MyTrades({ onNavigate }: Props) {
 
   useEffect(() => {
     if (tab === "buyer" && buyerItems.length === 0) loadBuyer("reset");
+    if (tab === "buyer" || (tab === "seller" && canSell)) loadArtDecoSummary();
     if (tab === "seller" && canSell) loadSellerDashboard();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, canSell, sellerRange, sellerCompare]);
@@ -347,6 +355,20 @@ export default function MyTrades({ onNavigate }: Props) {
     }
   }
 
+  async function loadArtDecoSummary() {
+    try {
+      setArtDecoLoading(true);
+      setArtDecoError(null);
+      const data = await getArtDecoTradesSummary();
+      setArtDecoSummary(data);
+    } catch (e: any) {
+      setArtDecoSummary(null);
+      setArtDecoError(e?.message || "No se pudo cargar Art Deco trades.");
+    } finally {
+      setArtDecoLoading(false);
+    }
+  }
+
   async function loadSellerDashboard() {
     try {
       setSellerDashboardLoading(true);
@@ -365,6 +387,9 @@ export default function MyTrades({ onNavigate }: Props) {
   const sellerCompareSummary = sellerDashboard?.compareSummary || {};
   const sellerDeltas = sellerDashboard?.deltas || {};
   const alerts = Array.isArray(sellerDashboard?.alerts) ? sellerDashboard.alerts : [];
+  const artDecoBuyerOrders = Array.isArray(artDecoSummary?.buyerOrders) ? artDecoSummary.buyerOrders : [];
+  const artDecoSellerOrders = Array.isArray(artDecoSummary?.sellerOrders) ? artDecoSummary.sellerOrders : [];
+  const artDecoSellerMetrics = artDecoSummary?.sellerSummary || { ordersCount: 0, grossRevenueUsd: 0, baseServiceUsd: 0, sellerProfitUsd: 0 };
 
   const filteredSellerListings = useMemo(() => {
     const raw = Array.isArray(sellerDashboard?.listings) ? sellerDashboard.listings : [];
@@ -646,6 +671,39 @@ export default function MyTrades({ onNavigate }: Props) {
               {buyerLoading ? "Cargando..." : "Cargar más"}
             </button>
           ) : null}
+
+          <div className="mt-6 rounded-2xl border border-white/10 bg-black/40 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold">Art Deco físicos</div>
+                <div className="text-xs text-white/55 mt-1">Pedidos reales comprados desde Community Store o desde el carrete.</div>
+              </div>
+              <div className="text-xs text-white/45">{artDecoBuyerOrders.length} órdenes</div>
+            </div>
+
+            {artDecoError ? <div className="mt-3 text-sm text-red-300">{artDecoError}</div> : null}
+            {artDecoLoading && artDecoBuyerOrders.length === 0 ? (
+              <div className="mt-3 text-white/60">Cargando Art Deco...</div>
+            ) : artDecoBuyerOrders.length === 0 ? (
+              <div className="mt-3 text-white/60">Todavía no tienes compras físicas Art Deco.</div>
+            ) : (
+              <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+                {artDecoBuyerOrders.map((order: any) => (
+                  <div key={order.id} className="rounded-xl border border-white/10 bg-black/50 p-3 flex gap-3">
+                    <div className="w-20 h-20 rounded-lg overflow-hidden border border-white/10 bg-black/50 shrink-0">
+                      {order.previewUrl ? <img src={order.previewUrl} className="w-full h-full object-cover" /> : null}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-semibold truncate">{order.name || 'Art Deco order'}</div>
+                      <div className="text-xs text-white/60 mt-1">{order.materialLabel || 'Material'} · {order.sizeLabel || 'Medida'} · {formatUsdMoney(order.salePriceUsd, order.currency)}</div>
+                      <div className="text-[11px] text-white/50 mt-2">Estado: <span className="text-white/80">{order.status || 'created'}</span></div>
+                      <div className="text-[11px] text-white/45 mt-1">{formatDateTime(order.createdAt)}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       ) : null}
 
@@ -816,6 +874,48 @@ export default function MyTrades({ onNavigate }: Props) {
                   </div>
                 </div>
               </div>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+              <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3 mb-4">
+                <div>
+                  <div className="text-sm font-semibold">Art Deco seller ledger</div>
+                  <div className="text-xs text-white/55 mt-1">Ventas físicas registradas en USD. La ganancia es la diferencia entre tu precio publicado y el costo base del servicio.</div>
+                </div>
+                <div className="text-xs text-white/45">{artDecoSellerMetrics.ordersCount || 0} ventas físicas</div>
+              </div>
+
+              {artDecoError ? <div className="rounded-xl border border-red-400/20 bg-red-500/10 p-4 text-red-200 text-sm">{artDecoError}</div> : null}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                <div className="rounded-xl border border-white/10 bg-black/40 p-3"><div className="text-white/55 text-[11px] uppercase tracking-wide">Ventas</div><div className="mt-2 text-lg font-bold">{artDecoSellerMetrics.ordersCount || 0}</div></div>
+                <div className="rounded-xl border border-white/10 bg-black/40 p-3"><div className="text-white/55 text-[11px] uppercase tracking-wide">Revenue bruto</div><div className="mt-2 text-lg font-bold">{formatUsdMoney(artDecoSellerMetrics.grossRevenueUsd || 0)}</div></div>
+                <div className="rounded-xl border border-white/10 bg-black/40 p-3"><div className="text-white/55 text-[11px] uppercase tracking-wide">Costo base</div><div className="mt-2 text-lg font-bold">{formatUsdMoney(artDecoSellerMetrics.baseServiceUsd || 0)}</div></div>
+                <div className="rounded-xl border border-white/10 bg-black/40 p-3"><div className="text-white/55 text-[11px] uppercase tracking-wide">Ganancia</div><div className="mt-2 text-lg font-bold text-emerald-300">{formatUsdMoney(artDecoSellerMetrics.sellerProfitUsd || 0)}</div></div>
+              </div>
+
+              {artDecoLoading && artDecoSellerOrders.length === 0 ? (
+                <div className="mt-4 text-white/60">Cargando ventas Art Deco...</div>
+              ) : artDecoSellerOrders.length === 0 ? (
+                <div className="mt-4 text-white/60">Aún no tienes ventas físicas Art Deco registradas.</div>
+              ) : (
+                <div className="mt-4 grid grid-cols-1 xl:grid-cols-2 gap-4">
+                  {artDecoSellerOrders.map((order: any) => (
+                    <div key={order.id} className="rounded-xl border border-white/10 bg-black/40 p-3 flex gap-3">
+                      <div className="w-20 h-20 rounded-lg overflow-hidden border border-white/10 bg-black/50 shrink-0">{order.previewUrl ? <img src={order.previewUrl} className="w-full h-full object-cover" /> : null}</div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-semibold truncate">{order.name || 'Art Deco listing'}</div>
+                        <div className="text-xs text-white/60 mt-1">{order.materialLabel || 'Material'} · {order.sizeLabel || 'Medida'}</div>
+                        <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-white/55">
+                          <span>Venta {formatUsdMoney(order.salePriceUsd, order.currency)}</span>
+                          <span>Base {formatUsdMoney(order.baseServiceUsd, order.currency)}</span>
+                          <span className="text-emerald-300">Ganancia {formatUsdMoney(order.sellerProfitUsd, order.currency)}</span>
+                        </div>
+                        <div className="text-[11px] text-white/45 mt-2">{formatDateTime(order.createdAt)} · {order.status || 'created'}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="rounded-2xl border border-white/10 bg-black/30 p-4">

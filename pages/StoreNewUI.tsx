@@ -1,9 +1,11 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Maximize, Layers, Check, ShoppingCart, CreditCard, ChevronRight, Image as ImageIcon, Sparkles, Scissors, ShieldCheck, Truck, Edit2, Info } from 'lucide-react';
-import { Asset, AppRoute } from "../types";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { Maximize, Layers, Check, ShoppingCart, CreditCard, ChevronRight, Image as ImageIcon, Sparkles, Scissors, ShieldCheck, Truck, Edit2, Info, BadgeDollarSign, Wand2 } from 'lucide-react';
+import type { Asset, AppRoute, StoreArtDecoListing, StoreArtDecoPayload, StorePrefill } from "../types";
 import { listMyAssets } from "../services/assetsApi";
 import { supabase } from "../services/supabaseClient";
 import { apiUrl } from "../services/apiBase";
+import { createArtDecoListing } from "../services/communityStoreApi";
+import { useWallet } from "../contexts/WalletContext";
 import OneNationUpIcon from "../components/brand/OneNationUpIcon";
 import ConfirmDollarPurchaseModal from "@/components/ConfirmDollarPurchaseModal";
 
@@ -130,7 +132,25 @@ const ParticleBackground = () => {
 };
 
 // --- APLICACIÓN PRINCIPAL ---
-type StorePrefill = { asset?: Asset | null };
+type Step = 'UPLOAD' | 'VERIFYING' | 'MATERIAL' | 'SIZE' | 'CROP' | 'MODE' | 'CHECKOUT' | 'PROCESSING' | 'SUCCESS';
+
+const SHIPPING_FEE = 15;
+
+function roundUsd(value: number) {
+  return Math.round((Number(value) || 0) * 100) / 100;
+}
+
+function formatUsd(value: number) {
+  return `$${roundUsd(value).toFixed(2)} USD`;
+}
+
+function resolveMaterial(materialId?: string | null) {
+  return MATERIALS.find((item) => item.id === materialId) || null;
+}
+
+function resolveSize(sizeId?: string | null) {
+  return SIZES.find((item) => item.id === sizeId) || null;
+}
 
 type StoreNewUIProps = {
   onNavigate: (route: AppRoute) => void;
@@ -139,6 +159,7 @@ type StoreNewUIProps = {
 };
 
 export default function StoreNewUI({ onNavigate, onRequestUpscale, prefill }: StoreNewUIProps) {
+  const { subscription } = useWallet();
   const [image, setImage] = useState<string | null>(null); // preview (dataUrl)
   const [asset, setAsset] = useState<Asset | null>(null);  // asset subido (storage)
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
@@ -229,25 +250,31 @@ export default function StoreNewUI({ onNavigate, onRequestUpscale, prefill }: St
 }, []);
   
   // Flujo Secuencial (Acordeón)
-  const [activeStep, setActiveStep] = useState('UPLOAD'); 
+  const [activeStep, setActiveStep] = useState<Step>('UPLOAD'); 
   
   // Estados Finales (Confirmados)
-  const [selectedMaterial, setSelectedMaterial] = useState(null);
-  const [selectedSize, setSelectedSize] = useState(null);
+  const [selectedMaterial, setSelectedMaterial] = useState<(typeof MATERIALS)[number] | null>(null);
+  const [selectedSize, setSelectedSize] = useState<(typeof SIZES)[number] | null>(null);
   const [isCropped, setIsCropped] = useState(false);
 
   // Estados Previos (Para visualización en 2 tiempos antes de confirmar)
-  const [previewMaterial, setPreviewMaterial] = useState(null);
-  const [previewSize, setPreviewSize] = useState(null);
+  const [previewMaterial, setPreviewMaterial] = useState<(typeof MATERIALS)[number] | null>(null);
+  const [previewSize, setPreviewSize] = useState<(typeof SIZES)[number] | null>(null);
   
   // Estado riguroso para el editor de recorte
   const [cropRect, setCropRect] = useState({ x: 0, y: 0, w: 0, h: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-  const [finalCrop, setFinalCrop] = useState(null); 
+  const [finalCrop, setFinalCrop] = useState<{ x: number; y: number; w: number; h: number; aspect: number } | null>(null); 
+  const [activePointerId, setActivePointerId] = useState<number | null>(null);
+  const [purchaseMode, setPurchaseMode] = useState<'buy' | 'sell' | null>(null);
+  const [successMode, setSuccessMode] = useState<'order' | 'listing'>('order');
+  const [publishedListingId, setPublishedListingId] = useState<string>('');
+  const [prefillArtDeco, setPrefillArtDeco] = useState<StoreArtDecoListing | null>(null);
+  const [listingForm, setListingForm] = useState({ name: '', description: '', priceUsd: '' });
   
   // Refs
-  const imageWrapperRef = useRef(null);
+  const imageWrapperRef = useRef<HTMLDivElement | null>(null);
 
   // Formulario de Checkout
   const [formData, setFormData] = useState({ name: '', email: '', phone: '', method: 'shipping', address: '', apt: '', city: '', state: '', zip: '', notes: '' });
@@ -296,6 +323,24 @@ function loadImgDimsFromUrl(url: string): Promise<{ w: number; h: number }> {
   });
 }
 
+const sellerEnabled = Boolean(subscription?.can_sell);
+const isLockedArtDecoPurchase = Boolean(prefillArtDeco?.id);
+const selectedBasePrice = useMemo(() => {
+  if (!selectedSize || !selectedMaterial) return 0;
+  return roundUsd(Number(selectedSize.basePrice || 0) * Number(selectedMaterial.multiplier || 1));
+}, [selectedMaterial, selectedSize]);
+const lockedBasePrice = useMemo(() => roundUsd(Number(prefillArtDeco?.artDecoPayload?.pricing?.basePrice || 0)), [prefillArtDeco]);
+const lockedSalePrice = useMemo(() => roundUsd(Number(prefillArtDeco?.priceUsd || prefillArtDeco?.artDecoPayload?.pricing?.salePrice || 0)), [prefillArtDeco]);
+const shippingCost = formData.method === 'pickup' ? 0 : SHIPPING_FEE;
+const checkoutUnitPrice = isLockedArtDecoPurchase ? lockedSalePrice : selectedBasePrice;
+const checkoutTotal = roundUsd(checkoutUnitPrice + shippingCost);
+const minimumSellPrice = selectedBasePrice;
+const listingPriceUsdValue = roundUsd(Number(listingForm.priceUsd || 0));
+const listingProfit = roundUsd(Math.max(0, listingPriceUsdValue - minimumSellPrice));
+const showModeStep = sellerEnabled && !isLockedArtDecoPurchase;
+const checkoutStepNumber = showModeStep ? 5 : 4;
+const canPublishListing = sellerEnabled && !isLockedArtDecoPurchase && !!asset && !!selectedMaterial && !!selectedSize && !!finalCrop && listingPriceUsdValue > minimumSellPrice;
+
 const resetFlowForNewImage = () => {
   setSelectedMaterial(null);
   setSelectedSize(null);
@@ -307,6 +352,14 @@ const resetFlowForNewImage = () => {
   setCroppedDataUrl(null);
   setOrderCode("");
   setSubmitError("");
+  setPurchaseMode(null);
+  setSuccessMode('order');
+  setPublishedListingId('');
+  setActivePointerId(null);
+  setIsDragging(false);
+  setCropGenError(null);
+  setPrefillArtDeco(null);
+  setListingForm({ name: '', description: '', priceUsd: '' });
 };
 
 const handleSelectFromHistory = async (a: Asset) => {
@@ -348,16 +401,77 @@ const handleSelectFromHistory = async (a: Asset) => {
   }
 };
 
+const hydrateArtDecoPrefill = useCallback((listing: StoreArtDecoListing) => {
+  const payload = listing?.artDecoPayload;
+  if (!payload) return;
+
+  resetFlowForNewImage();
+  setPrefillArtDeco(listing);
+
+  const lockedMaterial = resolveMaterial(payload.material);
+  const lockedSize = resolveSize(payload.size?.id) || resolveSize(String(payload.size?.label || '').split(' ')[0]) || null;
+  const imageDims = payload.imageDims || null;
+  const previewSource = payload.croppedImageDataUrl || listing.previewUrl || payload.assetUrl || null;
+
+  if (previewSource) setImage(previewSource);
+  setAsset({
+    id: payload.assetId || listing.id,
+    url: payload.assetUrl,
+    type: 'image',
+    name: payload.assetName || listing.name || 'Art Deco',
+    createdAt: Date.now(),
+    ownerId: listing.sellerId || '',
+    isPublic: false,
+    likedByMe: false,
+    likesCount: 0,
+    commentsCount: 0,
+    likes: [],
+    comments: [],
+  } as Asset);
+  setDims(imageDims);
+  setIs4kOk(Boolean(imageDims ? is4K(imageDims) : true));
+  setDimsLoading(false);
+  setImageOrientation(imageDims && imageDims.w > imageDims.h ? 'landscape' : 'portrait');
+  setSelectedMaterial(lockedMaterial);
+  setPreviewMaterial(lockedMaterial);
+  setSelectedSize(lockedSize);
+  setPreviewSize(lockedSize);
+  const lockedCrop = payload.cropNormalized
+    ? {
+        x: Number(payload.cropNormalized.x || 0),
+        y: Number(payload.cropNormalized.y || 0),
+        w: Number(payload.cropNormalized.w || 1),
+        h: Number(payload.cropNormalized.h || 1),
+        aspect: Number(payload.cropNormalized.aspect || (lockedSize ? lockedSize.ratio : 1) || 1),
+      }
+    : null;
+  setFinalCrop(lockedCrop);
+  setCroppedDataUrl(payload.croppedImageDataUrl || listing.previewUrl || null);
+  setIsCropped(Boolean(lockedCrop));
+  setPurchaseMode('buy');
+  setListingForm({
+    name: listing.name || payload.assetName || 'Art Deco listing',
+    description: listing.description || 'Creación física lista para producción y envío.',
+    priceUsd: String(roundUsd(Number(listing.priceUsd || payload.pricing?.salePrice || 0))),
+  });
+  setPickerOpen(false);
+  setActiveStep('CHECKOUT');
+}, []);
+
 useEffect(() => {
+  const listing = prefill?.artDecoListing || null;
+  if (!listing?.id) return;
+  hydrateArtDecoPrefill(listing);
+}, [hydrateArtDecoPrefill, prefill?.artDecoListing?.id]);
+
+useEffect(() => {
+  if (prefill?.artDecoListing?.id) return;
   const a = prefill?.asset || null;
   if (!a) return;
 
-  // Carga directa del asset desde donde se clicó (historial)
   handleSelectFromHistory(a);
-
-  // Cierra picker por si estaba abierto
   setPickerOpen(false);
-}, [prefill?.asset]);
+}, [prefill?.asset, prefill?.artDecoListing?.id]);
 
 const handleGoToUpscale = () => {
   if (!asset) return;
@@ -434,16 +548,20 @@ const handleGoToUpscale = () => {
   }, [selectedSize, updateCropSize]);
 
 
-  const handleMouseDown = (e) => {
-    if (activeStep !== 'CROP' || !selectedSize) return;
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (activeStep !== 'CROP' || !selectedSize || isLockedArtDecoPurchase) return;
+    e.preventDefault();
     setIsDragging(true);
+    setActivePointerId(e.pointerId);
     setDragStart({ x: e.clientX - cropRect.x, y: e.clientY - cropRect.y });
+    e.currentTarget.setPointerCapture?.(e.pointerId);
   };
 
   useEffect(() => {
-    const handleGlobalMouseMove = (e) => {
+    const handleGlobalPointerMove = (e: PointerEvent) => {
       if (!isDragging || activeStep !== 'CROP' || !imageWrapperRef.current) return;
-      
+      if (activePointerId != null && e.pointerId !== activePointerId) return;
+
       const wrapper = imageWrapperRef.current;
       const rect = wrapper.getBoundingClientRect();
       const imgW = rect.width;
@@ -451,32 +569,39 @@ const handleGoToUpscale = () => {
 
       let newX = e.clientX - dragStart.x;
       let newY = e.clientY - dragStart.y;
-      
+
       newX = Math.max(0, Math.min(newX, imgW - cropRect.w));
       newY = Math.max(0, Math.min(newY, imgH - cropRect.h));
-      
+
       setCropRect(prev => ({ ...prev, x: newX, y: newY }));
     };
 
-    const handleGlobalMouseUp = () => {
+    const handleGlobalPointerUp = (e: PointerEvent) => {
+      if (activePointerId != null && e.pointerId !== activePointerId) return;
       if (isDragging) setIsDragging(false);
+      setActivePointerId(null);
     };
 
-    window.addEventListener('mousemove', handleGlobalMouseMove);
-    window.addEventListener('mouseup', handleGlobalMouseUp);
+    window.addEventListener('pointermove', handleGlobalPointerMove, { passive: false });
+    window.addEventListener('pointerup', handleGlobalPointerUp);
+    window.addEventListener('pointercancel', handleGlobalPointerUp);
 
     return () => {
-      window.removeEventListener('mousemove', handleGlobalMouseMove);
-      window.removeEventListener('mouseup', handleGlobalMouseUp);
+      window.removeEventListener('pointermove', handleGlobalPointerMove);
+      window.removeEventListener('pointerup', handleGlobalPointerUp);
+      window.removeEventListener('pointercancel', handleGlobalPointerUp);
     };
-  }, [isDragging, dragStart, cropRect, activeStep]);
+  }, [isDragging, dragStart, cropRect, activeStep, activePointerId]);
 
 
   // Acciones de cambio de pasos (Acordeón Navigation)
-  const handleEditStep = (step) => {
+  const handleEditStep = (step: Step) => {
+    if (isLockedArtDecoPurchase && (step === 'MATERIAL' || step === 'SIZE' || step === 'CROP' || step === 'MODE')) return;
+
     if (step === 'CROP' || step === 'SIZE' || step === 'MATERIAL') {
        setIsCropped(false); 
        setFinalCrop(null);
+       setPurchaseMode(null);
     }
     
     if (step === 'MATERIAL') setPreviewMaterial(null);
@@ -577,12 +702,10 @@ async function makeCroppedDataUrl(
 }
 
 const handleConfirmCrop = async () => {
-  // No permitir doble click mientras genera
   if (cropProcessing) return;
 
   const wrapper = imageWrapperRef.current;
 
-  // Validaciones mínimas
   if (!wrapper || !image || !selectedSize) {
     setCropGenError("No se pudo preparar el recorte. Reintenta.");
     setActiveStep("CROP");
@@ -603,7 +726,6 @@ const handleConfirmCrop = async () => {
   setCropGenError(null);
 
   try {
-    // Aspect real basado en size + orientación
     let targetW = selectedSize.w;
     let targetH = selectedSize.h;
 
@@ -616,7 +738,6 @@ const handleConfirmCrop = async () => {
     }
 
     const aspect = targetW / targetH;
-
     const normalized = {
       x: cropRect.x / imgW,
       y: cropRect.y / imgH,
@@ -624,41 +745,36 @@ const handleConfirmCrop = async () => {
       h: cropRect.h / imgH,
     };
 
-  // Siempre guardamos coordenadas (esto es lo más importante para fábrica)
-  setFinalCrop({ ...normalized, aspect });
+    setFinalCrop({ ...normalized, aspect });
 
-  // Intentamos generar dataURL para preview (puede fallar por CORS/tainted canvas)
-  try {
-    const cdu = await makeCroppedDataUrl(image, normalized);
-    if (cdu && typeof cdu === "string") {
-      setCroppedDataUrl(cdu);
-      setCropGenError(null);
-    } else {
+    try {
+      const cdu = await makeCroppedDataUrl(image, normalized);
+      if (cdu && typeof cdu === "string") {
+        setCroppedDataUrl(cdu);
+        setCropGenError(null);
+      } else {
+        setCroppedDataUrl(null);
+        setCropGenError("No se pudo generar preview del recorte (salida vacía). Se usará el encuadre por coordenadas.");
+      }
+    } catch (e: any) {
       setCroppedDataUrl(null);
-      setCropGenError("No se pudo generar preview del recorte (salida vacía). Se usará el encuadre por coordenadas.");
+      setCropGenError(
+        e?.message
+          ? `No se pudo generar preview del recorte (CORS/Canvas). Se usará el encuadre por coordenadas. Detalle: ${String(e.message)}`
+          : "No se pudo generar preview del recorte (CORS/Canvas). Se usará el encuadre por coordenadas."
+      );
     }
-  } catch (e: any) {
-    setCroppedDataUrl(null);
-    setCropGenError(
-      e?.message
-        ? `No se pudo generar preview del recorte (CORS/Canvas). Se usará el encuadre por coordenadas. Detalle: ${String(e.message)}`
-        : "No se pudo generar preview del recorte (CORS/Canvas). Se usará el encuadre por coordenadas."
-    );
-  }
 
-  // ✅ Permitimos avanzar aunque el preview falle, porque las coordenadas sí están listas
-  setIsCropped(true);
-  setActiveStep("CHECKOUT");
+    setIsCropped(true);
+    setPurchaseMode(null);
+    setActiveStep(sellerEnabled && !isLockedArtDecoPurchase ? "MODE" : "CHECKOUT");
   } catch (e: any) {
-    // ❌ Si falla, reiniciamos Paso 3 y NO dejamos avanzar
     setCroppedDataUrl(null);
     setFinalCrop(null);
     setIsCropped(false);
-
-    // Reinicio de selección de recorte (Paso 3)
     setIsDragging(false);
+    setActivePointerId(null);
     setCropRect({ x: 0, y: 0, w: 0, h: 0 });
-
     setCropGenError(e?.message ? String(e.message) : String(e));
     setActiveStep("CROP");
   } finally {
@@ -666,12 +782,73 @@ const handleConfirmCrop = async () => {
   }
 };
 
-  const calculateTotal = () => {
-    const targetSize = previewSize || selectedSize;
-    const targetMaterial = previewMaterial || selectedMaterial;
-    if (!targetSize || !targetMaterial) return 0;
-    return (targetSize.basePrice * targetMaterial.multiplier).toFixed(2);
+const buildArtDecoPayload = (): StoreArtDecoPayload => {
+  if (!asset || !selectedMaterial || !selectedSize || !finalCrop) {
+    throw new Error('Completa material, tamaño y encuadre antes de publicar.');
+  }
+
+  const salePrice = listingPriceUsdValue;
+  return {
+    assetId: asset.id,
+    assetUrl: asset.url,
+    assetName: asset.name,
+    imageDims: dims ? { w: dims.w, h: dims.h } : null,
+    material: selectedMaterial.id as StoreArtDecoPayload['material'],
+    materialLabel: selectedMaterial.label,
+    size: {
+      id: selectedSize.id,
+      wIn: Number(selectedSize.w),
+      hIn: Number(selectedSize.h),
+      label: selectedSize.label,
+    },
+    fitMode: 'crop',
+    cropNormalized: finalCrop,
+    croppedImageDataUrl: croppedDataUrl || null,
+    pricing: {
+      basePrice: selectedBasePrice,
+      salePrice,
+      sellerProfit: roundUsd(salePrice - selectedBasePrice),
+      currency: 'USD',
+    },
   };
+};
+
+const handlePublishArtDeco = async () => {
+  setSubmitError('');
+
+  if (!sellerEnabled) {
+    setSubmitError('Necesitas plan Pro o superior para vender Art Deco en Community Store.');
+    return;
+  }
+  if (!canPublishListing) {
+    setSubmitError(`Debes publicar por encima del costo base ${formatUsd(minimumSellPrice)}.`);
+    return;
+  }
+
+  try {
+    setPurchaseMode('sell');
+    setActiveStep('PROCESSING');
+    const payload = buildArtDecoPayload();
+    const result = await createArtDecoListing({
+      previewAssetId: asset!.id,
+      name: listingForm.name.trim() || `${asset?.name || 'Creación'} · Art Deco`,
+      description:
+        listingForm.description.trim() ||
+        'Edición Art Deco lista para producción física. El comprador recibirá la pieza real con el encuadre validado por el creador.',
+      priceUsd: listingPriceUsdValue,
+      currency: 'USD',
+      artDecoPayload: payload,
+    });
+    setPublishedListingId(result.listingId);
+    setSuccessMode('listing');
+    setPurchaseMode('sell');
+    setOrderCode(result.listingId);
+    setActiveStep('SUCCESS');
+  } catch (e: any) {
+    setSubmitError(e?.message || 'No se pudo publicar el Art Deco.');
+    setActiveStep('MODE');
+  }
+};
 
 const handleCheckoutSubmit = async (e: React.FormEvent) => {
   e.preventDefault();
@@ -714,17 +891,21 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
   
 
   // Confirmación previa (compra en USD)
-  const shippingCostPreview = formData.method === 'pickup' ? 0 : 15;
+  const shippingCostPreview = formData.method === 'pickup' ? 0 : SHIPPING_FEE;
   const smartFillAddonPreview = 0;
-  const basePricePreview = Number((selectedSize as any).basePrice || 0);
-  const totalPreview = basePricePreview + shippingCostPreview + smartFillAddonPreview;
+  const basePricePreview = checkoutUnitPrice;
+  const totalPreview = roundUsd(basePricePreview + shippingCostPreview + smartFillAddonPreview);
 
-  const itemLabel = `Pedido 1NationUp (${String((selectedMaterial as any)?.label || 'Material')} · ${String((selectedSize as any)?.label || (selectedSize as any)?.id || 'Tamaño')})`;
-  const amountLabel = `$${Number(totalPreview).toFixed(2)} USD`;
+  const itemLabel = isLockedArtDecoPurchase
+    ? `Compra Art Deco (${String(prefillArtDeco?.name || asset?.name || 'Pieza física')})`
+    : `Pedido 1NationUp (${String(selectedMaterial?.label || 'Material')} · ${String(selectedSize?.label || selectedSize?.id || 'Tamaño')})`;
+  const amountLabel = formatUsd(totalPreview);
   const note =
     formData.method === 'pickup'
       ? 'Retiro (pickup). El total mostrado incluye cualquier cargo aplicable.'
-      : 'El total mostrado incluye envío estimado.';
+      : isLockedArtDecoPurchase
+        ? 'Estás comprando una creación Art Deco física. Al finalizar, recibirás confirmación y la fábrica recibirá el encuadre original.'
+        : 'El total mostrado incluye envío estimado.';
 
   setConfirmPayInfo({
     itemLabel,
@@ -732,6 +913,7 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
     note,
     action: async () => {
       setSubmitError('');
+      setPurchaseMode('buy');
       setActiveStep('PROCESSING');
 
       try {
@@ -753,17 +935,15 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
         if (!token) throw new Error('Debes iniciar sesión para comprar.');
 
         // 2) calcular fitMode (si confirmaste recorte -> "crop", si no -> "perfect")
-        const fitMode = finalCrop ? 'crop' : 'perfect';
+        const fitMode = finalCrop ? 'crop' : (prefillArtDeco?.artDecoPayload?.fitMode || 'perfect');
 
-        // 3) costos
-        const shippingCost = formData.method === 'pickup' ? 0 : 15;
-        const smartFillAddon = 0; // esta UI no usa smart_fill aún
-        const basePrice = Number((selectedSize as any).basePrice || 0);
-        const total = basePrice + shippingCost + smartFillAddon;
+        const shippingCost = formData.method === 'pickup' ? 0 : SHIPPING_FEE;
+        const smartFillAddon = 0;
+        const basePrice = checkoutUnitPrice;
+        const total = roundUsd(basePrice + shippingCost + smartFillAddon);
 
-        if (!(selectedMaterial as any)?.label) throw new Error('Material inválido: falta label.');
+        if (!selectedMaterial?.label) throw new Error('Material inválido: falta label.');
 
-        // 4) armar payload EXACTO que espera el backend (StoreOrderSchema)
         const payload: any = {
           assetId: asset.id,
           assetUrl: asset.url,
@@ -772,14 +952,14 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
           imageDims: dims ? { w: dims.w, h: dims.h } : null,
           require4k: true,
 
-          material: (selectedMaterial as any).id,
-          materialLabel: (selectedMaterial as any).label,
+          material: selectedMaterial.id,
+          materialLabel: selectedMaterial.label,
 
           size: {
-            id: (selectedSize as any).id,
-            wIn: Number((selectedSize as any).w),
-            hIn: Number((selectedSize as any).h),
-            label: (selectedSize as any).label,
+            id: selectedSize.id,
+            wIn: Number(selectedSize.w),
+            hIn: Number(selectedSize.h),
+            label: selectedSize.label,
           },
 
           fitMode,
@@ -814,7 +994,20 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
           flags: {},
         };
 
-        // 5) POST real
+        if (isLockedArtDecoPurchase && prefillArtDeco?.id) {
+          const authoritativeBase = roundUsd(Number(prefillArtDeco.artDecoPayload?.pricing?.basePrice || lockedBasePrice));
+          const salePriceUsd = roundUsd(Number(prefillArtDeco.priceUsd || prefillArtDeco.artDecoPayload?.pricing?.salePrice || basePrice));
+          payload.artDeco = {
+            listingId: prefillArtDeco.id,
+            sellerId: prefillArtDeco.sellerId || null,
+            sellerUsername: prefillArtDeco.sellerUsername || undefined,
+            salePriceUsd,
+            basePriceUsd: authoritativeBase,
+            sellerProfitUsd: roundUsd(Math.max(0, salePriceUsd - authoritativeBase)),
+            currency: prefillArtDeco.currency || prefillArtDeco.artDecoPayload?.pricing?.currency || 'USD',
+          };
+        }
+
         const resp = await fetch(apiUrl('/api/store/order'), {
           method: 'POST',
           headers: {
@@ -837,7 +1030,7 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
           throw new Error(msg);
         }
 
-        // 6) éxito real
+        setSuccessMode('order');
         setOrderCode(String(data.orderId || ''));
         setActiveStep('SUCCESS');
       } catch (err: any) {
@@ -1263,14 +1456,15 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
 
         {selectedSize && (
           <div 
-            className={`absolute transition-transform z-20 ${activeStep !== 'CROP' ? 'pointer-events-none' : 'cursor-move hover:scale-[1.01]'}`}
+            className={`absolute transition-transform z-20 ${activeStep !== 'CROP' ? 'pointer-events-none' : isLockedArtDecoPurchase ? 'cursor-default' : 'cursor-move hover:scale-[1.01]'}`}
             style={{
               left: `${cropRect.x}px`,
               top: `${cropRect.y}px`,
               width: `${cropRect.w}px`,
               height: `${cropRect.h}px`,
+              touchAction: 'none',
             }}
-            onMouseDown={handleMouseDown}
+            onPointerDown={handlePointerDown}
           >
             <svg className={`absolute inset-0 w-full h-full pointer-events-none transition-opacity duration-300 ${activeStep === 'CROP' ? 'opacity-100' : 'opacity-0'}`}>
                <rect x="0" y="0" width="100%" height="100%" fill="none" stroke="white" strokeWidth="2.5" strokeDasharray="10 10" className="animate-marching-ants drop-shadow-md" />
@@ -1352,7 +1546,7 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
         {activeStep === 'MATERIAL' && renderMaterialInfographic()}
         {activeStep === 'SIZE' && renderSizeMockup()}
         {activeStep === 'CROP' && renderCropper()}
-        {(activeStep === 'CHECKOUT' || activeStep === 'SUCCESS' || activeStep === 'PROCESSING') && renderFinalCropPreview()}
+        {(activeStep === 'MODE' || activeStep === 'CHECKOUT' || activeStep === 'SUCCESS' || activeStep === 'PROCESSING') && renderFinalCropPreview()}
         
       </div>
     );
@@ -1362,26 +1556,35 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
   const renderSidebar = () => {
     if (activeStep === 'PROCESSING') {
       return (
-        <div className="flex flex-col items-center justify-center h-full space-y-6">
+        <div className="flex flex-col items-center justify-center h-full space-y-6 text-center">
           <div className="w-20 h-20 border-4 border-[#DFB142] border-t-transparent rounded-full animate-spin shadow-[0_0_30px_rgba(223,177,66,0.3)]"></div>
-          <h2 className="text-2xl font-bold text-white">Procesando Orden...</h2>
-          <p className="text-gray-400 text-center text-sm">Conectando con la fábrica e inicializando pasarela de pago.</p>
+          <h2 className="text-2xl font-bold text-white">{purchaseMode === 'sell' ? 'Publicando Art Deco...' : 'Procesando Orden...'}</h2>
+          <p className="text-gray-400 text-center text-sm max-w-md">{purchaseMode === 'sell' ? 'Estamos registrando el listing físico en Community Store con su precio en USD y validando el margen de venta.' : 'Conectando con la fábrica, preparando confirmación y registrando el pedido físico.'}</p>
         </div>
       );
     }
     
     if (activeStep === 'SUCCESS') {
+      const isListingSuccess = successMode === 'listing';
       return (
         <div className="flex flex-col items-center justify-center h-full space-y-6 text-center animate-in zoom-in duration-500">
           <div className="w-24 h-24 bg-green-500/20 rounded-full flex items-center justify-center border-2 border-green-500 mb-4 shadow-[0_0_50px_rgba(34,197,94,0.4)]">
             <Check className="w-12 h-12 text-green-400" />
           </div>
-          <h2 className="text-3xl font-bold text-white">¡Creación Exitosa!</h2>
-          <p className="text-gray-400">Hemos bloqueado tu encuadre y enviado las coordenadas a la fábrica.</p>
+          <h2 className="text-3xl font-bold text-white">{isListingSuccess ? '¡Art Deco publicado!' : '¡Pedido confirmado!'}</h2>
+          <p className="text-gray-400 max-w-md">{isListingSuccess ? 'Tu creación física ya puede venderse en Community Store. El comprador completará el mismo flujo profesional de 1NationUp y tu ganancia quedará registrada en My Trades.' : 'Hemos bloqueado tu encuadre y enviado a fábrica tanto la imagen original como la versión recortada para producción.'}</p>
           <div className="bg-black/50 border border-white/10 p-6 rounded-xl w-full mt-4">
-            <span className="block text-xs text-gray-500 uppercase tracking-widest mb-2">Código de Fábrica</span>
-            <span className="block text-2xl font-mono text-[#7EAAED] tracking-widest font-bold">{orderCode || '1NUP-UNKNOWN'}</span>
+            <span className="block text-xs text-gray-500 uppercase tracking-widest mb-2">{isListingSuccess ? 'Listing ID' : 'Código de Fábrica'}</span>
+            <span className="block text-2xl font-mono text-[#7EAAED] tracking-widest font-bold">{orderCode || publishedListingId || '1NUP-UNKNOWN'}</span>
           </div>
+          {isListingSuccess ? (
+            <div className="w-full rounded-2xl border border-emerald-400/20 bg-emerald-500/10 p-4 text-left text-sm text-emerald-100">
+              <div className="font-semibold">Resumen comercial</div>
+              <div className="mt-2 flex items-center justify-between gap-3"><span>Costo base del servicio</span><span>{formatUsd(minimumSellPrice)}</span></div>
+              <div className="mt-1 flex items-center justify-between gap-3"><span>Precio publicado</span><span>{formatUsd(listingPriceUsdValue)}</span></div>
+              <div className="mt-1 flex items-center justify-between gap-3 font-semibold"><span>Ganancia por venta</span><span>{formatUsd(listingProfit)}</span></div>
+            </div>
+          ) : null}
           <button onClick={() => window.location.reload()} className="text-sm text-[#DFB142] hover:text-white transition-colors mt-8 flex items-center">
             Comenzar una nueva creación
           </button>
@@ -1391,6 +1594,24 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
 
     return (
       <div className="flex flex-col space-y-4 h-full overflow-y-auto pr-2 custom-scrollbar pb-10">
+        {image ? (
+          <div className="rounded-2xl border border-white/10 bg-black/40 p-4">
+            <div className="flex items-start gap-3">
+              <div className="w-20 h-20 rounded-2xl overflow-hidden border border-white/10 bg-black/50 shrink-0">
+                <img src={croppedDataUrl || image} alt={asset?.name || 'Imagen aceptada'} className="w-full h-full object-cover" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold text-emerald-200">{isLockedArtDecoPurchase ? 'Art Deco listo para comprar' : is4kOk ? 'Imagen 4K aceptada' : 'Pendiente de validar'}</span>
+                  {sellerEnabled && !isLockedArtDecoPurchase ? <span className="rounded-full border border-[#DFB142]/30 bg-[#DFB142]/10 px-3 py-1 text-[11px] font-semibold text-[#f5d889]">Puedes vender en Community Store</span> : null}
+                </div>
+                <div className="mt-2 text-sm font-semibold text-white truncate">{asset?.name || prefillArtDeco?.name || 'Creación seleccionada'}</div>
+                <div className="mt-1 text-xs text-white/55">{dims ? `${dims.w}×${dims.h}px` : 'Dimensiones listas para verificar'} · {selectedMaterial?.label || prefillArtDeco?.artDecoPayload?.materialLabel || 'Material por definir'} · {selectedSize?.label || prefillArtDeco?.artDecoPayload?.size?.label || 'Medida por definir'}</div>
+                <div className="mt-2 text-xs text-white/62 leading-5">{isLockedArtDecoPurchase ? 'Estás en la versión de compra física: el encuadre y la pieza ya fueron definidos por el creador y no se modificarán.' : '1NationUp convierte tu creación IA en una pieza física lista para producir. Selecciona material, define el encuadre exacto y decide si comprarla para ti o publicarla para venderla como Art Deco.'}</div>
+              </div>
+            </div>
+          </div>
+        ) : null}
         
         {/* PASO 1: MATERIAL */}
         <div className={`rounded-2xl border transition-all duration-500 overflow-hidden flex-shrink-0 ${activeStep === 'MATERIAL' ? 'border-[#DE6C53] bg-black/60 shadow-[0_0_20px_rgba(222,108,83,0.2)]' : selectedMaterial ? 'border-white/20 bg-black/40' : 'border-white/5 bg-black/20 opacity-50'}`}>
@@ -1506,8 +1727,11 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
               <div className="bg-[#DFB142]/10 border border-[#DFB142]/30 rounded-lg p-4 mb-5 text-center">
                  <Scissors className="w-8 h-8 text-[#DFB142] mx-auto mb-2" />
                  <p className="text-sm text-white font-medium mb-1">Ajusta tu diseño en la pantalla izquierda</p>
-                 <p className="text-xs text-gray-400">Arrastra el área iluminada. Lo que quede oscurecido se desechará.</p>
+                 <p className="text-xs text-gray-400">Arrastra el área iluminada con dedo o mouse. Lo que quede oscurecido se desechará.</p>
               </div>
+              {isLockedArtDecoPurchase ? (
+                <div className="mb-4 rounded-xl border border-sky-400/20 bg-sky-500/10 p-3 text-xs text-sky-100">Este Art Deco ya fue publicado. Puedes revisar el encuadre exacto, pero no modificarlo en esta compra.</div>
+              ) : null}
               
                 <button 
                   onClick={handleConfirmCrop}
@@ -1524,14 +1748,62 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
           )}
         </div>
 
-        {/* PASO 4: CHECKOUT */}
+        {showModeStep ? (
+          <div className={`rounded-2xl border transition-all duration-500 overflow-hidden flex-shrink-0 ${activeStep === 'MODE' ? 'border-[#7D45A9] bg-black/60 shadow-[0_0_20px_rgba(125,69,169,0.25)]' : purchaseMode ? 'border-white/20 bg-black/40' : 'border-white/5 bg-black/20 opacity-50'}`}>
+            <div className={`p-5 flex justify-between items-center ${purchaseMode && activeStep !== 'MODE' ? 'cursor-pointer hover:bg-white/5' : ''}`} onClick={() => { if (purchaseMode && activeStep !== 'MODE') setActiveStep('MODE') }}>
+              <div className="flex items-center space-x-4">
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold ${activeStep === 'MODE' ? 'bg-[#7D45A9] text-white' : purchaseMode ? 'bg-green-500 text-black' : 'bg-white/10 text-white'}`}>
+                  {purchaseMode && activeStep !== 'MODE' ? <Check className="w-5 h-5"/> : '4'}
+                </div>
+                <div>
+                  <h3 className={`font-bold ${activeStep === 'MODE' ? 'text-xl text-white' : 'text-lg text-gray-300'}`}>Compra o venta</h3>
+                  {purchaseMode && activeStep !== 'MODE' && <p className="text-sm text-[#d8b3ff]">{purchaseMode === 'sell' ? 'Listing Art Deco preparado' : 'Compra física para ti'}</p>}
+                </div>
+              </div>
+              {purchaseMode && activeStep !== 'MODE' && <Edit2 className="w-4 h-4 text-gray-400 hover:text-white transition-colors"/>}
+            </div>
+
+            {activeStep === 'MODE' && (
+              <div className="p-5 pt-0 animate-in slide-in-from-top-2 duration-300 space-y-4">
+                <div className="grid grid-cols-1 gap-3">
+                  <button type="button" onClick={() => { setPurchaseMode('buy'); setSubmitError(''); setActiveStep('CHECKOUT'); }} className={`w-full rounded-2xl border p-4 text-left transition ${purchaseMode === 'buy' ? 'border-green-500 bg-green-500/10 shadow-[0_0_18px_rgba(34,197,94,0.18)]' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}>
+                    <div className="flex items-center gap-3"><ShoppingCart className="w-5 h-5 text-green-300" /><span className="font-semibold text-white">Comprar para ti</span></div>
+                    <p className="mt-2 text-sm text-white/65">Mantén el flujo actual de 1NationUp y recibe en tu casa la pieza física con el encuadre confirmado.</p>
+                  </button>
+
+                  <button type="button" onClick={() => { setPurchaseMode('sell'); setSubmitError(''); setActiveStep('MODE'); if (!listingForm.priceUsd) setListingForm((prev) => ({ ...prev, priceUsd: String(roundUsd(minimumSellPrice + 20)) })); }} className={`w-full rounded-2xl border p-4 text-left transition ${purchaseMode === 'sell' ? 'border-[#DFB142] bg-[#DFB142]/10 shadow-[0_0_18px_rgba(223,177,66,0.18)]' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}>
+                    <div className="flex items-center gap-3"><BadgeDollarSign className="w-5 h-5 text-[#DFB142]" /><span className="font-semibold text-white">Publicar para vender</span></div>
+                    <p className="mt-2 text-sm text-white/65">Publica la creación como Art Deco físico en Community Store. El precio debe estar por encima del costo base del servicio.</p>
+                  </button>
+                </div>
+
+                {purchaseMode === 'sell' ? (
+                  <div className="rounded-2xl border border-[#DFB142]/20 bg-[#DFB142]/5 p-4 space-y-3">
+                    <div className="text-sm text-white/80">Configura el listing físico que verá la comunidad. La receta no se mostrará; sólo la pieza y su precio en USD.</div>
+                    <input type="text" value={listingForm.name} onChange={(e) => setListingForm({ ...listingForm, name: e.target.value })} placeholder="Título del Art Deco" className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-[#DFB142]" />
+                    <textarea value={listingForm.description} onChange={(e) => setListingForm({ ...listingForm, description: e.target.value })} placeholder="Describe el acabado, intención visual o ambiente ideal de la pieza" className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-[#DFB142] h-24 resize-none" />
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="rounded-xl border border-white/10 bg-black/30 p-3 text-sm"><div className="text-white/50 text-[11px] uppercase tracking-wide">Costo base</div><div className="mt-1 font-semibold text-white">{formatUsd(minimumSellPrice)}</div></div>
+                      <div className="rounded-xl border border-white/10 bg-black/30 p-3 text-sm"><div className="text-white/50 text-[11px] uppercase tracking-wide">Tu precio</div><input type="number" min={Math.ceil(minimumSellPrice + 1)} step="1" value={listingForm.priceUsd} onChange={(e) => setListingForm({ ...listingForm, priceUsd: e.target.value })} className="mt-2 w-full bg-transparent text-white outline-none" placeholder={`>${minimumSellPrice.toFixed(2)}`} /></div>
+                      <div className="rounded-xl border border-white/10 bg-black/30 p-3 text-sm"><div className="text-white/50 text-[11px] uppercase tracking-wide">Ganancia estimada</div><div className="mt-1 font-semibold text-emerald-300">{formatUsd(listingProfit)}</div></div>
+                    </div>
+                    <div className={`text-xs ${listingPriceUsdValue > minimumSellPrice ? 'text-emerald-200' : 'text-amber-200'}`}>{listingPriceUsdValue > minimumSellPrice ? 'El precio cumple el mínimo y tu ganancia quedará registrada en My Trades.' : `Debes publicar por encima de ${formatUsd(minimumSellPrice)}.`}</div>
+                    <button type="button" onClick={() => void handlePublishArtDeco()} disabled={!canPublishListing} className={`w-full rounded-2xl px-5 py-4 font-bold transition ${canPublishListing ? 'bg-[#DFB142] text-black hover:brightness-110' : 'bg-white/10 text-white/45 cursor-not-allowed'}`}>Publicar Art Deco en Community Store</button>
+                  </div>
+                ) : null}
+              </div>
+            )}
+          </div>
+        ) : null}
+
+        {/* PASO CHECKOUT */}
         <div className={`rounded-2xl border transition-all duration-500 overflow-hidden flex-shrink-0 ${activeStep === 'CHECKOUT' ? 'border-green-500 bg-black/60 shadow-[0_0_20px_rgba(34,197,94,0.2)]' : 'border-white/5 bg-black/20 opacity-50'}`}>
           <div className="p-5 flex justify-between items-center">
             <div className="flex items-center space-x-4">
               <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold ${activeStep === 'CHECKOUT' ? 'bg-green-500 text-black' : 'bg-white/10 text-white'}`}>
-                4
+                {checkoutStepNumber}
               </div>
-              <h3 className={`font-bold ${activeStep === 'CHECKOUT' ? 'text-xl text-white' : 'text-lg text-gray-300'}`}>Finalizar</h3>
+              <h3 className={`font-bold ${activeStep === 'CHECKOUT' ? 'text-xl text-white' : 'text-lg text-gray-300'}`}>{isLockedArtDecoPurchase ? 'Completar compra Art Deco' : 'Finalizar'}</h3>
             </div>
           </div>
 
@@ -1540,11 +1812,12 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
               
               <div className="bg-white/5 rounded-xl p-4 mb-6 border border-white/10">
                 <div className="flex justify-between items-center text-sm text-gray-300 mb-2">
-                  <span>{selectedMaterial?.label} ({selectedSize?.label})</span>
+                  <span>{isLockedArtDecoPurchase ? (prefillArtDeco?.name || 'Art Deco físico') : `${selectedMaterial?.label} (${selectedSize?.label})`}</span>
                 </div>
-                <div className="flex justify-between items-center text-lg font-bold text-white border-t border-white/10 pt-2">
-                  <span>Total</span>
-                  <span className="text-[#DFB142]">${calculateTotal()}</span>
+                <div className="space-y-2 border-t border-white/10 pt-3 text-sm">
+                  <div className="flex justify-between items-center text-gray-300"><span>{isLockedArtDecoPurchase ? 'Precio Art Deco' : 'Costo de producción'}</span><span>{formatUsd(checkoutUnitPrice)}</span></div>
+                  <div className="flex justify-between items-center text-gray-300"><span>{formData.method === 'pickup' ? 'Retiro' : 'Envío'}</span><span>{formatUsd(shippingCost)}</span></div>
+                  <div className="flex justify-between items-center text-lg font-bold text-white pt-2"><span>Total</span><span className="text-[#DFB142]">{formatUsd(checkoutTotal)}</span></div>
                 </div>
               </div>
 
@@ -1589,7 +1862,7 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
                   <div className="absolute inset-0 bg-gradient-to-r from-green-500 to-emerald-700 transition-transform duration-300 group-hover:scale-105"></div>
                   <div className="relative px-6 py-4 flex items-center justify-center space-x-3 text-white font-bold text-lg">
                     <CreditCard className="w-6 h-6" />
-                    <span>Pagar (${calculateTotal()})</span>
+                    <span>{isLockedArtDecoPurchase ? `Pagar ${formatUsd(checkoutTotal)}` : `Pagar ${formatUsd(checkoutTotal)}`}</span>
                   </div>
                 </button>
               </form>
@@ -1637,29 +1910,45 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
         {/* PANEL IZQUIERDO: Editor Visual Fijo */}
         <div className="flex-[1.3] p-6 lg:p-8 flex flex-col items-center justify-center relative border-b lg:border-b-0 lg:border-r border-white/5">
           {!image ? (
-            <div className="w-full max-w-3xl h-[60vh] rounded-3xl border border-white/10 bg-white/5 backdrop-blur-sm shadow-2xl overflow-hidden flex flex-col items-center justify-center text-center p-10">
-              <button
-                type="button"
-                onClick={() => setPickerOpen(true)}
-                className="w-28 h-28 rounded-3xl bg-white/10 hover:bg-white/20 border border-white/10 hover:border-[#7EAAED] transition flex items-center justify-center shadow-2xl"
-                title="Cargar desde historial"
-              >
-                <ImageIcon size={42} className="text-white/90" />
-              </button>
+            <div className="w-full max-w-4xl min-h-[60vh] rounded-3xl border border-white/10 bg-white/5 backdrop-blur-sm shadow-2xl overflow-hidden p-6 sm:p-8 lg:p-10">
+              <div className="grid grid-cols-1 lg:grid-cols-[1.1fr_0.9fr] gap-8 h-full items-center">
+                <div className="text-center lg:text-left">
+                  <div className="inline-flex items-center gap-2 rounded-full border border-[#DFB142]/20 bg-[#DFB142]/10 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-[#f5d889]">
+                    <Wand2 className="w-4 h-4" /> 1NationUp Physical Art
+                  </div>
+                  <h2 className="mt-5 text-3xl sm:text-4xl font-extrabold leading-tight">Convierte tus creaciones IA en una pieza física real lista para fabricar y enviar.</h2>
+                  <p className="text-gray-300 mt-4 max-w-2xl text-sm sm:text-base leading-7">
+                    1NationUp toma una imagen 4K de tu historial, te guía para elegir material, medida y encuadre exacto, y convierte ese resultado en una obra física profesional. Si tienes plan Pro o superior, además puedes publicarla como Art Deco y venderla en Community Store con tu propio margen.
+                  </p>
+                  <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-3 text-left">
+                    <div className="rounded-2xl border border-white/10 bg-black/30 p-4"><div className="text-sm font-semibold text-white">1. Selección</div><div className="mt-1 text-xs text-white/55">Escoge una imagen 4K de tu historial y validamos su resolución.</div></div>
+                    <div className="rounded-2xl border border-white/10 bg-black/30 p-4"><div className="text-sm font-semibold text-white">2. Encaje perfecto</div><div className="mt-1 text-xs text-white/55">Define material, tamaño y encuadre exacto sin perder control visual.</div></div>
+                    <div className="rounded-2xl border border-white/10 bg-black/30 p-4"><div className="text-sm font-semibold text-white">3. Compra o venta</div><div className="mt-1 text-xs text-white/55">Compra la pieza para ti o publícala para revenderla como Art Deco.</div></div>
+                  </div>
+                </div>
 
-              <h2 className="text-2xl font-extrabold mt-6">Cargar imagen desde tu historial</h2>
-              <p className="text-gray-400 mt-2 max-w-xl">
-                En 1NationUp no se permite cargar archivos desde tu PC. Haz click arriba para elegir una imagen de tu historial.
-                (Incluye todas las herramientas de imagen excepto Camera Angles)
-              </p>
-
-              <button
-                type="button"
-                onClick={() => setPickerOpen(true)}
-                className="mt-6 px-6 py-3 rounded-2xl bg-[#7EAAED] text-black font-extrabold hover:brightness-110 transition"
-              >
-                Abrir historial
-              </button>
+                <div className="rounded-3xl border border-white/10 bg-black/35 p-6 text-center">
+                  <button
+                    type="button"
+                    onClick={() => setPickerOpen(true)}
+                    className="mx-auto w-28 h-28 rounded-3xl bg-white/10 hover:bg-white/20 border border-white/10 hover:border-[#7EAAED] transition flex items-center justify-center shadow-2xl"
+                    title="Cargar desde historial"
+                  >
+                    <ImageIcon size={42} className="text-white/90" />
+                  </button>
+                  <h3 className="text-2xl font-extrabold mt-6">Selecciona tu imagen base</h3>
+                  <p className="text-gray-400 mt-2 text-sm leading-6">
+                    Por estabilidad, 1NationUp trabaja con imágenes ya generadas dentro de tu ecosistema Tales. Aquí verás todas tus imágenes del historial excepto Camera Angles.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setPickerOpen(true)}
+                    className="mt-6 w-full px-6 py-3 rounded-2xl bg-[#7EAAED] text-black font-extrabold hover:brightness-110 transition"
+                  >
+                    Abrir historial
+                  </button>
+                </div>
+              </div>
             </div>
           ) : (
             renderVisualEditor()

@@ -300,3 +300,49 @@ export async function createCommunityListingComment(
     commentsCount: Number.isFinite(Number(data.commentsCount)) ? Number(data.commentsCount) : 0,
   };
 }
+
+export async function createArtDecoListing(input: {
+  previewAssetId: string;
+  name: string;
+  description: string;
+  priceUsd: number;
+  currency?: string;
+  artDecoPayload: any;
+}) {
+  const headers = await authHeaders();
+  const resp = await fetch(apiUrl(`/api/community-store/art-deco`), {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      previewAssetId: input.previewAssetId,
+      name: input.name,
+      description: input.description,
+      priceUsd: input.priceUsd,
+      currency: input.currency || "USD",
+      artDecoPayload: input.artDecoPayload,
+    }),
+  });
+
+  const raw = await resp.text();
+  const data = parseJsonOrThrow(raw);
+
+  if (!resp.ok || data?.ok === false) {
+    const msg = data?.error?.message || `Create Art Deco listing failed (${resp.status})`;
+    const code = data?.error?.code;
+    const details = data?.error?.details || null;
+
+    if (code === "PLAN_REQUIRED_PRO" || code === "NO_ACTIVE_PLAN") {
+      emitPlanRequired({
+        code: String(code),
+        message: msg || "Para publicar Art Deco en Community Store necesitas un plan Pro o superior activo.",
+      });
+    }
+
+    const err: any = new Error(msg);
+    err.code = code;
+    err.details = details;
+    throw err;
+  }
+
+  return { listingId: String(data.listingId), reused: Boolean(data.reused) };
+}

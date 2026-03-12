@@ -348,6 +348,18 @@ export const StoreOrderSchema = z.object({
     total: z.number().nonnegative(),
   }),
 
+  artDeco: z
+    .object({
+      listingId: z.string().uuid(),
+      sellerId: z.string().uuid().nullable().optional(),
+      sellerUsername: z.string().optional(),
+      salePriceUsd: z.number().positive(),
+      basePriceUsd: z.number().nonnegative(),
+      sellerProfitUsd: z.number().nonnegative(),
+      currency: z.string().min(3).max(8).default("USD"),
+    })
+    .optional(),
+
   delivery: z.object({
     method: z.enum(["ship", "pickup"]),
     customerName: z.string().min(1),

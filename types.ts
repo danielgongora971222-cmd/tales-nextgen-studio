@@ -94,6 +94,53 @@ export interface Asset {
   comments: Comment[];
 }
 
+export interface StoreArtDecoPayload {
+  assetId: string;
+  assetUrl: string;
+  assetName?: string;
+  imageDims?: { w: number; h: number } | null;
+  material: "metal" | "acrylic" | "canvas" | "paper";
+  materialLabel: string;
+  size: {
+    id: string;
+    wIn: number;
+    hIn: number;
+    label: string;
+  };
+  fitMode: "perfect" | "crop" | "smart_fill";
+  cropNormalized?: {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    aspect?: number;
+  } | null;
+  croppedImageDataUrl?: string | null;
+  pricing: {
+    basePrice: number;
+    salePrice: number;
+    sellerProfit: number;
+    currency?: string;
+  };
+}
+
+export interface StoreArtDecoListing {
+  id: string;
+  sellerId?: string;
+  sellerUsername?: string;
+  name?: string;
+  description?: string;
+  priceUsd?: number;
+  currency?: string;
+  previewUrl?: string | null;
+  artDecoPayload?: StoreArtDecoPayload | null;
+}
+
+export interface StorePrefill {
+  asset?: Asset | null;
+  artDecoListing?: StoreArtDecoListing | null;
+}
+
 export interface StylePreset {
   id: string;
   name: string;

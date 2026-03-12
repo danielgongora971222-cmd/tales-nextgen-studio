@@ -63,7 +63,7 @@ export async function sendStoreOrderEmail({ orderId, payload }) {
   }
 
   const customerEmail = safeStr(payload?.delivery?.email);
-  const subject = `1NationUp Order ${orderId} — ${safeStr(payload?.materialLabel)} / ${safeStr(payload?.size?.label)}`;
+  const subject = `1NationUp ${payload?.artDeco?.listingId ? "Art Deco Order" : "Order"} ${orderId} — ${safeStr(payload?.materialLabel)} / ${safeStr(payload?.size?.label)}`;
 
   // Adjuntos: original (si < 20MB) + recorte (si viene)
   const attachments = [];
@@ -184,6 +184,21 @@ export async function sendStoreOrderEmail({ orderId, payload }) {
           : "No cropNormalized provided."
       }
     </p>
+
+    ${
+      payload?.artDeco?.listingId
+        ? `
+          <h3 style="margin: 18px 0 8px">Art Deco marketplace</h3>
+          <ul style="margin: 0 0 12px">
+            <li><b>Listing ID:</b> ${safeStr(payload?.artDeco?.listingId)}</li>
+            <li><b>Seller:</b> ${safeStr(payload?.artDeco?.sellerUsername || payload?.artDeco?.sellerId)}</li>
+            <li><b>Sale price:</b> ${money(payload?.artDeco?.salePriceUsd)}</li>
+            <li><b>Base service cost:</b> ${money(payload?.artDeco?.basePriceUsd)}</li>
+            <li><b>Seller profit:</b> ${money(payload?.artDeco?.sellerProfitUsd)}</li>
+          </ul>
+        `
+        : ""
+    }
 
     <h3 style="margin: 18px 0 8px">Pricing</h3>
     <ul style="margin: 0 0 12px">

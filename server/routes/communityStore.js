@@ -97,10 +97,90 @@ const CreateListingSchema = z.object({
   listingKind: z.enum(["single", "workflow"]).default("single"),
 });
 
+
+const CreateArtDecoListingSchema = z
+  .object({
+    previewAssetId: z.string().uuid(),
+    name: z.preprocess((v) => (typeof v === "string" ? v.trim() : ""), z.string().min(3).max(80)),
+    description: z.preprocess(
+      (v) => (typeof v === "string" ? v.trim() : ""),
+      z.string().min(20, "La descripción es obligatoria (mínimo 20 caracteres).").max(2000, "Máximo 2000 caracteres.")
+    ),
+    priceUsd: z.preprocess((v) => Number(v), z.number().positive().max(1000000)),
+    currency: z.preprocess((v) => (typeof v === "string" ? v.trim().toUpperCase() : "USD"), z.string().min(3).max(8)).default("USD"),
+    artDecoPayload: z
+      .object({
+        assetId: z.string().min(1),
+        assetUrl: z.string().min(1),
+        assetName: z.string().optional(),
+        imageDims: z.object({ w: z.number().int().nonnegative(), h: z.number().int().nonnegative() }).nullable().optional(),
+        material: z.enum(["metal", "acrylic", "canvas", "paper"]),
+        materialLabel: z.string().min(1),
+        size: z.object({
+          id: z.string().min(1),
+          wIn: z.number().positive(),
+          hIn: z.number().positive(),
+          label: z.string().min(1),
+        }),
+        fitMode: z.enum(["perfect", "crop", "smart_fill"]).default("crop"),
+        cropNormalized: z
+          .object({
+            x: z.number().min(0).max(1),
+            y: z.number().min(0).max(1),
+            w: z.number().min(0).max(1),
+            h: z.number().min(0).max(1),
+            aspect: z.number().positive().optional(),
+          })
+          .nullable()
+          .optional(),
+        croppedImageDataUrl: z.string().max(8_500_000).nullable().optional(),
+        pricing: z.object({
+          basePrice: z.number().nonnegative(),
+          salePrice: z.number().positive(),
+          sellerProfit: z.number().nonnegative(),
+          currency: z.string().min(3).max(8).optional(),
+        }),
+      })
+      .superRefine((value, ctx) => {
+        const basePrice = normalizeUsd(value?.pricing?.basePrice);
+        const salePrice = normalizeUsd(value?.pricing?.salePrice);
+        const sellerProfit = normalizeUsd(value?.pricing?.sellerProfit);
+
+        if (salePrice <= basePrice) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["pricing", "salePrice"],
+            message: "El precio de venta debe ser mayor que el costo base del servicio.",
+          });
+        }
+
+        if (Math.abs((salePrice - basePrice) - sellerProfit) > 0.02) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["pricing", "sellerProfit"],
+            message: "La ganancia del seller no coincide con el margen calculado.",
+          });
+        }
+      }),
+  })
+  .superRefine((value, ctx) => {
+    const priceUsd = normalizeUsd(value?.priceUsd);
+    const salePrice = normalizeUsd(value?.artDecoPayload?.pricing?.salePrice);
+    if (Math.abs(priceUsd - salePrice) > 0.02) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["priceUsd"],
+        message: "priceUsd debe coincidir con el precio de venta configurado para el Art Deco.",
+      });
+    }
+  });
+
 const UpdateListingSchema = z
   .object({
     name: z.preprocess((v) => (v === undefined ? undefined : String(v).trim()), z.string().min(3).max(80)).optional(),
     priceCredits: z.preprocess((v) => (v === undefined ? undefined : Number(v)), z.number().int().min(1).max(1000000)).optional(),
+    priceUsd: z.preprocess((v) => (v === undefined ? undefined : Number(v)), z.number().positive().max(1000000)).optional(),
+    currency: z.preprocess((v) => (v === undefined ? undefined : String(v).trim().toUpperCase()), z.string().min(3).max(8)).optional(),
     description: z.preprocess((v) => (v === undefined ? undefined : String(v).trim()), z.string().max(2000)).optional(),
     status: z.enum(["active", "unlisted", "deleted"]).optional(),
   })
@@ -161,6 +241,22 @@ export function createCommunityStoreRouter(ctx) {
     return { ok: true, error: null, canSell: !!active.subscription?.canSell };
   }
 
+
+  function normalizeUsd(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return 0;
+    return Math.round(n * 100) / 100;
+  }
+
+  function safeArtDecoPayload(payload) {
+    return payload && typeof payload === "object" ? payload : {};
+  }
+
+  function artDecoPreviewFromPayload(payload) {
+    const candidate = safeArtDecoPayload(payload)?.croppedImageDataUrl;
+    return typeof candidate === "string" && candidate.startsWith("data:image/") ? candidate : null;
+  }
+
   // LISTINGS PUBLICOS (paginado)
   router.get("/community-store/listings", async (req, res) => {
     const limit = clampInt(req.query.limit, 1, 48, 12);
@@ -186,7 +282,7 @@ export function createCommunityStoreRouter(ctx) {
     let q = supabaseAdmin
       .from(mine ? "community_listings" : "community_listings_public_catalog")
       .select(
-        "id, name, seller_id, seller_username_snapshot, seller_verified_snapshot, listing_kind, media_tag, price_credits, description, status, preview_asset_id, created_at, likes_count, comments_count, sales_count"
+        "id, name, seller_id, seller_username_snapshot, seller_verified_snapshot, listing_kind, media_tag, price_credits, price_usd, currency, art_deco_payload, description, status, preview_asset_id, created_at, likes_count, comments_count, sales_count"
       )
       .eq("status", "active");
 
@@ -259,7 +355,9 @@ export function createCommunityStoreRouter(ctx) {
 
     const items = rows.map((r) => {
       const ownedByMe = user?.id ? r.seller_id === user.id : false;
-      const purchasedByMe = user?.id ? purchasedSet.has(r.id) : false;
+      const purchasedByMe = user?.id && r.listing_kind !== "art_deco" ? purchasedSet.has(r.id) : false;
+      const artDecoPayload = safeArtDecoPayload(r.art_deco_payload);
+      const previewUrl = artDecoPreviewFromPayload(artDecoPayload) || previewUrlByListingId.get(r.id) || null;
 
       return {
         id: r.id,
@@ -272,11 +370,14 @@ export function createCommunityStoreRouter(ctx) {
 
         name: r.name || "",
         priceCredits: Number(r.price_credits) || 0,
+        priceUsd: normalizeUsd(r.price_usd),
+        currency: r.currency || "USD",
+        artDecoPayload: r.listing_kind === "art_deco" ? artDecoPayload : null,
         description: r.description || "",
 
         status: r.status,
 
-        previewUrl: previewUrlByListingId.get(r.id) || null,
+        previewUrl,
 
         createdAt: r.created_at ? new Date(r.created_at).getTime() : Date.now(),
 
@@ -306,7 +407,7 @@ export function createCommunityStoreRouter(ctx) {
     const { data: row, error } = await supabaseAdmin
       .from("community_listings")
       .select(
-        "id, name, seller_id, seller_username_snapshot, seller_verified_snapshot, listing_kind, media_tag, price_credits, description, status, preview_asset_id, created_at, likes_count, comments_count, sales_count"
+        "id, name, seller_id, seller_username_snapshot, seller_verified_snapshot, listing_kind, media_tag, price_credits, price_usd, currency, art_deco_payload, description, status, preview_asset_id, created_at, likes_count, comments_count, sales_count"
       )
       .eq("id", listingId)
       .maybeSingle();
@@ -373,11 +474,14 @@ export function createCommunityStoreRouter(ctx) {
 
         name: row.name || "",
         priceCredits: Number(row.price_credits) || 0,
+        priceUsd: normalizeUsd(row.price_usd),
+        currency: row.currency || "USD",
+        artDecoPayload: row.listing_kind === "art_deco" ? safeArtDecoPayload(row.art_deco_payload) : null,
         description: row.description || "",
 
         status: row.status,
 
-        previewUrl,
+        previewUrl: artDecoPreviewFromPayload(row.art_deco_payload) || previewUrl,
 
         createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
 
@@ -429,6 +533,7 @@ export function createCommunityStoreRouter(ctx) {
       .select("id, status")
       .eq("seller_id", user.id)
       .eq("preview_asset_id", previewAssetId)
+      .eq("listing_kind", listingKind)
       .neq("status", "deleted")
       .order("created_at", { ascending: false })
       .limit(1)
@@ -511,6 +616,127 @@ export function createCommunityStoreRouter(ctx) {
     return res.json({ ok: true, listingId, reused: false });
   });
 
+  router.post("/community-store/art-deco", async (req, res) => {
+    const { user, error } = await requireUser(req);
+    if (error) return res.status(401).json({ ok: false, error });
+
+    const active = await billing.getActiveSubscription(user.id);
+    if (active.error) return err(res, 500, active.error.code, active.error.message, active.error.details);
+    if (!active.subscription || !active.subscription.canSell) {
+      return err(res, 403, "PLAN_REQUIRED_PRO", "Necesitas plan Pro o superior para publicar Art Deco en Community Store.");
+    }
+
+    let body;
+    try {
+      body = CreateArtDecoListingSchema.parse(req.body);
+    } catch (e) {
+      return err(res, 400, "BAD_REQUEST", e?.message || "Payload inválido.");
+    }
+
+    const { previewAssetId, name, description, priceUsd, currency, artDecoPayload } = body;
+
+    const { data: assetRow, error: aErr } = await supabaseAdmin
+      .from("assets")
+      .select("id, owner_id, type")
+      .eq("id", previewAssetId)
+      .maybeSingle();
+
+    if (aErr) return err(res, 500, "DB_QUERY_FAILED", aErr.message);
+    if (!assetRow) return err(res, 404, "ASSET_NOT_FOUND", "Asset no encontrado.");
+    if (assetRow.owner_id !== user.id) return err(res, 403, "FORBIDDEN", "Ese asset no es tuyo.");
+    if (assetRow.type !== "image") return err(res, 400, "BAD_REQUEST", "Art Deco solo admite assets de imagen.");
+
+    const priceUsdNorm = normalizeUsd(priceUsd);
+    const basePriceUsd = normalizeUsd(artDecoPayload?.pricing?.basePrice);
+    const sellerProfitUsd = normalizeUsd(artDecoPayload?.pricing?.sellerProfit);
+    if (priceUsdNorm <= basePriceUsd) {
+      return err(res, 400, "BAD_REQUEST", "El precio de venta debe ser mayor que el costo base del servicio.");
+    }
+    if (Math.abs((priceUsdNorm - basePriceUsd) - sellerProfitUsd) > 0.02) {
+      return err(res, 400, "BAD_REQUEST", "La ganancia del seller no coincide con el margen calculado.");
+    }
+
+    const { data: profileRow } = await supabaseAdmin.from("profiles").select("username").eq("id", user.id).maybeSingle();
+    const sellerUsername = profileRow?.username || (user.email ? user.email.split("@")[0] : "seller");
+
+    const storedPayload = {
+      ...artDecoPayload,
+      pricing: {
+        ...artDecoPayload.pricing,
+        basePrice: basePriceUsd,
+        salePrice: priceUsdNorm,
+        sellerProfit: sellerProfitUsd,
+        currency: currency || "USD",
+      },
+    };
+
+    const { data: existing } = await supabaseAdmin
+      .from("community_listings")
+      .select("id")
+      .eq("seller_id", user.id)
+      .eq("preview_asset_id", previewAssetId)
+      .eq("listing_kind", "art_deco")
+      .neq("status", "deleted")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (existing?.id) {
+      const { error: upErr } = await supabaseAdmin
+        .from("community_listings")
+        .update({
+          name,
+          description,
+          status: "active",
+          price_credits: 0,
+          price_usd: priceUsdNorm,
+          currency: currency || "USD",
+          art_deco_payload: storedPayload,
+          listed_at: new Date().toISOString(),
+        })
+        .eq("id", existing.id)
+        .eq("seller_id", user.id);
+
+      if (upErr) {
+        if (String(upErr.code) === "23505") return err(res, 409, "NAME_TAKEN", "Ya existe un listing con ese nombre. Elige otro.");
+        return err(res, 500, "DB_UPDATE_FAILED", upErr.message);
+      }
+
+      return res.json({ ok: true, listingId: existing.id, reused: true });
+    }
+
+    const { data: insRows, error: insErr } = await supabaseAdmin
+      .from("community_listings")
+      .insert({
+        seller_id: user.id,
+        seller_username_snapshot: sellerUsername,
+        seller_verified_snapshot: false,
+        listing_kind: "art_deco",
+        media_tag: "image",
+        name,
+        price_credits: 0,
+        price_usd: priceUsdNorm,
+        currency: currency || "USD",
+        art_deco_payload: storedPayload,
+        description,
+        status: "active",
+        preview_asset_id: previewAssetId,
+        listed_at: new Date().toISOString(),
+      })
+      .select("id")
+      .limit(1);
+
+    if (insErr) {
+      if (String(insErr.code) === "23505") return err(res, 409, "NAME_TAKEN", "Ya existe un listing con ese nombre. Elige otro.");
+      return err(res, 500, "DB_INSERT_FAILED", insErr.message);
+    }
+
+    const listingId = insRows?.[0]?.id;
+    if (!listingId) return err(res, 500, "DB_INSERT_FAILED", "No se pudo crear listing Art Deco.");
+
+    return res.json({ ok: true, listingId, reused: false });
+  });
+
   // UPDATE LISTING (precio/descripcion/status)
   router.patch("/community-store/listings/:id", async (req, res) => {
     const { user, error } = await requireUser(req);
@@ -537,6 +763,8 @@ export function createCommunityStoreRouter(ctx) {
     const patch = {};
     if (body.name != null) patch.name = body.name;
     if (body.priceCredits != null) patch.price_credits = body.priceCredits;
+    if (body.priceUsd != null) patch.price_usd = normalizeUsd(body.priceUsd);
+    if (body.currency != null) patch.currency = body.currency;
     if (body.description != null) patch.description = body.description;
     if (body.status != null) {
       patch.status = body.status;
@@ -791,6 +1019,18 @@ export function createCommunityStoreRouter(ctx) {
       return err(res, 400, "BAD_REQUEST", e?.message || "Payload inválido.");
     }
 
+    const { data: listingRow, error: listingErr } = await supabaseAdmin
+      .from("community_listings")
+      .select("id, listing_kind, status")
+      .eq("id", body.listingId)
+      .maybeSingle();
+
+    if (listingErr) return err(res, 500, "DB_QUERY_FAILED", listingErr.message);
+    if (!listingRow || listingRow.status !== "active") return err(res, 404, "LISTING_UNAVAILABLE", "Este listing ya no está disponible públicamente.");
+    if (listingRow.listing_kind === "art_deco") {
+      return err(res, 409, "ART_DECO_REQUIRES_STORE_FLOW", "Este Art Deco se compra desde el flujo físico de 1NationUp, no con créditos.");
+    }
+
     const idempotencyKey = req.headers["x-idempotency-key"]
       ? String(req.headers["x-idempotency-key"])
       : randomUUID();
@@ -874,12 +1114,13 @@ export function createCommunityStoreRouter(ctx) {
 
     const { data: listingRow, error: lerr } = await supabaseAdmin
       .from("community_listings")
-      .select("id, seller_id, status")
+      .select("id, seller_id, listing_kind, status")
       .eq("id", listingId)
       .maybeSingle();
 
     if (lerr) return err(res, 500, "DB_QUERY_FAILED", lerr.message);
     if (!listingRow) return err(res, 404, "NOT_FOUND", "Listing no encontrado.");
+    if (listingRow.listing_kind === "art_deco") return err(res, 403, "RECIPE_NOT_AVAILABLE", "Las publicaciones Art Deco no exponen receta reutilizable.");
 
     const isSeller = listingRow.seller_id === user.id;
 
