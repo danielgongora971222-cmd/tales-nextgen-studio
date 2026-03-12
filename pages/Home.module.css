@@ -19,8 +19,8 @@
 
 @media (max-width: 720px) {
   .heroGrid {
-    gap: 10px;
-    grid-template-columns: 1fr;
+    gap: 8px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -506,6 +506,83 @@
   align-items: stretch;
 }
 
+
+.creatorFront {
+  align-items: stretch;
+}
+
+.creatorTextShell {
+  width: 100%;
+}
+
+.creatorLayout {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(160px, 240px);
+  gap: clamp(14px, 2.4vw, 28px);
+  align-items: end;
+}
+
+.creatorIntro {
+  min-width: 0;
+}
+
+.creatorUtilityBlock {
+  min-width: 0;
+  display: grid;
+  justify-items: end;
+  gap: 14px;
+}
+
+.creatorChipsRow {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.creatorChip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(255,255,255,0.10);
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.1;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: rgba(255,255,255,0.76);
+}
+
+.creatorChipMuted {
+  background: rgba(255,255,255,0.06);
+}
+
+.creatorActionCluster {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.creatorProfileLink {
+  margin-top: 0;
+  justify-content: flex-end;
+  text-align: right;
+}
+
+.heroCreatorCard .refTitle {
+  font-size: clamp(28px, 4.4vw, 46px);
+}
+
+.heroCreatorCard .refKicker {
+  margin-bottom: 8px;
+}
+
 .refCanvas {
   position: absolute;
   inset: 0;
@@ -829,6 +906,25 @@
     padding: 8px 12px;
     font-size: 10px;
   }
+
+  .creatorLayout {
+    grid-template-columns: minmax(0, 1fr) minmax(132px, 184px);
+    gap: 12px;
+  }
+
+  .creatorUtilityBlock {
+    gap: 10px;
+  }
+
+  .creatorChip {
+    padding: 7px 10px;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+  }
+
+  .heroCreatorCard .refTitle {
+    font-size: clamp(22px, 4vw, 34px);
+  }
 }
 
 @media (max-width: 640px) {
@@ -903,5 +999,47 @@
     padding: 6px 10px;
     font-size: 9px;
     max-width: none;
+  }
+
+  .heroGrid {
+    gap: 8px;
+  }
+
+  .creatorLayout {
+    grid-template-columns: minmax(0, 1fr) minmax(102px, 140px);
+    gap: 8px;
+    align-items: center;
+  }
+
+  .creatorUtilityBlock {
+    gap: 8px;
+  }
+
+  .creatorChipsRow {
+    gap: 6px;
+  }
+
+  .creatorChip {
+    padding: 5px 8px;
+    font-size: 8px;
+    letter-spacing: 0.08em;
+  }
+
+  .creatorActionCluster {
+    gap: 8px;
+  }
+
+  .heroCreatorCard .refTitle {
+    font-size: clamp(16px, 5vw, 24px);
+    line-height: 1.04;
+  }
+
+  .heroCreatorCard .refKicker {
+    font-size: 9px;
+  }
+
+  .heroCreatorCard .heroCreditsButton,
+  .heroCreatorCard .creatorProfileLink {
+    white-space: nowrap;
   }
 }

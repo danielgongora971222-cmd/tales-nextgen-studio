@@ -285,37 +285,43 @@ export default function Home({ onNavigate }: HomeProps) {
             />
           </div>
 
-          <div className={styles.refFront}>
-            <div className={styles.refTextWrap}>
-              <h2 className={styles.refKicker}>Your Space</h2>
-              <h1 className={styles.refTitle} title={user?.username || "Creator"}>
-                <span className={styles.refGradientText}>{username}</span>
-              </h1>
+          <div className={`${styles.refFront} ${styles.creatorFront}`}>
+            <div className={`${styles.refTextWrap} ${styles.creatorTextShell}`}>
+              <div className={styles.creatorLayout}>
+                <div className={styles.creatorIntro}>
+                  <h2 className={styles.refKicker}>Your Space</h2>
+                  <h1 className={styles.refTitle} title={user?.username || "Creator"}>
+                    <span className={styles.refGradientText}>{username}</span>
+                  </h1>
+                </div>
 
-              <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/74">
-                <span className="rounded-full border border-white/10 bg-white/10 px-3 py-1.5">{credits} credits</span>
-                <span className="rounded-full border border-white/10 bg-white/6 px-3 py-1.5">{activePlan}</span>
-              </div>
+                <div className={styles.creatorUtilityBlock}>
+                  <div className={styles.creatorChipsRow}>
+                    <span className={styles.creatorChip}>{credits} credits</span>
+                    <span className={`${styles.creatorChip} ${styles.creatorChipMuted}`}>{activePlan}</span>
+                  </div>
 
-              <div className="mt-3 flex items-center gap-2">
-                <button
-                  type="button"
-                  className={styles.heroCreditsButton}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    window.localStorage.setItem("tales_account_tab", "plans");
-                    onNavigate(AppRoute.PAYWALL);
-                  }}
-                >
-                  Manage
-                </button>
-              </div>
+                  <div className={styles.creatorActionCluster}>
+                    <button
+                      type="button"
+                      className={styles.heroCreditsButton}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        window.localStorage.setItem("tales_account_tab", "plans");
+                        onNavigate(AppRoute.PAYWALL);
+                      }}
+                    >
+                      Manage
+                    </button>
 
-              <div className={styles.refActionRow}>
-                <span>Profile</span>
-                <svg className={styles.refArrow} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 8l4 4m0 0l-4 4m4-4H3" />
-                </svg>
+                    <div className={`${styles.refActionRow} ${styles.creatorProfileLink}`}>
+                      <span>Profile</span>
+                      <svg className={styles.refArrow} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 8l4 4m0 0l-4 4m4-4H3" />
+                      </svg>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
