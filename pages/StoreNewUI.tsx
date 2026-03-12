@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Maximize, Layers, Check, ShoppingCart, CreditCard, ChevronRight, Image as ImageIcon, Sparkles, Scissors, ShieldCheck, Truck, Edit2, Info, BadgeDollarSign, Wand2 } from 'lucide-react';
+import { Maximize, Layers, Check, ShoppingCart, CreditCard, ChevronRight, Image as ImageIcon, Sparkles, Scissors, ShieldCheck, Truck, Edit2, Info } from 'lucide-react';
 import type { Asset, AppRoute, StoreArtDecoListing, StoreArtDecoPayload, StorePrefill } from "../types";
 import { listMyAssets } from "../services/assetsApi";
 import { supabase } from "../services/supabaseClient";
@@ -275,6 +275,11 @@ export default function StoreNewUI({ onNavigate, onRequestUpscale, prefill }: St
   
   // Refs
   const imageWrapperRef = useRef<HTMLDivElement | null>(null);
+  const stepsScrollRef = useRef<HTMLDivElement | null>(null);
+  const materialStepRef = useRef<HTMLDivElement | null>(null);
+  const sizeStepRef = useRef<HTMLDivElement | null>(null);
+  const cropStepRef = useRef<HTMLDivElement | null>(null);
+  const checkoutStepRef = useRef<HTMLDivElement | null>(null);
 
   // Formulario de Checkout
   const [formData, setFormData] = useState({ name: '', email: '', phone: '', method: 'shipping', address: '', apt: '', city: '', state: '', zip: '', notes: '' });
@@ -323,7 +328,7 @@ function loadImgDimsFromUrl(url: string): Promise<{ w: number; h: number }> {
   });
 }
 
-const sellerEnabled = Boolean(subscription?.can_sell);
+const sellerEnabled = false && Boolean(subscription?.can_sell);
 const isLockedArtDecoPurchase = Boolean(prefillArtDeco?.id);
 const selectedBasePrice = useMemo(() => {
   if (!selectedSize || !selectedMaterial) return 0;
@@ -337,9 +342,29 @@ const checkoutTotal = roundUsd(checkoutUnitPrice + shippingCost);
 const minimumSellPrice = selectedBasePrice;
 const listingPriceUsdValue = roundUsd(Number(listingForm.priceUsd || 0));
 const listingProfit = roundUsd(Math.max(0, listingPriceUsdValue - minimumSellPrice));
-const showModeStep = sellerEnabled && !isLockedArtDecoPurchase;
-const checkoutStepNumber = showModeStep ? 5 : 4;
-const canPublishListing = sellerEnabled && !isLockedArtDecoPurchase && !!asset && !!selectedMaterial && !!selectedSize && !!finalCrop && listingPriceUsdValue > minimumSellPrice;
+const showModeStep = false;
+const checkoutStepNumber = 4;
+const canPublishListing = false && sellerEnabled && !isLockedArtDecoPurchase && !!asset && !!selectedMaterial && !!selectedSize && !!finalCrop && listingPriceUsdValue > minimumSellPrice;
+
+const scrollToActiveStep = useCallback((step: Step) => {
+  const target =
+    step === 'MATERIAL' ? materialStepRef.current :
+    step === 'SIZE' ? sizeStepRef.current :
+    step === 'CROP' ? cropStepRef.current :
+    step === 'CHECKOUT' ? checkoutStepRef.current :
+    null;
+
+  if (!target) return;
+  window.requestAnimationFrame(() => {
+    target.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' });
+  });
+}, []);
+
+useEffect(() => {
+  if (!image) return;
+  if (activeStep !== 'MATERIAL' && activeStep !== 'SIZE' && activeStep !== 'CROP' && activeStep !== 'CHECKOUT') return;
+  scrollToActiveStep(activeStep);
+}, [activeStep, image, scrollToActiveStep]);
 
 const resetFlowForNewImage = () => {
   setSelectedMaterial(null);
@@ -352,7 +377,7 @@ const resetFlowForNewImage = () => {
   setCroppedDataUrl(null);
   setOrderCode("");
   setSubmitError("");
-  setPurchaseMode(null);
+  setPurchaseMode('buy');
   setSuccessMode('order');
   setPublishedListingId('');
   setActivePointerId(null);
@@ -601,7 +626,7 @@ const handleGoToUpscale = () => {
     if (step === 'CROP' || step === 'SIZE' || step === 'MATERIAL') {
        setIsCropped(false); 
        setFinalCrop(null);
-       setPurchaseMode(null);
+       setPurchaseMode('buy');
     }
     
     if (step === 'MATERIAL') setPreviewMaterial(null);
@@ -611,11 +636,13 @@ const handleGoToUpscale = () => {
   };
 
   const handleConfirmMaterial = () => {
+    if (!previewMaterial) return;
     setSelectedMaterial(previewMaterial);
     setActiveStep('SIZE');
   };
 
   const handleConfirmSize = () => {
+    if (!previewSize) return;
     setSelectedSize(previewSize);
     setIsCropped(false);
     setActiveStep('CROP');
@@ -766,8 +793,8 @@ const handleConfirmCrop = async () => {
     }
 
     setIsCropped(true);
-    setPurchaseMode(null);
-    setActiveStep(sellerEnabled && !isLockedArtDecoPurchase ? "MODE" : "CHECKOUT");
+    setPurchaseMode('buy');
+    setActiveStep('CHECKOUT');
   } catch (e: any) {
     setCroppedDataUrl(null);
     setFinalCrop(null);
@@ -1053,7 +1080,7 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
       return (
         <div className="flex flex-col items-center justify-center animate-in fade-in duration-500">
            <Layers className="w-16 h-16 text-gray-500 mb-4 opacity-50"/>
-           <p className="text-gray-400 font-medium">Selecciona un material para ver su composición 3D</p>
+           <p className="text-gray-400 font-medium">Material</p>
         </div>
       );
     }
@@ -1064,14 +1091,13 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
     
     return (
       <div className="flex flex-col items-center justify-center w-full h-full animate-in zoom-in-95 duration-500">
-         <div className="w-full max-w-sm mb-12 text-center relative z-10 bg-black/50 p-4 rounded-2xl border border-white/10 backdrop-blur-md">
+         <div className="w-full max-w-sm mb-4 sm:mb-8 text-center relative z-10 bg-black/50 p-4 rounded-2xl border border-white/10 backdrop-blur-md">
             <h3 className="text-2xl font-bold text-white mb-2 flex justify-center items-center">
               {previewMaterial.icon} <span className="ml-2">{previewMaterial.label}</span>
             </h3>
-            <p className="text-sm text-[#DFB142]">{previewMaterial.desc}</p>
-         </div>
+                     </div>
 
-         <div className={`relative iso-container ${isPortrait ? 'w-[200px] h-[280px]' : 'w-[280px] h-[200px]'} mb-10`}>
+         <div className={`relative iso-container ${isPortrait ? 'w-[150px] h-[210px] sm:w-[200px] sm:h-[280px]' : 'w-[210px] h-[150px] sm:w-[280px] sm:h-[200px]'} mb-10`}>
             {matId === 'acrylic' && (
               <>
                 <div className={`${baseClass} shadow-[0_20px_50px_rgba(0,0,0,0.8)]`} style={{ transform: 'translateZ(-40px)', backgroundColor: '#111' }}>
@@ -1122,7 +1148,7 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
       return (
         <div className="flex flex-col items-center justify-center animate-in fade-in duration-500">
            <Maximize className="w-16 h-16 text-gray-500 mb-4 opacity-50"/>
-           <p className="text-gray-400 font-medium">Selecciona una medida para visualizar a escala de render</p>
+           <p className="text-gray-400 font-medium">Medida</p>
         </div>
       );
     }
@@ -1371,7 +1397,7 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
             <span className="font-bold tracking-widest">Encuadre Exacto Confirmado</span>
          </div>
 
-         <div className="w-full h-[65vh] flex items-center justify-center relative mt-6">
+         <div className="w-full flex-1 min-h-0 flex items-center justify-center relative mt-4">
              <div 
                className="relative overflow-hidden shadow-[0_30px_60px_rgba(0,0,0,0.8)] border-[3px] border-[#22c55e] rounded-xl bg-[#0a0a0a]"
                style={{ 
@@ -1415,11 +1441,7 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
              </div>
          </div>
          
-         <p className="mt-6 text-gray-400 text-sm flex items-center">
-           <Info className="w-4 h-4 mr-2"/>
-           Esta es la previsualización exacta del encuadre que se enviará a la fábrica.
-         </p>
-      </div>
+               </div>
     );
   };
 
@@ -1427,13 +1449,13 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
     return (
       <div 
           ref={imageWrapperRef} 
-          className="relative inline-block max-w-full max-h-[75vh] shadow-[0_0_50px_rgba(0,0,0,0.5)] rounded-md"
+          className="relative inline-block max-w-full max-h-full shadow-[0_0_50px_rgba(0,0,0,0.5)] rounded-md"
       >
         <img 
           src={image} 
           alt="Upload" 
           onLoad={updateCropSize}
-          className="max-w-full max-h-[75vh] object-contain pointer-events-none select-none block"
+          className="max-w-full max-h-full object-contain pointer-events-none select-none block"
         />
 
         {selectedSize && (
@@ -1495,8 +1517,7 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
     if (!image) return null;
 
     return (
-      <div className="relative w-full h-[80vh] flex items-center justify-center bg-black/40 rounded-3xl border border-white/5 overflow-hidden backdrop-blur-sm shadow-2xl p-6 transition-all duration-500">
-        
+      <div className="relative w-full h-full min-h-0 rounded-[28px] border border-white/8 bg-black/40 overflow-hidden backdrop-blur-sm shadow-2xl p-3 sm:p-4 lg:p-6">
         {activeStep === 'VERIFYING' && (
           <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
             <div className="w-16 h-16 border-4 border-purple-500 border-t-transparent rounded-full animate-spin mb-4"></div>
@@ -1507,12 +1528,11 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
         )}
 
         {image && !dimsLoading && dims && !is4kOk && (
-          <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-300 p-6 text-center">
-            <div className="max-w-xl w-full rounded-3xl border border-red-500/30 bg-black/60 p-6 shadow-[0_0_40px_rgba(239,68,68,0.15)]">
+          <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-black/82 backdrop-blur-sm animate-in fade-in duration-300 p-4 text-center">
+            <div className="max-w-xl w-full rounded-3xl border border-red-500/30 bg-black/60 p-5 shadow-[0_0_40px_rgba(239,68,68,0.15)]">
               <h3 className="text-2xl font-extrabold text-white">Resolución insuficiente</h3>
               <p className="text-gray-300 mt-2">
-                Tu imagen es <span className="text-white font-bold">{dims.w}×{dims.h}</span>. Para fabricar, se requiere mínimo{" "}
-                <span className="text-white font-bold">4K (3840×2160)</span>.
+                Tu imagen es <span className="text-white font-bold">{dims.w}×{dims.h}</span>. Se requiere <span className="text-white font-bold">4K (3840×2160)</span>.
               </p>
 
               <div className="flex flex-col sm:flex-row gap-3 justify-center mt-6">
@@ -1521,7 +1541,7 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
                   onClick={handleGoToUpscale}
                   className="px-5 py-3 rounded-2xl bg-[#DFB142] text-black font-extrabold hover:brightness-110 transition"
                 >
-                  Ir a Upscale (hacer 4K)
+                  Ir a Upscale
                 </button>
 
                 <button
@@ -1542,12 +1562,28 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
           </div>
         )}
 
-        {/* Lógica de Renderizado Dinámico */}
-        {activeStep === 'MATERIAL' && renderMaterialInfographic()}
-        {activeStep === 'SIZE' && renderSizeMockup()}
-        {activeStep === 'CROP' && renderCropper()}
-        {(activeStep === 'MODE' || activeStep === 'CHECKOUT' || activeStep === 'SUCCESS' || activeStep === 'PROCESSING') && renderFinalCropPreview()}
-        
+        <div className="absolute top-3 left-3 z-30 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setPickerOpen(true)}
+            className="rounded-full border border-white/10 bg-black/60 px-3 py-2 text-[11px] font-semibold text-white/90 backdrop-blur hover:bg-black/75 transition"
+          >
+            {image ? 'Cambiar imagen' : 'Seleccionar imagen'}
+          </button>
+        </div>
+
+        {image ? (
+          <div className="absolute top-3 right-3 z-30 w-16 h-16 sm:w-20 sm:h-20 overflow-hidden rounded-2xl border border-white/15 bg-black/60 shadow-xl">
+            <img src={croppedDataUrl || image} alt={asset?.name || 'Preview actual'} className="w-full h-full object-cover" />
+          </div>
+        ) : null}
+
+        <div className="w-full h-full min-h-0 flex items-center justify-center pt-10 sm:pt-12">
+          {activeStep === 'MATERIAL' && renderMaterialInfographic()}
+          {activeStep === 'SIZE' && renderSizeMockup()}
+          {activeStep === 'CROP' && renderCropper()}
+          {(activeStep === 'MODE' || activeStep === 'CHECKOUT' || activeStep === 'SUCCESS' || activeStep === 'PROCESSING') && renderFinalCropPreview()}
+        </div>
       </div>
     );
   };
@@ -1556,68 +1592,65 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
   const renderSidebar = () => {
     if (activeStep === 'PROCESSING') {
       return (
-        <div className="flex flex-col items-center justify-center h-full space-y-6 text-center">
+        <div className="flex flex-col items-center justify-center h-full space-y-6 text-center px-4">
           <div className="w-20 h-20 border-4 border-[#DFB142] border-t-transparent rounded-full animate-spin shadow-[0_0_30px_rgba(223,177,66,0.3)]"></div>
-          <h2 className="text-2xl font-bold text-white">{purchaseMode === 'sell' ? 'Publicando Art Deco...' : 'Procesando Orden...'}</h2>
-          <p className="text-gray-400 text-center text-sm max-w-md">{purchaseMode === 'sell' ? 'Estamos registrando el listing físico en Community Store con su precio en USD y validando el margen de venta.' : 'Conectando con la fábrica, preparando confirmación y registrando el pedido físico.'}</p>
+          <h2 className="text-2xl font-bold text-white">Procesando orden...</h2>
+          <p className="text-gray-400 text-sm max-w-md">Estamos registrando tu pedido físico y preparando la confirmación.</p>
         </div>
       );
     }
-    
+
     if (activeStep === 'SUCCESS') {
       const isListingSuccess = successMode === 'listing';
       return (
-        <div className="flex flex-col items-center justify-center h-full space-y-6 text-center animate-in zoom-in duration-500">
+        <div className="flex flex-col items-center justify-center h-full space-y-6 text-center animate-in zoom-in duration-500 px-4">
           <div className="w-24 h-24 bg-green-500/20 rounded-full flex items-center justify-center border-2 border-green-500 mb-4 shadow-[0_0_50px_rgba(34,197,94,0.4)]">
             <Check className="w-12 h-12 text-green-400" />
           </div>
           <h2 className="text-3xl font-bold text-white">{isListingSuccess ? '¡Art Deco publicado!' : '¡Pedido confirmado!'}</h2>
-          <p className="text-gray-400 max-w-md">{isListingSuccess ? 'Tu creación física ya puede venderse en Community Store. El comprador completará el mismo flujo profesional de 1NationUp y tu ganancia quedará registrada en My Trades.' : 'Hemos bloqueado tu encuadre y enviado a fábrica tanto la imagen original como la versión recortada para producción.'}</p>
-          <div className="bg-black/50 border border-white/10 p-6 rounded-xl w-full mt-4">
+          <div className="bg-black/50 border border-white/10 p-6 rounded-xl w-full mt-2">
             <span className="block text-xs text-gray-500 uppercase tracking-widest mb-2">{isListingSuccess ? 'Listing ID' : 'Código de Fábrica'}</span>
             <span className="block text-2xl font-mono text-[#7EAAED] tracking-widest font-bold">{orderCode || publishedListingId || '1NUP-UNKNOWN'}</span>
           </div>
-          {isListingSuccess ? (
-            <div className="w-full rounded-2xl border border-emerald-400/20 bg-emerald-500/10 p-4 text-left text-sm text-emerald-100">
-              <div className="font-semibold">Resumen comercial</div>
-              <div className="mt-2 flex items-center justify-between gap-3"><span>Costo base del servicio</span><span>{formatUsd(minimumSellPrice)}</span></div>
-              <div className="mt-1 flex items-center justify-between gap-3"><span>Precio publicado</span><span>{formatUsd(listingPriceUsdValue)}</span></div>
-              <div className="mt-1 flex items-center justify-between gap-3 font-semibold"><span>Ganancia por venta</span><span>{formatUsd(listingProfit)}</span></div>
-            </div>
-          ) : null}
-          <button onClick={() => window.location.reload()} className="text-sm text-[#DFB142] hover:text-white transition-colors mt-8 flex items-center">
+          <button onClick={() => window.location.reload()} className="text-sm text-[#DFB142] hover:text-white transition-colors">
             Comenzar una nueva creación
           </button>
         </div>
       );
     }
 
-    return (
-      <div className="flex flex-col space-y-4 h-full overflow-y-auto pr-2 custom-scrollbar pb-10">
-        {image ? (
-          <div className="rounded-2xl border border-white/10 bg-black/40 p-4">
-            <div className="flex items-start gap-3">
-              <div className="w-20 h-20 rounded-2xl overflow-hidden border border-white/10 bg-black/50 shrink-0">
-                <img src={croppedDataUrl || image} alt={asset?.name || 'Imagen aceptada'} className="w-full h-full object-cover" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold text-emerald-200">{isLockedArtDecoPurchase ? 'Art Deco listo para comprar' : is4kOk ? 'Imagen 4K aceptada' : 'Pendiente de validar'}</span>
-                  {sellerEnabled && !isLockedArtDecoPurchase ? <span className="rounded-full border border-[#DFB142]/30 bg-[#DFB142]/10 px-3 py-1 text-[11px] font-semibold text-[#f5d889]">Puedes vender en Community Store</span> : null}
-                </div>
-                <div className="mt-2 text-sm font-semibold text-white truncate">{asset?.name || prefillArtDeco?.name || 'Creación seleccionada'}</div>
-                <div className="mt-1 text-xs text-white/55">{dims ? `${dims.w}×${dims.h}px` : 'Dimensiones listas para verificar'} · {selectedMaterial?.label || prefillArtDeco?.artDecoPayload?.materialLabel || 'Material por definir'} · {selectedSize?.label || prefillArtDeco?.artDecoPayload?.size?.label || 'Medida por definir'}</div>
-                <div className="mt-2 text-xs text-white/62 leading-5">{isLockedArtDecoPurchase ? 'Estás en la versión de compra física: el encuadre y la pieza ya fueron definidos por el creador y no se modificarán.' : '1NationUp convierte tu creación IA en una pieza física lista para producir. Selecciona material, define el encuadre exacto y decide si comprarla para ti o publicarla para venderla como Art Deco.'}</div>
+    if (!image) {
+      return (
+        <div className="h-full overflow-y-auto pr-1 pb-6 custom-scrollbar">
+          <div className="rounded-2xl border border-[#7EAAED]/30 bg-black/55 p-5 shadow-[0_0_20px_rgba(126,170,237,0.15)]">
+            <div className="flex items-center gap-4">
+              <div className="w-8 h-8 rounded-full bg-[#7EAAED] text-black font-bold flex items-center justify-center">1</div>
+              <div>
+                <h3 className="text-xl font-bold text-white">Imagen</h3>
+                <p className="text-sm text-[#7EAAED]">Imagen 4K</p>
               </div>
             </div>
+            <button
+              type="button"
+              onClick={() => setPickerOpen(true)}
+              className="mt-5 w-full rounded-2xl bg-[#7EAAED] px-5 py-4 text-base font-extrabold text-black transition hover:brightness-110"
+            >
+              Abrir historial
+            </button>
+            <div className="mt-3 text-xs text-white/55">Mínimo 3840 × 2160</div>
+            {historyLoading ? <div className="mt-3 text-sm text-white/65">Cargando historial...</div> : null}
+            {historyError ? <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{historyError}</div> : null}
           </div>
-        ) : null}
-        
-        {/* PASO 1: MATERIAL */}
-        <div className={`rounded-2xl border transition-all duration-500 overflow-hidden flex-shrink-0 ${activeStep === 'MATERIAL' ? 'border-[#DE6C53] bg-black/60 shadow-[0_0_20px_rgba(222,108,83,0.2)]' : selectedMaterial ? 'border-white/20 bg-black/40' : 'border-white/5 bg-black/20 opacity-50'}`}>
-          <div 
+        </div>
+      );
+    }
+
+    return (
+      <div ref={stepsScrollRef} className="flex flex-col space-y-4 h-full overflow-y-auto pr-1 pb-8 custom-scrollbar">
+        <div ref={materialStepRef} className={`rounded-2xl border transition-all duration-500 overflow-hidden flex-shrink-0 ${activeStep === 'MATERIAL' ? 'border-[#DE6C53] bg-black/60 shadow-[0_0_20px_rgba(222,108,83,0.2)]' : selectedMaterial ? 'border-white/20 bg-black/40' : 'border-white/5 bg-black/20 opacity-60'}`}>
+          <div
             className={`p-5 flex justify-between items-center ${selectedMaterial && activeStep !== 'MATERIAL' ? 'cursor-pointer hover:bg-white/5' : ''}`}
-            onClick={() => { if (selectedMaterial && activeStep !== 'MATERIAL') handleEditStep('MATERIAL') }}
+            onClick={() => { if (selectedMaterial && activeStep !== 'MATERIAL' && !isLockedArtDecoPurchase) handleEditStep('MATERIAL') }}
           >
             <div className="flex items-center space-x-4">
               <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold ${activeStep === 'MATERIAL' ? 'bg-[#DE6C53] text-black' : selectedMaterial ? 'bg-green-500 text-black' : 'bg-white/10 text-white'}`}>
@@ -1628,43 +1661,39 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
                 {selectedMaterial && activeStep !== 'MATERIAL' && <p className="text-sm text-[#DE6C53]">{selectedMaterial.label}</p>}
               </div>
             </div>
-            {selectedMaterial && activeStep !== 'MATERIAL' && <Edit2 className="w-4 h-4 text-gray-400 hover:text-white transition-colors"/>}
+            {selectedMaterial && activeStep !== 'MATERIAL' && !isLockedArtDecoPurchase && <Edit2 className="w-4 h-4 text-gray-400 hover:text-white transition-colors"/>}
           </div>
 
           {activeStep === 'MATERIAL' && (
             <div className="p-5 pt-0 animate-in slide-in-from-top-2 duration-300">
-              <p className="text-gray-400 text-sm mb-4">Haz clic en un material para visualizar su infografía 3D.</p>
               <div className="grid grid-cols-1 gap-3 mb-4">
                 {MATERIALS.map(mat => (
-                  <button 
-                    key={mat.id} 
-                    onClick={() => setPreviewMaterial(mat)} 
+                  <button
+                    key={mat.id}
+                    onClick={() => setPreviewMaterial(mat)}
                     className={`w-full flex items-center p-4 rounded-xl border transition-all text-left group ${previewMaterial?.id === mat.id ? 'bg-[#DE6C53]/20 border-[#DE6C53] shadow-[0_0_15px_rgba(222,108,83,0.3)]' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}
                   >
                     <div className={`p-2 rounded-lg mr-4 transition-colors ${previewMaterial?.id === mat.id ? 'bg-[#DE6C53] text-black' : 'text-white bg-black/30 group-hover:text-[#DE6C53]'}`}>{mat.icon}</div>
                     <div>
                       <span className="block font-bold text-white">{mat.label}</span>
-                      <span className="block text-xs text-gray-400">{mat.desc}</span>
                     </div>
                   </button>
                 ))}
               </div>
-              
-              {/* Botón de Confirmar */}
+
               <div className={`overflow-hidden transition-all duration-500 ${previewMaterial ? 'max-h-24 opacity-100' : 'max-h-0 opacity-0'}`}>
-                 <button onClick={handleConfirmMaterial} className="w-full py-4 rounded-xl font-bold bg-[#DE6C53] text-black hover:bg-[#eb7d65] transition-colors shadow-[0_0_20px_rgba(222,108,83,0.4)] flex items-center justify-center">
-                    Confirmar Material <ChevronRight className="w-5 h-5 ml-1"/>
-                 </button>
+                <button onClick={handleConfirmMaterial} className="w-full py-4 rounded-xl font-bold bg-[#DE6C53] text-black hover:bg-[#eb7d65] transition-colors shadow-[0_0_20px_rgba(222,108,83,0.4)] flex items-center justify-center">
+                  Confirmar material <ChevronRight className="w-5 h-5 ml-1"/>
+                </button>
               </div>
             </div>
           )}
         </div>
 
-        {/* PASO 2: MEDIDA */}
-        <div className={`rounded-2xl border transition-all duration-500 overflow-hidden flex-shrink-0 ${activeStep === 'SIZE' ? 'border-[#7EAAED] bg-black/60 shadow-[0_0_20px_rgba(126,170,237,0.2)]' : selectedSize ? 'border-white/20 bg-black/40' : 'border-white/5 bg-black/20 opacity-50'}`}>
-          <div 
+        <div ref={sizeStepRef} className={`rounded-2xl border transition-all duration-500 overflow-hidden flex-shrink-0 ${activeStep === 'SIZE' ? 'border-[#7EAAED] bg-black/60 shadow-[0_0_20px_rgba(126,170,237,0.2)]' : selectedSize ? 'border-white/20 bg-black/40' : 'border-white/5 bg-black/20 opacity-60'}`}>
+          <div
             className={`p-5 flex justify-between items-center ${selectedSize && activeStep !== 'SIZE' ? 'cursor-pointer hover:bg-white/5' : ''}`}
-            onClick={() => { if (selectedSize && activeStep !== 'SIZE') handleEditStep('SIZE') }}
+            onClick={() => { if (selectedSize && activeStep !== 'SIZE' && !isLockedArtDecoPurchase) handleEditStep('SIZE') }}
           >
             <div className="flex items-center space-x-4">
               <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold ${activeStep === 'SIZE' ? 'bg-[#7EAAED] text-black' : selectedSize ? 'bg-green-500 text-black' : 'bg-white/10 text-white'}`}>
@@ -1675,17 +1704,16 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
                 {selectedSize && activeStep !== 'SIZE' && <p className="text-sm text-[#7EAAED]">{selectedSize.label}</p>}
               </div>
             </div>
-            {selectedSize && activeStep !== 'SIZE' && <Edit2 className="w-4 h-4 text-gray-400 hover:text-white transition-colors"/>}
+            {selectedSize && activeStep !== 'SIZE' && !isLockedArtDecoPurchase && <Edit2 className="w-4 h-4 text-gray-400 hover:text-white transition-colors"/>}
           </div>
 
           {activeStep === 'SIZE' && (
             <div className="p-5 pt-0 animate-in slide-in-from-top-2 duration-300">
-              <p className="text-gray-400 text-sm mb-4">Toca una medida para ver cómo luce en escala real.</p>
               <div className="grid grid-cols-1 gap-2 mb-4">
                 {SIZES.map(size => (
-                  <button 
-                    key={size.id} 
-                    onClick={() => setPreviewSize(size)} 
+                  <button
+                    key={size.id}
+                    onClick={() => setPreviewSize(size)}
                     className={`w-full flex items-center justify-between p-4 rounded-xl border transition-all group ${previewSize?.id === size.id ? 'bg-[#7EAAED]/20 border-[#7EAAED] shadow-[0_0_15px_rgba(126,170,237,0.3)]' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}
                   >
                     <span className="font-bold text-white flex items-center"><Maximize className={`w-4 h-4 mr-2 ${previewSize?.id === size.id ? 'text-[#7EAAED]' : 'text-gray-500 group-hover:text-[#7EAAED]'}`}/> {size.label}</span>
@@ -1694,21 +1722,19 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
                 ))}
               </div>
 
-              {/* Botón de Confirmar */}
               <div className={`overflow-hidden transition-all duration-500 ${previewSize ? 'max-h-24 opacity-100' : 'max-h-0 opacity-0'}`}>
-                 <button onClick={handleConfirmSize} className="w-full py-4 rounded-xl font-bold bg-[#7EAAED] text-black hover:bg-[#8ebfff] transition-colors shadow-[0_0_20px_rgba(126,170,237,0.4)] flex items-center justify-center">
-                    Confirmar Medida <ChevronRight className="w-5 h-5 ml-1"/>
-                 </button>
+                <button onClick={handleConfirmSize} className="w-full py-4 rounded-xl font-bold bg-[#7EAAED] text-black hover:bg-[#8ebfff] transition-colors shadow-[0_0_20px_rgba(126,170,237,0.4)] flex items-center justify-center">
+                  Confirmar medida <ChevronRight className="w-5 h-5 ml-1"/>
+                </button>
               </div>
             </div>
           )}
         </div>
 
-        {/* PASO 3: ENCUADRE (CROP) */}
-        <div className={`rounded-2xl border transition-all duration-500 overflow-hidden flex-shrink-0 ${activeStep === 'CROP' ? 'border-[#DFB142] bg-black/60 shadow-[0_0_20px_rgba(223,177,66,0.2)]' : isCropped ? 'border-white/20 bg-black/40' : 'border-white/5 bg-black/20 opacity-50'}`}>
-          <div 
+        <div ref={cropStepRef} className={`rounded-2xl border transition-all duration-500 overflow-hidden flex-shrink-0 ${activeStep === 'CROP' ? 'border-[#DFB142] bg-black/60 shadow-[0_0_20px_rgba(223,177,66,0.2)]' : isCropped ? 'border-white/20 bg-black/40' : 'border-white/5 bg-black/20 opacity-60'}`}>
+          <div
             className={`p-5 flex justify-between items-center ${isCropped && activeStep !== 'CROP' ? 'cursor-pointer hover:bg-white/5' : ''}`}
-            onClick={() => { if (isCropped && activeStep !== 'CROP') handleEditStep('CROP') }}
+            onClick={() => { if (isCropped && activeStep !== 'CROP' && !isLockedArtDecoPurchase) handleEditStep('CROP') }}
           >
             <div className="flex items-center space-x-4">
               <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold ${activeStep === 'CROP' ? 'bg-[#DFB142] text-black' : isCropped ? 'bg-green-500 text-black' : 'bg-white/10 text-white'}`}>
@@ -1716,100 +1742,48 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
               </div>
               <div>
                 <h3 className={`font-bold ${activeStep === 'CROP' ? 'text-xl text-white' : 'text-lg text-gray-300'}`}>Encuadre</h3>
-                {isCropped && activeStep !== 'CROP' && <p className="text-sm text-[#DFB142]">Recorte Confirmado</p>}
+                {isCropped && activeStep !== 'CROP' && <p className="text-sm text-[#DFB142]">Confirmado</p>}
               </div>
             </div>
-            {isCropped && activeStep !== 'CROP' && <Edit2 className="w-4 h-4 text-gray-400 hover:text-white transition-colors"/>}
+            {isCropped && activeStep !== 'CROP' && !isLockedArtDecoPurchase && <Edit2 className="w-4 h-4 text-gray-400 hover:text-white transition-colors"/>}
           </div>
 
           {activeStep === 'CROP' && (
             <div className="p-5 pt-0 animate-in slide-in-from-top-2 duration-300">
-              <div className="bg-[#DFB142]/10 border border-[#DFB142]/30 rounded-lg p-4 mb-5 text-center">
-                 <Scissors className="w-8 h-8 text-[#DFB142] mx-auto mb-2" />
-                 <p className="text-sm text-white font-medium mb-1">Ajusta tu diseño en la pantalla izquierda</p>
-                 <p className="text-xs text-gray-400">Arrastra el área iluminada con dedo o mouse. Lo que quede oscurecido se desechará.</p>
-              </div>
-              {isLockedArtDecoPurchase ? (
-                <div className="mb-4 rounded-xl border border-sky-400/20 bg-sky-500/10 p-3 text-xs text-sky-100">Este Art Deco ya fue publicado. Puedes revisar el encuadre exacto, pero no modificarlo en esta compra.</div>
+              {cropGenError ? (
+                <div className="mb-4 rounded-xl border border-amber-400/30 bg-amber-500/10 p-3 text-xs text-amber-100">{cropGenError}</div>
               ) : null}
-              
-                <button 
-                  onClick={handleConfirmCrop}
-                  disabled={cropProcessing}
-                  className={`group relative w-full p-1 rounded-2xl ${cropProcessing ? "opacity-60 cursor-not-allowed" : "animate-[pulse_1.5s_ease-in-out_infinite]"}`}
-                >
+              {isLockedArtDecoPurchase ? (
+                <div className="mb-4 rounded-xl border border-sky-400/20 bg-sky-500/10 p-3 text-xs text-sky-100">Este Art Deco ya fue publicado. El encuadre se mantiene bloqueado para esta compra.</div>
+              ) : null}
+
+              <button
+                onClick={handleConfirmCrop}
+                disabled={cropProcessing}
+                className={`group relative w-full p-1 rounded-2xl ${cropProcessing ? "opacity-60 cursor-not-allowed" : "animate-[pulse_1.5s_ease-in-out_infinite]"}`}
+              >
                 <div className="absolute inset-0 bg-gradient-to-r from-[#DFB142] to-[#DE6C53] rounded-2xl blur opacity-70 group-hover:opacity-100 transition duration-500"></div>
                 <div className="relative flex items-center justify-center space-x-2 px-6 py-4 bg-[#0a0a0a] rounded-xl text-white font-bold">
                   <Check className="w-5 h-5 text-[#DFB142] group-hover:scale-125 transition-transform" />
-                  <span>{cropProcessing ? "Generando recorte..." : "Confirmar Recorte"}</span>
+                  <span>{cropProcessing ? "Generando recorte..." : "Confirmar encuadre"}</span>
                 </div>
               </button>
             </div>
           )}
         </div>
 
-        {showModeStep ? (
-          <div className={`rounded-2xl border transition-all duration-500 overflow-hidden flex-shrink-0 ${activeStep === 'MODE' ? 'border-[#7D45A9] bg-black/60 shadow-[0_0_20px_rgba(125,69,169,0.25)]' : purchaseMode ? 'border-white/20 bg-black/40' : 'border-white/5 bg-black/20 opacity-50'}`}>
-            <div className={`p-5 flex justify-between items-center ${purchaseMode && activeStep !== 'MODE' ? 'cursor-pointer hover:bg-white/5' : ''}`} onClick={() => { if (purchaseMode && activeStep !== 'MODE') setActiveStep('MODE') }}>
-              <div className="flex items-center space-x-4">
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold ${activeStep === 'MODE' ? 'bg-[#7D45A9] text-white' : purchaseMode ? 'bg-green-500 text-black' : 'bg-white/10 text-white'}`}>
-                  {purchaseMode && activeStep !== 'MODE' ? <Check className="w-5 h-5"/> : '4'}
-                </div>
-                <div>
-                  <h3 className={`font-bold ${activeStep === 'MODE' ? 'text-xl text-white' : 'text-lg text-gray-300'}`}>Compra o venta</h3>
-                  {purchaseMode && activeStep !== 'MODE' && <p className="text-sm text-[#d8b3ff]">{purchaseMode === 'sell' ? 'Listing Art Deco preparado' : 'Compra física para ti'}</p>}
-                </div>
-              </div>
-              {purchaseMode && activeStep !== 'MODE' && <Edit2 className="w-4 h-4 text-gray-400 hover:text-white transition-colors"/>}
-            </div>
-
-            {activeStep === 'MODE' && (
-              <div className="p-5 pt-0 animate-in slide-in-from-top-2 duration-300 space-y-4">
-                <div className="grid grid-cols-1 gap-3">
-                  <button type="button" onClick={() => { setPurchaseMode('buy'); setSubmitError(''); setActiveStep('CHECKOUT'); }} className={`w-full rounded-2xl border p-4 text-left transition ${purchaseMode === 'buy' ? 'border-green-500 bg-green-500/10 shadow-[0_0_18px_rgba(34,197,94,0.18)]' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}>
-                    <div className="flex items-center gap-3"><ShoppingCart className="w-5 h-5 text-green-300" /><span className="font-semibold text-white">Comprar para ti</span></div>
-                    <p className="mt-2 text-sm text-white/65">Mantén el flujo actual de 1NationUp y recibe en tu casa la pieza física con el encuadre confirmado.</p>
-                  </button>
-
-                  <button type="button" onClick={() => { setPurchaseMode('sell'); setSubmitError(''); setActiveStep('MODE'); if (!listingForm.priceUsd) setListingForm((prev) => ({ ...prev, priceUsd: String(roundUsd(minimumSellPrice + 20)) })); }} className={`w-full rounded-2xl border p-4 text-left transition ${purchaseMode === 'sell' ? 'border-[#DFB142] bg-[#DFB142]/10 shadow-[0_0_18px_rgba(223,177,66,0.18)]' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}>
-                    <div className="flex items-center gap-3"><BadgeDollarSign className="w-5 h-5 text-[#DFB142]" /><span className="font-semibold text-white">Publicar para vender</span></div>
-                    <p className="mt-2 text-sm text-white/65">Publica la creación como Art Deco físico en Community Store. El precio debe estar por encima del costo base del servicio.</p>
-                  </button>
-                </div>
-
-                {purchaseMode === 'sell' ? (
-                  <div className="rounded-2xl border border-[#DFB142]/20 bg-[#DFB142]/5 p-4 space-y-3">
-                    <div className="text-sm text-white/80">Configura el listing físico que verá la comunidad. La receta no se mostrará; sólo la pieza y su precio en USD.</div>
-                    <input type="text" value={listingForm.name} onChange={(e) => setListingForm({ ...listingForm, name: e.target.value })} placeholder="Título del Art Deco" className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-[#DFB142]" />
-                    <textarea value={listingForm.description} onChange={(e) => setListingForm({ ...listingForm, description: e.target.value })} placeholder="Describe el acabado, intención visual o ambiente ideal de la pieza" className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-[#DFB142] h-24 resize-none" />
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      <div className="rounded-xl border border-white/10 bg-black/30 p-3 text-sm"><div className="text-white/50 text-[11px] uppercase tracking-wide">Costo base</div><div className="mt-1 font-semibold text-white">{formatUsd(minimumSellPrice)}</div></div>
-                      <div className="rounded-xl border border-white/10 bg-black/30 p-3 text-sm"><div className="text-white/50 text-[11px] uppercase tracking-wide">Tu precio</div><input type="number" min={Math.ceil(minimumSellPrice + 1)} step="1" value={listingForm.priceUsd} onChange={(e) => setListingForm({ ...listingForm, priceUsd: e.target.value })} className="mt-2 w-full bg-transparent text-white outline-none" placeholder={`>${minimumSellPrice.toFixed(2)}`} /></div>
-                      <div className="rounded-xl border border-white/10 bg-black/30 p-3 text-sm"><div className="text-white/50 text-[11px] uppercase tracking-wide">Ganancia estimada</div><div className="mt-1 font-semibold text-emerald-300">{formatUsd(listingProfit)}</div></div>
-                    </div>
-                    <div className={`text-xs ${listingPriceUsdValue > minimumSellPrice ? 'text-emerald-200' : 'text-amber-200'}`}>{listingPriceUsdValue > minimumSellPrice ? 'El precio cumple el mínimo y tu ganancia quedará registrada en My Trades.' : `Debes publicar por encima de ${formatUsd(minimumSellPrice)}.`}</div>
-                    <button type="button" onClick={() => void handlePublishArtDeco()} disabled={!canPublishListing} className={`w-full rounded-2xl px-5 py-4 font-bold transition ${canPublishListing ? 'bg-[#DFB142] text-black hover:brightness-110' : 'bg-white/10 text-white/45 cursor-not-allowed'}`}>Publicar Art Deco en Community Store</button>
-                  </div>
-                ) : null}
-              </div>
-            )}
-          </div>
-        ) : null}
-
-        {/* PASO CHECKOUT */}
-        <div className={`rounded-2xl border transition-all duration-500 overflow-hidden flex-shrink-0 ${activeStep === 'CHECKOUT' ? 'border-green-500 bg-black/60 shadow-[0_0_20px_rgba(34,197,94,0.2)]' : 'border-white/5 bg-black/20 opacity-50'}`}>
+        <div ref={checkoutStepRef} className={`rounded-2xl border transition-all duration-500 overflow-hidden flex-shrink-0 ${activeStep === 'CHECKOUT' ? 'border-green-500 bg-black/60 shadow-[0_0_20px_rgba(34,197,94,0.2)]' : 'border-white/5 bg-black/20 opacity-60'}`}>
           <div className="p-5 flex justify-between items-center">
             <div className="flex items-center space-x-4">
               <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold ${activeStep === 'CHECKOUT' ? 'bg-green-500 text-black' : 'bg-white/10 text-white'}`}>
                 {checkoutStepNumber}
               </div>
-              <h3 className={`font-bold ${activeStep === 'CHECKOUT' ? 'text-xl text-white' : 'text-lg text-gray-300'}`}>{isLockedArtDecoPurchase ? 'Completar compra Art Deco' : 'Finalizar'}</h3>
+              <h3 className={`font-bold ${activeStep === 'CHECKOUT' ? 'text-xl text-white' : 'text-lg text-gray-300'}`}>{isLockedArtDecoPurchase ? 'Completar compra Art Deco' : 'Finalizar compra'}</h3>
             </div>
           </div>
 
           {activeStep === 'CHECKOUT' && (
             <div className="p-5 pt-0 animate-in slide-in-from-top-2 duration-300">
-              
               <div className="bg-white/5 rounded-xl p-4 mb-6 border border-white/10">
                 <div className="flex justify-between items-center text-sm text-gray-300 mb-2">
                   <span>{isLockedArtDecoPurchase ? (prefillArtDeco?.name || 'Art Deco físico') : `${selectedMaterial?.label} (${selectedSize?.label})`}</span>
@@ -1827,10 +1801,10 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
                     {submitError}
                   </div>
                 )}
-                <input required type="text" className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Nombre Completo" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})}/>
-                <input required type="email" className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Correo Electrónico" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})}/>
-                <input required type="tel" className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Número de Teléfono" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})}/>
-                
+                <input required type="text" className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Nombre completo" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})}/>
+                <input required type="email" className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Correo electrónico" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})}/>
+                <input required type="tel" className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Número de teléfono" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})}/>
+
                 <div className="grid grid-cols-2 gap-2">
                   <button type="button" onClick={() => setFormData({...formData, method: 'shipping'})} className={`py-3 rounded-lg border flex flex-col items-center justify-center space-y-1 transition-all ${formData.method === 'shipping' ? 'bg-green-500/20 border-green-500 text-green-400' : 'bg-white/5 border-white/10 text-gray-400'}`}>
                     <Truck className="w-5 h-5" />
@@ -1845,37 +1819,36 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
                 {formData.method === 'shipping' && (
                   <div className="space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
                     <div className="grid grid-cols-3 gap-2">
-                       <input required type="text" className="col-span-2 w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Dirección de Envío" value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})}/>
-                       <input type="text" className="col-span-1 w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Apt/Suite (Opcional)" value={formData.apt} onChange={e => setFormData({...formData, apt: e.target.value})}/>
+                       <input required type="text" className="col-span-2 w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Dirección" value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})}/>
+                       <input type="text" className="col-span-1 w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Apt/Suite" value={formData.apt} onChange={e => setFormData({...formData, apt: e.target.value})}/>
                     </div>
                     <div className="grid grid-cols-3 gap-2">
                       <input required type="text" className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Ciudad" value={formData.city} onChange={e => setFormData({...formData, city: e.target.value})}/>
                       <input required type="text" className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Estado" value={formData.state} onChange={e => setFormData({...formData, state: e.target.value})}/>
-                      <input required type="text" className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Cód. Postal" value={formData.zip} onChange={e => setFormData({...formData, zip: e.target.value})}/>
+                      <input required type="text" className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Cód. postal" value={formData.zip} onChange={e => setFormData({...formData, zip: e.target.value})}/>
                     </div>
                   </div>
                 )}
 
-                <textarea className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm h-20 resize-none" placeholder="Notas adicionales para la fábrica o envío (Opcional)..." value={formData.notes} onChange={e => setFormData({...formData, notes: e.target.value})}></textarea>
+                <textarea className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm h-20 resize-none" placeholder="Notas (opcional)" value={formData.notes} onChange={e => setFormData({...formData, notes: e.target.value})}></textarea>
 
                 <button type="submit" className="w-full relative group rounded-xl overflow-hidden mt-4">
                   <div className="absolute inset-0 bg-gradient-to-r from-green-500 to-emerald-700 transition-transform duration-300 group-hover:scale-105"></div>
                   <div className="relative px-6 py-4 flex items-center justify-center space-x-3 text-white font-bold text-lg">
                     <CreditCard className="w-6 h-6" />
-                    <span>{isLockedArtDecoPurchase ? `Pagar ${formatUsd(checkoutTotal)}` : `Pagar ${formatUsd(checkoutTotal)}`}</span>
+                    <span>{`Pagar ${formatUsd(checkoutTotal)}`}</span>
                   </div>
                 </button>
               </form>
             </div>
           )}
         </div>
-
       </div>
     );
   };
 
   return (
-    <div className="min-h-screen bg-[#050505] font-sans text-white overflow-hidden flex flex-col relative">
+    <div className="h-[100dvh] min-h-screen bg-[#050505] font-sans text-white overflow-hidden flex flex-col relative">
       <ParticleBackground />
       <ConfirmDollarPurchaseModal
         open={confirmPayOpen}
@@ -1891,70 +1864,45 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
           await confirmPayInfo.action();
         }}
       />
-      
-      <header className="relative z-10 p-5 lg:px-8 flex justify-between items-center border-b border-white/5 bg-black/40 backdrop-blur-md">
-        <div className="flex items-center space-x-3">
-          <div className="w-10 h-10 bg-gradient-to-br from-[#7EAAED] to-[#7D45A9] rounded-xl flex items-center justify-center font-bold text-xl shadow-lg">1N</div>
-          <h1 className="text-2xl font-extrabold tracking-tight hidden sm:block">
+
+      <header className="relative z-10 p-4 lg:px-8 flex justify-between items-center border-b border-white/5 bg-black/40 backdrop-blur-md shrink-0">
+        <div className="flex items-center space-x-3 min-w-0">
+          <div className="w-10 h-10 bg-gradient-to-br from-[#7EAAED] to-[#7D45A9] rounded-xl flex items-center justify-center font-bold text-xl shadow-lg shrink-0">1N</div>
+          <h1 className="text-lg sm:text-2xl font-extrabold tracking-tight truncate">
             <span className="bg-clip-text text-transparent bg-gradient-to-r from-[#7EAAED] via-[#DFB142] to-[#7D45A9]">1NationUp</span>
-            <span className="text-white ml-2">Studio</span>
+            <span className="text-white ml-2 hidden sm:inline">Studio</span>
           </h1>
         </div>
-        <div className="flex items-center text-sm text-gray-400 font-medium">
+        <div className="hidden sm:flex items-center text-sm text-gray-400 font-medium shrink-0">
           <ShieldCheck className="w-4 h-4 mr-2 text-green-500"/> Calidad Garantizada
         </div>
       </header>
 
-      <main className="relative z-10 flex-1 flex flex-col lg:flex-row w-full max-w-[1800px] mx-auto overflow-hidden">
-        
-        {/* PANEL IZQUIERDO: Editor Visual Fijo */}
-        <div className="flex-[1.3] p-6 lg:p-8 flex flex-col items-center justify-center relative border-b lg:border-b-0 lg:border-r border-white/5">
+      <main className="relative z-10 flex-1 min-h-0 flex flex-col lg:flex-row w-full max-w-[1800px] mx-auto overflow-hidden">
+        <div className="basis-[47%] min-h-[280px] lg:min-h-0 lg:flex-[1.3] p-3 sm:p-4 lg:p-8 flex flex-col items-center justify-center relative border-b lg:border-b-0 lg:border-r border-white/5 overflow-hidden">
           {!image ? (
-            <div className="w-full max-w-4xl min-h-[60vh] rounded-3xl border border-white/10 bg-white/5 backdrop-blur-sm shadow-2xl overflow-hidden p-6 sm:p-8 lg:p-10">
-              <div className="grid grid-cols-1 lg:grid-cols-[1.1fr_0.9fr] gap-8 h-full items-center">
-                <div className="text-center lg:text-left">
-                  <div className="inline-flex items-center gap-2 rounded-full border border-[#DFB142]/20 bg-[#DFB142]/10 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-[#f5d889]">
-                    <Wand2 className="w-4 h-4" /> 1NationUp Physical Art
-                  </div>
-                  <h2 className="mt-5 text-3xl sm:text-4xl font-extrabold leading-tight">Convierte tus creaciones IA en una pieza física real lista para fabricar y enviar.</h2>
-                  <p className="text-gray-300 mt-4 max-w-2xl text-sm sm:text-base leading-7">
-                    1NationUp toma una imagen 4K de tu historial, te guía para elegir material, medida y encuadre exacto, y convierte ese resultado en una obra física profesional. Si tienes plan Pro o superior, además puedes publicarla como Art Deco y venderla en Community Store con tu propio margen.
-                  </p>
-                  <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-3 text-left">
-                    <div className="rounded-2xl border border-white/10 bg-black/30 p-4"><div className="text-sm font-semibold text-white">1. Selección</div><div className="mt-1 text-xs text-white/55">Escoge una imagen 4K de tu historial y validamos su resolución.</div></div>
-                    <div className="rounded-2xl border border-white/10 bg-black/30 p-4"><div className="text-sm font-semibold text-white">2. Encaje perfecto</div><div className="mt-1 text-xs text-white/55">Define material, tamaño y encuadre exacto sin perder control visual.</div></div>
-                    <div className="rounded-2xl border border-white/10 bg-black/30 p-4"><div className="text-sm font-semibold text-white">3. Compra o venta</div><div className="mt-1 text-xs text-white/55">Compra la pieza para ti o publícala para revenderla como Art Deco.</div></div>
-                  </div>
-                </div>
-
-                <div className="rounded-3xl border border-white/10 bg-black/35 p-6 text-center">
-                  <button
-                    type="button"
-                    onClick={() => setPickerOpen(true)}
-                    className="mx-auto w-28 h-28 rounded-3xl bg-white/10 hover:bg-white/20 border border-white/10 hover:border-[#7EAAED] transition flex items-center justify-center shadow-2xl"
-                    title="Cargar desde historial"
-                  >
-                    <ImageIcon size={42} className="text-white/90" />
-                  </button>
-                  <h3 className="text-2xl font-extrabold mt-6">Selecciona tu imagen base</h3>
-                  <p className="text-gray-400 mt-2 text-sm leading-6">
-                    Por estabilidad, 1NationUp trabaja con imágenes ya generadas dentro de tu ecosistema Tales. Aquí verás todas tus imágenes del historial excepto Camera Angles.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setPickerOpen(true)}
-                    className="mt-6 w-full px-6 py-3 rounded-2xl bg-[#7EAAED] text-black font-extrabold hover:brightness-110 transition"
-                  >
-                    Abrir historial
-                  </button>
-                </div>
-              </div>
+            <div className="w-full h-full rounded-[28px] border border-white/10 bg-white/5 backdrop-blur-sm shadow-2xl overflow-hidden p-6 flex flex-col items-center justify-center text-center">
+              <button
+                type="button"
+                onClick={() => setPickerOpen(true)}
+                className="w-24 h-24 sm:w-28 sm:h-28 rounded-3xl bg-white/10 hover:bg-white/20 border border-white/10 hover:border-[#7EAAED] transition flex items-center justify-center shadow-2xl"
+                title="Cargar desde historial"
+              >
+                <ImageIcon size={42} className="text-white/90" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setPickerOpen(true)}
+                className="mt-6 px-6 py-3 rounded-2xl bg-[#7EAAED] text-black font-extrabold hover:brightness-110 transition"
+              >
+                Seleccionar imagen
+              </button>
+              <div className="mt-3 text-xs text-white/55">4K mínimo</div>
             </div>
           ) : (
             renderVisualEditor()
           )}
 
-        {/* Picker modal (estética tipo community feed) */}
           {pickerOpen && (
             <div className="fixed inset-0 z-[100] bg-black/70 backdrop-blur-sm flex items-center justify-center p-0 sm:p-4">
               <div className="w-full h-[100dvh] sm:h-auto sm:max-w-6xl sm:max-h-[85vh] rounded-none sm:rounded-3xl border border-white/10 bg-black/60 shadow-2xl overflow-hidden flex flex-col">
@@ -2004,7 +1952,6 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
                             </span>
                           </div>
 
-                          {/* Badge 1NationUp (solo estética en picker, no navegación) */}
                           <div className="absolute top-2 left-2 opacity-0 group-hover:opacity-100 transition-opacity">
                             <div className="flex items-center gap-1 px-2 py-1 rounded-xl bg-black/60 border border-white/10 backdrop-blur-sm">
                               <OneNationUpIcon size={14} />
@@ -2019,26 +1966,23 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
 
                 <div className="p-5 border-t border-white/10 text-xs text-gray-400">
                   Requisito para avanzar: <span className="text-white font-bold">mínimo 4K (3840×2160)</span>.
-                  Si no cumple, aparecerá la opción de ir a Upscale.
                 </div>
               </div>
             </div>
           )}
         </div>
 
-        {/* PANEL DERECHO: Sidebar Acordeón Dinámico */}
-        <div className={`flex-[0.7] w-full lg:max-w-[500px] p-6 lg:p-8 bg-black/40 backdrop-blur-xl transition-all duration-700 relative ${!image ? 'opacity-0 translate-x-20 pointer-events-none absolute right-0' : 'opacity-100 translate-x-0'}`}>
-           {renderSidebar()}
+        <div className="basis-[53%] min-h-0 w-full lg:max-w-[500px] lg:flex-[0.7] p-3 sm:p-4 lg:p-8 bg-black/40 backdrop-blur-xl border-t border-white/5 lg:border-t-0">
+          {renderSidebar()}
         </div>
       </main>
 
-      {/* Estilos CSS Adicionales para el 3D Isométrico y Scrollbars */}
       <style dangerouslySetInnerHTML={{__html: `
         .custom-scrollbar::-webkit-scrollbar { width: 6px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: rgba(255,255,255,0.02); border-radius: 10px; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
-        
+
         @keyframes marching-ants {
           to { stroke-dashoffset: -20; }
         }
@@ -2046,7 +1990,6 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
           animation: marching-ants 1s linear infinite;
         }
 
-        /* Utilidades para 3D Isométrico */
         .iso-container {
           transform-style: preserve-3d;
           transform: rotateX(55deg) rotateZ(-45deg);
@@ -2057,6 +2000,5 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
           transition: transform 0.8s cubic-bezier(0.4, 0, 0.2, 1);
         }
       `}} />
-    </div>
-  );
+    </div>  );
 }
