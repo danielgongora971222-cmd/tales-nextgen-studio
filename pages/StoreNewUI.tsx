@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Maximize, Layers, Check, ShoppingCart, CreditCard, ChevronRight, Image as ImageIcon, Sparkles, Scissors, ShieldCheck, Truck, Edit2, Info } from 'lucide-react';
+import { Maximize, Layers, Check, ShoppingCart, CreditCard, ChevronRight, Image as ImageIcon, Sparkles, ShieldCheck, Truck, Edit2 } from 'lucide-react';
 import type { Asset, AppRoute, StoreArtDecoListing, StoreArtDecoPayload, StorePrefill } from "../types";
 import { listMyAssets } from "../services/assetsApi";
 import { supabase } from "../services/supabaseClient";
@@ -590,6 +590,7 @@ const handleGoToUpscale = () => {
     const handleGlobalPointerMove = (e: PointerEvent) => {
       if (!isDragging || activeStep !== 'CROP' || !imageWrapperRef.current) return;
       if (activePointerId != null && e.pointerId !== activePointerId) return;
+      if (e.cancelable) e.preventDefault();
 
       const wrapper = imageWrapperRef.current;
       const rect = wrapper.getBoundingClientRect();
@@ -782,18 +783,14 @@ const handleConfirmCrop = async () => {
       const cdu = await makeCroppedDataUrl(image, normalized);
       if (cdu && typeof cdu === "string") {
         setCroppedDataUrl(cdu);
-        setCropGenError(null);
       } else {
         setCroppedDataUrl(null);
-        setCropGenError("No se pudo generar preview del recorte (salida vacía). Se usará el encuadre por coordenadas.");
       }
+      setCropGenError(null);
     } catch (e: any) {
+      console.warn('[1NationUp] No se pudo generar preview local del recorte; se usará el encuadre confirmado.', e);
       setCroppedDataUrl(null);
-      setCropGenError(
-        e?.message
-          ? `No se pudo generar preview del recorte (CORS/Canvas). Se usará el encuadre por coordenadas. Detalle: ${String(e.message)}`
-          : "No se pudo generar preview del recorte (CORS/Canvas). Se usará el encuadre por coordenadas."
-      );
+      setCropGenError(null);
     }
 
     setIsCropped(true);
@@ -1095,28 +1092,19 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
     
     return (
       <div className="flex flex-col items-center justify-center w-full h-full animate-in zoom-in-95 duration-500">
-         <div className="w-full max-w-sm mb-4 sm:mb-8 text-center relative z-10 bg-black/50 p-4 rounded-2xl border border-white/10 backdrop-blur-md">
-            <h3 className="text-2xl font-bold text-white mb-2 flex justify-center items-center">
-              {previewMaterial.icon} <span className="ml-2">{previewMaterial.label}</span>
-            </h3>
-                     </div>
-
          <div className={`relative iso-container ${isPortrait ? 'w-[150px] h-[210px] sm:w-[200px] sm:h-[280px]' : 'w-[210px] h-[150px] sm:w-[280px] sm:h-[200px]'} mb-10`}>
             {matId === 'acrylic' && (
               <>
                 <div className={`${baseClass} shadow-[0_20px_50px_rgba(0,0,0,0.8)]`} style={{ transform: 'translateZ(-40px)', backgroundColor: '#111' }}>
-                    <div className="absolute inset-0 bg-black/80 flex items-center justify-center text-xs text-gray-600 font-mono">Backing</div>
                 </div>
                 <div className={`${baseClass}`} style={{ transform: 'translateZ(0px)', backgroundImage: `url(${image})` }}></div>
                 <div className={`${baseClass} border border-white/20`} style={{ transform: 'translateZ(20px)', background: 'linear-gradient(135deg, rgba(255,255,255,0.4) 0%, rgba(255,255,255,0) 50%, rgba(255,255,255,0.1) 100%)', backdropFilter: 'blur(1px)' }}>
-                   <div className="absolute top-2 right-2 flex text-[10px] text-white/50"><Info className="w-3 h-3 mr-1"/> Acrílico 1/4"</div>
                 </div>
               </>
             )}
             {matId === 'canvas' && (
               <>
                 <div className={`${baseClass} shadow-[0_20px_50px_rgba(0,0,0,0.8)] border-[8px] border-[#3e2723]`} style={{ transform: 'translateZ(-30px)', backgroundColor: '#e0c097' }}>
-                    <div className="absolute inset-0 bg-black/20 flex items-center justify-center text-xs text-[#3e2723] font-mono font-bold">Wood Frame</div>
                 </div>
                 <div className={`${baseClass} border-4 border-black/10`} style={{ transform: 'translateZ(10px)', backgroundImage: `url(${image})`, filter: 'sepia(0.1) contrast(0.95)' }}>
                     <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/canvas-orange.png')] opacity-30 mix-blend-multiply"></div>
@@ -1126,7 +1114,6 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
             {matId === 'metal' && (
               <>
                 <div className={`${baseClass} shadow-[0_30px_60px_rgba(0,0,0,0.9)]`} style={{ transform: 'translateZ(-50px)', backgroundColor: '#222', width: '50%', height: '50%', top: '25%', left: '25%' }}>
-                   <div className="absolute inset-0 flex items-center justify-center text-[10px] text-gray-500 font-mono">Wall Mount</div>
                 </div>
                 <div className={`${baseClass} border border-white/10`} style={{ transform: 'translateZ(0px)', backgroundImage: `url(${image})`, filter: 'contrast(1.1) saturate(1.2)' }}>
                    <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/20 to-transparent"></div>
@@ -1198,12 +1185,6 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
     return (
       <div className="flex flex-col w-full h-full relative overflow-hidden bg-[#0a0a0c] rounded-3xl animate-in zoom-in-95 duration-500 shadow-inner">
          
-         {/* Badge Flotante Superior */}
-         <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-black/80 px-6 py-2 rounded-full backdrop-blur-xl border border-white/10 z-20 flex items-center space-x-2 shadow-[0_10px_30px_rgba(0,0,0,0.5)]">
-            <Maximize className="w-4 h-4 text-[#DFB142]" />
-            <span className="text-white font-bold tracking-widest text-sm uppercase">Simulación Realista</span>
-         </div>
-
          {/* SVG Principal - Render 3D Simulado */}
          <div className="flex-1 w-full h-full flex items-center justify-center p-0">
            <svg viewBox={dynamicViewBox} preserveAspectRatio="xMidYMid slice" className="w-full h-full drop-shadow-2xl overflow-visible">
@@ -1436,12 +1417,6 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
                       alt="Cropped Final"
                     />
                   )}
-                  {!croppedDataUrl && cropGenError && (
-                    <div className="absolute bottom-2 left-2 right-2 bg-white/10 border border-white/20 text-white text-[11px] p-2 rounded-xl backdrop-blur-sm">
-                      No se pudo mostrar el preview aquí, pero el encuadre se guardó y el servidor lo procesará.
-                      <div className="mt-1 text-white/70">Detalle: {cropGenError}</div>
-                    </div>
-                  )}
              </div>
          </div>
          
@@ -1526,7 +1501,7 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
     if (!image) return null;
 
     return (
-      <div className="relative w-full h-full min-h-0 rounded-[28px] border border-white/8 bg-black/40 overflow-hidden backdrop-blur-sm shadow-2xl p-3 sm:p-4 lg:p-6">
+      <div className={`relative w-full h-full min-h-0 rounded-[28px] border border-white/8 bg-black/40 overflow-hidden backdrop-blur-sm shadow-2xl ${activeStep === 'CROP' ? 'p-2 sm:p-3 lg:p-4' : 'p-3 sm:p-4 lg:p-6'}`}>
         {activeStep === 'VERIFYING' && (
           <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
             <div className="w-16 h-16 border-4 border-purple-500 border-t-transparent rounded-full animate-spin mb-4"></div>
@@ -1856,6 +1831,8 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
     );
   };
 
+  const isCropFocusView = Boolean(image && activeStep === 'CROP');
+
   return (
     <div className="h-[100dvh] min-h-screen bg-[#050505] font-sans text-white overflow-hidden flex flex-col relative">
       <ParticleBackground />
@@ -1876,7 +1853,7 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
 
 
       <main className="relative z-10 flex-1 min-h-0 flex flex-col lg:flex-row w-full max-w-[1800px] mx-auto overflow-hidden">
-        <div className="flex-none h-[38dvh] min-h-[260px] max-h-[420px] lg:h-auto lg:max-h-none lg:basis-[47%] lg:min-h-0 lg:flex-[1.3] p-2 sm:p-3 lg:p-8 flex flex-col items-center justify-center relative border-b lg:border-b-0 lg:border-r border-white/5 overflow-hidden bg-black/35 backdrop-blur-md">
+        <div className={`flex-none ${isCropFocusView ? 'h-[58dvh] min-h-[360px] max-h-none' : 'h-[38dvh] min-h-[260px] max-h-[420px]'} lg:h-auto lg:max-h-none lg:basis-[47%] lg:min-h-0 lg:flex-[1.3] p-2 sm:p-3 lg:p-8 flex flex-col items-center justify-center relative border-b lg:border-b-0 lg:border-r border-white/5 overflow-hidden bg-black/35 backdrop-blur-md`}>
           {!image ? (
             <div className="w-full h-full rounded-[28px] border border-white/10 bg-white/5 backdrop-blur-sm shadow-2xl overflow-hidden p-6 flex flex-col items-center justify-center text-center">
               <button
