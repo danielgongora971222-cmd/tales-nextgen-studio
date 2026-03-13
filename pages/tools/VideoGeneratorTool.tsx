@@ -10,6 +10,7 @@ import { formatErr } from "../../services/videoGenApi";
 import { useGenerationQueue } from "../../contexts/GenerationQueueContext";
 import { FramePickerModal } from "./video/FramePickerModal";
 import { MultishotModal } from "./video/multishotmodal";
+import { MultishotModeModal } from "./video/MultishotModeModal";
 import { LimitedTextarea, KLING_V3_SHOT_PROMPT_LIMIT } from "./video/LimitedTextarea";
 import { KlingElementsModal } from "./video/KlingElementsModal";
 import { HistorySection } from "./video/HistorySection";
@@ -292,7 +293,6 @@ const VideoGeneratorTool: React.FC = () => {
   const hoverVideoEls = useRef<Record<string, HTMLVideoElement | null>>({});
 
   const [error, setError] = useState<string | null>(null);
-  const [previewOpen, setPreviewOpen] = useState(false);
 
   // Core
   const [prompt, setPrompt] = useState("");
@@ -336,6 +336,7 @@ const VideoGeneratorTool: React.FC = () => {
 
   const [multishotEnabled, setMultishotEnabled] = useState(false);
   const [multishotOpen, setMultishotOpen] = useState(false);
+  const [multishotModeOpen, setMultishotModeOpen] = useState(false);
   const [klingShots, setKlingShots] = useState<KlingV3Shot[]>([
     { prompt: "", durationSeconds: 4, elementIds: [] },
     { prompt: "", durationSeconds: 4, elementIds: [] },
@@ -1745,11 +1746,26 @@ const clearModalSelectedIds = () => {
                       <button
                         type="button"
                         className={styles.promptTag}
-                        onClick={() => setMultishotEnabled(false)}
-                        title="Click para apagar Multishot"
+                        onClick={() => {
+                          if (klingShotType === "customize") {
+                            setMultishotOpen(true);
+                            return;
+                          }
+                        }}
+                        title={klingShotType === "customize" ? "Abrir Multishot" : "Multishot activo"}
                       >
                         {multishotBadgeLabel}
-                        <span className={styles.promptTagRemove}>×</span>
+                        <span
+                          className={styles.promptTagRemove}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setMultishotEnabled(false);
+                            setMultishotOpen(false);
+                            setMultishotModeOpen(false);
+                          }}
+                        >
+                          ×
+                        </span>
                       </button>
                     )}
                   </div>
@@ -1763,13 +1779,8 @@ const clearModalSelectedIds = () => {
                               <Icon name="multishot" />
                               <span>Multishot • customize</span>
                             </div>
-
                             <div className={styles.multishotMeta}>
-                              Total: <b>{multishotTotalSeconds || 0}s</b> · Duration: <b>{durationSeconds}s</b> · Max shots: 6
-                            </div>
-
-                            <div className={styles.multishotHint}>
-                              Escribe el prompt de cada shot. Mantén consistencia de sujeto/estilo entre shots para mejor continuidad.
+                              {klingShots.length} shots · {multishotTotalSeconds || 0}s
                             </div>
                           </div>
 
@@ -1777,165 +1788,27 @@ const clearModalSelectedIds = () => {
                             <button
                               type="button"
                               className={styles.multishotAddBtn}
-                              onClick={() =>
-                                setKlingShots((prev) =>
-                                  prev.length >= 6 ? prev : [...prev, { prompt: "", durationSeconds: 1, elementIds: [] }]
-                                )
-                              }
+                              onClick={() => setMultishotOpen(true)}
                             >
-                              + Shot
+                              Edit
                             </button>
 
                             <button
                               type="button"
                               className={styles.multishotExpandBtn}
-                              onClick={() => setMultishotOpen(true)}
-                              title="Abrir editor completo"
+                              onClick={() => {
+                                setMultishotEnabled(false);
+                                setMultishotOpen(false);
+                                setMultishotModeOpen(false);
+                              }}
+                              title="Desactivar Multishot"
                             >
-                              ⤢
+                              <Icon name="close" />
                             </button>
                           </div>
                         </div>
-
-                        {isKlingV3ElementsUI && selectedKlingElementIds.length > 0 && (
-                          <div className={styles.elementsMap}>
-                            <div className={styles.elementsMapTitle}>Elements mapping (Kling V3)</div>
-                            <div className={styles.elementsMapHelp}>
-                              Los tokens @... del prompt se asignan a @Element1..@Element5 según el orden aquí.
-                            </div>
-                            <div className={styles.elementsMapList}>
-                              {selectedKlingElementIds.map((id, index) => {
-                                const el = klingElements.find((x) => x.id === id);
-                                const tok = elementTokenById.get(id) || "@element";
-                                return (
-                                  <div key={id} className={styles.elementsMapRow}>
-                                    <div className={styles.elementsMapLeft}>
-                                      <div className={styles.elementsMapIndex}>@Element{index + 1}</div>
-                                      <div className={styles.elementsMapName}>{el.name || "Element"}</div>
-                                      <div className={styles.elementsMapToken}>{tok}</div>
-                                    </div>
-                                    <div className={styles.elementsMapActions}>
-                                      <button
-                                        type="button"
-                                        className={styles.elementsMapBtn}
-                                        disabled={index === 0}
-                                        onClick={() => setSelectedKlingElementIds((prev) => moveItem(prev, index, index - 1))}
-                                        title="Subir"
-                                      >
-                                        ↑
-                                      </button>
-
-                                      <button
-                                        type="button"
-                                        className={styles.elementsMapBtn}
-                                        disabled={index === selectedKlingElementIds.length - 1}
-                                        onClick={() => setSelectedKlingElementIds((prev) => moveItem(prev, index, index + 1))}
-                                        title="Bajar"
-                                      >
-                                        ↓
-                                      </button>
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
-
-                        <div className={styles.multishotShots}>
-                          {klingShots.map((s, i) => (
-                            <div key={i} className={styles.multishotShotRow}>
-                              <div className={styles.multishotShotHeader}>
-                                <div className={styles.multishotShotName}>Shot {i + 1}</div>
-
-                                <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                                  {isKlingV3ElementsUI && (
-                                    <button
-                                      type="button"
-                                      className={styles.multishotElementsBtn}
-                                      onClick={() => openElementsForShot(i)}
-                                      title="Seleccionar Elements para este shot"
-                                    >
-                                      <Icon name="elements" />{" "}
-                                      {(Array.isArray(s.elementIds) && s.elementIds.length) ? `Elements (${s.elementIds.length})` : "Elements"}
-                                    </button>
-                                  )}
-
-                                  <button
-                                    type="button"
-                                    className={styles.multishotRemoveBtn}
-                                    onClick={() => setKlingShots((prev) => prev.filter((_, idx) => idx !== i))}
-                                    disabled={klingShots.length <= 2}
-                                    title={klingShots.length <= 2 ? "Mínimo 2 shots" : "Eliminar shot"}
-                                  >
-                                    <Icon name="close" />
-                                  </button>
-                                </div>
-                              </div>
-
-                              <MentionTextarea
-                                value={s.prompt || ""}
-                                onChange={(next) => {
-                                  const clipped = next.length > KLING_V3_SHOT_PROMPT_LIMIT ? next.slice(0, KLING_V3_SHOT_PROMPT_LIMIT) : next;
-
-                                  // Para Kling V3: el prompt del shot es la fuente de verdad de sus Elements (tokens @...)
-                                  const mentionedIds: string[] = [];
-                                  if (isKlingV3ElementsUI) {
-                                    for (const tok of extractMentionTokens(clipped)) {
-                                      const id = elementTokenToId.get(tok.toLowerCase());
-                                      if (!id) continue;
-                                      if (!mentionedIds.includes(id)) mentionedIds.push(id);
-                                    }
-                                  }
-
-                                  setKlingShots((prev) =>
-                                    prev.map((x, idx) =>
-                                      idx === i
-                                        ? { ...x, prompt: clipped, ...(isKlingV3ElementsUI ? { elementIds: mentionedIds } : { elementIds: [] }) }
-                                        : x
-                                    )
-                                  );
-                                }}
-                                placeholder="Prompt del shot…"
-                                rows={2}
-                                textareaClassName={styles.multishotTextarea}
-                                items={isKlingV3ElementsUI ? elementMentionItems : []}
-                              />
-
-                              <div className={styles.multishotCharRow}>
-                                <span>{(s.prompt || "").length}/{KLING_V3_SHOT_PROMPT_LIMIT}</span>
-                              </div>
-
-                              <div className={styles.multishotDurationRow}>
-                                <div className={styles.multishotDurationLabel}>
-                                  <Icon name="clock" /> Duration
-                                </div>
-
-                                <input
-                                  className={styles.multishotDurationInput}
-                                  type="number"
-                                  min={1}
-                                  max={15}
-                                  value={s.durationSeconds}
-                                  onChange={(e) => {
-                                    const v = clampInt(e.target.value, 1, 15, 1);
-                                    setKlingShots((prev) => prev.map((x, idx) => (idx === i ? { ...x, durationSeconds: v } : x)));
-                                  }}
-                                />
-
-                                <span className={styles.multishotDurationUnit}>s</span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-
-                        {!multishotIsReady && (
-                        <div className={styles.multishotWarn}>
-                          Para generar: mínimo 2 shots con prompt, suma total entre 3s y 15s, y cada shot 1–15s (≤ 512 caracteres).
-                        </div>
-                        )}
                       </div>
-                    ) : (
+                  ) : (
                     <>
                       <MentionTextarea
                         value={prompt}
@@ -1965,11 +1838,6 @@ const clearModalSelectedIds = () => {
                         }}
                       />
 
-                      {isMultishotIntelligence && (
-                        <div className={styles.multishotHint}>
-                          Multishot <b>intelligence</b>: escribe un único prompt aquí. Kling dividirá en varios planos automáticamente.
-                        </div>
-                      )}
                     </>
                   )}
               </div>
@@ -1990,82 +1858,6 @@ const clearModalSelectedIds = () => {
                           <div style={{ marginTop: 8, fontSize: 12, color: "rgba(255,255,255,0.65)", textAlign: "center" }}>
                             Coste estimado: <b>{estimatedCostCredits}</b> créditos
                           </div>
-
-                          <button
-                            type="button"
-                            className={styles.previewBtn}
-                            onClick={() => setPreviewOpen((v) => !v)}
-                          >
-                            {previewOpen ? "HIDE PREVIEW" : "PREVIEW"}
-                          </button>
-
-                          {previewOpen && (() => {
-                            try {
-                              const finals = computeFinalInputsForModel();
-
-                              const plan = handler.buildPlan({
-                                model: modelNorm,
-                                prompt: finals.promptForModel,
-                                tool: TOOL_ID,
-                                nameHint: "video",
-
-                                count,
-                                durationSeconds,
-                                aspectRatio,
-                                resolution,
-
-                                firstFrameAssetId: firstFrame?.id || null,
-                                lastFrameAssetId: lastFrame?.id || null,
-
-                                klingMode,
-                                klingSound,
-                                klingSoundTouched,
-
-                                selectedKlingElementIds: finals.selectedKlingElementIdsForModel,
-                                multishotEnabled,
-                                klingShots: finals.klingShotsForModel,
-                                klingShotType,
-
-                                negativePrompt,
-                                klingCfgScale,
-                                klingVoiceIdsText,
-                              });
-
-                              const elementList = finals.selectedKlingElementIdsForModel
-                                .map((id) => klingElements.find((e) => e.id === id)?.klingElementId)
-                                .filter(Boolean);
-
-                              return (
-                                <div className={styles.previewPanel}>
-                                  <div className={styles.previewTitle}>Prompt real (lo que se envía)</div>
-
-                                  <textarea
-                                    className={styles.previewTextarea}
-                                    readOnly
-                                    value={plan.effectivePrompt}
-                                  />
-
-                                  <div className={styles.previewTitle}>element_list (IDs reales de Kling, en orden @ElementN)</div>
-
-                                  <pre className={styles.previewPre}>
-            {JSON.stringify(elementList, null, 2)}
-                                  </pre>
-
-                                  <div className={styles.previewTitle}>Payload exacto enviado al backend (/api/ai/video)</div>
-
-                                  <pre className={styles.previewPre}>
-            {JSON.stringify(plan.body, null, 2)}
-                                  </pre>
-                                </div>
-                              );
-                            } catch (e: any) {
-                              return (
-                                <div className={styles.previewPanel}>
-                                  <div className={styles.previewError}>{formatErr(e)}</div>
-                                </div>
-                              );
-                            }
-                          })()}
 
                           {isGenerating && (
                             <button type="button" className={styles.cancelBtn} onClick={handleCancel}>
@@ -2105,7 +1897,15 @@ const clearModalSelectedIds = () => {
               openElementsForShot(multishotEnabled && klingShotType === "customize" ? 0 : null);
             }}
             multishotEnabled={multishotEnabled}
-            setMultishotEnabled={setMultishotEnabled}
+            onMultishotClick={() => {
+              if (multishotEnabled) {
+                setMultishotEnabled(false);
+                setMultishotOpen(false);
+                setMultishotModeOpen(false);
+                return;
+              }
+              setMultishotModeOpen(true);
+            }}
             multishotMetaLabel={multishotMetaLabel}
           />
 
@@ -2146,15 +1946,39 @@ const clearModalSelectedIds = () => {
         getAssetUrl={getAssetUrl}
       />
 
+      <MultishotModeModal
+        open={multishotModeOpen}
+        title="Multishot"
+        intelligenceText="Usa un único prompt y Kling divide los planos automáticamente."
+        customizeText="Abre el editor shot-by-shot para controlar cada plano."
+        customizeHint="Ajusta parámetros antes de entrar si lo necesitas."
+        onClose={() => setMultishotModeOpen(false)}
+        onChooseIntelligence={() => {
+          setKlingShotType("intelligence");
+          setMultishotEnabled(true);
+          setMultishotModeOpen(false);
+          setMultishotOpen(false);
+        }}
+        onChooseCustomize={() => {
+          setKlingShotType("customize");
+          setMultishotEnabled(true);
+          setMultishotModeOpen(false);
+          setMultishotOpen(true);
+        }}
+      />
+
       <MultishotModal
-        open={multishotOpen}
+        open={multishotOpen && klingShotType === "customize"}
         onClose={() => setMultishotOpen(false)}
         shots={klingShots}
         setShots={setKlingShots}
-        shotType={klingShotType}
-        setShotType={setKlingShotType}
         totalSeconds={multishotTotalSeconds}
         durationSeconds={durationSeconds}
+        generateDisabled={isGenerating || !multishotIsReady || (queueActiveCount >= queueMaxActive)}
+        onGenerate={() => {
+          setMultishotOpen(false);
+          handleGenerate();
+        }}
       />
 
       {VIDEO_ELEMENTS_UI_ENABLED && (

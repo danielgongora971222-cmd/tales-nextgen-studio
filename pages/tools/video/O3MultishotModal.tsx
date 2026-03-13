@@ -14,6 +14,8 @@ export function O3MultishotModal({
   setShots,
   totalSeconds,
   mentionItems,
+  onGenerate,
+  generateDisabled = false,
 }: {
   open: boolean;
   onClose: () => void;
@@ -21,6 +23,8 @@ export function O3MultishotModal({
   setShots: React.Dispatch<React.SetStateAction<O3Shot[]>>;
   totalSeconds: number;
   mentionItems?: MentionItem[];
+  onGenerate?: () => void;
+  generateDisabled?: boolean;
 }) {
   useEffect(() => {
     if (!open) return;
@@ -37,7 +41,7 @@ export function O3MultishotModal({
     <div className={styles.modalOverlay} role="dialog" aria-modal="true">
       <div className={styles.modal}>
         <div className={styles.modalHeader}>
-          <div className={styles.modalTitle}>Storyboard (Kling O3)</div>
+          <div className={styles.modalTitle}>Storyboard • Customize</div>
           <button className={styles.modalClose} onClick={onClose} type="button" title="Cerrar">
             ×
           </button>
@@ -55,7 +59,7 @@ export function O3MultishotModal({
           </button>
 
           <div className={styles.segmentMeta} style={totalWarn ? { color: "rgba(255, 86, 94, 0.95)" } : undefined}>
-            Total: {totalSeconds}s (recomendado 3–15s · max 10 shots)
+            Total: {totalSeconds}s · max 10
           </div>
         </div>
 
@@ -82,7 +86,7 @@ export function O3MultishotModal({
                     value={s.prompt}
                     onChange={(next) => setShots((prev) => prev.map((x, idx) => (idx === i ? { ...x, prompt: next } : x)))}
                     items={mentionItems}
-                    placeholder="Prompt de este shot… (usa @ para insertar Refs)"
+                    placeholder="Prompt de este shot…"
                   />
                 ) : (
                   <LimitedTextarea
@@ -112,10 +116,15 @@ export function O3MultishotModal({
               </div>
             ))}
           </div>
+        </div>
 
-          <div className={styles.modalNote}>
-            Tip: El backend enviará <code>multi_prompt</code> a Kling O3 y usará la suma de duraciones.
-          </div>
+        <div className={styles.modalFooter}>
+          <button type="button" className={styles.secondaryBtn} onClick={onClose}>Close</button>
+          {onGenerate && (
+            <button type="button" className={styles.uploadBtn} onClick={onGenerate} disabled={generateDisabled}>
+              Generate
+            </button>
+          )}
         </div>
       </div>
     </div>

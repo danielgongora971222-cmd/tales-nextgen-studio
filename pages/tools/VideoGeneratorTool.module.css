@@ -2495,3 +2495,81 @@
   .cookPanelShell { inset: 10px 10px 76px 10px; }
   .cookSectionMeta { max-width: 92px; }
 }
+
+
+.modeChoiceGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.modeChoiceCard {
+  width: 100%;
+  min-height: 148px;
+  padding: 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(241,225,148,0.12);
+  background: rgba(0,0,0,0.22);
+  color: rgba(255,255,255,0.92);
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+
+.modeChoiceCard:hover {
+  transform: translateY(-1px);
+  border-color: rgba(241,225,148,0.28);
+  background: rgba(91,14,20,0.20);
+}
+
+.modeChoiceTitle {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(241,225,148,0.95);
+}
+
+.modeChoiceDesc {
+  margin-top: 10px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: rgba(255,255,255,0.82);
+}
+
+.modeChoiceHint {
+  margin-top: 10px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: rgba(241,225,148,0.72);
+}
+
+.modalFooter {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 12px 14px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+}
+
+.secondaryBtn {
+  height: 40px;
+  padding: 0 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(0,0,0,0.22);
+  color: rgba(255,255,255,0.88);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 11px;
+}
+
+@media (max-width: 720px) {
+  .modeChoiceGrid {
+    grid-template-columns: 1fr;
+  }
+}

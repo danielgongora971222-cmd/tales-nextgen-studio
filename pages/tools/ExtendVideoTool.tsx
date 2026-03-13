@@ -24,6 +24,7 @@ import {
   type O3Shot,
 } from "./video/O3MultishotModal";
 import { LimitedTextarea } from "./video/LimitedTextarea";
+import { MultishotModeModal } from "./video/MultishotModeModal";
 import { estimateVideoCostCredits } from "../../config/pricing.js";
 
 type EditModelId =
@@ -190,6 +191,8 @@ export default function ExtendVideoTool() {
   const [keepAudio, setKeepAudio] = useState(true);
 
   const [multishotEnabled, setMultishotEnabled] = useState(false);
+  const [multishotMode, setMultishotMode] = useState<"intelligence" | "customize">("intelligence");
+  const isStoryboardMode = ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled && multishotMode === "customize";
   const [shots, setShots] = useState<O3Shot[]>([{ prompt: "", durationSeconds: 5 }]);
 
   const [isGenerating, setIsGenerating] = useState(false);
@@ -212,6 +215,7 @@ export default function ExtendVideoTool() {
     setElementsOpen(false);
   }, []);
   const [multishotOpen, setMultishotOpen] = useState(false);
+const [multishotModeOpen, setMultishotModeOpen] = useState(false);
 
   // Pending resume
   const [pendingJob, setPendingJob] = useState<PendingVideoEditJob | null>(null);
@@ -229,9 +233,9 @@ export default function ExtendVideoTool() {
   );
 
   const estimatedCostCredits = useMemo(() => {
-    const dur = multishotEnabled ? multishotTotalSeconds : durationSeconds;
+    const dur = isStoryboardMode ? multishotTotalSeconds : durationSeconds;
     return estimateVideoCostCredits({ modelNorm: model, durationSeconds: dur });
-  }, [model, durationSeconds, multishotEnabled, multishotTotalSeconds]);
+  }, [model, durationSeconds, isStoryboardMode, multishotTotalSeconds]);
 
   const combinedRefsCount = referenceImageIds.length + klingElementIds.length;
   const maxCombinedRefs = model === "kling-o3-ref-to-video-pro" ? 7 : 4;
@@ -440,12 +444,12 @@ export default function ExtendVideoTool() {
   ]);
 
   const multishotReady = useMemo(() => {
-    if (!multishotEnabled) return true;
+    if (!isStoryboardMode) return true;
     if (shotsWithPrompt.length === 0) return false;
     if (multishotTotalSeconds < 3 || multishotTotalSeconds > 15) return false;
     if (shotsWithPrompt.some((s) => (s.prompt || "").length > O3_SHOT_PROMPT_LIMIT)) return false;
     return true;
-  }, [multishotEnabled, shotsWithPrompt, multishotTotalSeconds]);
+  }, [isStoryboardMode, shotsWithPrompt, multishotTotalSeconds]);
 
   const visibleHistory = useMemo(() => history.slice(0, visibleCount), [history, visibleCount]);
   const hasMore = history.length > visibleHistory.length;
@@ -754,7 +758,7 @@ export default function ExtendVideoTool() {
   const prevPromptImageTokensRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    if (ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled) return;
+    if (ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode) return;
 
     const tokens = extractMentionTokens(prompt).map((t) => t.toLowerCase());
 
@@ -810,7 +814,7 @@ export default function ExtendVideoTool() {
   const prevPromptElementTokensRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    if (ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled) return;
+    if (ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode) return;
 
     const tokens = extractMentionTokens(prompt).map((t) => t.toLowerCase());
 
@@ -1025,7 +1029,7 @@ export default function ExtendVideoTool() {
     // ===== Reference → Video =====
     if (model === "kling-o3-ref-to-video-pro") {
       // Multishot (solo si se habilita el flag)
-      if (ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled) {
+      if (ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode) {
         const clean = shots.filter((s) => (s.prompt || "").trim().length > 0);
         if (clean.length === 0) {
           return { ok: false as const, error: "Agrega al menos 1 shot con prompt para el Storyboard." };
@@ -1319,7 +1323,7 @@ export default function ExtendVideoTool() {
   } else {
     paramsLabelParts.push(aspectRatio === "auto" ? "Aspect: auto" : `Aspect: ${aspectRatio}`);
     paramsLabelParts.push(
-      ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled
+      ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode
         ? `Duration: ${multishotTotalSeconds}s`
         : `Duration: ${durationSeconds}s`
     );
@@ -1457,7 +1461,7 @@ export default function ExtendVideoTool() {
                                   type="button"
                                   className={`${styles.segmentBtn} ${aspectRatio === "auto" ? styles.segmentBtnActive : ""}`}
                                   onClick={() => setAspectRatio("auto")}
-                                  disabled={ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled}
+                                  disabled={ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode}
                                 >
                                   auto
                                 </button>
@@ -1466,7 +1470,7 @@ export default function ExtendVideoTool() {
                                 type="button"
                                 className={`${styles.segmentBtn} ${aspectRatio === "16:9" ? styles.segmentBtnActive : ""}`}
                                 onClick={() => setAspectRatio("16:9")}
-                                disabled={ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled}
+                                disabled={ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode}
                               >
                                 16:9
                               </button>
@@ -1474,7 +1478,7 @@ export default function ExtendVideoTool() {
                                 type="button"
                                 className={`${styles.segmentBtn} ${aspectRatio === "9:16" ? styles.segmentBtnActive : ""}`}
                                 onClick={() => setAspectRatio("9:16")}
-                                disabled={ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled}
+                                disabled={ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode}
                               >
                                 9:16
                               </button>
@@ -1482,7 +1486,7 @@ export default function ExtendVideoTool() {
                                 type="button"
                                 className={`${styles.segmentBtn} ${aspectRatio === "1:1" ? styles.segmentBtnActive : ""}`}
                                 onClick={() => setAspectRatio("1:1")}
-                                disabled={ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled}
+                                disabled={ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode}
                               >
                                 1:1
                               </button>
@@ -1498,14 +1502,14 @@ export default function ExtendVideoTool() {
                                   type="button"
                                   className={`${styles.segmentBtn} ${durationSeconds === d ? styles.segmentBtnActive : ""}`}
                                   onClick={() => setDurationSeconds(d)}
-                                  disabled={ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled}
-                                  title={ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled ? "Con Storyboard la duración viene de la suma de shots" : ""}
+                                  disabled={ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode}
+                                  title={ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode ? "Con Storyboard la duración viene de la suma de shots" : ""}
                                 >
                                   {d}s
                                 </button>
                               ))}
                             </div>
-                            {ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled && (
+                            {ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode && (
                               <div className={styles.segmentMeta}>
                                 Storyboard total: <b>{multishotTotalSeconds}s</b>
                               </div>
@@ -1659,7 +1663,7 @@ export default function ExtendVideoTool() {
             {/* Prompt */}
             <div className={`${styles.promptInputWrap} ${styles.cookPromptInputWrap}`}>
               <div className={`${styles.promptEditor} ${styles.cookPromptEditor}`}>
-                {(referenceImageIds.length > 0 || klingElementIds.length > 0 || (ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled)) && (
+                {(referenceImageIds.length > 0 || klingElementIds.length > 0 || (ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode)) && (
                   <div className={styles.promptTags}>
                     {referenceImageIds.length > 0 && (
                       <button type="button" className={styles.promptTag} onClick={() => setRefPickerOpen(true)}>
@@ -1695,7 +1699,7 @@ export default function ExtendVideoTool() {
                       Total refs: {combinedRefsCount}/{maxCombinedRefs}
                     </button>
 
-                    {ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled && (
+                    {ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode && (
                       <button type="button" className={styles.promptTag} onClick={() => setMultishotOpen(true)}>
                         Storyboard: {multishotTotalSeconds}s
                       </button>
@@ -1703,74 +1707,37 @@ export default function ExtendVideoTool() {
                   </div>
                 )}
 
-                {ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled ? (
+                {ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode ? (
                   <div className={styles.multishotInline}>
                     <div className={styles.multishotTop}>
-                      <div className={styles.multishotTitle}>
-                        <Icon name="multishot" /> Storyboard (Kling O3)
+                      <div>
+                        <div className={styles.multishotTitle}>
+                          <Icon name="multishot" /> Storyboard • customize
+                        </div>
+                        <div className={styles.multishotMeta}>
+                          {shots.length} shots · {multishotTotalSeconds}s
+                        </div>
                       </div>
 
                       <div className={styles.multishotTopActions}>
+                        <button type="button" className={styles.multishotAddBtn} onClick={() => setMultishotOpen(true)}>
+                          Edit
+                        </button>
                         <button
                           type="button"
-                          className={styles.multishotAddBtn}
-                          onClick={() => setShots((prev) => (prev.length >= 10 ? prev : [...prev, { prompt: "", durationSeconds: 3 }]))}
-                          title="Agregar shot (máx 10)"
+                          className={styles.multishotExpandBtn}
+                          onClick={() => {
+                            setMultishotEnabled(false);
+                            setMultishotMode("intelligence");
+                            setMultishotOpen(false);
+                            setMultishotModeOpen(false);
+                          }}
+                          title="Desactivar Multishot"
                         >
-                          + Shot
-                        </button>
-
-                        <button type="button" className={styles.multishotExpandBtn} onClick={() => setMultishotOpen(true)} title="Editor">
-                          <Icon name="sliders" />
-                        </button>
-
-                        <button type="button" className={styles.multishotExpandBtn} onClick={() => setMultishotEnabled(false)} title="Volver a prompt único">
-                          <Icon name="swap" />
+                          <Icon name="close" />
                         </button>
                       </div>
                     </div>
-
-                    <div className={styles.multishotMeta}>
-                      Total: {multishotTotalSeconds}s · Shots: {shots.length} · Límite: {O3_SHOT_PROMPT_LIMIT} chars
-                    </div>
-
-                    <div className={styles.multishotShots}>
-                      {shots.map((s, idx) => (
-                        <div key={idx} className={styles.multishotShotRow}>
-                          <div className={styles.multishotShotHeader}>
-                            <div className={styles.multishotShotName}>
-                              Shot {idx + 1} · {s.durationSeconds}s
-                            </div>
-
-                            <button
-                              type="button"
-                              className={styles.multishotRemoveBtn}
-                              onClick={() => setShots((prev) => prev.filter((_, i) => i !== idx))}
-                              disabled={shots.length <= 1}
-                              title={shots.length <= 1 ? "Debe existir al menos 1 shot" : "Eliminar shot"}
-                            >
-                              <Icon name="trash" />
-                            </button>
-                          </div>
-
-                          <LimitedTextarea
-                            value={s.prompt || ""}
-                            onChange={(next) => setShots((prev) => prev.map((x, i) => (i === idx ? { ...x, prompt: next } : x)))}
-                            placeholder="Prompt del shot… (sujeto, acción, cámara, estilo)"
-                            rows={2}
-                            limit={O3_SHOT_PROMPT_LIMIT}
-                            surfaceClassName={styles.multishotTextarea}
-                            inputResize="vertical"
-                          />
-                        </div>
-                      ))}
-                    </div>
-
-                    {!multishotReady && (
-                      <div className={styles.multishotWarn}>
-                        Para generar: mínimo 1 shot con prompt, total 3–15s, y ningún shot supera {O3_SHOT_PROMPT_LIMIT} caracteres.
-                      </div>
-                    )}
                   </div>
                 ) : (
                   <MentionTextarea
@@ -1816,7 +1783,6 @@ export default function ExtendVideoTool() {
                   />
                 )}
 
-                <div className={styles.noteSmall}>{selectedModel.uiHint}</div>
               </div>
             </div>
 
@@ -1830,7 +1796,7 @@ export default function ExtendVideoTool() {
                   !user ||
                   combinedRefsCount > maxCombinedRefs ||
                   (model === "kling-o3-ref-to-video-pro"
-                    ? ((ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled) ? !multishotReady : (prompt || "").trim().length === 0)
+                    ? ((ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode) ? !multishotReady : (prompt || "").trim().length === 0)
                     : !inputVideo || (prompt || "").trim().length === 0)
                 }
                 onClick={onGenerate}
@@ -1934,8 +1900,14 @@ export default function ExtendVideoTool() {
                   type="button"
                   className={`${styles.controlBtn} ${multishotEnabled ? styles.controlBtnActive : ""}`}
                   onClick={() => {
-                    setMultishotEnabled((v) => !v);
-                    setMultishotOpen(true);
+                    if (multishotEnabled) {
+                      setMultishotEnabled(false);
+                      setMultishotMode("intelligence");
+                      setMultishotOpen(false);
+                      setMultishotModeOpen(false);
+                      return;
+                    }
+                    setMultishotModeOpen(true);
                   }}
                   title="Storyboard / Multishot"
                 >
@@ -1944,7 +1916,7 @@ export default function ExtendVideoTool() {
                     Storyboard
                   </span>
                   <span className={styles.controlBtnMeta}>
-                    {multishotEnabled ? `(${shots.length})` : ""}
+                    {multishotEnabled ? `(${multishotMode === "customize" ? shots.length : multishotMode})` : ""}
                   </span>
                 </button>
               )}
@@ -2000,7 +1972,7 @@ export default function ExtendVideoTool() {
                                   type="button"
                                   className={`${styles.segmentBtn} ${aspectRatio === "auto" ? styles.segmentBtnActive : ""}`}
                                   onClick={() => setAspectRatio("auto")}
-                                  disabled={ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled}
+                                  disabled={ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode}
                                 >
                                   auto
                                 </button>
@@ -2009,7 +1981,7 @@ export default function ExtendVideoTool() {
                                 type="button"
                                 className={`${styles.segmentBtn} ${aspectRatio === "16:9" ? styles.segmentBtnActive : ""}`}
                                 onClick={() => setAspectRatio("16:9")}
-                                disabled={ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled}
+                                disabled={ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode}
                               >
                                 16:9
                               </button>
@@ -2017,7 +1989,7 @@ export default function ExtendVideoTool() {
                                 type="button"
                                 className={`${styles.segmentBtn} ${aspectRatio === "9:16" ? styles.segmentBtnActive : ""}`}
                                 onClick={() => setAspectRatio("9:16")}
-                                disabled={ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled}
+                                disabled={ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode}
                               >
                                 9:16
                               </button>
@@ -2025,7 +1997,7 @@ export default function ExtendVideoTool() {
                                 type="button"
                                 className={`${styles.segmentBtn} ${aspectRatio === "1:1" ? styles.segmentBtnActive : ""}`}
                                 onClick={() => setAspectRatio("1:1")}
-                                disabled={ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled}
+                                disabled={ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode}
                               >
                                 1:1
                               </button>
@@ -2041,14 +2013,14 @@ export default function ExtendVideoTool() {
                                   type="button"
                                   className={`${styles.segmentBtn} ${durationSeconds === d ? styles.segmentBtnActive : ""}`}
                                   onClick={() => setDurationSeconds(d)}
-                                  disabled={ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled}
-                                  title={ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled ? "Con Storyboard la duración viene de la suma de shots" : ""}
+                                  disabled={ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode}
+                                  title={ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode ? "Con Storyboard la duración viene de la suma de shots" : ""}
                                 >
                                   {d}s
                                 </button>
                               ))}
                             </div>
-                            {ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled && (
+                            {ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode && (
                               <div className={styles.segmentMeta}>
                                 Storyboard total: <b>{multishotTotalSeconds}s</b>
                               </div>
@@ -2199,13 +2171,42 @@ export default function ExtendVideoTool() {
       )}
 
       {ENABLE_EDITVIDEO_MULTISHOT && (
-        <O3MultishotModal
-          open={multishotOpen}
-          onClose={() => setMultishotOpen(false)}
-          shots={shots}
-          setShots={setShots}
-          totalSeconds={multishotTotalSeconds}
-        />
+        <>
+          <MultishotModeModal
+            open={multishotModeOpen}
+            title="Multishot"
+            intelligenceText="Usa el prompt principal y deja que el modelo resuelva la secuencia."
+            customizeText="Abre el editor shot-by-shot para escribir storyboard manual."
+            customizeHint="Antes de entrar, revisa modelo y parámetros."
+            onClose={() => setMultishotModeOpen(false)}
+            onChooseIntelligence={() => {
+              setMultishotEnabled(true);
+              setMultishotMode("intelligence");
+              setMultishotModeOpen(false);
+              setMultishotOpen(false);
+            }}
+            onChooseCustomize={() => {
+              setMultishotEnabled(true);
+              setMultishotMode("customize");
+              setMultishotModeOpen(false);
+              setMultishotOpen(true);
+            }}
+          />
+
+          <O3MultishotModal
+            open={multishotOpen && isStoryboardMode}
+            onClose={() => setMultishotOpen(false)}
+            shots={shots}
+            setShots={setShots}
+            totalSeconds={multishotTotalSeconds}
+            mentionItems={promptMentionItems}
+            generateDisabled={isGenerating || !multishotReady || !user || combinedRefsCount > maxCombinedRefs}
+            onGenerate={() => {
+              setMultishotOpen(false);
+              onGenerate();
+            }}
+          />
+        </>
       )}
 
       <ViewerModal

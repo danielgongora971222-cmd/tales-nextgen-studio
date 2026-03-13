@@ -362,38 +362,6 @@ export function ControlsPopover({
 
             {isKlingV3 && (
               <>
-                <div className={styles.formRow}>
-                  <label className={styles.formLabel}>Shot type</label>
-
-                  {!multishotEnabled ? (
-                    <div className={styles.noteSmall}>Activa <b>Multishot</b> para habilitar shot_type.</div>
-                  ) : (
-                    <div className={styles.segment}>
-                      <button
-                        type="button"
-                        className={`${styles.segmentBtn} ${klingShotType === "customize" ? styles.segmentBtnActive : ""}`}
-                        onClick={() => setKlingShotType("customize")}
-                      >
-                        customize
-                      </button>
-
-                      <button
-                        type="button"
-                        className={`${styles.segmentBtn} ${klingShotType === "intelligence" ? styles.segmentBtnActive : ""} ${
-                          isKlingO3 ? styles.segmentBtnDisabled : ""
-                        }`}
-                        onClick={() => !isKlingO3 && setKlingShotType("intelligence")}
-                        disabled={isKlingO3}
-                        title={isKlingO3 ? "Kling O3 Pro solo soporta shot_type=customize" : "intelligence"}
-                      >
-                        intelligence
-                      </button>
-
-                      {isKlingO3 && <span className={styles.segmentMeta}>O3: solo customize</span>}
-                    </div>
-                  )}
-                </div>
-
                 {isKlingV3Model && (
                   <div className={styles.formRow}>
                     <label className={styles.formLabel}>Negative prompt</label>

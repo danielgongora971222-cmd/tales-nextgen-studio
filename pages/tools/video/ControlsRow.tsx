@@ -34,7 +34,7 @@ type Props = {
   openElements: () => void;
 
   multishotEnabled: boolean;
-  setMultishotEnabled: React.Dispatch<React.SetStateAction<boolean>>;
+  onMultishotClick: () => void;
   multishotMetaLabel: string; // ej: "12s" o "Intelligence"
 };
 
@@ -58,7 +58,7 @@ export function ControlsRow({
   selectedKlingElementCount,
   openElements,
   multishotEnabled,
-  setMultishotEnabled,
+  onMultishotClick,
   multishotMetaLabel,
 }: Props) {
   return (
@@ -180,7 +180,7 @@ export function ControlsRow({
             className={`${styles.controlBtn} ${multishotEnabled ? styles.controlBtnActive : ""}`}
             onClick={() => {
               setPanel(null);
-              setMultishotEnabled((v) => !v);
+              onMultishotClick();
             }}
             title="Activar/Desactivar Multishot"
           >
