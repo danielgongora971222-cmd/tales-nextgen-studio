@@ -1420,9 +1420,6 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     setIsCookOpen(true);
   }
 
-  const stopCookPanelPointer = useCallback((e: React.SyntheticEvent) => {
-    e.stopPropagation();
-  }, []);
 
   return (
     <div ref={rootRef} className={`${styles.root} ${isCookOpen ? styles.rootCookOpen : ""}`} onMouseMove={handleRootMouseMove}>
@@ -1489,10 +1486,6 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
             <div className={styles.cookPanelShell}>
               <div
                 className={styles.cookPanel}
-                onPointerDownCapture={stopCookPanelPointer}
-                onMouseDownCapture={stopCookPanelPointer}
-                onClickCapture={stopCookPanelPointer}
-                onTouchStartCapture={stopCookPanelPointer}
               >
                 <div className={`${styles.popover} ${styles.cookInlinePopover}`} ref={popoverRef}>
                   <div className={styles.popoverInner}>
