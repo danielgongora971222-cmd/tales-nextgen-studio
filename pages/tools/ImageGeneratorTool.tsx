@@ -1061,7 +1061,7 @@ useEffect(() => {
     if (next === GOOGLE_IMAGE_MODELS.NANO_BANANA) setQuality("1K");
     if (!supportsGoogleSearchGrounding(next)) setGoogleSearchGrounding(false);
 
-    setPanel(null); // auto-close
+    restoreCookFromPanel(); // auto-close
   }
 
   const refLabel =
@@ -1071,6 +1071,14 @@ useEffect(() => {
       refs.char3 ? "R3" : null,
       refs.background ? "BG" : null,
     ].filter(Boolean).join(" ") || "None";
+
+  const visibleRefSlots = useMemo(() => {
+    const slots: RefSlot[] = ["char1"];
+    if (refs.char1) slots.push("char2");
+    if (refs.char2) slots.push("char3");
+    slots.push("background");
+    return slots;
+  }, [refs]);
 
   // UI states
   const [panel, setPanel] = useState<Panel>(null);
@@ -1101,22 +1109,46 @@ useEffect(() => {
   const totalLimitReached = activeGlobalJobsCount >= 4;
   const [error, setError] = useState<string | null>(null);
   const [isCookOpen, setIsCookOpen] = useState(false);
+  const isCookSidebarVisible = isCookOpen && !panel;
+  const isCookLayerVisible = isCookOpen || !!panel;
+  const refFileInputsRef = useRef<Record<RefSlot, HTMLInputElement | null>>({
+    char1: null,
+    char2: null,
+    char3: null,
+    background: null,
+  });
 
   const closeCook = useCallback(() => {
     setIsCookOpen(false);
     setPanel(null);
     setPickerSlot(null);
+    setPickerQuery("");
+  }, []);
+
+  const restoreCookFromPanel = useCallback(() => {
+    setPanel(null);
+    setPickerSlot(null);
+    setPickerQuery("");
+    setIsCookOpen(true);
+  }, []);
+
+  const openCook = useCallback(() => {
+    setPanel(null);
+    setPickerSlot(null);
+    setPickerQuery("");
+    setIsCookOpen(true);
   }, []);
 
   const toggleCookPanel = useCallback((next: Panel) => {
     if (!next) {
-      setPanel(null);
-      setPickerSlot(null);
+      restoreCookFromPanel();
       return;
     }
     setPickerSlot(null);
+    setPickerQuery("");
+    setIsCookOpen(false);
     setPanel((prev) => (prev === next ? null : next));
-  }, []);
+  }, [restoreCookFromPanel]);
 
     // Cache de dimensiones por imagen (para layout del historial y viewer responsive)
   const [imgDims, setImgDims] = useState<Record<string, { w: number; h: number }>>({});
@@ -2116,13 +2148,19 @@ const promptReferences: PromptReference[] = useMemo(() => {
     setElementCreatePickerQuery("");
   }
 
-  function closeCreateModal() {
+  function closeCreateModal(options?: { restoreCook?: boolean }) {
     setIsElementCreateOpen(false);
     setElementCreatePickerSlot(null);
+    if (options?.restoreCook ?? true) {
+      openCook();
+    }
   }
 
-  function closeAllModal() {
+  function closeAllModal(options?: { restoreCook?: boolean }) {
     setIsElementAllOpen(false);
+    if (options?.restoreCook ?? true) {
+      openCook();
+    }
   }
 
   async function handleCreateElement() {
@@ -2295,13 +2333,12 @@ const promptReferences: PromptReference[] = useMemo(() => {
       const el = popoverRef.current;
       if (!el) return;
       if (!el.contains(e.target as Node)) {
-        setPanel(null);
-        setPickerSlot(null);
+        restoreCookFromPanel();
       }
     }
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
-  }, [panel]);
+  }, [panel, restoreCookFromPanel]);
 
   // ESC cierra viewer y panel Cook
   useEffect(() => {
@@ -2311,13 +2348,17 @@ const promptReferences: PromptReference[] = useMemo(() => {
         setViewer(null);
         return;
       }
+      if (panel) {
+        restoreCookFromPanel();
+        return;
+      }
       if (isCookOpen) {
         closeCook();
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [viewer, isCookOpen, closeCook]);
+  }, [viewer, panel, isCookOpen, closeCook, restoreCookFromPanel]);
 
   const refLibraryAssets = useMemo(() => {
     return refLibraryTab === "purchased" ? purchasedAssets : history;
@@ -2382,9 +2423,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
     try {
       const uploaded = await uploadUserAsset(file, REF_TOOL_ID);
       setRefSlot(slot, uploaded);
-      setPanel(null); // auto-close
-      setPickerSlot(null);
-      setPickerQuery("");
+      restoreCookFromPanel();
     } catch (e: any) {
       setError(e?.message || "Upload falló.");
     }
@@ -2970,37 +3009,43 @@ const promptReferences: PromptReference[] = useMemo(() => {
       </div>
 
       {/* START CREATE / SIDEBAR DE PROMPT */}
-      <button
-        type="button"
-        className={`${styles.cookToggle} ${isCookOpen ? styles.cookToggleOpen : styles.cookTogglePulse}`}
-        onClick={() => {
-          if (isCookOpen) closeCook();
-          else setIsCookOpen(true);
-        }}
-        aria-expanded={isCookOpen}
-        aria-controls="image-generator-cook"
-        aria-label={isCookOpen ? "Close Start Create" : "Open Start Create"}
-      >
-        <span className={styles.cookToggleLabel}>Start Create</span>
-        <span className={styles.cookToggleGlyph} aria-hidden="true">{isCookOpen ? "×" : "+"}</span>
-      </button>
-
-      <div
-        id="image-generator-cook"
-        className={`${styles.cookOverlay} ${isCookOpen ? styles.cookOverlayOpen : ""}`}
-        aria-hidden={!isCookOpen}
-      >
+      {panel === null && (
         <button
           type="button"
-          className={styles.cookBackdrop}
-          aria-label="Close Cook"
-          tabIndex={isCookOpen ? 0 : -1}
-          onClick={closeCook}
-        />
+          className={`${styles.cookToggle} ${isCookSidebarVisible ? styles.cookToggleOpen : styles.cookTogglePulse}`}
+          onClick={() => {
+            if (isCookSidebarVisible) closeCook();
+            else openCook();
+          }}
+          aria-expanded={isCookSidebarVisible}
+          aria-controls="image-generator-cook"
+          aria-label={isCookSidebarVisible ? "Close Start Create" : "Open Start Create"}
+        >
+          <span className={styles.cookToggleLabel}>Start Create</span>
+          <span className={styles.cookToggleGlyph} aria-hidden="true">{isCookSidebarVisible ? "×" : "+"}</span>
+        </button>
+      )}
+
+      {isCookLayerVisible && (
+        <div
+          id="image-generator-cook"
+          className={`${styles.cookOverlay} ${styles.cookOverlayOpen}`}
+          aria-hidden={!isCookLayerVisible}
+        >
+          <button
+            type="button"
+            className={styles.cookBackdrop}
+            aria-label={panel ? "Back to Start Create" : "Close Start Create"}
+            tabIndex={isCookLayerVisible ? 0 : -1}
+            onClick={() => {
+              if (panel) restoreCookFromPanel();
+              else closeCook();
+            }}
+          />
 
 
-        {panel && (
-          <div className={styles.cookPanelShell}>
+          {panel && (
+          <div className={`${styles.cookPanelShell} ${!isCookSidebarVisible ? styles.cookPanelShellSolo : ""}`}>
             <div ref={popoverRef} className={styles.cookPanel}>
               {panel === "reference" && (
                 <>
@@ -3008,91 +3053,16 @@ const promptReferences: PromptReference[] = useMemo(() => {
                     <div className={styles.popoverTitle}>Reference</div>
                     <div className={styles.headerRight}>
                       <div className={styles.cookSectionMeta}>{refLabel}</div>
-                      <button type="button" className={styles.closeBtn} onClick={() => setPanel(null)} aria-label="Close Reference">
+                      <button type="button" className={styles.closeBtn} onClick={restoreCookFromPanel} aria-label="Close Reference">
                         ×
                       </button>
                     </div>
                   </div>
                   <div className={`${styles.popoverBody} ${styles.cookPanelBody}`}>
-                    {(refs.char1 || refs.char2 || refs.char3 || refs.background) && (
-                      <div className={styles.refThumbStrip}>
-                        {refs.char1 && (
-                          <div className={styles.refMini} title="Reference 1">
-                            <img src={refs.char1.url} alt="char1" />
-                            <span className={styles.refMiniIcon}>R1</span>
-                            <button
-                              type="button"
-                              className={styles.refMiniRemove}
-                              aria-label="Remove Reference 1"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setRefSlot("char1", null);
-                              }}
-                            >
-                              ×
-                            </button>
-                          </div>
-                        )}
-
-                        {refs.char2 && (
-                          <div className={styles.refMini} title="Reference 2">
-                            <img src={refs.char2.url} alt="char2" />
-                            <span className={styles.refMiniIcon}>R2</span>
-                            <button
-                              type="button"
-                              className={styles.refMiniRemove}
-                              aria-label="Remove Reference 2"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setRefSlot("char2", null);
-                              }}
-                            >
-                              ×
-                            </button>
-                          </div>
-                        )}
-
-                        {refs.char3 && (
-                          <div className={styles.refMini} title="Reference 3">
-                            <img src={refs.char3.url} alt="char3" />
-                            <span className={styles.refMiniIcon}>R3</span>
-                            <button
-                              type="button"
-                              className={styles.refMiniRemove}
-                              aria-label="Remove Reference 3"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setRefSlot("char3", null);
-                              }}
-                            >
-                              ×
-                            </button>
-                          </div>
-                        )}
-
-                        {refs.background && (
-                          <div className={styles.refMini} title="Background">
-                            <img src={refs.background.url} alt="background" />
-                            <span className={styles.refMiniIcon}>BG</span>
-                            <button
-                              type="button"
-                              className={styles.refMiniRemove}
-                              aria-label="Remove Background"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setRefSlot("background", null);
-                              }}
-                            >
-                              ×
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
                     <div className={`${styles.refSlots} ${styles.cookPanelScroll}`}>
-                      {(["char1", "char2", "char3", "background"] as RefSlot[]).map((slot) => {
+                      {visibleRefSlots.map((slot) => {
                         const current = refs[slot];
+                        const isPicking = pickerSlot === slot;
                         return (
                           <div key={slot} className={styles.refSlot}>
                             <div className={styles.refSlotLeft}>
@@ -3105,24 +3075,40 @@ const promptReferences: PromptReference[] = useMemo(() => {
                                 <div className={`${styles.refSlotThumb} ${styles.refSlotThumbEmpty}`}>+</div>
                               )}
                               <div className={styles.refSlotText}>
-                                <div className={styles.refSlotName}>{current ? current.name : "No asset selected"}</div>
-                                <div className={styles.refSlotSub}>
-                                  {slot === "background"
-                                    ? "Optional background / scene guide"
-                                    : "Use your history or purchased assets"}
-                                </div>
+                                {current ? <div className={styles.refSlotName}>{current.name}</div> : null}
                               </div>
                             </div>
                             <div className={styles.refSlotActions}>
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className={styles.hiddenFileInput}
+                                ref={(node) => {
+                                  refFileInputsRef.current[slot] = node;
+                                }}
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (!file) return;
+                                  void handleUploadToSlot(slot, file);
+                                  e.currentTarget.value = "";
+                                }}
+                              />
                               <button
                                 type="button"
                                 className={styles.smallBtn}
+                                onClick={() => refFileInputsRef.current[slot]?.click()}
+                              >
+                                Upload
+                              </button>
+                              <button
+                                type="button"
+                                className={`${styles.smallBtnGhost} ${isPicking ? styles.smallBtnGhostActive : ""}`}
                                 onClick={() => {
-                                  setPickerSlot(slot);
-                                  setPanel("reference");
+                                  setPickerQuery("");
+                                  setPickerSlot((prev) => (prev === slot ? null : slot));
                                 }}
                               >
-                                {current ? "Replace" : "Choose"}
+                                Pick
                               </button>
                               {current && (
                                 <button type="button" className={styles.smallBtnGhost} onClick={() => setRefSlot(slot, null)}>
@@ -3130,93 +3116,91 @@ const promptReferences: PromptReference[] = useMemo(() => {
                                 </button>
                               )}
                             </div>
+
+                            {isPicking && (
+                              <div className={styles.cookPickerShell}>
+                                <div className={styles.pickerHeader}>
+                                  <div className={styles.pickerTitle}>Select asset for {SLOT_LABEL[slot]}</div>
+                                  <button
+                                    type="button"
+                                    className={styles.smallBtnGhost}
+                                    onClick={() => setPickerSlot(null)}
+                                  >
+                                    Close
+                                  </button>
+                                </div>
+
+                                <div className={styles.pickerTabs}>
+                                  <button
+                                    type="button"
+                                    className={`${styles.smallBtnGhost} ${refLibraryTab === "history" ? styles.smallBtnGhostActive : ""}`}
+                                    onClick={() => setRefLibraryTab("history")}
+                                  >
+                                    My history
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className={`${styles.smallBtnGhost} ${refLibraryTab === "purchased" ? styles.smallBtnGhostActive : ""}`}
+                                    onClick={() => setRefLibraryTab("purchased")}
+                                  >
+                                    Purchased assets
+                                  </button>
+                                </div>
+
+                                <input
+                                  className={styles.search}
+                                  placeholder={refLibraryTab === "purchased" ? "Search in purchased assets..." : "Search in history..."}
+                                  value={pickerQuery}
+                                  onChange={(e) => setPickerQuery(e.target.value)}
+                                />
+
+                                <div className={styles.pickerGrid}>
+                                  {filteredPickerAssets.map((a) => (
+                                    <button
+                                      key={a.id}
+                                      type="button"
+                                      className={styles.pickerTile}
+                                      onClick={() => {
+                                        setRefSlot(slot, a);
+                                        restoreCookFromPanel();
+                                      }}
+                                    >
+                                      <img src={a.url} alt={a.name} />
+                                      <div className={styles.pickerTileMeta}>
+                                        <div className={styles.pickerTileCap}>
+                                          {removeStylePresetBlock(a.prompt || "") || a.name}
+                                        </div>
+                                        {a.accessSource === "purchased" ? (
+                                          <span className={styles.pickerTileBadge}>Purchased</span>
+                                        ) : null}
+                                      </div>
+                                    </button>
+                                  ))}
+
+                                  {filteredPickerAssets.length === 0 ? (
+                                    <div className={styles.pickerEmpty}>
+                                      {refLibraryTab === "purchased"
+                                        ? "Aún no tienes assets comprados en Community Store."
+                                        : "No images found in your history."}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              </div>
+                            )}
                           </div>
                         );
                       })}
                     </div>
-
-                    {pickerSlot && (
-                      <div className={styles.cookPickerShell}>
-                        <div className={styles.pickerHeader}>
-                          <div className={styles.pickerTitle}>Select asset for {SLOT_LABEL[pickerSlot]}</div>
-                          <button
-                            type="button"
-                            className={styles.smallBtnGhost}
-                            onClick={() => setPickerSlot(null)}
-                          >
-                            Close
-                          </button>
-                        </div>
-
-                        <div className={styles.pickerTabs}>
-                          <button
-                            type="button"
-                            className={`${styles.smallBtnGhost} ${refLibraryTab === "history" ? styles.smallBtnGhostActive : ""}`}
-                            onClick={() => setRefLibraryTab("history")}
-                          >
-                            My history
-                          </button>
-                          <button
-                            type="button"
-                            className={`${styles.smallBtnGhost} ${refLibraryTab === "purchased" ? styles.smallBtnGhostActive : ""}`}
-                            onClick={() => setRefLibraryTab("purchased")}
-                          >
-                            Purchased assets
-                          </button>
-                        </div>
-
-                        <input
-                          className={styles.search}
-                          placeholder={refLibraryTab === "purchased" ? "Search in purchased assets..." : "Search in history..."}
-                          value={pickerQuery}
-                          onChange={(e) => setPickerQuery(e.target.value)}
-                        />
-
-                        <div className={styles.pickerGrid}>
-                          {filteredPickerAssets.map((a) => (
-                            <button
-                              key={a.id}
-                              type="button"
-                              className={styles.pickerTile}
-                              onClick={() => {
-                                setRefSlot(pickerSlot, a);
-                                setPickerSlot(null);
-                                setPanel(null);
-                              }}
-                            >
-                              <img src={a.url} alt={a.name} />
-                              <div className={styles.pickerTileMeta}>
-                                <div className={styles.pickerTileCap}>
-                                  {removeStylePresetBlock(a.prompt || "") || a.name}
-                                </div>
-                                {a.accessSource === "purchased" ? (
-                                  <span className={styles.pickerTileBadge}>Purchased</span>
-                                ) : null}
-                              </div>
-                            </button>
-                          ))}
-
-                          {filteredPickerAssets.length === 0 ? (
-                            <div className={styles.pickerEmpty}>
-                              {refLibraryTab === "purchased"
-                                ? "Aún no tienes assets comprados en Community Store."
-                                : "No images found in your history."}
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-                    )}
                   </div>
                 </>
               )}
-
               {panel === "model" && (
                 <>
                   <div className={styles.popoverHeader}>
                     <div className={styles.popoverTitle}>Model</div>
                     <div className={styles.headerRight}>
                       <div className={styles.cookSectionMeta}>{modelLabel}</div>
-                      <button type="button" className={styles.closeBtn} onClick={() => setPanel(null)} aria-label="Close Model">
+                      <button type="button" className={styles.closeBtn} onClick={restoreCookFromPanel} aria-label="Close Model">
                         ×
                       </button>
                     </div>
@@ -3254,7 +3238,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
                       <button
                         type="button"
                         className={styles.closeBtn}
-                        onClick={() => setPanel(null)}
+                        onClick={restoreCookFromPanel}
                         aria-label="Close Parameters"
                       >
                         ×
@@ -3270,7 +3254,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
                           value={aspectRatio}
                           onChange={(e) => {
                             setAspectRatio(e.target.value);
-                            setPanel(null);
+                            restoreCookFromPanel();
                           }}
                         >
                           {aspectRatioOptions.map((ar) => (
@@ -3289,7 +3273,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
                           disabled={activeCaps.countOptions.length === 1}
                           onChange={(e) => {
                             setCount(Number(e.target.value));
-                            setPanel(null);
+                            restoreCookFromPanel();
                           }}
                         >
                           {activeCaps.countOptions.map((n) => (
@@ -3307,7 +3291,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
                           value={gridMode}
                           onChange={(e) => {
                             setGridMode(e.target.value);
-                            setPanel(null);
+                            restoreCookFromPanel();
                           }}
                         >
                           {GRID_OPTIONS.map((opt) => (
@@ -3325,7 +3309,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
                           value={quality}
                           onChange={(e) => {
                             setQuality(e.target.value as Quality);
-                            setPanel(null);
+                            restoreCookFromPanel();
                           }}
                         >
                           {getActiveCaps(model).qualities.map((q) => (
@@ -3344,7 +3328,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
                             className={`${styles.modelOption} ${googleSearchGrounding ? styles.modelOptionActive : ""}`}
                             onClick={() => {
                               setGoogleSearchGrounding((prev) => !prev);
-                              setPanel(null);
+                              restoreCookFromPanel();
                             }}
                           >
                             {googleSearchGrounding ? "Enabled" : "Disabled"}
@@ -3367,12 +3351,12 @@ const promptReferences: PromptReference[] = useMemo(() => {
                         className={styles.smallBtnGhost}
                         onClick={() => {
                           setSelectedStyleId(null);
-                          setPanel(null);
+                          restoreCookFromPanel();
                         }}
                       >
                         Clear
                       </button>
-                      <button type="button" className={styles.closeBtn} onClick={() => setPanel(null)} aria-label="Close Styles">
+                      <button type="button" className={styles.closeBtn} onClick={restoreCookFromPanel} aria-label="Close Styles">
                         ×
                       </button>
                     </div>
@@ -3388,7 +3372,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
                             className={`${styles.presetCard} ${active ? styles.presetCardActive : ""}`}
                             onClick={() => {
                               setSelectedStyleId(p.id);
-                              setPanel(null);
+                              restoreCookFromPanel();
                             }}
                           >
                             <div className={styles.presetCover}>
@@ -3417,8 +3401,9 @@ const promptReferences: PromptReference[] = useMemo(() => {
           </div>
         )}
 
-        <div className={styles.cookSidebarShell}>
-          <div className={styles.cookSidebar}>
+        {isCookSidebarVisible && (
+          <div className={styles.cookSidebarShell}>
+            <div className={styles.cookSidebar}>
             <div className={`${styles.cookSectionCard} ${styles.cookPromptCard}`}>
               <div className={`${styles.promptRow} ${styles.cookPromptRow}`}>
                 <div className={`${styles.promptInputWrap} ${styles.cookPromptInputWrap}`}>
@@ -3428,6 +3413,10 @@ const promptReferences: PromptReference[] = useMemo(() => {
                       className={`${styles.klingElementBtn} ${elementCtaActive ? styles.klingElementBtnCta : ""}`}
                       onClick={() => {
                         setElementCtaActive(false);
+                        setIsCookOpen(false);
+                        setPanel(null);
+                        setPickerSlot(null);
+                        setPickerQuery("");
                         setIsElementAllOpen(true);
                       }}
                       title="Element/Person"
@@ -3543,9 +3532,11 @@ const promptReferences: PromptReference[] = useMemo(() => {
                 </div>
               </div>
             </div>
+            </div>
           </div>
+        )}
         </div>
-      </div>
+      )}
 
       {/* VIEWER OVERLAY (al click en imagen) */}
       {viewer && (
@@ -4008,7 +3999,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
                   type="button"
                   className={styles.smallBtnGhost}
                   onClick={() => {
-                    closeAllModal();
+                    closeAllModal({ restoreCook: false });
                     setIsElementCreateOpen(true);
                   }}
                 >

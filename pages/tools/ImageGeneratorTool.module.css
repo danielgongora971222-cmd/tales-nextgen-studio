@@ -2547,6 +2547,14 @@
   padding: 0 16px 16px;
 }
 
+.hiddenFileInput {
+  display: none;
+}
+
+.cookPanelShellSolo {
+  inset: 16px;
+}
+
 @media (max-width: 1280px) {
   .cookPanelShell {
     inset: 16px calc(var(--cook-sidebar-width, 420px) + 24px) 16px calc(var(--cook-rail-width, 88px) + 104px);
@@ -2583,6 +2591,10 @@
     justify-content: stretch;
   }
 
+  .cookPanelShellSolo {
+    inset: 16px;
+  }
+
   .cookPanel {
     width: 100%;
   }
@@ -2607,6 +2619,10 @@
 
   .cookPanelShell {
     inset: 12px 12px 256px 12px;
+  }
+
+  .cookPanelShellSolo {
+    inset: 12px;
   }
 
   .cookSectionMeta {
@@ -2639,6 +2655,10 @@
 
   .cookPanelShell {
     inset: 10px 10px 296px 10px;
+  }
+
+  .cookPanelShellSolo {
+    inset: 10px;
   }
 
   .cookSectionMeta {
