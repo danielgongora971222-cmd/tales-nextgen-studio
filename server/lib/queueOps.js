@@ -51,6 +51,21 @@ function normalizeImageModel(params) {
   return String(params?.model || "unknown").trim() || "unknown";
 }
 
+
+function isWorkerHeartbeatTableMissingError(error) {
+  const code = String(error?.code || "").trim().toUpperCase();
+  const message = String(error?.message || error || "").toLowerCase();
+  const details = String(error?.details || "").toLowerCase();
+  const hint = String(error?.hint || "").toLowerCase();
+
+  return (
+    code === "PGRST205" ||
+    ((message.includes("worker_heartbeats") || details.includes("worker_heartbeats") || hint.includes("worker_heartbeats")) &&
+      (message.includes("schema cache") || message.includes("does not exist") || message.includes("could not find the table") ||
+        details.includes("schema cache") || hint.includes("reload the schema cache")))
+  );
+}
+
 function normalizeVideoProvider(params) {
   const provider = String(params?.provider || "").trim();
   if (provider) return provider;
@@ -100,7 +115,10 @@ async function loadWorkerHeartbeatRows({ supabaseAdmin, limit = 200 }) {
     .order("updated_at", { ascending: false })
     .limit(limit);
 
-  if (error) throw error;
+  if (error) {
+    if (isWorkerHeartbeatTableMissingError(error)) return [];
+    throw error;
+  }
   return Array.isArray(data) ? data : [];
 }
 

@@ -90,6 +90,21 @@ const supabaseAdmin =
 
 const billing = createBillingHelpers(supabaseAdmin);
 
+
+function isWorkerHeartbeatTableMissingError(error) {
+  const code = String(error?.code || "").trim().toUpperCase();
+  const message = String(error?.message || error || "").toLowerCase();
+  const details = String(error?.details || "").toLowerCase();
+  const hint = String(error?.hint || "").toLowerCase();
+
+  return (
+    code === "PGRST205" ||
+    ((message.includes("worker_heartbeats") || details.includes("worker_heartbeats") || hint.includes("worker_heartbeats")) &&
+      (message.includes("schema cache") || message.includes("does not exist") || message.includes("could not find the table") ||
+        details.includes("schema cache") || hint.includes("reload the schema cache")))
+  );
+}
+
 async function hasActiveWorkerHeartbeat(kind, maxAgeMs = 90_000) {
   if (!supabaseAdmin) return false;
 
@@ -103,6 +118,10 @@ async function hasActiveWorkerHeartbeat(kind, maxAgeMs = 90_000) {
     .limit(1);
 
   if (error) {
+    if (isWorkerHeartbeatTableMissingError(error)) {
+      console.warn("[workerHeartbeat] worker_heartbeats table missing or schema cache stale; skipping readiness wait");
+      return null;
+    }
     console.warn("[workerHeartbeat] lookup failed:", String(error.message || error));
     return false;
   }
@@ -114,7 +133,9 @@ async function waitForActiveWorkerHeartbeat(kind, { timeoutMs = 25_000, probeEve
   const startedAt = Date.now();
 
   while (Date.now() - startedAt <= timeoutMs) {
-    if (await hasActiveWorkerHeartbeat(kind)) return true;
+    const state = await hasActiveWorkerHeartbeat(kind);
+    if (state === true) return true;
+    if (state === null) return null;
     await sleep(probeEveryMs);
   }
 
@@ -127,12 +148,18 @@ async function ensureAsyncWorkerReadyOrThrow(kind, opts) {
 
   try {
     const isReady = await waitForActiveWorkerHeartbeat(kind, opts);
-    if (isReady) return true;
+    if (isReady === true) return true;
 
     if (!enforceHeartbeat) {
-      console.warn(
-        `[workerHeartbeat] no active heartbeat for kind=${kind}; allowing async enqueue in advisory mode`
-      );
+      if (isReady === null) {
+        console.warn(
+          `[workerHeartbeat] heartbeat table unavailable for kind=${kind}; allowing async enqueue without readiness gate`
+        );
+      } else {
+        console.warn(
+          `[workerHeartbeat] no active heartbeat for kind=${kind}; allowing async enqueue in advisory mode`
+        );
+      }
       return false;
     }
   } catch (err) {
