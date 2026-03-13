@@ -182,6 +182,7 @@ export default function ExtendVideoTool() {
   const [inputVideo, setInputVideo] = useState<Asset | null>(null);
 
   const [referenceImageIds, setReferenceImageIds] = useState<string[]>([]);
+  const [sessionUploadedImageIds, setSessionUploadedImageIds] = useState<string[]>([]);
   const [klingElementIds, setKlingElementIds] = useState<string[]>([]);
   const [klingElements, setKlingElements] = useState<KlingElement[]>([]);
   const [isLoadingElements, setIsLoadingElements] = useState(false);
@@ -365,6 +366,25 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     return m;
   }, [refImageTokenById]);
 
+  const mentionPromptRefImages = useMemo(() => {
+    const selected = referenceImageIds
+      .map((id) => mentionableRefImages.find((a) => a.id === id) || null)
+      .filter(Boolean) as Asset[];
+
+    const uploaded = sessionUploadedImageIds
+      .map((id) => mentionableRefImages.find((a) => a.id === id) || null)
+      .filter(Boolean) as Asset[];
+
+    const seen = new Set<string>();
+    const merged: Asset[] = [];
+    for (const asset of [...selected, ...uploaded]) {
+      if (!asset?.id || seen.has(asset.id)) continue;
+      seen.add(asset.id);
+      merged.push(asset);
+    }
+    return merged;
+  }, [referenceImageIds, sessionUploadedImageIds, mentionableRefImages]);
+
   const elementTokenToId = useMemo(() => {
     const m = new Map<string, string>(); // token(lower) -> elementId
     for (const [id, tok] of elementTokenById.entries()) m.set(tok.toLowerCase(), id);
@@ -416,14 +436,10 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
       out.push({ id: el.id, token, label: el.name || "Element", kind: "element", previewUrl });
     }
 
-    // Referencias de imagen (slug tokens)
-    const selectedImgSet = new Set(referenceImageIds);
-    const orderedImgs = [
-      ...(referenceImageIds.map((id) => mentionableRefImages.find((a) => a.id === id)).filter(Boolean) as Asset[]),
-      ...mentionableRefImages.filter((a) => !selectedImgSet.has(a.id)),
-    ];
-
-    for (const a of orderedImgs) {
+    // Referencias de imagen para @
+    // - Solo mostramos referencias ya seleccionadas
+    // - y también imágenes subidas localmente en esta sesión de la tool
+    for (const a of mentionPromptRefImages) {
       const token = refImageTokenById.get(a.id) || makeImageTag(a.name || "image");
       const url = getAssetUrl(a);
       out.push({ id: a.id, token, label: a.name || "Image", kind: "ref", previewUrl: url });
@@ -439,6 +455,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     elementTokenById,
     refImageTokenById,
     mentionableRefImages,
+    mentionPromptRefImages,
     excludeIdsFromMentions,
   ]);
 
@@ -747,6 +764,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
   const uploadImage = useCallback(async (file: File) => {
     const a = await uploadUserAsset(file, { tool: TOOL_NAME, category: "image", type: "image" });
     setImageAssets((prev) => [a, ...prev]);
+    setSessionUploadedImageIds((prev) => (prev.includes(a.id) ? prev : [a.id, ...prev]));
     return a;
   }, []);
 

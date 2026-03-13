@@ -347,6 +347,7 @@ const checkoutStepNumber = 4;
 const canPublishListing = false && sellerEnabled && !isLockedArtDecoPurchase && !!asset && !!selectedMaterial && !!selectedSize && !!finalCrop && listingPriceUsdValue > minimumSellPrice;
 
 const scrollToActiveStep = useCallback((step: Step) => {
+  const container = stepsScrollRef.current;
   const target =
     step === 'MATERIAL' ? materialStepRef.current :
     step === 'SIZE' ? sizeStepRef.current :
@@ -354,9 +355,12 @@ const scrollToActiveStep = useCallback((step: Step) => {
     step === 'CHECKOUT' ? checkoutStepRef.current :
     null;
 
-  if (!target) return;
+  if (!container || !target) return;
   window.requestAnimationFrame(() => {
-    target.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' });
+    const containerRect = container.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const nextTop = container.scrollTop + (targetRect.top - containerRect.top) - 8;
+    container.scrollTo({ top: Math.max(0, nextTop), behavior: 'smooth' });
   });
 }, []);
 
@@ -1138,7 +1142,7 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
               </>
             )}
          </div>
-      </div>
+        </div>
     );
   };
 
@@ -1447,15 +1451,18 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
 
   const renderCropper = () => {
     return (
-      <div 
+      <div className="w-full h-full min-h-0 flex items-center justify-center overflow-hidden overscroll-contain px-1 sm:px-3 pb-1 sm:pb-2">
+        <div 
           ref={imageWrapperRef} 
-          className="relative inline-block max-w-full max-h-full shadow-[0_0_50px_rgba(0,0,0,0.5)] rounded-md"
-      >
+          className="relative inline-flex items-center justify-center max-w-full max-h-full shadow-[0_0_50px_rgba(0,0,0,0.5)] rounded-md overflow-hidden touch-none select-none"
+          style={{ maxHeight: '100%', maxWidth: '100%' }}
+        >
         <img 
           src={image} 
           alt="Upload" 
           onLoad={updateCropSize}
-          className="max-w-full max-h-full object-contain pointer-events-none select-none block"
+          className="block max-w-full max-h-full object-contain pointer-events-none select-none touch-none"
+          draggable={false}
         />
 
         {selectedSize && (
@@ -1485,6 +1492,7 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
               width: `${cropRect.w}px`,
               height: `${cropRect.h}px`,
               touchAction: 'none',
+              overscrollBehavior: 'contain',
             }}
             onPointerDown={handlePointerDown}
           >
@@ -1509,6 +1517,7 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
             )}
           </div>
         )}
+        </div>
       </div>
     );
   };
@@ -1578,7 +1587,7 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
           </div>
         ) : null}
 
-        <div className="w-full h-full min-h-0 flex items-center justify-center pt-10 sm:pt-12">
+        <div className="w-full h-full min-h-0 flex items-center justify-center pt-12 sm:pt-12 pb-1 sm:pb-2 overflow-hidden">
           {activeStep === 'MATERIAL' && renderMaterialInfographic()}
           {activeStep === 'SIZE' && renderSizeMockup()}
           {activeStep === 'CROP' && renderCropper()}
@@ -1865,21 +1874,9 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
         }}
       />
 
-      <header className="relative z-10 p-4 lg:px-8 flex justify-between items-center border-b border-white/5 bg-black/40 backdrop-blur-md shrink-0">
-        <div className="flex items-center space-x-3 min-w-0">
-          <div className="w-10 h-10 bg-gradient-to-br from-[#7EAAED] to-[#7D45A9] rounded-xl flex items-center justify-center font-bold text-xl shadow-lg shrink-0">1N</div>
-          <h1 className="text-lg sm:text-2xl font-extrabold tracking-tight truncate">
-            <span className="bg-clip-text text-transparent bg-gradient-to-r from-[#7EAAED] via-[#DFB142] to-[#7D45A9]">1NationUp</span>
-            <span className="text-white ml-2 hidden sm:inline">Studio</span>
-          </h1>
-        </div>
-        <div className="hidden sm:flex items-center text-sm text-gray-400 font-medium shrink-0">
-          <ShieldCheck className="w-4 h-4 mr-2 text-green-500"/> Calidad Garantizada
-        </div>
-      </header>
 
       <main className="relative z-10 flex-1 min-h-0 flex flex-col lg:flex-row w-full max-w-[1800px] mx-auto overflow-hidden">
-        <div className="basis-[47%] min-h-[280px] lg:min-h-0 lg:flex-[1.3] p-3 sm:p-4 lg:p-8 flex flex-col items-center justify-center relative border-b lg:border-b-0 lg:border-r border-white/5 overflow-hidden">
+        <div className="flex-none h-[38dvh] min-h-[260px] max-h-[420px] lg:h-auto lg:max-h-none lg:basis-[47%] lg:min-h-0 lg:flex-[1.3] p-2 sm:p-3 lg:p-8 flex flex-col items-center justify-center relative border-b lg:border-b-0 lg:border-r border-white/5 overflow-hidden bg-black/35 backdrop-blur-md">
           {!image ? (
             <div className="w-full h-full rounded-[28px] border border-white/10 bg-white/5 backdrop-blur-sm shadow-2xl overflow-hidden p-6 flex flex-col items-center justify-center text-center">
               <button
@@ -1972,7 +1969,7 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
           )}
         </div>
 
-        <div className="basis-[53%] min-h-0 w-full lg:max-w-[500px] lg:flex-[0.7] p-3 sm:p-4 lg:p-8 bg-black/40 backdrop-blur-xl border-t border-white/5 lg:border-t-0">
+        <div className="flex-1 min-h-0 w-full lg:max-w-[500px] lg:flex-[0.7] p-2 sm:p-3 lg:p-8 bg-black/40 backdrop-blur-xl border-t border-white/5 lg:border-t-0 overflow-hidden">
           {renderSidebar()}
         </div>
       </main>
