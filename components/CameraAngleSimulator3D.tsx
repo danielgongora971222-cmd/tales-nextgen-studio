@@ -48,6 +48,7 @@ const CameraAngleSimulator3D: React.FC<Props> = ({
   >(null);
 
   const [cubeSize, setCubeSize] = useState(280);
+  const [isDragging, setIsDragging] = useState(false);
 
   useEffect(() => {
     valueRef.current = value;
@@ -64,7 +65,7 @@ const CameraAngleSimulator3D: React.FC<Props> = ({
     const compute = () => {
       const width = el.clientWidth;
       const height = el.clientHeight || width;
-      const next = clamp(Math.round(Math.min(width, height) * 0.46), 210, 430);
+      const next = clamp(Math.round(Math.min(width, height) * 0.52), 190, 420);
       setCubeSize(next);
     };
 
@@ -76,18 +77,16 @@ const CameraAngleSimulator3D: React.FC<Props> = ({
   }, []);
 
   useEffect(() => {
-    const stage = stageRef.current;
-    if (!stage) return;
-
     const onPointerMove = (e: PointerEvent) => {
       if (!dragRef.current) return;
-      const s = dragRef.current;
+      e.preventDefault();
 
+      const s = dragRef.current;
       const dx = e.clientX - s.startX;
       const dy = e.clientY - s.startY;
 
       const nextAz = wrap360(s.startAz + dx * 0.35);
-      const nextEl = clamp(s.startEl + (-dy) * 0.22, -30, 90);
+      const nextEl = clamp(s.startEl + -dy * 0.22, -30, 90);
 
       onChangeRef.current({
         azimuth: nextAz,
@@ -96,31 +95,42 @@ const CameraAngleSimulator3D: React.FC<Props> = ({
       });
     };
 
-    const onPointerUp = () => {
+    const endDrag = () => {
       dragRef.current = null;
+      setIsDragging(false);
     };
 
-    stage.addEventListener("pointermove", onPointerMove);
-    window.addEventListener("pointerup", onPointerUp);
+    const preventTouchScroll = (e: TouchEvent) => {
+      if (dragRef.current) e.preventDefault();
+    };
+
+    window.addEventListener("pointermove", onPointerMove, { passive: false });
+    window.addEventListener("pointerup", endDrag);
+    window.addEventListener("pointercancel", endDrag);
+    window.addEventListener("touchmove", preventTouchScroll, { passive: false });
 
     return () => {
-      stage.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", endDrag);
+      window.removeEventListener("pointercancel", endDrag);
+      window.removeEventListener("touchmove", preventTouchScroll);
     };
   }, []);
 
   const startDrag = (e: React.PointerEvent) => {
     if (disabled) return;
-    const stage = stageRef.current;
-    if (!stage) return;
 
     const target = e.target as HTMLElement;
     const interactiveTarget = target.closest?.("button, input, a, [data-role='zoom-slider']");
     if (interactiveTarget) return;
 
+    e.preventDefault();
+
     try {
-      (e.currentTarget as any).setPointerCapture?.(e.pointerId);
-    } catch {}
+      (e.currentTarget as HTMLDivElement).setPointerCapture?.(e.pointerId);
+    } catch {
+      // no-op
+    }
 
     dragRef.current = {
       startX: e.clientX,
@@ -128,6 +138,7 @@ const CameraAngleSimulator3D: React.FC<Props> = ({
       startAz: value.azimuth,
       startEl: value.elevation,
     };
+    setIsDragging(true);
   };
 
   const az = value.azimuth;
@@ -136,68 +147,53 @@ const CameraAngleSimulator3D: React.FC<Props> = ({
   const cubeDepth = cubeSize / 2;
 
   const cubeTransform = useMemo(() => {
-    const rotY = -az; // Fix: 90° now visually matches RIGHT and 270° matches LEFT.
+    const rotY = -az;
     const rotX = clamp(-el, -75, 75);
-    const scale = clamp(0.8 + (zm / 10) * 0.38, 0.8, 1.18);
+    const scale = clamp(0.84 + (zm / 10) * 0.34, 0.84, 1.18);
 
     return `rotateX(${rotX}deg) rotateY(${rotY}deg) scale(${scale})`;
   }, [az, el, zm]);
 
   const faceBase =
-    "absolute inset-0 overflow-hidden rounded-[28px] border border-[rgba(241,225,148,0.14)] bg-[linear-gradient(180deg,rgba(23,11,14,0.94),rgba(8,3,6,0.96))] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]";
-  const faceLabel = "text-[10px] sm:text-[11px] font-mono tracking-[0.28em] text-[rgba(241,225,148,0.62)]";
+    "absolute inset-0 overflow-hidden rounded-[28px] border border-[rgba(241,225,148,0.1)] bg-[linear-gradient(180deg,rgba(20,10,12,0.96),rgba(7,3,5,0.98))] shadow-[inset_0_1px_0_rgba(255,255,255,0.03),0_18px_48px_rgba(0,0,0,0.26)]";
+  const faceLabel = "text-[10px] sm:text-[11px] font-mono tracking-[0.28em] text-[rgba(241,225,148,0.56)]";
 
   return (
     <div className="w-full">
       <div
         ref={stageRef}
         onPointerDown={startDrag}
-        className="relative aspect-square w-full overflow-hidden rounded-[34px] border border-[rgba(241,225,148,0.12)] bg-[#030102] select-none shadow-[0_40px_120px_rgba(0,0,0,0.55)]"
-        style={{ cursor: disabled ? "default" : "grab" }}
+        className="relative aspect-square w-full overflow-hidden rounded-[34px] bg-transparent select-none"
+        style={{
+          cursor: disabled ? "default" : isDragging ? "grabbing" : "grab",
+          touchAction: "none",
+          overscrollBehavior: "contain",
+          WebkitUserSelect: "none",
+        }}
       >
-        <div className="absolute inset-0 opacity-95" style={starfieldBackground} />
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_45%,rgba(241,225,148,0.06),transparent_20%),radial-gradient(circle_at_50%_50%,rgba(91,14,20,0.18),transparent_42%)]" />
-        <div className="pointer-events-none absolute inset-x-[11%] bottom-10 h-20 rounded-full bg-[radial-gradient(circle,rgba(91,14,20,0.42),transparent_72%)] blur-2xl" />
+        <div className="absolute inset-0 rounded-[34px] opacity-95" style={starfieldBackground} />
+        <div className="absolute inset-0 rounded-[34px] bg-[radial-gradient(circle_at_50%_50%,rgba(241,225,148,0.05),transparent_18%),radial-gradient(circle_at_50%_55%,rgba(91,14,20,0.24),transparent_42%)]" />
+        <div className="pointer-events-none absolute left-1/2 top-1/2 h-[78%] w-[78%] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[radial-gradient(circle,rgba(91,14,20,0.28),transparent_66%)] blur-3xl" />
+        <div className="pointer-events-none absolute inset-x-[14%] bottom-[9%] h-24 rounded-full bg-[radial-gradient(circle,rgba(91,14,20,0.42),transparent_72%)] blur-3xl" />
 
-        <div className="absolute left-4 top-4 z-20 rounded-2xl border border-[rgba(241,225,148,0.12)] bg-black/45 px-3 py-2 text-[11px] font-mono text-white/78 backdrop-blur-xl shadow-[0_20px_60px_rgba(0,0,0,0.35)]">
-          <div className="flex items-center gap-2">
-            <span className="text-[rgba(241,225,148,0.7)]">AZ</span>
-            <span>{Math.round(az)}°</span>
-          </div>
-          <div className="mt-1 flex items-center gap-2">
-            <span className="text-[rgba(241,225,148,0.7)]">EL</span>
-            <span>{Math.round(el)}°</span>
-          </div>
-          <div className="mt-1 flex items-center gap-2">
-            <span className="text-[rgba(241,225,148,0.7)]">ZM</span>
-            <span>{zm.toFixed(1)}</span>
-          </div>
+        <div className="absolute left-3 top-3 z-20 inline-flex items-center gap-2 rounded-full border border-[rgba(241,225,148,0.12)] bg-[rgba(8,4,5,0.68)] px-3 py-2 text-[11px] font-mono text-[rgba(255,245,220,0.88)] shadow-[0_18px_50px_rgba(0,0,0,0.28)] backdrop-blur-xl sm:left-4 sm:top-4">
+          <span className="text-[rgba(241,225,148,0.72)]">AZ</span>
+          <span>{Math.round(az)}°</span>
+          <span className="mx-1 h-3.5 w-px bg-[rgba(241,225,148,0.12)]" />
+          <span className="text-[rgba(241,225,148,0.72)]">EL</span>
+          <span>{Math.round(el)}°</span>
         </div>
-
-        {onOpenReferencePicker ? (
-          <button
-            type="button"
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={onOpenReferencePicker}
-            className="absolute right-4 top-4 z-20 inline-flex items-center gap-2 rounded-2xl border border-[rgba(241,225,148,0.16)] bg-[rgba(10,5,6,0.72)] px-4 py-2 text-xs font-semibold text-[rgba(255,245,220,0.92)] backdrop-blur-xl transition hover:border-[rgba(241,225,148,0.34)] hover:bg-[rgba(20,8,10,0.82)]"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M12 5v14" />
-              <path d="M5 12h14" />
-            </svg>
-            {imageUrl ? "Cambiar referencia" : "Cargar referencia"}
-          </button>
-        ) : null}
 
         <div
           data-role="zoom-slider"
-          className="absolute left-4 top-1/2 z-20 flex -translate-y-1/2 flex-col items-center gap-3 rounded-[24px] border border-[rgba(241,225,148,0.12)] bg-[rgba(5,2,3,0.72)] px-3 py-4 backdrop-blur-xl shadow-[0_25px_70px_rgba(0,0,0,0.34)]"
+          className="absolute left-3 top-1/2 z-20 flex -translate-y-1/2 flex-col items-center gap-3 rounded-[22px] border border-[rgba(241,225,148,0.1)] bg-[rgba(8,4,5,0.62)] px-2.5 py-3 shadow-[0_22px_60px_rgba(0,0,0,0.34)] backdrop-blur-xl sm:left-4 sm:px-3 sm:py-4"
           onPointerDown={(e) => e.stopPropagation()}
+          style={{ touchAction: "none" }}
         >
           <svg
             xmlns="http://www.w3.org/2000/svg"
-            width="18"
-            height="18"
+            width="16"
+            height="16"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
@@ -228,20 +224,20 @@ const CameraAngleSimulator3D: React.FC<Props> = ({
             style={{
               writingMode: "bt-lr",
               WebkitAppearance: "slider-vertical" as any,
-              height: "220px",
+              height: cubeSize < 250 ? "140px" : "188px",
             }}
           />
 
-          <div className="text-[11px] font-mono text-white/74">{zm.toFixed(1)}</div>
+          <div className="text-[10px] font-mono text-white/68 sm:text-[11px]">{zm.toFixed(1)}</div>
         </div>
 
-        <div className="absolute inset-0 flex items-center justify-center px-14 py-14 sm:px-20 sm:py-16">
+        <div className="absolute inset-0 flex items-center justify-center px-12 py-12 sm:px-16 sm:py-16">
           <div
             className="relative"
             style={{
               width: `${cubeSize}px`,
               height: `${cubeSize}px`,
-              perspective: "1050px",
+              perspective: "1120px",
             }}
           >
             <div
@@ -249,38 +245,55 @@ const CameraAngleSimulator3D: React.FC<Props> = ({
               style={{
                 transform: cubeTransform,
                 transformStyle: "preserve-3d",
-                transition: disabled ? "transform 140ms linear" : "transform 90ms linear",
+                transition: isDragging ? "none" : "transform 130ms cubic-bezier(0.22, 1, 0.36, 1)",
               }}
             >
               <div className={faceBase} style={{ transform: `rotateY(0deg) translateZ(${cubeDepth}px)` }}>
+                <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.03),transparent_34%),radial-gradient(circle_at_50%_26%,rgba(241,225,148,0.08),transparent_34%)]" />
+
                 {imageUrl ? (
-                  <div className="absolute inset-0 flex items-center justify-center bg-[radial-gradient(circle_at_50%_35%,rgba(255,255,255,0.1),transparent_42%),linear-gradient(180deg,rgba(255,255,255,0.02),rgba(0,0,0,0.08))] p-5">
-                    <div className="relative flex h-full w-full items-center justify-center overflow-hidden rounded-[22px] border border-white/8 bg-[rgba(0,0,0,0.18)] shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
+                  <>
+                    <div className="absolute inset-[7%] overflow-hidden rounded-[22px] border border-[rgba(241,225,148,0.09)] bg-[rgba(0,0,0,0.28)] shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
                       <img
                         src={imageUrl}
                         alt={referenceLabel || "Reference"}
-                        className="max-h-full max-w-full object-contain object-center"
+                        className="h-full w-full object-contain object-center"
                         draggable={false}
                       />
                     </div>
-                  </div>
+
+                    {onOpenReferencePicker ? (
+                      <button
+                        type="button"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={onOpenReferencePicker}
+                        className="absolute bottom-4 right-4 inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-[rgba(241,225,148,0.16)] bg-[rgba(8,4,5,0.8)] text-[rgba(255,245,220,0.92)] shadow-[0_16px_40px_rgba(0,0,0,0.3)] backdrop-blur-xl transition hover:border-[rgba(241,225,148,0.28)] hover:bg-[rgba(18,8,10,0.9)]"
+                        title="Cambiar referencia"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M12 5v14" />
+                          <path d="M5 12h14" />
+                        </svg>
+                      </button>
+                    ) : null}
+                  </>
                 ) : (
-                  <div className="absolute inset-0 flex items-center justify-center p-6">
+                  <div className="absolute inset-[8%] flex items-center justify-center">
                     <button
                       type="button"
                       onPointerDown={(e) => e.stopPropagation()}
                       onClick={onOpenReferencePicker}
-                      className="group flex h-full w-full flex-col items-center justify-center gap-4 rounded-[22px] border border-dashed border-[rgba(241,225,148,0.18)] bg-[linear-gradient(180deg,rgba(20,8,10,0.86),rgba(8,3,6,0.96))] px-6 text-center transition hover:border-[rgba(241,225,148,0.38)] hover:bg-[linear-gradient(180deg,rgba(28,12,15,0.92),rgba(12,4,7,0.98))]"
+                      className="group flex h-full w-full flex-col items-center justify-center gap-4 rounded-[24px] border border-dashed border-[rgba(241,225,148,0.18)] bg-[linear-gradient(180deg,rgba(18,8,10,0.88),rgba(8,3,5,0.96))] px-6 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.03)] transition hover:border-[rgba(241,225,148,0.3)] hover:bg-[linear-gradient(180deg,rgba(25,11,14,0.92),rgba(10,4,6,0.98))]"
                     >
-                      <div className="flex h-16 w-16 items-center justify-center rounded-[22px] border border-[rgba(241,225,148,0.16)] bg-[rgba(241,225,148,0.08)] text-[rgba(241,225,148,0.9)] transition group-hover:scale-105 group-hover:bg-[rgba(241,225,148,0.14)]">
+                      <div className="flex h-16 w-16 items-center justify-center rounded-[22px] border border-[rgba(241,225,148,0.16)] bg-[rgba(241,225,148,0.08)] text-[rgba(241,225,148,0.92)] transition group-hover:scale-105 group-hover:bg-[rgba(241,225,148,0.14)]">
                         <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                           <path d="M12 5v14" />
                           <path d="M5 12h14" />
                         </svg>
                       </div>
                       <div>
-                        <div className="text-sm font-semibold text-[rgba(255,245,220,0.94)]">Cargar referencia</div>
-                        <div className="mt-1 text-[11px] font-mono tracking-[0.22em] text-[rgba(241,225,148,0.62)]">FRONT FACE</div>
+                        <div className="text-sm font-semibold text-[rgba(255,245,220,0.94)] sm:text-base">Cargar referencia</div>
+                        <div className="mt-2 text-[10px] font-mono tracking-[0.22em] text-[rgba(241,225,148,0.58)] sm:text-[11px]">FRONT FACE</div>
                       </div>
                     </button>
                   </div>
@@ -288,27 +301,27 @@ const CameraAngleSimulator3D: React.FC<Props> = ({
               </div>
 
               <div className={faceBase} style={{ transform: `rotateY(90deg) translateZ(${cubeDepth}px)` }}>
-                <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.06),transparent_35%),radial-gradient(circle_at_45%_30%,rgba(241,225,148,0.08),transparent_35%)]" />
+                <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),transparent_34%),radial-gradient(circle_at_45%_30%,rgba(241,225,148,0.07),transparent_35%)]" />
                 <div className="absolute inset-0 flex items-center justify-center"><div className={faceLabel}>RIGHT</div></div>
               </div>
 
               <div className={faceBase} style={{ transform: `rotateY(-90deg) translateZ(${cubeDepth}px)` }}>
-                <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.06),transparent_35%),radial-gradient(circle_at_55%_30%,rgba(241,225,148,0.08),transparent_35%)]" />
+                <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),transparent_34%),radial-gradient(circle_at_55%_30%,rgba(241,225,148,0.07),transparent_35%)]" />
                 <div className="absolute inset-0 flex items-center justify-center"><div className={faceLabel}>LEFT</div></div>
               </div>
 
               <div className={faceBase} style={{ transform: `rotateY(180deg) translateZ(${cubeDepth}px)` }}>
-                <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),transparent_35%)]" />
+                <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),transparent_35%)]" />
                 <div className="absolute inset-0 flex items-center justify-center"><div className={faceLabel}>BACK</div></div>
               </div>
 
               <div className={faceBase} style={{ transform: `rotateX(90deg) translateZ(${cubeDepth}px)` }}>
-                <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),transparent_35%)]" />
+                <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),transparent_35%)]" />
                 <div className="absolute inset-0 flex items-center justify-center"><div className={faceLabel}>UP</div></div>
               </div>
 
               <div className={faceBase} style={{ transform: `rotateX(-90deg) translateZ(${cubeDepth}px)` }}>
-                <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),transparent_35%)]" />
+                <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.03),transparent_35%)]" />
                 <div className="absolute inset-0 flex items-center justify-center"><div className={faceLabel}>DOWN</div></div>
               </div>
             </div>
@@ -316,7 +329,7 @@ const CameraAngleSimulator3D: React.FC<Props> = ({
         </div>
 
         {referenceLabel ? (
-          <div className="pointer-events-none absolute bottom-4 left-1/2 z-20 -translate-x-1/2 rounded-full border border-[rgba(241,225,148,0.12)] bg-[rgba(5,2,3,0.74)] px-4 py-2 text-xs text-white/72 backdrop-blur-xl">
+          <div className="pointer-events-none absolute bottom-4 left-1/2 z-20 max-w-[min(68vw,360px)] -translate-x-1/2 truncate rounded-full border border-[rgba(241,225,148,0.1)] bg-[rgba(8,4,5,0.72)] px-4 py-2 text-[11px] text-white/72 shadow-[0_20px_50px_rgba(0,0,0,0.3)] backdrop-blur-xl sm:bottom-5">
             {referenceLabel}
           </div>
         ) : null}
