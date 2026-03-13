@@ -3,12 +3,13 @@ import FileUploader from "../../components/FileUploader";
 import ErrorModal from "../../components/ErrorModal";
 import { useAuth } from "../../contexts/AuthContext";
 import type { Asset } from "../../types";
-import { deleteAsset, listMyAssets, uploadUserAsset, downloadAssetToDisk } from "../../services/assetsApi";
+import { deleteAsset, listMyAssets, downloadAssetToDisk } from "../../services/assetsApi";
 import { apiPostJson, formatErr } from "../../services/videoGenApi";
 import { waitJobCompletion } from "../../services/jobsApi";
 import { estimateVideoCostCredits } from "../../config/pricing.js";
 
 type Orientation = "image" | "video";
+type MotionControlModel = "kling-2.6-motion-control" | "kling-v3-motion-control";
 
 type PendingMotionControlJob = {
   jobId: string;
@@ -19,10 +20,26 @@ type PendingMotionControlJob = {
   keepOriginalSound: boolean;
   characterOrientation: Orientation;
   mode: "std" | "pro";
+  model: MotionControlModel;
   createdAt: number;
 };
 
 const PENDING_MOTION_KEY = "tales_pending_motion_control_job_v1";
+
+function normalizeMotionControlModel(value: unknown): MotionControlModel {
+  return value === "kling-v3-motion-control" ? "kling-v3-motion-control" : "kling-2.6-motion-control";
+}
+
+function resolveMotionControlPricingModel(model: MotionControlModel, mode: "std" | "pro") {
+  if (model === "kling-v3-motion-control") {
+    return mode === "pro" ? "kling-v3-motion-control-pro" : "kling-v3-motion-control";
+  }
+  return mode === "pro" ? "kling-2.6-motion-control-pro" : "kling-2.6-motion-control";
+}
+
+function getMotionControlModelLabel(model: MotionControlModel) {
+  return model === "kling-v3-motion-control" ? "Kling Motion Control 3.0" : "Kling Motion Control 2.6";
+}
 
 function savePending(job: PendingMotionControlJob) {
   try {
@@ -36,7 +53,13 @@ function loadPending(): PendingMotionControlJob | null {
     if (!raw) return null;
     const j = JSON.parse(raw);
     if (!j?.jobId || !j?.prompt) return null;
-    return j as PendingMotionControlJob;
+    return {
+      ...j,
+      keepOriginalSound: j?.keepOriginalSound !== false,
+      characterOrientation: j?.characterOrientation === "image" ? "image" : "video",
+      mode: j?.mode === "pro" ? "pro" : "std",
+      model: normalizeMotionControlModel(j?.model),
+    } as PendingMotionControlJob;
   } catch {
     return null;
   }
@@ -67,6 +90,7 @@ export default function MotionControlTool() {
   const [keepOriginalSound, setKeepOriginalSound] = useState(true);
   const [characterOrientation, setCharacterOrientation] = useState<Orientation>("video");
   const [mode, setMode] = useState<"std" | "pro">("std");
+  const [model, setModel] = useState<MotionControlModel>("kling-2.6-motion-control");
 
   // Job state
   const [isGenerating, setIsGenerating] = useState(false);
@@ -74,12 +98,6 @@ export default function MotionControlTool() {
   const abortRef = useRef<AbortController | null>(null);
 
   const [pendingJob, setPendingJob] = useState<PendingMotionControlJob | null>(null);
-
-    const pendingSlots = useMemo(() => {
-    if (isGenerating) return ["pending-1"];
-    if (pendingJob) return ["pending-resume-1"];
-    return [];
-  }, [isGenerating, pendingJob]);
 
   // Output + history
   const [latest, setLatest] = useState<Asset | null>(null);
@@ -103,15 +121,17 @@ export default function MotionControlTool() {
   const [error, setError] = useState<string | null>(null);
 
   const canGenerate = !!user && !!refImage && !!refVideo && !isGenerating;
+  const selectedModelLabel = getMotionControlModelLabel(model);
+  const selectedModelBadge = `${selectedModelLabel} · ${mode === "pro" ? "1080p" : "720p"}`;
   const estimatedCostCredits = useMemo(() => {
-    const pricingModelNorm = mode === "pro" ? "kling-2.6-motion-control-pro" : "kling-2.6-motion-control";
+    const pricingModelNorm = resolveMotionControlPricingModel(model, mode);
     return estimateVideoCostCredits({
       modelNorm: pricingModelNorm,
       durationSeconds: 5,
       resolution: mode === "pro" ? "1080p" : "720p",
       klingMode: mode,
     });
-  }, [mode]);
+  }, [model, mode]);
 
   const filteredPickerAssets = useMemo(() => {
     const q = pickerQuery.trim().toLowerCase();
@@ -201,9 +221,22 @@ export default function MotionControlTool() {
     setProgressMsg("Cancelado. Puedes reanudar más tarde.");
   }
 
+  async function restorePendingAssets(job: PendingMotionControlJob) {
+    try {
+      const [imgs, vids] = await Promise.all([
+        listMyAssets({ type: "image", limit: 200 }),
+        listMyAssets({ type: "video", limit: 200 }),
+      ]);
+      setRefImage(imgs.find((x) => x.id === job.imageAssetId) || null);
+      setRefVideo(vids.find((x) => x.id === job.videoAssetId) || null);
+    } catch {
+      // noop: el job puede seguir aunque no podamos hidratar las refs en la UI
+    }
+  }
+
   async function runMotionControlJob(job: PendingMotionControlJob) {
     setIsGenerating(true);
-    setProgressMsg("Procesando (Kling)…");
+    setProgressMsg(`Procesando (${getMotionControlModelLabel(job.model)})…`);
     abortRef.current = new AbortController();
 
     try {
@@ -248,7 +281,7 @@ export default function MotionControlTool() {
     const finalPrompt = (prompt || "").trim() || "Motion Control";
 
     setIsGenerating(true);
-    setProgressMsg("Encolando…");
+    setProgressMsg(`Encolando (${selectedModelLabel})…`);
     abortRef.current = new AbortController();
 
     try {
@@ -263,6 +296,7 @@ export default function MotionControlTool() {
         keepOriginalSound,
         characterOrientation,
         mode,
+        model,
         async: true,
       },
       { timeoutMs: 60_000, retries: 0 }
@@ -280,6 +314,7 @@ export default function MotionControlTool() {
       keepOriginalSound,
       characterOrientation,
       mode,
+      model,
       createdAt: Date.now(),
     };
 
@@ -323,13 +358,19 @@ export default function MotionControlTool() {
     }
   }
 
- useEffect(() => {
+  useEffect(() => {
     void refreshHistory();
 
     const p = typeof window !== "undefined" ? loadPending() : null;
     if (!p) return;
 
     setPendingJob(p);
+    setPrompt(p.prompt || "");
+    setKeepOriginalSound(p.keepOriginalSound !== false);
+    setCharacterOrientation(p.characterOrientation === "image" ? "image" : "video");
+    setMode(p.mode === "pro" ? "pro" : "std");
+    setModel(normalizeMotionControlModel(p.model));
+    void restorePendingAssets(p);
     void runMotionControlJob(p);
   }, []);
 
@@ -342,7 +383,7 @@ export default function MotionControlTool() {
           <div>
             <h1 className="text-2xl font-bold">Motion Control</h1>
             <p className="text-white/70 mt-1">
-              Transfiere movimiento de un video a tu personaje (Kling 2.6 · Motion Control via Fal).
+              Transfiere movimiento de un video a tu personaje con {selectedModelLabel}.
             </p>
           </div>
 
@@ -365,6 +406,9 @@ export default function MotionControlTool() {
                 <div className="text-xs font-bold tracking-wider text-amber-300 uppercase">Job pendiente</div>
                 <div className="text-sm text-white/80 mt-1">
                   Hay una generación en progreso guardada. Si cancelaste o recargaste, puedes reanudarla.
+                </div>
+                <div className="text-xs text-amber-200/80 mt-1">
+                  {getMotionControlModelLabel(pendingJob.model)}
                 </div>
               </div>
 
@@ -397,7 +441,7 @@ export default function MotionControlTool() {
         <div className="glass-panel p-6 rounded-2xl border border-white/10 space-y-5">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-bold">Inputs</h2>
-            <div className="text-xs text-white/50">Kling 2.6 Pro</div>
+            <div className="text-xs text-white/50">{selectedModelBadge}</div>
           </div>
 
           <div className="space-y-3">
@@ -452,6 +496,48 @@ export default function MotionControlTool() {
                 Seleccionado: <span className="text-white/80 font-mono">{refVideo.name}</span>
               </div>
             )}
+          </div>
+
+          <div className="space-y-2">
+            <div className="text-xs font-bold text-gray-400 uppercase tracking-wider">Modelo</div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <button
+                type="button"
+                className={`text-left p-3 rounded-xl border transition ${
+                  model === "kling-2.6-motion-control"
+                    ? "border-white/30 bg-white/10"
+                    : "border-white/10 bg-black/30 hover:bg-white/5"
+                }`}
+                onClick={() => setModel("kling-2.6-motion-control")}
+                disabled={isGenerating}
+              >
+                <div className="text-sm font-semibold">Motion Control 2.6</div>
+                <div className="text-xs text-white/60 mt-1">
+                  Mantiene el flujo actual y la compatibilidad existente.
+                </div>
+              </button>
+
+              <button
+                type="button"
+                className={`text-left p-3 rounded-xl border transition ${
+                  model === "kling-v3-motion-control"
+                    ? "border-white/30 bg-white/10"
+                    : "border-white/10 bg-black/30 hover:bg-white/5"
+                }`}
+                onClick={() => setModel("kling-v3-motion-control")}
+                disabled={isGenerating}
+              >
+                <div className="text-sm font-semibold">Motion Control 3.0</div>
+                <div className="text-xs text-white/60 mt-1">
+                  Usa los endpoints v3 dedicados y convive con 2.6 sin reemplazarlo.
+                </div>
+              </button>
+            </div>
+            <div className="text-[11px] text-white/45">
+              {model === "kling-v3-motion-control"
+                ? "En 3.0, From video admite hasta 30s y From image hasta 10s."
+                : "Puedes cambiar entre 2.6 y 3.0 sin tocar el resto del flujo."}
+            </div>
           </div>
 
           <div className="space-y-2">
@@ -884,12 +970,20 @@ export default function MotionControlTool() {
                   <div className="text-xs font-bold text-gray-400 uppercase tracking-wider">Recipe</div>
 
                   <RecipeRow label="Model" value={(viewer as any)?.meta?.model || "—"} />
-                  <RecipeRow label="Endpoint" value={(viewer as any)?.meta?.falEndpointId || "—"} />
+                  <RecipeRow
+                    label="Endpoint"
+                    value={
+                      (viewer as any)?.meta?.falEndpointId ||
+                      (viewer as any)?.meta?.endpointId ||
+                      ((viewer as any)?.meta?.provider === "kling" ? "/videos/motion-control" : "—")
+                    }
+                  />
                   <RecipeRow label="RequestId" value={(viewer as any)?.meta?.requestId || "—"} />
 
                   <div className="pt-2 border-t border-white/10" />
 
                   <RecipeRow label="Orientation" value={(viewer as any)?.meta?.motionControl?.characterOrientation || "—"} />
+                  <RecipeRow label="Mode" value={(viewer as any)?.meta?.motionControl?.mode || "—"} />
                   <RecipeRow label="Keep sound" value={(viewer as any)?.meta?.motionControl?.keepOriginalSound ? "yes" : "no"} />
 
                   <div className="pt-2 border-t border-white/10" />

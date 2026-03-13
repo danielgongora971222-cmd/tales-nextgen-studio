@@ -34,7 +34,7 @@ export const VIDEO_TOOLS_REGISTRY: ToolDefinition[] = [
     id: 'motion-control',
     label: 'Motion Control',
     route: AppRoute.TOOL_MOTION_CONTROL,
-    description: 'Direct camera moves and motion paths for cinematic control.',
+    description: 'Transfer motion from a reference video to a character image with Kling 2.6 or 3.0.',
     status: 'ready'
   }
 ];

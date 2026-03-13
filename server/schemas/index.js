@@ -140,6 +140,7 @@ export const MotionControlRequestSchema = z.object({
 
   // std = 720p, pro = 1080p (lo mapeamos así en el handler)
   mode: z.enum(["std", "pro"]).optional(),
+  model: z.enum(["kling-2.6-motion-control", "kling-v3-motion-control"]).optional(),
 
   async: z.boolean().optional(),
   tool: z.string().optional(),

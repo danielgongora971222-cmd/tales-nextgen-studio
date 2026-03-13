@@ -283,6 +283,12 @@ function videoUnitUsd({
     case "kling-o3-ref-video-to-video-pro":
       perSecondUsd = 0.168;
       break;
+    case "kling-v3-motion-control":
+      perSecondUsd = 0.126;
+      break;
+    case "kling-v3-motion-control-pro":
+      perSecondUsd = 0.168;
+      break;
     case "kling-2.6-motion-control":
       perSecondUsd = 0.07;
       break;

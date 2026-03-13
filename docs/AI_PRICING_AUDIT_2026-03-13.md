@@ -44,6 +44,8 @@
 - `kling-o3-ref-to-video-pro`
 - `kling-o3-edit-video-pro`
 - `kling-o3-ref-video-to-video-pro`
+- `kling-v3-motion-control`
+- `kling-v3-motion-control-pro`
 - `kling-2.6-motion-control`
 - `kling-2.6-motion-control-pro`
 

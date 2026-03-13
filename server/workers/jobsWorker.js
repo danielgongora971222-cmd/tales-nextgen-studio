@@ -510,6 +510,7 @@ const taskStatusRaw = extractKlingTaskStatus(taskData, rawJson);
 
     const meta = {
       ...(params.meta || {}),
+      ...(params.motionControl ? { motionControl: params.motionControl } : {}),
 
       // ✅ CRÍTICO para que aparezca en MotionControlTool / MyCreations
       tool: toolName,
@@ -679,6 +680,7 @@ const taskStatusRaw = extractKlingTaskStatus(taskData, rawJson);
   }
   const meta = {
     ...(params.meta || {}),
+    ...(params.motionControl ? { motionControl: params.motionControl } : {}),
 
     // ✅ CRÍTICO para que aparezca en herramientas y MyCreations
     tool: toolName,
@@ -686,7 +688,7 @@ const taskStatusRaw = extractKlingTaskStatus(taskData, rawJson);
 
     provider: "fal",
     model: params.model || null,
-    falEndpointId: params.falEndpointId || null,
+    falEndpointId: params.falEndpointId || params.endpointId || null,
     requestId: params.requestId || null,
     providerStatus: "COMPLETED",
     providerVideoUrl: videoUrl,
