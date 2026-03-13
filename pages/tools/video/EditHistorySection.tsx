@@ -134,11 +134,11 @@ export function EditHistorySection({
         ) : (
           <div className={styles.grid}>
             {pendingSlots.map((id) => (
-              <div key={id} className={`${styles.tile} ${styles.tilePending}`}>
-                <div className={styles.tilePendingMedia} />
-                <div className={styles.tileMeta}>
-                  <div className={styles.tileTitle}>Processing…</div>
-                  <div className={styles.tileSub}>Fal / Kling</div>
+              <div key={id} className={`${styles.tile} ${styles.tilePending}`} aria-label="Generating video...">
+                <div className={styles.pendingFrame}>
+                  <div className={styles.pendingShimmer} />
+                  <div className={styles.pendingSpinner} />
+                  <div className={styles.pendingLabel}>GENERATING</div>
                 </div>
               </div>
             ))}

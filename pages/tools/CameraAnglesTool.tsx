@@ -4,7 +4,7 @@ import CameraAngleSimulator3D, { CameraAngleValue } from "../../components/Camer
 import { estimateImageCostCredits } from "../../config/pricing.js";
 import { downloadAssetToDisk, listMyAssets, uploadUserAsset } from "../../services/assetsApi";
 import { generateImageBatch } from "../../services/geminiService";
-import { Asset } from "../../types";
+import { AppRoute, Asset } from "../../types";
 
 const CAMERA_ANGLES_MODEL = "fal-ai/qwen-image-edit-2511-multiple-angles";
 const DEFAULT_COUNT = 1;
@@ -320,6 +320,8 @@ const CameraAnglesTool: React.FC = () => {
     }
   };
 
+  const goHome = () => window.dispatchEvent(new CustomEvent("tales:navigate", { detail: { route: AppRoute.HOME } }));
+
   return (
     <div
       className="relative overflow-hidden bg-[#030102] text-[rgba(255,245,220,0.95)]"
@@ -489,6 +491,17 @@ const CameraAnglesTool: React.FC = () => {
         </div>
 
         <div className="absolute right-3 z-20 flex items-center gap-2 sm:right-5" style={{ top: "max(env(safe-area-inset-top), 12px)" }}>
+          <button
+            type="button"
+            onClick={goHome}
+            className="inline-flex min-h-[48px] items-center gap-2 rounded-full border border-[rgba(241,225,148,0.12)] bg-[rgba(8,4,5,0.72)] px-4 py-2 text-sm text-[rgba(255,245,220,0.9)] shadow-[0_18px_48px_rgba(0,0,0,0.32)] backdrop-blur-xl transition hover:border-[rgba(241,225,148,0.22)] hover:bg-[rgba(14,7,9,0.86)]"
+            aria-label="Cerrar herramienta y volver al home"
+            title="Close"
+          >
+            <IconClose className="h-4 w-4 text-[rgba(241,225,148,0.78)]" />
+            <span className="hidden sm:inline">Close</span>
+          </button>
+
           <div className={`${pillClass} hidden sm:inline-flex`}>
             <span className="text-[rgba(241,225,148,0.74)]">Coste</span>
             <span className="font-semibold text-[rgba(255,245,220,0.95)]">{estimatedCostCredits} créditos</span>

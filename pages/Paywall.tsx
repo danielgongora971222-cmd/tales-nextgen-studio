@@ -283,7 +283,11 @@ export default function Paywall({
           })
         : list.filter((p) => String(p?.billing_period || "").toLowerCase() === "year");
 
-    return filtered.sort((a, b) => planPowerScore(a) - planPowerScore(b));
+    return filtered.sort((a, b) => {
+      const priceDiff = Number(a?.price_cents || 0) - Number(b?.price_cents || 0);
+      if (priceDiff !== 0) return priceDiff;
+      return planPowerScore(a) - planPowerScore(b);
+    });
   }, [plans, period]);
 
   const bestValuePlanId = useMemo(() => {

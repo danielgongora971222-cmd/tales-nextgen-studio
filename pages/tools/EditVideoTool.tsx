@@ -169,6 +169,7 @@ export default function EditVideoTool() {
   const [panel, setPanel] = useState<null | "model" | "params">(null);
   const [isCookOpen, setIsCookOpen] = useState(false);
   const popoverRef = useRef<HTMLDivElement | null>(null);
+  const floatingPopoverRef = useRef<HTMLDivElement | null>(null);
   const controlsRef = useRef<HTMLDivElement | null>(null);
 
   const [model, setModel] = useState<EditModelId>("kling-o3-edit-video-pro");
@@ -2014,7 +2015,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
             </div>
 
             {panel && (
-              <div className={styles.popover} ref={popoverRef}>
+              <div className={styles.popover} ref={floatingPopoverRef}>
                 <div className={styles.popoverInner}>
                   <div className={styles.popoverHeader}>
                     <div className={styles.popoverTitle}>{panel === "model" ? "MODELOS" : "AJUSTES"}</div>
