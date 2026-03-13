@@ -3,10 +3,9 @@ import styles from "./ImageGeneratorTool.module.css";
 import videoStyles from "./VideoGeneratorTool.module.css";
 
 import ErrorModal from "../../components/ErrorModal";
-import { Asset, GeminiModel } from "../../types";
+import { AppRoute, Asset, GeminiModel } from "../../types";
 import { generateImageBatch } from "../../services/geminiService";
 import { deleteAsset, listMyAssets, uploadUserAsset, downloadAssetToDisk } from "../../services/assetsApi";
-import { AssetPickerModal } from "./video/AssetPickerModal";
 import { LIGHTING_PRESETS } from "../../config/presets/lightroom";
 import OneNationUpIcon from "@/components/brand/OneNationUpIcon";
 import { estimateImageCostCredits } from "../../config/pricing.js";
@@ -15,7 +14,7 @@ import { usePendingImageToolJobs } from "../../hooks/usePendingImageToolJobs";
 import { useAuth } from "../../contexts/AuthContext";
 
 type Quality = "1K" | "2K" | "4K";
-type PanelKey = "model" | "quality" | null;
+type PanelKey = "reference" | "lighting" | "model" | "parameters" | null;
 
 const TOOL_ID = "lightroom";
 const REF_TOOL_ID = "lightroom-ref";
@@ -315,6 +314,7 @@ const LightroomTool: React.FC = () => {
   const { user } = useAuth();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
+  const refFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [error, setError] = useState<string | null>(null);
   const [panel, setPanel] = useState<PanelKey>(null);
@@ -329,10 +329,9 @@ const LightroomTool: React.FC = () => {
   const [viewer, setViewer] = useState<Asset | null>(null);
 
   const [baseRef, setBaseRef] = useState<Asset | null>(null);
-  const [isBasePickerOpen, setIsBasePickerOpen] = useState(false);
-
   const [selectedLightingId, setSelectedLightingId] = useState<string | null>(null);
-  const [isLightingPickerOpen, setIsLightingPickerOpen] = useState(false);
+  const [isCookOpen, setIsCookOpen] = useState(false);
+  const [pickerQuery, setPickerQuery] = useState("");
 
   const [model, setModel] = useState<string>(MODEL_OPTIONS[0].id);
   const [quality, setQuality] = useState<Quality>("1K");
@@ -357,6 +356,20 @@ const LightroomTool: React.FC = () => {
     return LIGHTING_PRESETS.find((p) => p.id === selectedLightingId) || null;
   }, [selectedLightingId]);
 
+  const pickerAssets = useMemo(() => myAssets.filter((a: any) => (a?.type ? a.type === "image" : true)), [myAssets]);
+
+  const filteredPickerAssets = useMemo(() => {
+    const q = (pickerQuery || "").trim().toLowerCase();
+    if (!q) return pickerAssets;
+    return pickerAssets.filter((asset) => `${asset.name || ""} ${removeLightingPresetBlock(asset.prompt || "") || ""}`.toLowerCase().includes(q));
+  }, [pickerAssets, pickerQuery]);
+
+  const filteredLightingPresets = useMemo(() => {
+    const q = (pickerQuery || "").trim().toLowerCase();
+    if (!q) return LIGHTING_PRESETS;
+    return LIGHTING_PRESETS.filter((preset) => String(preset.name || "").toLowerCase().includes(q));
+  }, [pickerQuery]);
+
   const modelLabel = useMemo(() => prettyModelLabel(model), [model]);
 
   const allowedQualities = useMemo(() => {
@@ -372,6 +385,40 @@ const LightroomTool: React.FC = () => {
   const estimatedCostCredits = useMemo(() => {
     return estimateImageCostCredits({ model, quality: qualityLabel, count: 1 });
   }, [model, qualityLabel]);
+
+  const referenceLabel = baseRef ? "Ready" : "Add image";
+  const lightingLabel = selectedLighting?.name || "Select";
+  const parametersLabel = qualityLabel;
+  const isCookSidebarVisible = isCookOpen && !panel;
+  const isCookLayerVisible = isCookOpen || !!panel;
+
+  function goHome() {
+    window.dispatchEvent(new CustomEvent("tales:navigate", { detail: { route: AppRoute.HOME } }));
+  }
+
+  function openCook() {
+    setPickerQuery("");
+    setPanel(null);
+    setIsCookOpen(true);
+  }
+
+  function closeCook() {
+    setPickerQuery("");
+    setPanel(null);
+    setIsCookOpen(false);
+  }
+
+  function openPanel(next: PanelKey) {
+    setPickerQuery("");
+    setIsCookOpen(true);
+    setPanel(next);
+  }
+
+  function restoreCookFromPanel() {
+    setPickerQuery("");
+    setPanel(null);
+    setIsCookOpen(true);
+  }
 
   async function reloadHistory() {
     setIsLoadingHistory(true);
@@ -494,6 +541,7 @@ const LightroomTool: React.FC = () => {
     setIsGenerating(true);
     setError(null);
     setPanel(null);
+    setIsCookOpen(false);
     startLocalPending(1);
     setPendingSlots([`pending-local-${Date.now()}`]);
 
@@ -581,10 +629,10 @@ const LightroomTool: React.FC = () => {
   const previewLightingCover = selectedLighting?.coverUrl || null;
 
   return (
-    <div ref={rootRef} className={styles.root}>
+    <div ref={rootRef} className={`${styles.root} ${isCookOpen ? styles.rootCookOpen : ""}`}>
       {/* HISTORIAL */}
-      <div className={styles.stage}>
-        <div className={styles.historyHeader}>
+      <div className={`${styles.stage} ${isCookOpen ? styles.stageCookOpen : ""}`}>
+        <div className={`${styles.historyHeader} ${isCookOpen ? styles.historyHeaderCookOpen : ""}`}>
           <div className={styles.historyTitle}>
             <span className={styles.kicker}>LIGHTROOM</span>
             <div className={styles.historyMeta}>
@@ -599,9 +647,14 @@ const LightroomTool: React.FC = () => {
             </div>
           </div>
 
-          <button className={styles.ghostBtn} onClick={reloadHistory} type="button" disabled={isLoadingHistory}>
-            Refresh
-          </button>
+          <div className={styles.historyActions}>
+            <button className={styles.ghostBtn} onClick={reloadHistory} type="button" disabled={isLoadingHistory}>
+              Refresh
+            </button>
+            <button className={styles.closeHomeBtn} onClick={goHome} type="button" aria-label="Close tool and go home" title="Close">
+              ×
+            </button>
+          </div>
         </div>
 
         <div className={styles.historyGrid}>
@@ -693,215 +746,179 @@ const LightroomTool: React.FC = () => {
         </div>
       </div>
 
-      {/* DOCK */}
-      <div className={styles.dockWrap}>
-        <div className={styles.dock}>
-          <div className={videoStyles.frameStrip}>
-            {/* Reference Image (like FIRST FRAME) */}
-            <button
-              type="button"
-              className={videoStyles.frameCard}
-              onClick={() => setIsBasePickerOpen(true)}
-              title="Select reference image"
-            >
-              {baseRef ? (
-                <img className={videoStyles.frameCardImg} src={baseRef.url} alt={baseRef.name || "Reference"} />
-              ) : (
-                <div className={videoStyles.frameCardEmpty}>
-                  <div className={videoStyles.frameCardIcons}>
-                    <Icon name="image" />
-                    <Icon name="upload" />
-                  </div>
-                  <div className={videoStyles.frameCardEmptyText}>SELECT IMAGE</div>
-                </div>
-              )}
+      {panel === null && (
+        <button
+          type="button"
+          className={`${styles.cookToggle} ${isCookSidebarVisible ? styles.cookToggleOpen : styles.cookTogglePulse}`}
+          onClick={() => {
+            if (isCookSidebarVisible) closeCook();
+            else openCook();
+          }}
+          aria-expanded={isCookSidebarVisible}
+          aria-controls="lightroom-start-create"
+          aria-label={isCookSidebarVisible ? "Close Start Create" : "Open Start Create"}
+        >
+          <span className={styles.cookToggleLabel}>Start Create</span>
+          <span className={styles.cookToggleGlyph} aria-hidden="true">{isCookSidebarVisible ? "×" : "+"}</span>
+        </button>
+      )}
 
-              <span className={videoStyles.frameCardBadge}>REF</span>
-
-              {baseRef && (
-                <button
-                  type="button"
-                  className={videoStyles.frameCardRemove}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setBaseRef(null);
-                  }}
-                  title="Remove"
-                >
-                  ×
-                </button>
-              )}
-            </button>
-
-            {/* Lighting (like LAST FRAME slot, but opens lighting presets) */}
-            <button
-              type="button"
-              className={videoStyles.frameCard}
-              onClick={() => setIsLightingPickerOpen(true)}
-              title="Select lighting"
-            >
-              {previewLightingCover ? (
-                <img className={videoStyles.frameCardImg} src={previewLightingCover} alt={selectedLighting?.name || "Lighting"} />
-              ) : (
-                <div className={videoStyles.frameCardEmpty}>
-                  <div className={videoStyles.frameCardIcons}>
-                    <Icon name="mode" />
-                  </div>
-                  <div className={videoStyles.frameCardEmptyText}>SELECT LIGHTING</div>
-                </div>
-              )}
-
-              <span className={videoStyles.frameCardBadge}>LIGHT</span>
-
-              {selectedLightingId && (
-                <button
-                  type="button"
-                  className={videoStyles.frameCardRemove}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedLightingId(null);
-                  }}
-                  title="Clear"
-                >
-                  ×
-                </button>
-              )}
-            </button>
-          </div>
-
-          <div className={styles.controlsRow}>
-            <button
-              type="button"
-              className={`${styles.controlBtn} ${panel === "model" ? styles.controlBtnActive : ""}`}
-              onClick={() => setPanel((p) => (p === "model" ? null : "model"))}
-            >
-              <span>Model</span>
-              <span className={styles.controlBtnMeta}>{modelLabel}</span>
-            </button>
-
-            <button
-              type="button"
-              className={`${styles.controlBtn} ${panel === "quality" ? styles.controlBtnActive : ""}`}
-              onClick={() => setPanel((p) => (p === "quality" ? null : "quality"))}
-            >
-              <span>Quality</span>
-              <span className={styles.controlBtnMeta}>{qualityLabel}</span>
-            </button>
-          </div>
+      {isCookLayerVisible && (
+        <div
+          id="lightroom-start-create"
+          className={`${styles.cookOverlay} ${styles.cookOverlayOpen}`}
+          aria-hidden={!isCookLayerVisible}
+        >
+          <button
+            type="button"
+            className={styles.cookBackdrop}
+            aria-label={panel ? "Back to Start Create" : "Close Start Create"}
+            tabIndex={isCookLayerVisible ? 0 : -1}
+            onClick={() => {
+              if (panel) restoreCookFromPanel();
+              else closeCook();
+            }}
+          />
 
           {panel && (
-            <div className={styles.popover} ref={popoverRef}>
-              {panel === "model" && (
-                <div className={styles.popoverInner}>
-                  <div className={styles.popoverHeader}>
-                    <div className={styles.popoverTitle}>Model</div>
-                    <button className={styles.closeBtn} onClick={() => setPanel(null)} type="button">
-                      <Icon name="close" />
-                    </button>
-                  </div>
-
-                  <div className={styles.modelGrid}>
-                    <div className={styles.modelGroup}>
-                      <div className={styles.modelGroupLabel}>Available</div>
-                      <div className={styles.modelGroupOptions}>
-                        {MODEL_OPTIONS.map((opt) => (
-                          <button
-                            key={opt.id}
-                            type="button"
-                            className={`${styles.modelOption} ${model === opt.id ? styles.modelOptionActive : ""}`}
-                            onClick={() => {
-                              setModel(opt.id);
-                              setPanel(null);
-                            }}
-                          >
-                            {opt.label}
-                          </button>
-                        ))}
+            <div className={`${styles.cookPanelShell} ${!isCookSidebarVisible ? styles.cookPanelShellSolo : ""}`}>
+              <div ref={popoverRef} className={styles.cookPanel}>
+                {panel === "reference" && (
+                  <>
+                    <div className={styles.popoverHeader}>
+                      <div className={styles.popoverTitle}>Reference</div>
+                      <div className={styles.headerRight}>
+                        <div className={styles.cookSectionMeta}>{referenceLabel}</div>
+                        <button type="button" className={styles.closeBtn} onClick={restoreCookFromPanel} aria-label="Close Reference">×</button>
                       </div>
                     </div>
-                  </div>
-                </div>
-              )}
+                    <div className={`${styles.popoverBody} ${styles.cookPanelBody} ${styles.cookPanelScroll}`}>
+                      <div className={styles.refSlot}>
+                        <div className={styles.refSlotLeft}>
+                          <div className={styles.refSlotLabel}>Reference Image</div>
+                          {baseRef ? (
+                            <div className={styles.refSlotThumb}>
+                              <img src={baseRef.url} alt={baseRef.name || "Reference"} />
+                            </div>
+                          ) : (
+                            <div className={`${styles.refSlotThumb} ${styles.refSlotThumbEmpty}`}>+</div>
+                          )}
+                        </div>
+                        <div className={styles.refSlotActions}>
+                          <input type="file" accept="image/*" className={styles.hiddenFileInput} ref={refFileInputRef} onChange={(e) => { const file = e.target.files?.[0]; if (!file) return; void uploadReference(file).then((asset) => { setBaseRef(asset); restoreCookFromPanel(); }).catch((err: any) => setError(err?.message || "Upload falló.")); e.currentTarget.value = ""; }} />
+                          <button type="button" className={styles.smallBtn} onClick={() => refFileInputRef.current?.click()}>Upload</button>
+                          {baseRef && <button type="button" className={styles.smallBtnGhost} onClick={() => setBaseRef(null)}>Remove</button>}
+                        </div>
+                      </div>
+                      <input className={styles.search} placeholder="Search in your library..." value={pickerQuery} onChange={(e) => setPickerQuery(e.target.value)} />
+                      <div className={styles.pickerGrid}>
+                        {filteredPickerAssets.map((asset) => (
+                          <button key={asset.id} type="button" className={styles.pickerTile} onClick={() => { setBaseRef(asset); restoreCookFromPanel(); }}>
+                            <img src={asset.url} alt={asset.name} />
+                            <div className={styles.pickerTileMeta}><div className={styles.pickerTileCap}>{removeLightingPresetBlock(asset.prompt || "") || asset.name}</div></div>
+                          </button>
+                        ))}
+                        {filteredPickerAssets.length === 0 ? <div className={styles.pickerEmpty}>No images found in your library.</div> : null}
+                      </div>
+                    </div>
+                  </>
+                )}
 
-              {panel === "quality" && (
-                <div className={styles.popoverInner}>
-                  <div className={styles.popoverHeader}>
-                    <div className={styles.popoverTitle}>Quality</div>
-                    <button className={styles.closeBtn} onClick={() => setPanel(null)} type="button">
-                      <Icon name="close" />
-                    </button>
-                  </div>
+                {panel === "lighting" && (
+                  <>
+                    <div className={styles.popoverHeader}>
+                      <div className={styles.popoverTitle}>Lighting</div>
+                      <div className={styles.headerRight}>
+                        <div className={styles.cookSectionMeta}>{lightingLabel}</div>
+                        <button type="button" className={styles.smallBtnGhost} onClick={() => { setSelectedLightingId(null); restoreCookFromPanel(); }}>Clear</button>
+                        <button type="button" className={styles.closeBtn} onClick={restoreCookFromPanel} aria-label="Close Lighting">×</button>
+                      </div>
+                    </div>
+                    <div className={`${styles.popoverBody} ${styles.cookPanelBody} ${styles.cookPanelScroll}`}>
+                      <input className={styles.search} placeholder="Search lighting..." value={pickerQuery} onChange={(e) => setPickerQuery(e.target.value)} />
+                      <div className={styles.presetGrid}>
+                        {filteredLightingPresets.map((preset) => {
+                          const active = selectedLightingId === preset.id;
+                          return (
+                            <button key={preset.id} type="button" className={`${styles.presetCard} ${active ? styles.presetCardActive : ""}`} onClick={() => { setSelectedLightingId(preset.id); restoreCookFromPanel(); }}>
+                              <div className={styles.presetCover}>{preset.coverUrl ? <img src={preset.coverUrl} alt={preset.name} /> : <div className={styles.presetCoverEmpty} />}</div>
+                              <div className={styles.presetName}>{preset.name}</div>
+                            </button>
+                          );
+                        })}
+                        {filteredLightingPresets.length === 0 ? <div className={styles.pickerEmpty}>No hay iluminaciones que coincidan.</div> : null}
+                      </div>
+                    </div>
+                  </>
+                )}
 
-                  <div className={styles.formRow}>
-                    <label className={styles.formLabel}>Quality</label>
-                    <select
-                      className={styles.select}
-                      value={qualityLabel}
-                      onChange={(e) => {
-                        setQuality(e.target.value as Quality);
-                        setPanel(null);
-                      }}
-                    >
-                      {allowedQualities.map((q) => (
-                        <option key={q} value={q}>
-                          {q}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-              )}
+                {panel === "model" && (
+                  <>
+                    <div className={styles.popoverHeader}>
+                      <div className={styles.popoverTitle}>Model</div>
+                      <div className={styles.headerRight}>
+                        <div className={styles.cookSectionMeta}>{modelLabel}</div>
+                        <button type="button" className={styles.closeBtn} onClick={restoreCookFromPanel} aria-label="Close Model">×</button>
+                      </div>
+                    </div>
+                    <div className={`${styles.popoverBody} ${styles.cookPanelBody} ${styles.cookPanelScroll}`}>
+                      <div className={styles.modelGrid}><div className={styles.modelGroup}><div className={styles.modelGroupLabel}>Available</div><div className={styles.modelGroupOptions}>{MODEL_OPTIONS.map((opt) => (<button key={opt.id} type="button" className={`${styles.modelOption} ${model === opt.id ? styles.modelOptionActive : ""}`} onClick={() => { setModel(opt.id); restoreCookFromPanel(); }}>{opt.label}</button>))}</div></div></div>
+                    </div>
+                  </>
+                )}
+
+                {panel === "parameters" && (
+                  <>
+                    <div className={styles.popoverHeader}>
+                      <div className={styles.popoverTitle}>Parameters</div>
+                      <div className={styles.headerRight}>
+                        <div className={styles.cookSectionMeta}>{parametersLabel}</div>
+                        <button type="button" className={styles.closeBtn} onClick={restoreCookFromPanel} aria-label="Close Parameters">×</button>
+                      </div>
+                    </div>
+                    <div className={`${styles.popoverBody} ${styles.cookPanelBody} ${styles.cookPanelScroll}`}>
+                      <div className={styles.paramGrid}>
+                        <div className={styles.formRow}>
+                          <label className={styles.formLabel}>Quality</label>
+                          <select className={styles.select} value={qualityLabel} onChange={(e) => { setQuality(e.target.value as Quality); restoreCookFromPanel(); }}>
+                            {allowedQualities.map((q) => (<option key={q} value={q}>{q}</option>))}
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
           )}
 
-          {/* Sin prompt editable: solo estado + botón */}
-          <div className={styles.promptRow}>
-            <div className={styles.promptInputWrap}>
-              <div className={styles.promptEditor}>
-                <div style={{ padding: 10, color: "rgba(255,255,255,0.65)", fontSize: 12 }}>
-                  {!baseRef ? "Add a reference image." : ""}
-                  {baseRef && !selectedLighting ? "Select a lighting preset." : ""}
-                  {baseRef && selectedLighting ? `Relight → ${selectedLighting.name}` : ""}
+          {isCookSidebarVisible && (
+            <div className={styles.cookSidebarShell}>
+              <div className={styles.cookSidebar}>
+                <div className={`${styles.cookSectionCard} ${styles.cookPromptCard}`}>
+                  <div className={`${styles.promptRow} ${styles.cookPromptRow}`}>
+                    <div className={`${styles.promptInputWrap} ${styles.cookPromptInputWrap}`}>
+                      <div className={`${styles.promptEditor} ${styles.cookPromptEditor}`}><div className={`${styles.prompt} ${styles.cookPrompt}`} style={{ minHeight: 88, padding: 14, fontSize: 12 }}>{!baseRef ? "Add a reference image." : ""}{baseRef && !selectedLighting ? "Select a lighting preset." : ""}{baseRef && selectedLighting ? `Relight → ${selectedLighting.name}` : ""}</div></div>
+                    </div>
+                    <div className={`${styles.generateCol} ${styles.cookGenerateCol}`}>
+                      <button type="button" className={`${styles.generateBtn} ${styles.cookGenerateBtn}`} disabled={isGenerating || !baseRef || !selectedLightingId} onClick={handleGenerate} data-loading={isGenerating ? "true" : "false"}>
+                        <span className={styles.generateLabel}>{isGenerating ? "GENERATING" : "RELIGHT"}</span>
+                        {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
+                      </button>
+                    </div>
+                  </div>
+                  <div className={styles.cookControlsRow}>
+                    <button type="button" className={`${styles.controlBtn} ${styles.cookControlBtn}`} onClick={() => openPanel("reference")}><span className={styles.controlBtnLabel}>Reference</span><span className={styles.controlBtnMeta}>{referenceLabel}</span></button>
+                    <button type="button" className={`${styles.controlBtn} ${styles.cookControlBtn}`} onClick={() => openPanel("lighting")}><span className={styles.controlBtnLabel}>Lighting</span><span className={styles.controlBtnMeta}>{lightingLabel}</span></button>
+                    <button type="button" className={`${styles.controlBtn} ${styles.cookControlBtn}`} onClick={() => openPanel("model")}><span className={styles.controlBtnLabel}>Model</span><span className={styles.controlBtnMeta}>{modelLabel}</span></button>
+                    <button type="button" className={`${styles.controlBtn} ${styles.cookControlBtn}`} onClick={() => openPanel("parameters")}><span className={styles.controlBtnLabel}>Parameters</span><span className={styles.controlBtnMeta}>{parametersLabel}</span></button>
+                  </div>
                 </div>
               </div>
             </div>
-
-            <div className={styles.generateCol}>
-              <button
-                type="button"
-                className={styles.generateBtn}
-                disabled={isGenerating || !baseRef || !selectedLightingId}
-                onClick={handleGenerate}
-                data-loading={isGenerating ? "true" : "false"}
-              >
-                <span className={styles.generateLabel}>{isGenerating ? "GENERATING" : "RELIGHT"}</span>
-                {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
-              </button>
-            </div>
-          </div>
+          )}
         </div>
-      </div>
-
-      {/* Modals */}
-      <AssetPickerModal
-        open={isBasePickerOpen}
-        title="Reference Image"
-        kind="image"
-        assets={myAssets.filter((a: any) => (a?.type ? a.type === "image" : true))}
-        selectedId={baseRef?.id || null}
-        onSelect={(a) => setBaseRef(a)}
-        onClose={() => setIsBasePickerOpen(false)}
-        onUpload={uploadReference}
-        getAssetUrl={getAssetUrl}
-      />
-
-      <LightingPickerModal
-        open={isLightingPickerOpen}
-        selectedLightingId={selectedLightingId}
-        onSelect={(id) => setSelectedLightingId(id)}
-        onClear={() => setSelectedLightingId(null)}
-        onClose={() => setIsLightingPickerOpen(false)}
-      />
+      )}
 
       {/* VIEWER */}
       {viewer && (

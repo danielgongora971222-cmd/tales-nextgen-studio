@@ -112,6 +112,17 @@ const AppContent: React.FC = () => {
   }, [navigate]);
 
   useEffect(() => {
+    const onNavigate = (ev: any) => {
+      const nextRoute = ev?.detail?.route;
+      if (!nextRoute) return;
+      navigate(nextRoute as AppRoute);
+    };
+
+    window.addEventListener("tales:navigate", onNavigate as any);
+    return () => window.removeEventListener("tales:navigate", onNavigate as any);
+  }, [navigate]);
+
+  useEffect(() => {
     const onOpenSell = (ev: any) => {
       if (!user) {
         setAuthModalOpen(true);

@@ -11,7 +11,7 @@ import {
 } from "../../services/assetsApi";
 import { useAuth } from "../../contexts/AuthContext";
 import { supabase } from "../../services/supabaseClient";
-import { Asset, GeminiModel } from "../../types";
+import { AppRoute, Asset, GeminiModel } from "../../types";
 import ErrorModal from "../../components/ErrorModal";
 import { STYLE_PRESETS } from "../../config/presets/restyle";
 import {
@@ -1028,6 +1028,10 @@ useEffect(() => {
   const [isCookOpen, setIsCookOpen] = useState(false);
   const isCookSidebarVisible = isCookOpen && !panel;
   const isCookLayerVisible = isCookOpen || !!panel;
+
+  const goHome = useCallback(() => {
+    window.dispatchEvent(new CustomEvent("tales:navigate", { detail: { route: AppRoute.HOME } }));
+  }, []);
   const refFileInputsRef = useRef<Record<RefSlot, HTMLInputElement | null>>(
     Object.fromEntries(REF_SLOTS.map((slot) => [slot, null])) as Record<RefSlot, HTMLInputElement | null>
   );
@@ -2324,7 +2328,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
       <div className={`${styles.stage} ${isCookOpen ? styles.stageCookOpen : ""}`}>
         <div className={`${styles.historyHeader} ${isCookOpen ? styles.historyHeaderCookOpen : ""}`}>
           <div className={styles.historyTitle}>
-            <span className={styles.kicker}>IMAGE GENERATOR</span>
+            <span className={styles.kicker}>EDITOR IA PRO</span>
             <div className={styles.historyMeta}>
               {isLoadingHistory ? (
                 <span className={styles.subKicker}>Loading history...</span>
@@ -2337,9 +2341,14 @@ const promptReferences: PromptReference[] = useMemo(() => {
             </div>
           </div>
 
-          <button className={styles.ghostBtn} onClick={reloadHistory} type="button" disabled={isLoadingHistory}>
-            Refresh
-          </button>
+          <div className={styles.historyActions}>
+            <button className={styles.ghostBtn} onClick={reloadHistory} type="button" disabled={isLoadingHistory}>
+              Refresh
+            </button>
+            <button className={styles.closeHomeBtn} onClick={goHome} type="button" aria-label="Close tool and go home" title="Close">
+              ×
+            </button>
+          </div>
         </div>
 
         <div className={`${styles.historyGrid} ${styles.historyGridCook} ${isCookOpen ? styles.historyGridCookOpen : ""}`}>
