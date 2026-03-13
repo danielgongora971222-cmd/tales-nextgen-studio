@@ -1,11 +1,13 @@
 import React from "react";
 import styles from "../VideoGeneratorTool.module.css";
-import type { Asset } from "../../../types";
+import { AppRoute, type Asset } from "../../../types";
 import { Icon } from "./icon";
 import { shortText } from "./text";
 
 type Props = {
   isLoading: boolean;
+  isCookOpen?: boolean;
+  title?: string;
   pendingSlots: string[];
   totalCount: number;
   visibleHistory: Asset[];
@@ -23,6 +25,8 @@ type Props = {
 
 export function EditHistorySection({
   isLoading,
+  isCookOpen = false,
+  title = "EDIT VIDEO",
   pendingSlots,
   totalCount,
   visibleHistory,
@@ -37,11 +41,13 @@ export function EditHistorySection({
   onShowError,
   hoverVideoEls,
 }: Props) {
+  const goHome = () => window.dispatchEvent(new CustomEvent("tales:navigate", { detail: { route: AppRoute.HOME } }));
+
   return (
-    <div className={styles.stage}>
-      <div className={styles.historyHeader}>
+    <div className={`${styles.stage} ${isCookOpen ? styles.stageCookOpen : ""}`}>
+      <div className={`${styles.historyHeader} ${isCookOpen ? styles.historyHeaderCookOpen : ""}`}>
         <div className={styles.historyTitle}>
-          <span className={styles.kicker}>EDIT VIDEO</span>
+          <span className={styles.kicker}>{title}</span>
           <div className={styles.historyMeta}>
             {isLoading ? (
               <span className={styles.subKicker}>Loading history...</span>
@@ -54,9 +60,14 @@ export function EditHistorySection({
           </div>
         </div>
 
-        <button className={styles.ghostBtn} onClick={onRefresh} type="button" disabled={isLoading}>
-          Refresh
-        </button>
+        <div className={styles.historyActions}>
+          <button className={styles.ghostBtn} onClick={onRefresh} type="button" disabled={isLoading}>
+            Refresh
+          </button>
+          <button className={styles.closeHomeBtn} onClick={goHome} type="button" aria-label="Close tool and go home" title="Close">
+            ×
+          </button>
+        </div>
       </div>
 
       <div className={styles.historyGrid}>

@@ -375,6 +375,7 @@ const VideoGeneratorTool: React.FC = () => {
   const [pickerVisibleCount, setPickerVisibleCount] = useState(PICKER_INITIAL_COUNT);
 
   const popoverRef = useRef<HTMLDivElement>(null);
+  const [isCookOpen, setIsCookOpen] = useState(false);
 
     // ==== Root glow (igual que ImageTool) ====
   const rootRef = useRef<HTMLDivElement>(null);
@@ -1132,6 +1133,23 @@ const durationLabel = useMemo(() => {
   return `${durationSeconds}s`;
 }, [durationSeconds, isMultishotCustomize, multishotTotalSeconds]);
 
+  const isCookSidebarVisible = isCookOpen && !panel;
+  const isCookLayerVisible = isCookOpen || !!panel;
+
+  function openCook() {
+    setPanel(null);
+    setIsCookOpen(true);
+  }
+
+  function closeCook() {
+    setPanel(null);
+    setIsCookOpen(false);
+  }
+
+  function restoreCookFromPanel() {
+    setPanel(null);
+    setIsCookOpen(true);
+  }
 
   const openPicker = (slot: FrameSlotKey) => {
     if (slot === "last" && !hasFirst) return; // bloquea last si no hay first
@@ -1591,13 +1609,15 @@ const clearModalSelectedIds = () => {
   return (
     <div
       ref={rootRef}
-      className={styles.root}
+      className={`${styles.root} ${isCookOpen ? styles.rootCookOpen : ""}`}
       onMouseMove={handleRootMouseMove}
       onMouseLeave={handleRootMouseLeave}
     >
       <ErrorModal error={error} onClose={() => setError(null)} />
 
       <HistorySection
+        isCookOpen={isCookOpen}
+        title="VIDEO GENERATOR"
         isLoading={isLoadingHistory}
         pendingSlots={pendingSlots}
         totalCount={videoAssets.length}
@@ -1614,9 +1634,87 @@ const clearModalSelectedIds = () => {
         hoverVideoEls={hoverVideoEls}
       />
 
-      {/* DOCK (prompt bar estilo Image Tool) */}
-      <div className={styles.dockWrap}>
-        <div className={styles.dock}>
+      {panel === null && (
+        <button
+          type="button"
+          className={`${styles.cookToggle} ${isCookSidebarVisible ? styles.cookToggleOpen : styles.cookTogglePulse}`}
+          onClick={() => {
+            if (isCookSidebarVisible) closeCook();
+            else openCook();
+          }}
+          aria-expanded={isCookSidebarVisible}
+          aria-controls="video-generator-start-create"
+          aria-label={isCookSidebarVisible ? "Close Start Create" : "Open Start Create"}
+        >
+          <span className={styles.cookToggleLabel}>Start Create</span>
+          <span className={styles.cookToggleGlyph} aria-hidden="true">{isCookSidebarVisible ? "×" : "+"}</span>
+        </button>
+      )}
+
+      {isCookLayerVisible && (
+        <div id="video-generator-start-create" className={`${styles.cookOverlay} ${styles.cookOverlayOpen}`} aria-hidden={!isCookLayerVisible}>
+          <button
+            type="button"
+            className={styles.cookBackdrop}
+            aria-label={panel ? "Back to Start Create" : "Close Start Create"}
+            tabIndex={isCookLayerVisible ? 0 : -1}
+            onClick={() => {
+              if (panel) restoreCookFromPanel();
+              else closeCook();
+            }}
+          />
+
+          {panel && (
+            <div className={styles.cookPanelShell}>
+              <div className={styles.cookPanel}>
+                <ControlsPopover
+                  inline
+                  onClose={restoreCookFromPanel}
+                  panel={panel}
+                  setPanel={setPanel}
+                  popoverRef={popoverRef}
+                  model={model}
+                  setModel={setModel}
+                  veoIsFast={veoIsFast}
+                  capability={capability}
+                  hasFirst={hasFirst}
+                  aspectRatio={aspectRatio}
+                  setAspectRatio={setAspectRatio}
+                  supportedResolutions={supportedResolutions}
+                  resolution={resolution}
+                  setResolution={setResolution}
+                  count={count}
+                  setCount={setCount}
+                  isKling={isKling}
+                  isKlingV3={isKlingV3}
+                  klingMode={klingMode}
+                  setKlingMode={setKlingMode}
+                  klingSound={klingSound}
+                  setKlingSound={setKlingSound}
+                  setKlingSoundTouched={setKlingSoundTouched}
+                  klingShotType={klingShotType}
+                  setKlingShotType={setKlingShotType}
+                  negativePrompt={negativePrompt}
+                  setNegativePrompt={setNegativePrompt}
+                  klingCfgScale={klingCfgScale}
+                  setKlingCfgScale={setKlingCfgScale}
+                  klingVoiceIdsText={klingVoiceIdsText}
+                  setKlingVoiceIdsText={setKlingVoiceIdsText}
+                  multishotEnabled={multishotEnabled}
+                  multishotTotalSeconds={multishotTotalSeconds}
+                  setMultishotOpen={setMultishotOpen}
+                  allowedDurations={allowedDurations}
+                  durationSeconds={durationSeconds}
+                  setDurationSeconds={setDurationSeconds}
+                />
+              </div>
+            </div>
+          )}
+
+          {isCookSidebarVisible && (
+            <div className={styles.cookSidebarShell}>
+              <div className={styles.cookSidebar}>
+                <div className={`${styles.dock} ${styles.cookSectionCard} ${styles.cookPromptCard}`}>
           <FrameStrip
             firstFrame={firstFrame}
             lastFrame={lastFrame}
@@ -1626,9 +1724,9 @@ const clearModalSelectedIds = () => {
             swapFrames={swapFrames}
           />
 
-          <div className={styles.promptRow}>
-            <div className={styles.promptInputWrap}>
-              <div className={styles.promptEditor}>
+          <div className={`${styles.promptRow} ${styles.cookPromptRow}`}>
+            <div className={`${styles.promptInputWrap} ${styles.cookPromptInputWrap}`}>
+              <div className={`${styles.promptEditor} ${styles.cookPromptEditor}`}>
                 {((VIDEO_ELEMENTS_UI_ENABLED && selectedKlingElementIds.length > 0) || (isKlingV3 && multishotEnabled)) && (
                   <div className={styles.promptTags}>
                     {VIDEO_ELEMENTS_UI_ENABLED && selectedKlingElementIds.length > 0 && (
@@ -1877,10 +1975,10 @@ const clearModalSelectedIds = () => {
               </div>
             </div>
 
-            <div className={styles.generateCol}>
+            <div className={`${styles.generateCol} ${styles.cookGenerateCol}`}>
                           <button
                             type="button"
-                            className={styles.generateBtn}
+                            className={`${styles.generateBtn} ${styles.cookGenerateBtn}`}
                             disabled={(queueActiveCount >= queueMaxActive) || (isKlingV3 && multishotEnabled ? !multishotIsReady : !prompt.trim())}
                             onClick={handleGenerate}
                             data-loading={isGenerating ? "true" : "false"}
@@ -2011,48 +2109,14 @@ const clearModalSelectedIds = () => {
             multishotMetaLabel={multishotMetaLabel}
           />
 
-          <ControlsPopover
-            panel={panel}
-            setPanel={setPanel}
-            popoverRef={popoverRef}
-            model={model}
-            setModel={setModel}
-            veoIsFast={veoIsFast}
-            capability={capability}
-            hasFirst={hasFirst}
-            aspectRatio={aspectRatio}
-            setAspectRatio={setAspectRatio}
-            supportedResolutions={supportedResolutions}
-            resolution={resolution}
-            setResolution={setResolution}
-            count={count}
-            setCount={setCount}
-            isKling={isKling}
-            isKlingV3={isKlingV3}
-            klingMode={klingMode}
-            setKlingMode={setKlingMode}
-            klingSound={klingSound}
-            setKlingSound={setKlingSound}
-            setKlingSoundTouched={setKlingSoundTouched}
-            klingShotType={klingShotType}
-            setKlingShotType={setKlingShotType}
-            negativePrompt={negativePrompt}
-            setNegativePrompt={setNegativePrompt}
-            klingCfgScale={klingCfgScale}
-            setKlingCfgScale={setKlingCfgScale}
-            klingVoiceIdsText={klingVoiceIdsText}
-            setKlingVoiceIdsText={setKlingVoiceIdsText}
-            multishotEnabled={multishotEnabled}
-            multishotTotalSeconds={multishotTotalSeconds}
-            setMultishotOpen={setMultishotOpen}
-            allowedDurations={allowedDurations}
-            durationSeconds={durationSeconds}
-            setDurationSeconds={setDurationSeconds}
-          />
 
                 </div>
+                </div>
+              </div>
             </div>
-         </div>
+          )}
+        </div>
+      )}
 
       <ViewerModal
         viewer={viewer}

@@ -74,6 +74,9 @@ type Props = {
   allowedDurations: readonly number[];
   durationSeconds: number;
   setDurationSeconds: (v: any) => void;
+
+  inline?: boolean;
+  onClose?: () => void;
 };
 
 export function ControlsPopover({
@@ -113,21 +116,25 @@ export function ControlsPopover({
   allowedDurations,
   durationSeconds,
   setDurationSeconds,
+  inline = false,
+  onClose,
 }: Props) {
   if (!panel || panel === "frames") return null;
+
+  const close = onClose || (() => setPanel(null));
 
   const isKlingV2 = model === KLING_2_5_TURBO || model === KLING_2_6;
   const isKlingO3 = model === KLING_O3_PRO;
   const isKlingV3Model = model === KLING_V3;
 
   return (
-    <div ref={popoverRef} className={styles.popover}>
+    <div ref={popoverRef} className={`${styles.popover} ${inline ? styles.cookInlinePopover : ""}`}>
       <div className={styles.popoverInner}>
         <div className={styles.popoverHeader}>
           <div className={styles.popoverTitle}>
             {panel === "model" ? "Model" : panel === "parameters" ? "Parameters" : "Duration"}
           </div>
-          <button className={styles.closeBtn} onClick={() => setPanel(null)} type="button" title="Cerrar">
+          <button className={styles.closeBtn} onClick={close} type="button" title="Cerrar">
             <Icon name="close" />
           </button>
         </div>
@@ -140,7 +147,7 @@ export function ControlsPopover({
               className={`${styles.modelOption} ${model === VEO_3 || model === VEO_3_FAST ? styles.modelOptionActive : ""}`}
               onClick={() => {
                 setModel(veoIsFast ? VEO_3_FAST : VEO_3);
-                setPanel(null);
+                close();
               }}
             >
               <div className={styles.modelName}>Veo 3</div>
@@ -152,7 +159,7 @@ export function ControlsPopover({
               className={`${styles.modelOption} ${model === VEO_3_1 || model === VEO_3_1_FAST ? styles.modelOptionActive : ""}`}
               onClick={() => {
                 setModel(veoIsFast ? VEO_3_1_FAST : VEO_3_1);
-                setPanel(null);
+                close();
               }}
             >
               <div className={styles.modelName}>Veo 3.1</div>
@@ -164,7 +171,7 @@ export function ControlsPopover({
               className={`${styles.modelOption} ${model === KLING_2_5_TURBO ? styles.modelOptionActive : ""}`}
               onClick={() => {
                 setModel(KLING_2_5_TURBO);
-                setPanel(null);
+                close();
               }}
             >
               <div className={styles.modelName}>Kling 2.5 Turbo</div>
@@ -176,7 +183,7 @@ export function ControlsPopover({
               className={`${styles.modelOption} ${model === KLING_2_6 ? styles.modelOptionActive : ""}`}
               onClick={() => {
                 setModel(KLING_2_6);
-                setPanel(null);
+                close();
               }}
             >
               <div className={styles.modelName}>Kling 2.6</div>
@@ -188,7 +195,7 @@ export function ControlsPopover({
               className={`${styles.modelOption} ${model === KLING_O3_PRO ? styles.modelOptionActive : ""}`}
               onClick={() => {
                 setModel(KLING_O3_PRO);
-                setPanel(null);
+                close();
               }}
             >
               <div className={styles.modelName}>Kling O3 Pro</div>
@@ -200,7 +207,7 @@ export function ControlsPopover({
               className={`${styles.modelOption} ${model === KLING_V3 ? styles.modelOptionActive : ""}`}
               onClick={() => {
                 setModel(KLING_V3);
-                setPanel(null);
+                close();
               }}
             >
               <div className={styles.modelName}>Kling V3</div>

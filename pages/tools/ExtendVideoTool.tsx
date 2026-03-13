@@ -167,6 +167,7 @@ export default function ExtendVideoTool() {
 
   // ===== UI state =====
   const [panel, setPanel] = useState<null | "model" | "params">(null);
+  const [isCookOpen, setIsCookOpen] = useState(false);
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const controlsRef = useRef<HTMLDivElement | null>(null);
 
@@ -1326,12 +1327,31 @@ export default function ExtendVideoTool() {
     if (model !== "kling-o3-ref-to-video-pro") paramsLabelParts.push(keepAudio ? "Keep audio: yes" : "Keep audio: no");
   }
   const paramsLabel = paramsLabelParts.join(" · ");
+  const isCookSidebarVisible = isCookOpen && !panel;
+  const isCookLayerVisible = isCookOpen || !!panel;
+
+  function openCook() {
+    setPanel(null);
+    setIsCookOpen(true);
+  }
+
+  function closeCook() {
+    setPanel(null);
+    setIsCookOpen(false);
+  }
+
+  function restoreCookFromPanel() {
+    setPanel(null);
+    setIsCookOpen(true);
+  }
 
   return (
-    <div ref={rootRef} className={styles.root} onMouseMove={handleRootMouseMove}>
+    <div ref={rootRef} className={`${styles.root} ${isCookOpen ? styles.rootCookOpen : ""}`} onMouseMove={handleRootMouseMove}>
       <ErrorModal error={error} onClose={() => setError(null)} />
 
       <EditHistorySection
+        isCookOpen={isCookOpen}
+        title="EXTEND VIDEO"
         isLoading={isLoadingHistory}
         pendingSlots={pendingSlots}
         totalCount={history.length}
@@ -1356,10 +1376,210 @@ export default function ExtendVideoTool() {
         hoverVideoEls={hoverVideoEls}
       />
 
-      {/* ===== Dock ===== */}
-      <div className={styles.dockWrap}>
-        <div className={styles.dock}>
-          <div className={styles.promptRow}>
+      {panel === null && (
+        <button
+          type="button"
+          className={`${styles.cookToggle} ${isCookSidebarVisible ? styles.cookToggleOpen : styles.cookTogglePulse}`}
+          onClick={() => {
+            if (isCookSidebarVisible) closeCook();
+            else openCook();
+          }}
+          aria-expanded={isCookSidebarVisible}
+          aria-controls="extend-video-start-create"
+          aria-label={isCookSidebarVisible ? "Close Start Create" : "Open Start Create"}
+        >
+          <span className={styles.cookToggleLabel}>Start Create</span>
+          <span className={styles.cookToggleGlyph} aria-hidden="true">{isCookSidebarVisible ? "×" : "+"}</span>
+        </button>
+      )}
+
+      {isCookLayerVisible && (
+        <div id="extend-video-start-create" className={`${styles.cookOverlay} ${styles.cookOverlayOpen}`} aria-hidden={!isCookLayerVisible}>
+          <button
+            type="button"
+            className={styles.cookBackdrop}
+            aria-label={panel ? "Back to Start Create" : "Close Start Create"}
+            tabIndex={isCookLayerVisible ? 0 : -1}
+            onClick={() => {
+              if (panel) restoreCookFromPanel();
+              else closeCook();
+            }}
+          />
+
+          {panel && (
+            <div className={styles.cookPanelShell}>
+<div className={`${styles.popover} ${styles.cookInlinePopover}`} ref={popoverRef}>
+                <div className={styles.popoverInner}>
+                  <div className={styles.popoverHeader}>
+                    <div className={styles.popoverTitle}>{panel === "model" ? "MODELOS" : "AJUSTES"}</div>
+                    <button className={styles.closeBtn} type="button" onClick={() => setPanel(null)} title="Cerrar">
+                      <Icon name="close" />
+                    </button>
+                  </div>
+
+                  {panel === "model" ? (
+                    <div className={styles.modelGrid}>
+                      {MODEL_OPTIONS.map((opt) => (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          className={`${styles.modelOption} ${model === opt.id ? styles.modelOptionActive : ""}`}
+                          onClick={() => {
+                            setModel(opt.id);
+                            setPanel(null);
+                          }}
+                        >
+                          <div className={styles.modelName}>{opt.uiName}</div>
+                          <div className={styles.modelDesc}>{opt.uiDesc}</div>
+                        </button>
+                      ))}
+
+                      <div className={styles.note} style={{ gridColumn: "1 / -1" }}>
+                        <b>Tip:</b> Si Kling falla, reduce referencias (máx {maxCombinedRefs} combinadas), simplifica el prompt, o prueba una duración menor.
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      {model === "kling-o3-edit-video-pro" ? (
+                        <div className={styles.note}>
+                          <div>
+                            <b>Aspect &amp; Duration:</b> en <b>Editar Video</b>, Kling usa el aspect ratio y la duración del <b>video de entrada</b>.
+                            Aquí solo ajustas audio y referencias.
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className={styles.formRow}>
+                            <label className={styles.formLabel}>Aspect</label>
+                            <div className={styles.segment}>
+                              {model !== "kling-o3-ref-to-video-pro" && (
+                                <button
+                                  type="button"
+                                  className={`${styles.segmentBtn} ${aspectRatio === "auto" ? styles.segmentBtnActive : ""}`}
+                                  onClick={() => setAspectRatio("auto")}
+                                  disabled={ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled}
+                                >
+                                  auto
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                className={`${styles.segmentBtn} ${aspectRatio === "16:9" ? styles.segmentBtnActive : ""}`}
+                                onClick={() => setAspectRatio("16:9")}
+                                disabled={ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled}
+                              >
+                                16:9
+                              </button>
+                              <button
+                                type="button"
+                                className={`${styles.segmentBtn} ${aspectRatio === "9:16" ? styles.segmentBtnActive : ""}`}
+                                onClick={() => setAspectRatio("9:16")}
+                                disabled={ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled}
+                              >
+                                9:16
+                              </button>
+                              <button
+                                type="button"
+                                className={`${styles.segmentBtn} ${aspectRatio === "1:1" ? styles.segmentBtnActive : ""}`}
+                                onClick={() => setAspectRatio("1:1")}
+                                disabled={ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled}
+                              >
+                                1:1
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className={styles.formRow}>
+                            <label className={styles.formLabel}>Duration</label>
+                            <div className={styles.segment}>
+                              {[3, 5, 8, 10, 12, 15].map((d) => (
+                                <button
+                                  key={d}
+                                  type="button"
+                                  className={`${styles.segmentBtn} ${durationSeconds === d ? styles.segmentBtnActive : ""}`}
+                                  onClick={() => setDurationSeconds(d)}
+                                  disabled={ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled}
+                                  title={ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled ? "Con Storyboard la duración viene de la suma de shots" : ""}
+                                >
+                                  {d}s
+                                </button>
+                              ))}
+                            </div>
+                            {ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled && (
+                              <div className={styles.segmentMeta}>
+                                Storyboard total: <b>{multishotTotalSeconds}s</b>
+                              </div>
+                            )}
+                          </div>
+                        </>
+                      )}
+
+
+                      {model === "kling-o3-ref-to-video-pro" ? (
+                        <div className={styles.formRow}>
+                          <label className={styles.formLabel}>Audio</label>
+                          <div className={styles.segment}>
+                            <button
+                              type="button"
+                              className={`${styles.segmentBtn} ${!generateAudio ? styles.segmentBtnActive : ""}`}
+                              onClick={() => setGenerateAudio(false)}
+                            >
+                              off
+                            </button>
+                            <button
+                              type="button"
+                              className={`${styles.segmentBtn} ${generateAudio ? styles.segmentBtnActive : ""}`}
+                              onClick={() => setGenerateAudio(true)}
+                            >
+                              on
+                            </button>
+                          </div>
+                          <div className={styles.segmentMeta}>Audio aumenta costo y tiempo.</div>
+                        </div>
+                      ) : (
+                        <div className={styles.formRow}>
+                          <label className={styles.formLabel}>Keep audio</label>
+                          <div className={styles.segment}>
+                            <button
+                              type="button"
+                              className={`${styles.segmentBtn} ${keepAudio ? styles.segmentBtnActive : ""}`}
+                              onClick={() => setKeepAudio(true)}
+                            >
+                              yes
+                            </button>
+                            <button
+                              type="button"
+                              className={`${styles.segmentBtn} ${!keepAudio ? styles.segmentBtnActive : ""}`}
+                              onClick={() => setKeepAudio(false)}
+                            >
+                              no
+                            </button>
+                          </div>
+                          <div className={styles.segmentMeta}>Si “yes”, intenta preservar el audio original.</div>
+                        </div>
+                      )}
+
+                      <div className={styles.note}>
+                        <div>
+                          <b>Referencias:</b>{" "}
+                          {model === "kling-o3-ref-to-video-pro"
+                            ? `Requiere 1–${maxCombinedRefs} referencias visuales. `
+                            : `Máximo ${maxCombinedRefs} referencias visuales.`}
+                          1–2 referencias fuertes suele funcionar mejor que muchas débiles.
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {isCookSidebarVisible && (
+            <div className={styles.cookSidebarShell}>
+              <div className={styles.cookSidebar}>
+                <div className={`${styles.dock} ${styles.cookSectionCard} ${styles.cookPromptCard}`}>
+          <div className={`${styles.promptRow} ${styles.cookPromptRow}`}>
             {/* Inputs */}
                       {model === "kling-o3-ref-to-video-pro" ? (
                         <div className={styles.frameStrip}>
@@ -1437,8 +1657,8 @@ export default function ExtendVideoTool() {
             )}
 
             {/* Prompt */}
-            <div className={styles.promptInputWrap}>
-              <div className={styles.promptEditor}>
+            <div className={`${styles.promptInputWrap} ${styles.cookPromptInputWrap}`}>
+              <div className={`${styles.promptEditor} ${styles.cookPromptEditor}`}>
                 {(referenceImageIds.length > 0 || klingElementIds.length > 0 || (ENABLE_EDITVIDEO_MULTISHOT && multishotEnabled)) && (
                   <div className={styles.promptTags}>
                     {referenceImageIds.length > 0 && (
@@ -1601,10 +1821,10 @@ export default function ExtendVideoTool() {
             </div>
 
             {/* Generate */}
-            <div className={styles.generateCol}>
+            <div className={`${styles.generateCol} ${styles.cookGenerateCol}`}>
               <button
                 type="button"
-                className={styles.generateBtn}
+                className={`${styles.generateBtn} ${styles.cookGenerateBtn}`}
                 disabled={
                   isGenerating ||
                   !user ||
@@ -1897,8 +2117,12 @@ export default function ExtendVideoTool() {
               </div>
             )}
           </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
-      </div>
+      )}
 
       {/* ===== Modals ===== */}
       <AssetPickerModal

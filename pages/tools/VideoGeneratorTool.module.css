@@ -2245,3 +2245,253 @@
   color: rgba(255, 190, 190, 0.92);
   border-color: rgba(255, 140, 140, 0.22);
 }
+
+/* ===== Shared Start Create + history header actions ===== */
+.historyActions{
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.closeHomeBtn{
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(10, 5, 6, 0.72);
+  color: rgba(255,255,255,0.92);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  line-height: 1;
+  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+
+.closeHomeBtn:hover{
+  transform: translateY(-1px);
+  border-color: rgba(241,225,148,0.35);
+  background: rgba(26, 12, 14, 0.92);
+}
+
+.rootCookOpen {
+  --cook-sidebar-width: min(980px, calc(100vw - 32px));
+}
+
+.stageCookOpen {
+  isolation: isolate;
+}
+
+.historyGridCookOpen {
+  padding-bottom: 112px;
+}
+
+.historyHeaderCookOpen {
+  transition: padding 0.28s ease;
+}
+
+.cookToggle {
+  position: absolute;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  z-index: 360;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-width: 196px;
+  height: 54px;
+  padding: 0 22px;
+  border: none;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(164,28,40,0.98), rgba(91,14,20,0.98));
+  color: rgba(255,245,220,0.98);
+  cursor: pointer;
+  box-shadow:
+    0 22px 54px rgba(0,0,0,0.62),
+    0 0 0 1px rgba(255,255,255,0.08) inset,
+    0 0 32px rgba(91,14,20,0.24);
+  backdrop-filter: blur(16px) saturate(150%);
+  transition: transform 0.22s ease, background 0.22s ease, box-shadow 0.22s ease, opacity 0.22s ease;
+}
+.cookToggle:hover { transform: translateX(-50%) translateY(-2px); }
+.cookToggleOpen {
+  background: linear-gradient(135deg, rgba(103,19,26,0.98), rgba(68,11,16,0.98));
+}
+.cookTogglePulse { animation: cookTogglePulse 2.2s ease-in-out infinite; }
+.cookToggleLabel { font-size: 13px; font-weight: 800; letter-spacing: 0.04em; }
+.cookToggleGlyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.14);
+  color: rgba(255,255,255,0.96);
+  font-size: 16px;
+  line-height: 1;
+}
+@keyframes cookTogglePulse {
+  0%, 100% { box-shadow: 0 18px 44px rgba(0,0,0,0.6), 0 0 0 0 rgba(241,225,148,0), inset 0 1px 0 rgba(255,255,255,0.08); }
+  50% { box-shadow: 0 20px 52px rgba(0,0,0,0.66), 0 0 0 10px rgba(241,225,148,0.05), inset 0 1px 0 rgba(255,255,255,0.08); }
+}
+
+.cookOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 340;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.26s ease;
+}
+.cookOverlayOpen { opacity: 1; pointer-events: auto; }
+
+.cookBackdrop {
+  position: absolute;
+  inset: 0;
+  border: none;
+  background:
+    linear-gradient(180deg, rgba(3,1,2,0.18) 0%, rgba(3,1,2,0.32) 36%, rgba(3,1,2,0.76) 100%),
+    radial-gradient(circle at 50% 100%, rgba(91,14,20,0.18), transparent 44%);
+  backdrop-filter: blur(10px) saturate(140%);
+}
+
+.cookSidebarShell {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  padding: 16px 16px 88px 16px;
+  pointer-events: none;
+}
+
+.cookSidebar {
+  width: min(100%, var(--cook-sidebar-width, 980px));
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  pointer-events: auto;
+}
+
+.cookSectionCard {
+  position: relative;
+  background: rgba(12, 10, 12, 0.92);
+  border: 1px solid rgba(241,225,148,0.08);
+  border-radius: 24px;
+  backdrop-filter: blur(22px) saturate(170%);
+  box-shadow:
+    0 22px 70px rgba(0,0,0,0.72),
+    inset 0 1px 0 rgba(255,255,255,0.06),
+    inset 0 -14px 30px rgba(0,0,0,0.6);
+  overflow: visible;
+}
+
+.cookPromptCard { padding: 16px; }
+.cookPromptRow { flex-direction: column; align-items: stretch; gap: 14px; }
+.cookPromptInputWrap { align-items: stretch; gap: 12px; }
+.cookPromptEditor { width: 100%; }
+.cookGenerateCol { width: 100%; }
+.cookGenerateBtn { width: 100%; }
+.cookEstimate { margin-top: 2px; font-size: 12px; color: rgba(255,255,255,0.65); text-align: center; }
+.cookControlsRow { display: flex; flex-wrap: wrap; gap: 10px; }
+.cookControlBtn { flex: 1 1 calc(50% - 5px); min-height: 44px; justify-content: space-between; }
+.cookControlBtn .controlBtnMeta { padding-left: 10px; flex-shrink: 0; }
+
+.cookPanelShell {
+  position: absolute;
+  inset: 16px;
+  z-index: 12;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.cookPanel {
+  width: min(100%, 980px);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  pointer-events: auto;
+  background: rgba(12, 10, 12, 0.96);
+  border: 1px solid rgba(241,225,148,0.08);
+  border-radius: 24px;
+  box-shadow:
+    0 26px 80px rgba(0,0,0,0.82),
+    inset 0 1px 0 rgba(255,255,255,0.06),
+    inset 0 -18px 32px rgba(0,0,0,0.65);
+  backdrop-filter: blur(28px) saturate(170%);
+  animation: cookPanelIn 0.24s ease;
+}
+@keyframes cookPanelIn {
+  from { opacity: 0; transform: translateY(6px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.cookPanelBody {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.cookPanelScroll {
+  min-height: 0;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.cookSectionMeta {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.58);
+  text-align: right;
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cookInlinePopover {
+  position: relative;
+  left: auto;
+  bottom: auto;
+  width: 100%;
+  max-width: none;
+  max-height: none;
+  transform: none;
+  animation: none;
+}
+.cookInlinePopover .popoverInner {
+  max-height: none;
+  min-height: 0;
+  height: 100%;
+  border: none;
+  border-radius: 24px;
+  background: transparent;
+  box-shadow: none;
+}
+
+@media (max-width: 720px) {
+  .cookSidebarShell { padding: 0 12px 82px 12px; }
+  .cookSidebar { width: 100%; }
+  .cookPromptCard { padding: 14px; }
+  .cookControlBtn { flex-basis: calc(50% - 5px); }
+  .cookPanelShell { inset: 12px 12px 90px 12px; }
+  .cookSectionMeta { max-width: 120px; }
+}
+
+@media (max-width: 520px) {
+  .cookToggle { bottom: 12px; min-width: 170px; height: 48px; padding: 0 18px; }
+  .cookControlBtn { flex-basis: 100%; }
+  .cookPanelShell { inset: 10px 10px 76px 10px; }
+  .cookSectionMeta { max-width: 92px; }
+}
