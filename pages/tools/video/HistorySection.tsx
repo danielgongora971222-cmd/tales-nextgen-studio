@@ -4,6 +4,51 @@ import { AppRoute, type Asset } from "../../../types";
 import { Icon } from "./icon";
 import { shortText } from "./text";
 
+
+const getPosterSeekTime = (video: HTMLVideoElement) => {
+  const saved = Number(video.dataset.posterTime || "");
+  if (Number.isFinite(saved) && saved > 0) return saved;
+  const duration = Number(video.duration || 0);
+  if (Number.isFinite(duration) && duration > 0) {
+    return Math.max(0.04, Math.min(0.18, duration / 12));
+  }
+  return 0.08;
+};
+
+const primeHistoryVideoFrame = (video: HTMLVideoElement | null) => {
+  if (!video) return;
+  if (video.dataset.posterPrimed === "true" || video.dataset.posterPriming === "true") return;
+  video.dataset.posterPriming = "true";
+  const targetTime = getPosterSeekTime(video);
+  video.dataset.posterTime = String(targetTime);
+  try {
+    video.currentTime = targetTime;
+  } catch {
+    video.dataset.posterPriming = "false";
+  }
+};
+
+const finalizeHistoryVideoFrame = (video: HTMLVideoElement | null) => {
+  if (!video) return;
+  if (video.dataset.posterPriming !== "true") return;
+  video.pause();
+  video.dataset.posterPriming = "false";
+  video.dataset.posterPrimed = "true";
+};
+
+const resetHistoryVideoFrame = (video: HTMLVideoElement | null) => {
+  if (!video) return;
+  video.pause();
+  const targetTime = getPosterSeekTime(video);
+  try {
+    video.currentTime = targetTime;
+  } catch {
+    try {
+      video.currentTime = 0;
+    } catch {}
+  }
+};
+
 type Props = {
   isLoading: boolean;
   isCookOpen?: boolean;
@@ -111,27 +156,31 @@ export function HistorySection({
                   onMouseEnter={() => {
                     const el = hoverVideoEls.current[asset.id];
                     if (el) {
-                      el.currentTime = 0;
+                      try {
+                        el.currentTime = 0;
+                      } catch {}
                       el.play().catch(() => {});
                     }
                   }}
                   onMouseLeave={() => {
-                    const el = hoverVideoEls.current[asset.id];
-                    if (el) {
-                      el.pause();
-                      el.currentTime = 0;
-                    }
+                    resetHistoryVideoFrame(hoverVideoEls.current[asset.id]);
                   }}
                 >
                   <video
                     ref={(el) => {
                       hoverVideoEls.current[asset.id] = el;
+                      if (el) {
+                        primeHistoryVideoFrame(el);
+                      }
                     }}
                     className={styles.tileVideo}
                     src={asset.url}
                     muted
                     playsInline
-                    preload="metadata"
+                    preload="auto"
+                    onLoadedMetadata={(e) => primeHistoryVideoFrame(e.currentTarget)}
+                    onCanPlay={(e) => primeHistoryVideoFrame(e.currentTarget)}
+                    onSeeked={(e) => finalizeHistoryVideoFrame(e.currentTarget)}
                   />
 
                   <div className={styles.tileMeta}>
