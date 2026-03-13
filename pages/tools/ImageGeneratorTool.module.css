@@ -2177,7 +2177,7 @@
 /* --- IMAGE GENERATOR / COOK SIDEBAR LAYOUT --- */
 .rootCookOpen {
   --cook-rail-width: 88px;
-  --cook-sidebar-width: clamp(360px, 34vw, 470px);
+  --cook-sidebar-width: clamp(360px, 32vw, 470px);
 }
 
 .stageCookOpen {
@@ -2297,9 +2297,9 @@
   inset: 0;
   border: none;
   background:
-    linear-gradient(90deg, rgba(3,1,2,0.35) 0%, rgba(3,1,2,0.14) 18%, rgba(3,1,2,0.12) 54%, rgba(3,1,2,0.68) 100%),
-    radial-gradient(circle at 75% 50%, rgba(91,14,20,0.16), transparent 42%);
-  backdrop-filter: blur(8px) saturate(140%);
+    linear-gradient(90deg, rgba(3,1,2,0.52) 0%, rgba(3,1,2,0.28) 18%, rgba(3,1,2,0.18) 48%, rgba(3,1,2,0.74) 100%),
+    radial-gradient(circle at 72% 50%, rgba(91,14,20,0.18), transparent 42%);
+  backdrop-filter: blur(10px) saturate(140%);
 }
 
 .cookHistoryRail {
@@ -2379,21 +2379,20 @@
 .cookSidebarShell {
   position: absolute;
   inset: 0;
-  z-index: 3;
+  z-index: 4;
   display: flex;
   justify-content: flex-end;
   align-items: stretch;
   padding: 16px 16px 16px calc(var(--cook-rail-width, 88px) + 30px);
+  pointer-events: none;
 }
 
 .cookSidebar {
   width: min(100%, var(--cook-sidebar-width, 420px));
-  height: 100%;
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  overflow-y: auto;
-  padding-right: 2px;
+  justify-content: flex-end;
+  pointer-events: auto;
 }
 
 .cookSectionCard {
@@ -2434,15 +2433,15 @@
 }
 
 .cookPrompt {
-  min-height: 128px;
-  height: 128px;
+  min-height: 120px;
+  height: 120px;
   padding-top: 14px;
   padding-bottom: 14px;
 }
 
 .cookPrompt:focus-within {
-  min-height: 168px;
-  height: 168px;
+  min-height: 152px;
+  height: 152px;
 }
 
 .cookGenerateCol {
@@ -2466,8 +2465,70 @@
   text-align: center;
 }
 
-.cookSectionHeader {
-  gap: 12px;
+.cookControlsRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.cookControlBtn {
+  flex: 1 1 calc(50% - 5px);
+  min-height: 44px;
+  justify-content: space-between;
+}
+
+.cookControlBtn .controlBtnLabel {
+  max-width: calc(100% - 72px);
+}
+
+.cookControlBtn .controlBtnMeta {
+  padding-left: 10px;
+  flex-shrink: 0;
+}
+
+.cookPanelShell {
+  position: absolute;
+  inset: 16px calc(var(--cook-sidebar-width, 420px) + 34px) 16px calc(var(--cook-rail-width, 88px) + 118px);
+  z-index: 3;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.cookPanel {
+  width: min(100%, 920px);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  pointer-events: auto;
+  background: rgba(12, 10, 12, 0.96);
+  border: 1px solid rgba(241,225,148,0.08);
+  border-radius: 24px;
+  box-shadow:
+    0 26px 80px rgba(0,0,0,0.82),
+    inset 0 1px 0 rgba(255,255,255,0.06),
+    inset 0 -18px 32px rgba(0,0,0,0.65);
+  backdrop-filter: blur(28px) saturate(170%);
+  animation: cookPanelIn 0.24s var(--ease-spring);
+}
+
+@keyframes cookPanelIn {
+  from { opacity: 0; transform: translateY(6px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.cookPanelBody {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.cookPanelScroll {
+  min-height: 0;
+  overflow: auto;
 }
 
 .cookSectionMeta {
@@ -2483,25 +2544,17 @@
   text-overflow: ellipsis;
 }
 
-.cookRefThumbStrip {
-  padding: 14px 16px 0;
+.cookPickerShell {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 16px 16px;
 }
 
-.cookRefSlots {
-  padding-top: 14px;
-}
-
-.cookFormRow {
-  padding-top: 16px;
-}
-
-.cookParamGrid {
-  gap: 0;
-}
-
-.cookPresetGrid {
-  max-height: none;
-  overflow: visible;
+@media (max-width: 1280px) {
+  .cookPanelShell {
+    inset: 16px calc(var(--cook-sidebar-width, 420px) + 24px) 16px calc(var(--cook-rail-width, 88px) + 104px);
+  }
 }
 
 @media (max-width: 1100px) {
@@ -2526,14 +2579,6 @@
     right: 18px;
   }
 
-  .cookSidebarShell {
-    padding: 108px 16px 16px;
-  }
-
-  .cookSidebar {
-    width: min(100%, 720px);
-  }
-
   .cookHistoryRail {
     left: 16px;
     right: 96px;
@@ -2549,24 +2594,49 @@
   .cookHistoryThumb {
     width: 76px;
   }
+
+  .cookSidebarShell {
+    padding: 0 16px 16px 16px;
+    align-items: flex-end;
+  }
+
+  .cookSidebar {
+    width: min(100%, 720px);
+  }
+
+  .cookPanelShell {
+    inset: 102px 16px 244px 16px;
+    justify-content: stretch;
+  }
+
+  .cookPanel {
+    width: 100%;
+  }
 }
 
 @media (max-width: 720px) {
   .cookSidebarShell {
-    padding: 96px 12px 12px;
+    padding: 0 12px 12px 12px;
+  }
+
+  .cookSidebar {
+    width: 100%;
   }
 
   .cookPromptCard {
     padding: 14px;
   }
 
-  .cookSectionHeader {
-    flex-wrap: wrap;
+  .cookControlBtn {
+    flex-basis: calc(50% - 5px);
+  }
+
+  .cookPanelShell {
+    inset: 92px 12px 256px 12px;
   }
 
   .cookSectionMeta {
-    max-width: none;
-    text-align: left;
+    max-width: 120px;
   }
 
   .cookHistoryRail {
@@ -2577,5 +2647,36 @@
   .cookHistoryThumb {
     width: 68px;
     border-radius: 16px;
+  }
+}
+
+@media (max-width: 520px) {
+  .cookToggle {
+    bottom: 14px;
+    right: 14px;
+    height: 42px;
+    padding: 0 12px 0 14px;
+  }
+
+  .cookControlBtn {
+    flex-basis: 100%;
+  }
+
+  .cookPrompt {
+    min-height: 104px;
+    height: 104px;
+  }
+
+  .cookPrompt:focus-within {
+    min-height: 132px;
+    height: 132px;
+  }
+
+  .cookPanelShell {
+    inset: 88px 10px 296px 10px;
+  }
+
+  .cookSectionMeta {
+    max-width: 92px;
   }
 }
