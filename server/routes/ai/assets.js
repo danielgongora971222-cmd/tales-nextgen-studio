@@ -1113,7 +1113,7 @@ router.post("/assets/complete-upload", async (req, res) => {
   }
 });
 
-router.post("/assets/upload", upload.single("file"), async (req, res, next) => {
+async function handleDirectServerUpload(req, res, next, { allowInProd = false } = {}) {
   try {
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
@@ -1122,7 +1122,7 @@ router.post("/assets/upload", upload.single("file"), async (req, res, next) => {
     const isProdEnv = envName === "production";
     const allowLegacyUpload = String(process.env.ALLOW_LEGACY_UPLOAD || "").trim() === "1";
 
-    if (isProdEnv && !allowLegacyUpload) {
+    if (isProdEnv && !allowLegacyUpload && !allowInProd) {
       throw httpError(
         400,
         "LEGACY_UPLOAD_DISABLED",
@@ -1234,6 +1234,14 @@ router.post("/assets/upload", upload.single("file"), async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+}
+
+router.post("/assets/upload-proxy", upload.single("file"), async (req, res, next) => {
+  return handleDirectServerUpload(req, res, next, { allowInProd: true });
+});
+
+router.post("/assets/upload", upload.single("file"), async (req, res, next) => {
+  return handleDirectServerUpload(req, res, next, { allowInProd: false });
 });
 
 // ===============================

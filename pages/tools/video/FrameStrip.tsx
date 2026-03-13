@@ -9,12 +9,18 @@ type Props = {
   firstFrame: Asset | null;
   lastFrame: Asset | null;
   hasFirst: boolean;
+  lastDisabled?: boolean;
+  lastDisabledReason?: string;
   openPicker: (slot: FrameSlotKey) => void;
   clearFrame: (slot: FrameSlotKey) => void;
   swapFrames: () => void;
 };
 
-export function FrameStrip({ firstFrame, lastFrame, hasFirst, openPicker, clearFrame, swapFrames }: Props) {
+export function FrameStrip({ firstFrame, lastFrame, hasFirst, lastDisabled = false, lastDisabledReason, openPicker, clearFrame, swapFrames }: Props) {
+  const isLastBlocked = !hasFirst || lastDisabled;
+  const lastTitle = lastDisabled
+    ? (lastDisabledReason || "LAST frame bloqueado")
+    : (!hasFirst ? "Primero carga FIRST para habilitar LAST" : "LAST frame");
   return (
     <div className={styles.frameStrip}>
       {/* FIRST */}
@@ -67,13 +73,19 @@ export function FrameStrip({ firstFrame, lastFrame, hasFirst, openPicker, clearF
 
       {/* LAST */}
       <div
-        className={`${styles.frameCard} ${!hasFirst ? styles.frameCardLocked : ""}`}
-        title={!hasFirst ? "Primero carga FIRST para habilitar LAST" : "LAST frame"}
+        className={`${styles.frameCard} ${isLastBlocked ? styles.frameCardLocked : ""}`}
+        title={lastTitle}
         role="button"
-        tabIndex={hasFirst ? 0 : -1}
-        onClick={() => openPicker("last")}
-        onKeyDown={(e) => e.key === "Enter" && openPicker("last")}
-        aria-disabled={!hasFirst}
+        tabIndex={isLastBlocked ? -1 : 0}
+        onClick={() => {
+          if (isLastBlocked) return;
+          openPicker("last");
+        }}
+        onKeyDown={(e) => {
+          if (isLastBlocked) return;
+          if (e.key === "Enter") openPicker("last");
+        }}
+        aria-disabled={isLastBlocked}
       >
         {lastFrame ? (
           <img className={styles.frameCardImg} src={lastFrame.url} alt="LAST" />

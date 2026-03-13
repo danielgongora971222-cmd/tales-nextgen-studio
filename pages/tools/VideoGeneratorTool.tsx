@@ -620,6 +620,7 @@ const VideoGeneratorTool: React.FC = () => {
   // ✅ Kling O3 se comporta como “V3 family” en UI (Elements + Multishot)
   const isKlingO3 = modelNorm === KLING_O3_PRO;
   const isKlingV3 = modelNorm === KLING_V3 || isKlingO3;
+  const lastFrameBlockedByMultishot = isKlingV3 && multishotEnabled;
 
   const maxKlingElements = isKlingV3 ? (hasFirst ? 3 : 5) : 0;
 
@@ -1153,7 +1154,7 @@ const durationLabel = useMemo(() => {
   }
 
   const openPicker = (slot: FrameSlotKey) => {
-    if (slot === "last" && !hasFirst) return; // bloquea last si no hay first
+    if (slot === "last" && (!hasFirst || lastFrameBlockedByMultishot)) return; // bloquea last si no hay first o si Multishot está activo
     setPanel(null);
     setPickerSlot(slot);
     setPickerQuery("");
@@ -1165,11 +1166,17 @@ const durationLabel = useMemo(() => {
     if (slot === "first") {
       setFirstFrame(asset);
     } else {
-      if (!hasFirst) return;
+      if (!hasFirst || lastFrameBlockedByMultishot) return;
       setLastFrame(asset);
     }
     setPickerOpen(false);
   };
+
+  useEffect(() => {
+    if (!lastFrameBlockedByMultishot) return;
+    if (lastFrame) setLastFrame(null);
+    if (pickerOpen && pickerSlot === "last") setPickerOpen(false);
+  }, [lastFrameBlockedByMultishot, lastFrame, pickerOpen, pickerSlot]);
 
   const clearFrame = (slot: FrameSlotKey) => {
     if (slot === "first") {
@@ -1720,6 +1727,8 @@ const clearModalSelectedIds = () => {
             firstFrame={firstFrame}
             lastFrame={lastFrame}
             hasFirst={hasFirst}
+            lastDisabled={lastFrameBlockedByMultishot}
+            lastDisabledReason="LAST frame bloqueado mientras Multishot está activo"
             openPicker={openPicker}
             clearFrame={clearFrame}
             swapFrames={swapFrames}

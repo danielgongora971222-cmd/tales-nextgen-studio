@@ -5,6 +5,21 @@ import { apiUrl } from "./apiBase";
 type ApiOk = { ok: true; items: any[] };
 type ApiFail = { ok: false; error: any };
 
+function normalizeClientAssetMeta(raw: any) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const next = { ...raw };
+  if (next.source === "user_upload_direct") next.source = "upload";
+  return next;
+}
+
+function assetApiUrl(path: string): string {
+  const p = String(path || "");
+  if (/^https?:\/\//i.test(p)) return p;
+  const normalized = p.startsWith("/") ? p : `/${p}`;
+  if (typeof window !== "undefined") return normalized;
+  return apiUrl(normalized);
+}
+
 function mapRowToAsset(row: any): Asset {
   const createdRaw =
     row.createdAt ?? row.created_at ?? row.created ?? row.created_time ?? row.timestamp;
@@ -27,6 +42,7 @@ function mapRowToAsset(row: any): Asset {
   const ownerId = String(row.ownerId ?? row.owner_id ?? row.userId ?? row.user_id ?? "");
 
   const isPublic = !!(row.isPublic ?? row.is_public ?? row.public ?? row.is_public_asset);
+  const meta = normalizeClientAssetMeta((row as any).meta ?? (row as any).metadata ?? undefined);
 
   // Normaliza el type a "image" | "video"
   const rawType = String(row.type ?? row.assetType ?? row.mimeType ?? "");
@@ -40,11 +56,11 @@ function mapRowToAsset(row: any): Asset {
     name: row.name ?? row.filename ?? row.title ?? "",
 
     // ✅ DB: public.assets.tool
-    tool: row.tool ?? row.meta?.tool ?? row.metadata?.tool ?? undefined,
+    tool: row.tool ?? meta?.tool ?? undefined,
 
-    prompt: row.prompt ?? row.meta?.prompt ?? undefined,
+    prompt: row.prompt ?? meta?.prompt ?? undefined,
     createdAt,
-    meta: (row as any).meta ?? (row as any).metadata ?? undefined,
+    meta,
     ownerId,
     isPublic,
     accessSource: (row as any).accessSource ?? (row as any).access_source ?? "owned",
@@ -391,7 +407,7 @@ async function authHeadersJson() {
 
 export async function publishAsset(assetId: string) {
   const headers = await authHeadersJson();
-  const resp = await fetch(apiUrl(`/api/assets/${assetId}/publish`), { method: "POST", headers });
+  const resp = await fetch(assetApiUrl(`/api/assets/${assetId}/publish`), { method: "POST", headers });
 
   const text = await resp.text();
   const data = JSON.parse(text);
@@ -408,7 +424,7 @@ export async function publishAsset(assetId: string) {
 
 export async function unpublishAsset(assetId: string) {
   const headers = await authHeadersJson();
-  const resp = await fetch(apiUrl(`/api/assets/${assetId}/unpublish`), { method: "POST", headers });
+  const resp = await fetch(assetApiUrl(`/api/assets/${assetId}/unpublish`), { method: "POST", headers });
 
   const text = await resp.text();
   const data = JSON.parse(text);
@@ -425,7 +441,7 @@ export async function unpublishAsset(assetId: string) {
 
 export async function deleteAsset(assetId: string) {
   const headers = await authHeadersJson();
-  const resp = await fetch(apiUrl(`/api/assets/${assetId}`), { method: "DELETE", headers });
+  const resp = await fetch(assetApiUrl(`/api/assets/${assetId}`), { method: "DELETE", headers });
 
   const text = await resp.text();
   const data = JSON.parse(text);
@@ -478,7 +494,7 @@ export async function uploadUserAsset(
     // ---------- 0) INTENTO PRINCIPAL: presign + upload directo ----------
     let presignErr: any = null;
     try {
-      const presignResp = await fetch(apiUrl("/api/assets/presign-upload"), {
+      const presignResp = await fetch(assetApiUrl("/api/assets/presign-upload"), {
       method: "POST",
       headers: headersJson,
       body: JSON.stringify({
@@ -535,7 +551,7 @@ export async function uploadUserAsset(
         throw new Error(`Proveedor de upload desconocido: ${String(upload.provider)}`);
       }
 
-      const completeResp = await fetch(apiUrl("/api/assets/complete-upload"), {
+      const completeResp = await fetch(assetApiUrl("/api/assets/complete-upload"), {
         method: "POST",
         headers: headersJson,
         body: JSON.stringify({
@@ -565,6 +581,7 @@ export async function uploadUserAsset(
       }
 
       const row = completeData.item;
+      const normalizedMeta = normalizeClientAssetMeta(row.meta ?? meta ?? undefined);
       invalidateMyAssetsCache();
 
       return {
@@ -572,10 +589,10 @@ export async function uploadUserAsset(
         url: row.url,
         type: row.type === "video" ? "video" : "image",
         name: row.name || file.name,
-        tool: row.tool ?? tool,
+        tool: row.tool ?? normalizedMeta?.tool ?? tool,
         prompt: undefined,
         createdAt: row.createdAt ? new Date(row.createdAt).getTime() : Date.now(),
-        meta: row.meta ?? meta ?? undefined,
+        meta: normalizedMeta,
         ownerId: row.ownerId,
         isPublic: !!row.isPublic,
 
@@ -592,7 +609,7 @@ export async function uploadUserAsset(
     presignErr = e;
   }
 
-  // ---------- 1) FALLBACK: multipart/form-data (legacy) ----------
+  // ---------- 1) FALLBACK: upload proxy server-side (same-origin) ----------
   const form = new FormData();
   form.append("file", file, name);
   form.append("tool", tool);
@@ -606,7 +623,7 @@ export async function uploadUserAsset(
 
   let resp: Response;
   try {
-    resp = await fetch(apiUrl("/api/assets/upload"), {
+    resp = await fetch(assetApiUrl("/api/assets/upload-proxy"), {
       method: "POST",
       headers: headersMultipart,
       body: form,
@@ -661,7 +678,7 @@ export async function uploadUserAsset(
       reader.readAsDataURL(file);
     });
 
-    const resp2 = await fetch(apiUrl("/api/assets/upload"), {
+    const resp2 = await fetch(assetApiUrl("/api/assets/upload-proxy"), {
       method: "POST",
       headers: headersJson,
       body: JSON.stringify({ dataUrl, name, tool, category, type, meta }),
@@ -685,6 +702,7 @@ export async function uploadUserAsset(
     }
 
     const row2 = data2.item;
+    const normalizedMeta2 = normalizeClientAssetMeta(row2.meta ?? meta ?? undefined);
     invalidateMyAssetsCache();
 
     return {
@@ -692,10 +710,10 @@ export async function uploadUserAsset(
       url: row2.url,
       type: row2.type === "video" ? "video" : "image",
       name: row2.name || file.name,
-      tool: row2.tool ?? tool,
+      tool: row2.tool ?? normalizedMeta2?.tool ?? tool,
       prompt: undefined,
       createdAt: row2.createdAt ? new Date(row2.createdAt).getTime() : Date.now(),
-      meta: row2.meta ?? meta ?? undefined,
+      meta: normalizedMeta2,
       ownerId: row2.ownerId,
       isPublic: !!row2.isPublic,
 
@@ -715,6 +733,7 @@ export async function uploadUserAsset(
   }
 
   const row = data.item;
+  const normalizedMeta3 = normalizeClientAssetMeta(row.meta ?? meta ?? undefined);
   invalidateMyAssetsCache();
 
   return {
@@ -722,10 +741,10 @@ export async function uploadUserAsset(
     url: row.url,
     type: row.type === "video" ? "video" : "image",
     name: row.name || file.name,
-    tool: row.tool ?? tool,
+    tool: row.tool ?? normalizedMeta3?.tool ?? tool,
     prompt: undefined,
     createdAt: row.createdAt ? new Date(row.createdAt).getTime() : Date.now(),
-    meta: row.meta ?? meta ?? undefined,
+    meta: normalizedMeta3,
     ownerId: row.ownerId,
     isPublic: !!row.isPublic,
 
@@ -746,7 +765,7 @@ export async function downloadAssetToDisk(assetId: string, filenameHint?: string
     throw new Error("Debes iniciar sesión para descargar.");
   }
 
-  const resp = await fetch(apiUrl(`/api/assets/${assetId}/download`), {
+  const resp = await fetch(assetApiUrl(`/api/assets/${assetId}/download`), {
     method: "GET",
     headers: { Authorization: `Bearer ${token}` },
   });

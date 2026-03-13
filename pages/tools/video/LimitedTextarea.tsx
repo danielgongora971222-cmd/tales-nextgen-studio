@@ -71,6 +71,7 @@ export function LimitedTextarea({
         className={`${styles.limitInput} ${
           inputResize === "vertical" ? styles.limitInputResizeVertical : styles.limitInputResizeNone
         }`}
+        style={{ caretColor: "var(--text-main, rgba(255, 255, 255, 0.92))" }}
         rows={rows}
         value={value}
         onChange={(e) => {

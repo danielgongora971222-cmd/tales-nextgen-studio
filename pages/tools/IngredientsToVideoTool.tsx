@@ -270,8 +270,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     .filter((a) => getMetaTool(a) !== FRAME_UPLOAD_TOOL)
 
     // ✅ Solo referencias subidas por el usuario (NO imágenes generadas)
-    .filter((a) => getMetaSource(a) === "upload")
-
+    
     // ✅ Excluye elementos de Image Gen (element-library)
     .filter((a) => getMetaTool(a) !== "element-library")
     .filter((a) => getMetaCategory(a) !== "element")
@@ -565,41 +564,73 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
 
   // ===== Fetchers =====
   const reloadImages = useCallback(async () => {
-    if (!user) return;
+    if (!user) return [] as Asset[];
     setIsLoadingImages(true);
     try {
       const imgs = await listMyAssets({ type: "image", limit: 500 });
-      setImageAssets(imgs);
+
+      if (Array.isArray(imgs) && imgs.length > 0) {
+        setImageAssets(imgs);
+        return imgs;
+      }
+
+      const all = await listMyAssets({ limit: 500 } as any);
+      const onlyImages = (all || []).filter((x: any) => {
+        if (x?.type === "image") return true;
+        const mime = String(x?.mime || x?.contentType || x?.mimeType || x?.meta?.mimeType || "");
+        return mime.startsWith("image/");
+      });
+
+      setImageAssets(onlyImages);
+      return onlyImages;
     } catch (err: any) {
       console.warn(err);
+      return [] as Asset[];
     } finally {
       setIsLoadingImages(false);
     }
   }, [user]);
 
   const reloadVideos = useCallback(async () => {
-    if (!user) return;
+    if (!user) return [] as Asset[];
     setIsLoadingVideos(true);
     try {
       const vids = await listMyAssets({ type: "video", limit: 250 });
-      setVideoAssets(vids);
+
+      if (Array.isArray(vids) && vids.length > 0) {
+        setVideoAssets(vids);
+        return vids;
+      }
+
+      const all = await listMyAssets({ limit: 250 } as any);
+      const onlyVideos = (all || []).filter((x: any) => {
+        if (x?.type === "video") return true;
+        const mime = String(x?.mime || x?.contentType || x?.mimeType || x?.meta?.mimeType || "");
+        return mime.startsWith("video/");
+      });
+
+      setVideoAssets(onlyVideos);
+      return onlyVideos;
     } catch (err: any) {
       console.warn(err);
+      return [] as Asset[];
     } finally {
       setIsLoadingVideos(false);
     }
   }, [user]);
 
   const reloadHistory = useCallback(async () => {
-    if (!user) return;
+    if (!user) return [] as Asset[];
     setIsLoadingHistory(true);
     try {
       const vids = await listMyAssets({ type: "video", limit: 250 });
       const filtered = vids.filter((a) => getMetaTool(a) === TOOL_NAME);
       setHistory(filtered);
       setVisibleCount(18);
+      return filtered;
     } catch (err: any) {
       setError(formatErr(err));
+      return [] as Asset[];
     } finally {
       setIsLoadingHistory(false);
     }
@@ -617,6 +648,41 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
       setIsLoadingElements(false);
     }
   }, [user]);
+
+  useEffect(() => {
+    if (!user) {
+      setImageAssets([]);
+      setVideoAssets([]);
+      setHistory([]);
+      return;
+    }
+
+    void (async () => {
+      await Promise.all([
+        reloadImages(),
+        reloadVideos(),
+        reloadHistory(),
+        VIDEO_ELEMENTS_UI_ENABLED ? reloadKlingElements() : Promise.resolve([]),
+      ]);
+    })();
+  }, [user?.id, reloadImages, reloadVideos, reloadHistory, reloadKlingElements]);
+
+  useEffect(() => {
+    if (!pickerOpen && !refPickerOpen) return;
+
+    void (async () => {
+      const tasks: Promise<any>[] = [];
+      if (pickerOpen === "video") tasks.push(reloadVideos());
+      if (pickerOpen === "start" || pickerOpen === "end" || refPickerOpen) tasks.push(reloadImages());
+      await Promise.all(tasks);
+    })();
+  }, [pickerOpen, refPickerOpen, reloadImages, reloadVideos]);
+
+  useEffect(() => {
+    if (!(ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode)) return;
+    if (endImage) setEndImage(null);
+    if (pickerOpen === "end") setPickerOpen(null);
+  }, [isStoryboardMode, endImage, pickerOpen]);
 
   useEffect(() => {
     const run = async () => {
