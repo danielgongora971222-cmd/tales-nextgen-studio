@@ -105,7 +105,12 @@ export default function MotionControlTool() {
   const canGenerate = !!user && !!refImage && !!refVideo && !isGenerating;
   const estimatedCostCredits = useMemo(() => {
     const pricingModelNorm = mode === "pro" ? "kling-2.6-motion-control-pro" : "kling-2.6-motion-control";
-    return estimateVideoCostCredits({ modelNorm: pricingModelNorm, isKling: true, durationSeconds: 5 });
+    return estimateVideoCostCredits({
+      modelNorm: pricingModelNorm,
+      durationSeconds: 5,
+      resolution: mode === "pro" ? "1080p" : "720p",
+      klingMode: mode,
+    });
   }, [mode]);
 
   const filteredPickerAssets = useMemo(() => {

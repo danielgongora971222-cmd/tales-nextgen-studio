@@ -57,6 +57,7 @@ import { assertJobLimits } from "./lib/jobLimits.js";
 import { assertQueueAdmission } from "./lib/queueOps.js";
 import { createLegalRouter } from "./routes/legal.js";
 import { createProfileRouter } from "./routes/profile.js";
+import { estimateFaceSwapCostCredits, estimateUpscaleCostCredits } from "../config/pricing.js";
 import {
   FACESWAP_ANALYSIS_MODEL,
   FACESWAP_INSERT_MODEL,
@@ -2947,7 +2948,7 @@ app.post("/api/ai/faceswap/analyze", async (req, res, next) => {
 
       const spend = await billing.spendCredits({
         userId: user.id,
-        amountCredits: 1,
+        amountCredits: estimateFaceSwapCostCredits({ quality, phase: "analysis" }),
         entryType: "ai_faceswap_mannequin",
         refType: "job",
         refId: jobRow.id,
@@ -2964,7 +2965,7 @@ app.post("/api/ai/faceswap/analyze", async (req, res, next) => {
 
     const spend = await billing.spendCredits({
       userId: user.id,
-      amountCredits: 1,
+      amountCredits: estimateFaceSwapCostCredits({ quality, phase: "analysis" }),
       entryType: "ai_faceswap_mannequin",
       refType: "sync",
       refId: null,
@@ -3042,7 +3043,7 @@ app.post("/api/ai/faceswap/mannequin", async (req, res, next) => {
         throw httpError(500, "JOB_INSERT_FAILED", "No se pudo crear el job de faceswap.", { jobErr });
       }
 
-      const costCredits = 1; // faceswap: 1 imagen (ajustable si quieres por quality)
+      const costCredits = estimateFaceSwapCostCredits({ quality, phase: "analysis" });
       const spend = await billing.spendCredits({
         userId: user.id,
         amountCredits: costCredits,
@@ -3059,7 +3060,7 @@ app.post("/api/ai/faceswap/mannequin", async (req, res, next) => {
 
       return res.json({ ok: true, jobId: jobRow.id });
     }
-    const costCredits = 1; // faceswap: 1 imagen (ajustable)
+    const costCredits = estimateFaceSwapCostCredits({ quality, phase: "analysis" });
     const spend = await billing.spendCredits({
       userId: user.id,
       amountCredits: costCredits,
@@ -3219,7 +3220,7 @@ app.post("/api/ai/faceswap/insert", async (req, res, next) => {
       throw httpError(500, "JOB_INSERT_FAILED", "No se pudo crear el job de faceswap insert.", { jobErr });
     }
 
-    const costCredits = 1;
+    const costCredits = estimateFaceSwapCostCredits({ quality, phase: "insert" });
     const spend = await billing.spendCredits({
       userId: user.id,
       amountCredits: costCredits,
@@ -3237,7 +3238,7 @@ app.post("/api/ai/faceswap/insert", async (req, res, next) => {
     return res.json({ ok: true, jobId: jobRow.id });
   }
 
-    const costCredits = 1;
+    const costCredits = estimateFaceSwapCostCredits({ quality, phase: "insert" });
   const spend = await billing.spendCredits({
     userId: user.id,
     amountCredits: costCredits,
@@ -3537,7 +3538,7 @@ app.post("/api/ai/upscale", async (req, res, next) => {
         throw httpError(500, "JOB_INSERT_FAILED", "No se pudo crear el job de upscale.", { jobErr });
       }
 
-      const costCredits = 1; // upscale: 1 imagen (ajustable por scale si quieres)
+      const costCredits = estimateUpscaleCostCredits({ model: selectedModel, scale });
       const spend = await billing.spendCredits({
         userId: user.id,
         amountCredits: costCredits,
@@ -3556,7 +3557,7 @@ app.post("/api/ai/upscale", async (req, res, next) => {
     }
 
     // ✅ SYNC (legacy): ejecuta en request (puede tardar)
-    const costCredits = 1;
+    const costCredits = estimateUpscaleCostCredits({ model: selectedModel, scale });
     const spend = await billing.spendCredits({
       userId: user.id,
       amountCredits: costCredits,

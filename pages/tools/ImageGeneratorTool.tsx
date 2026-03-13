@@ -968,8 +968,8 @@ useEffect(() => {
 
     const effCount = caps.countOptions.includes(count) ? count : (caps.countOptions[0] || 1);
 
-    return estimateImageCostCredits({ model: effectiveModel, quality: effQuality, count: effCount });
-  }, [model, quality, count, refs?.char1, refs?.char2, refs?.char3, refs?.background, selectedElementAssetIds]);
+    return estimateImageCostCredits({ model: effectiveModel, quality: effQuality, count: effCount, aspectRatio });
+  }, [model, quality, count, aspectRatio, refs?.char1, refs?.char2, refs?.char3, refs?.background, selectedElementAssetIds]);
   const styleLabel = selectedStylePreset?.name || "None";
 
   // Options reales para el selector de Aspect Ratio.

@@ -1072,8 +1072,16 @@ const multishotTotalSeconds = useMemo(() => {
 
 const estimatedCostCredits = useMemo(() => {
   const dur = isMultishotCustomize ? (multishotTotalSeconds || durationSeconds) : durationSeconds;
-  return estimateVideoCostCredits({ modelNorm, durationSeconds: dur });
-}, [modelNorm, durationSeconds, isMultishotCustomize, multishotTotalSeconds]);
+  return estimateVideoCostCredits({
+    modelNorm,
+    durationSeconds: dur,
+    resolution,
+    generateAudio: klingSound,
+    klingMode,
+    voiceControl: klingVoiceIdsText.trim().length > 0,
+    count,
+  });
+}, [modelNorm, durationSeconds, isMultishotCustomize, multishotTotalSeconds, resolution, klingSound, klingMode, klingVoiceIdsText, count]);
 
 useEffect(() => {
   if (!isMultishotCustomize) return;

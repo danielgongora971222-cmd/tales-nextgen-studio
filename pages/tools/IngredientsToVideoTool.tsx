@@ -238,8 +238,14 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
 
   const estimatedCostCredits = useMemo(() => {
     const dur = isStoryboardMode ? multishotTotalSeconds : durationSeconds;
-    return estimateVideoCostCredits({ modelNorm: model, durationSeconds: dur });
-  }, [model, durationSeconds, isStoryboardMode, multishotTotalSeconds]);
+    return estimateVideoCostCredits({
+      modelNorm: model,
+      durationSeconds: dur,
+      resolution: "1080p",
+      generateAudio,
+      klingMode: "pro",
+    });
+  }, [model, durationSeconds, isStoryboardMode, multishotTotalSeconds, generateAudio]);
 
   const combinedRefsCount = referenceImageIds.length + klingElementIds.length;
   const maxCombinedRefs = model === "kling-o3-ref-to-video-pro" ? 7 : 4;

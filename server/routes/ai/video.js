@@ -75,17 +75,27 @@ export function createAiVideoRouter(ctx) {
     req,
     modelNorm,
     durationSeconds,
+    resolution = undefined,
+    generateAudio = undefined,
+    klingMode = undefined,
+    voiceControl = undefined,
     count = 1,
     entryType = "gen_spend_video",
     refType = "ai_video",
     refId = null,
   }) {
-    const isKling = String(modelNorm || "").startsWith("kling-");
     const dur = clampInt(durationSeconds || 0, 1, 60);
     const n = clampInt(count || 1, 1, 8);
 
-    const perVideo = estimateVideoCostCredits({ modelNorm, durationSeconds: dur, isKling });
-    const totalCredits = perVideo * n;
+    const totalCredits = estimateVideoCostCredits({
+      modelNorm,
+      durationSeconds: dur,
+      resolution,
+      generateAudio,
+      klingMode,
+      voiceControl,
+      count: n,
+    });
 
     const baseIdem = ctx?.billing?.getIdempotencyKey ? ctx.billing.getIdempotencyKey(req) : undefined;
     const idem = baseIdem ? `${refType}:${baseIdem}` : undefined;
@@ -694,6 +704,9 @@ const isKling = selectedModelNorm.startsWith("kling-");
           req,
           modelNorm: selectedModelNorm,
           durationSeconds: dur,
+          resolution: klingModeValue === "pro" ? "1080p" : "720p",
+          generateAudio: soundValue === "on",
+          klingMode: klingModeValue,
           count: 1,
           entryType: "ai_video_generate",
           refType: "ai_video",
@@ -1060,6 +1073,10 @@ const isKling = selectedModelNorm.startsWith("kling-");
           req,
           modelNorm: selectedModelNorm,
           durationSeconds: dur,
+          resolution: klingModeValue === "pro" ? "1080p" : "720p",
+          generateAudio: soundValue === "on",
+          klingMode: klingModeValue,
+          voiceControl: Array.isArray(klingVoiceIds) && klingVoiceIds.length > 0,
           count: 1,
           entryType: "ai_video_generate",
           refType: "ai_video",
@@ -1423,6 +1440,9 @@ const isKling = selectedModelNorm.startsWith("kling-");
         req,
         modelNorm: selectedModelNorm,
         durationSeconds: klingDuration,
+        resolution: klingModeValue === "pro" ? "1080p" : "720p",
+        generateAudio: enableAudio === true,
+        klingMode: klingModeValue,
         count: 1,
         entryType: "ai_video_generate",
         refType: "ai_video",
@@ -1763,6 +1783,8 @@ const isKling = selectedModelNorm.startsWith("kling-");
         req,
         modelNorm: veoModel,
         durationSeconds: dur,
+        resolution: reso,
+        generateAudio: false,
         count: requestedCount,
         entryType: "ai_video_generate",
         refType: "job",
@@ -1793,6 +1815,8 @@ const isKling = selectedModelNorm.startsWith("kling-");
       req,
       modelNorm: veoModel,
       durationSeconds: dur,
+      resolution: reso,
+      generateAudio: false,
       count: requestedCount,
       entryType: "ai_video_generate",
       refType: "ai_video",
@@ -2268,7 +2292,13 @@ const isKling = selectedModelNorm.startsWith("kling-");
         if (blocked) return;
 
         // ✅ Spend de créditos ANTES de crear la tarea (idempotente vía x-idempotency-key)
-        const costCredits = estimateVideoCostCredits({ modelNorm: model, durationSeconds: totalDur, isKling: true });
+        const costCredits = estimateVideoCostCredits({
+          modelNorm: model,
+          durationSeconds: kind === "reference-to-video" ? totalDur : dur,
+          resolution: "1080p",
+          generateAudio: kind === "reference-to-video" ? body.generateAudio === true : false,
+          klingMode: "pro",
+        });
 
         const spend = await ctx.billing.spendCredits({
           userId: user.id,
@@ -2411,7 +2441,12 @@ const isKling = selectedModelNorm.startsWith("kling-");
       // Esta ruta NO recibe duración explícita; usamos un costo estable basado en 5s.
       const mode = body.mode === "pro" ? "pro" : "std";
       const pricingModelNorm = mode === "pro" ? "kling-2.6-motion-control-pro" : "kling-2.6-motion-control";
-      const costCredits = estimateVideoCostCredits({ modelNorm: pricingModelNorm, isKling: true, durationSeconds: 5 });
+      const costCredits = estimateVideoCostCredits({
+        modelNorm: pricingModelNorm,
+        durationSeconds: 5,
+        resolution: mode === "pro" ? "1080p" : "720p",
+        klingMode: mode,
+      });
 
       const spend = await ctx.billing.spendCredits({
         userId: user.id,

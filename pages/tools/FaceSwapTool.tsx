@@ -71,7 +71,18 @@ export default function FaceSwapTool() {
     return SWAP_OPTIONS.find((x) => x.id === step1SwapType)?.desc || "";
   }, [step1SwapType]);
 
-  const estimatedStepCostCredits = useMemo(() => estimateFaceSwapCostCredits(), []);
+  const estimatedStep1CostCredits = useMemo(
+    () => estimateFaceSwapCostCredits({ quality: step1Quality, phase: "analysis" }),
+    [step1Quality]
+  );
+  const estimatedStep2CostCredits = useMemo(
+    () => estimateFaceSwapCostCredits({ quality: step1Quality, phase: "insert" }),
+    [step1Quality]
+  );
+  const estimatedPipelineCostCredits = useMemo(
+    () => estimateFaceSwapCostCredits({ quality: step1Quality, phase: "full" }),
+    [step1Quality]
+  );
 
   const lockedSwapType = step1SwapType;
   const lockedQuality = step1Quality;
@@ -232,7 +243,7 @@ export default function FaceSwapTool() {
           </button>
 
           <div className="text-center text-[12px] text-white/60 -mt-2">
-            Coste estimado: <span className="font-semibold text-white/85">{estimatedStepCostCredits}</span> crédito
+            Coste estimado paso 1: <span className="font-semibold text-white/85">{estimatedStep1CostCredits}</span> créditos · pipeline completo: <span className="font-semibold text-white/85">{estimatedPipelineCostCredits}</span>
           </div>
 
           {step1Error && <div className="text-sm text-red-400">{step1Error}</div>}
@@ -381,7 +392,7 @@ export default function FaceSwapTool() {
           </button>
 
           <div className="text-center text-[12px] text-white/60 -mt-2">
-            Coste estimado: <span className="font-semibold text-white/85">{estimatedStepCostCredits}</span> crédito
+            Coste estimado paso 2: <span className="font-semibold text-white/85">{estimatedStep2CostCredits}</span> créditos · pipeline completo: <span className="font-semibold text-white/85">{estimatedPipelineCostCredits}</span>
           </div>
 
           {step2Error && <div className="text-sm text-red-400">{step2Error}</div>}

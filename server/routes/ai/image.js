@@ -399,6 +399,7 @@ export function createAiImageRouter(ctx) {
         model: selectedModel,
         quality,
         count,
+        aspectRatio,
       });
 
       const spend = await ctx.billing.spendCredits({
@@ -424,6 +425,7 @@ export function createAiImageRouter(ctx) {
       model: selectedModel,
       quality,
       count,
+      aspectRatio,
     });
 
     const spend = await ctx.billing.spendCredits({
