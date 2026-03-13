@@ -3,7 +3,7 @@ import { randomUUID } from "crypto";
 
 export function createWalletRouter(ctx) {
   const router = express.Router();
-  const { supabaseAdmin, requireUser, ADMIN_TOKEN, billing } = ctx;
+  const { supabaseAdmin, requireUser, adminAuth, billing } = ctx;
 
   function err(res, status, code, message, details) {
     return res.status(status).json({ ok: false, error: { code, message, details: details || null } });
@@ -406,17 +406,22 @@ export function createWalletRouter(ctx) {
     });
   });
 
-  // Admin: grant credits (para testing)
+  // Admin: grant credits (para testing / soporte owner)
   router.post("/wallet/admin/grant", async (req, res) => {
-    if (!ADMIN_TOKEN) return err(res, 503, "ADMIN_NOT_CONFIGURED", "ADMIN_TOKEN no configurado en el server.");
+    const auth = await adminAuth.requireAdminAccess(req);
+    if (!auth.ok) return err(res, auth.status || 403, auth.error?.code || "FORBIDDEN", auth.error?.message || "Acceso denegado.", auth.error?.details);
 
-    const token = req.headers["x-admin-token"] ? String(req.headers["x-admin-token"]) : "";
-    if (!token || token !== ADMIN_TOKEN) return err(res, 401, "UNAUTHORIZED", "Admin token inválido.");
+    const target = await adminAuth.resolveTargetUser({
+      userId: req.body?.userId ? String(req.body.userId) : "",
+      email: req.body?.email ? String(req.body.email) : "",
+    });
+    if (target.error || !target.user) {
+      return err(res, 404, target.error?.code || "USER_NOT_FOUND", target.error?.message || "Usuario no encontrado.", target.error?.details);
+    }
 
-    const userId = req.body?.userId ? String(req.body.userId) : "";
+    const userId = String(target.user.id);
     const amount = Number(req.body?.amountCredits);
 
-    if (!userId) return err(res, 400, "BAD_REQUEST", "Falta userId.");
     if (!Number.isFinite(amount) || amount <= 0) return err(res, 400, "BAD_REQUEST", "amountCredits debe ser > 0.");
 
     await supabaseAdmin.from("wallet_balances").upsert({ user_id: userId }, { onConflict: "user_id" });
@@ -456,6 +461,7 @@ export function createWalletRouter(ctx) {
     return res.json({
       ok: true,
       userId,
+      email: target.user.email || null,
       wallet: {
         gen_plan_credits,
         gen_topup_credits,

@@ -5,8 +5,9 @@ import { useWallet } from "../contexts/WalletContext";
 import { apiUrl } from "../services/apiBase";
 import { supabase } from "../services/supabaseClient";
 import { profileMe, type ProfileMeResponse } from "../services/profileApi";
-import { billingMe, mockCancel } from "../services/billingApi";
+import { billingMe, billingPlans, mockCancel } from "../services/billingApi";
 import { emitProfileRefresh, emitWalletRefresh } from "../services/appEvents";
+import { ownerAssignMockPlanByEmail, ownerCancelPlanByEmail, ownerGrantCreditsByEmail } from "../services/ownerAdminApi";
 
 type TabKey = "profile" | "security" | "billing";
 
@@ -20,6 +21,7 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
 
   const [me, setMe] = useState<ProfileMeResponse | null>(null);
   const [sub, setSub] = useState<any | null>(null);
+  const [availablePlans, setAvailablePlans] = useState<any[]>([]);
 
   const [displayName, setDisplayName] = useState<string>(user?.username || "");
   const [busy, setBusy] = useState(false);
@@ -32,6 +34,12 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
   const [newPass2, setNewPass2] = useState("");
   const [passBusy, setPassBusy] = useState(false);
   const [passMsg, setPassMsg] = useState<string>("");
+
+  const [ownerTargetEmail, setOwnerTargetEmail] = useState("");
+  const [ownerPlanSlug, setOwnerPlanSlug] = useState("");
+  const [ownerCredits, setOwnerCredits] = useState("100");
+  const [ownerBusy, setOwnerBusy] = useState(false);
+  const [ownerMsg, setOwnerMsg] = useState("");
 
   useEffect(() => {
     const focus = window.localStorage.getItem("tales_profile_focus");
@@ -47,11 +55,18 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
     };
   }, [avatarPreview]);
 
+  useEffect(() => {
+    if (ownerPlanSlug) return;
+    if (!availablePlans.length) return;
+    const first = availablePlans[0];
+    if (first?.slug) setOwnerPlanSlug(String(first.slug));
+  }, [availablePlans, ownerPlanSlug]);
+
   async function loadAll() {
     setLoading(true);
     setErr("");
 
-    const [pR, sR] = await Promise.allSettled([profileMe(), billingMe()]);
+    const [pR, sR, plansR] = await Promise.allSettled([profileMe(), billingMe(), billingPlans()]);
 
     if (pR.status === "fulfilled") {
       setMe(pR.value);
@@ -61,6 +76,7 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
     }
 
     if (sR.status === "fulfilled") setSub(sR.value || null);
+    if (plansR.status === "fulfilled") setAvailablePlans(Array.isArray(plansR.value) ? plansR.value : []);
 
     setLoading(false);
   }
@@ -193,6 +209,84 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
       setErr(e?.message || "No se pudo actualizar la contraseña.");
     } finally {
       setPassBusy(false);
+    }
+  }
+
+  async function ownerAssignPlan() {
+    if (!me?.ownerAdmin) return;
+
+    const email = ownerTargetEmail.trim();
+    if (!email) return setErr("Escribe el email del usuario al que quieres asignarle el plan.");
+    if (!ownerPlanSlug) return setErr("Selecciona un plan.");
+
+    setOwnerBusy(true);
+    setOwnerMsg("");
+    setErr("");
+
+    try {
+      const data = await ownerAssignMockPlanByEmail(email, ownerPlanSlug);
+      const planName = data?.plan?.name || ownerPlanSlug;
+      setOwnerMsg(`Plan asignado: ${planName} -> ${data?.user?.email || email}`);
+      await refreshWallet();
+      await loadAll();
+    } catch (e: any) {
+      setErr(e?.message || "No se pudo asignar el plan.");
+    } finally {
+      setOwnerBusy(false);
+    }
+  }
+
+  async function ownerGrantCredits() {
+    if (!me?.ownerAdmin) return;
+
+    const email = ownerTargetEmail.trim();
+    const amount = Math.floor(Number(ownerCredits));
+
+    if (!email) return setErr("Escribe el email del usuario al que quieres asignarle créditos.");
+    if (!Number.isFinite(amount) || amount <= 0) return setErr("Los créditos deben ser un número mayor que 0.");
+
+    setOwnerBusy(true);
+    setOwnerMsg("");
+    setErr("");
+
+    try {
+      const data = await ownerGrantCreditsByEmail(email, amount);
+      setOwnerMsg(`Créditos agregados: +${amount} -> ${data?.email || email}`);
+      await refreshWallet();
+      await loadAll();
+    } catch (e: any) {
+      setErr(e?.message || "No se pudo agregar créditos.");
+    } finally {
+      setOwnerBusy(false);
+    }
+  }
+
+  async function ownerCancelPlan(wipeGenerationCredits: boolean) {
+    if (!me?.ownerAdmin) return;
+
+    const email = ownerTargetEmail.trim();
+    if (!email) return setErr("Escribe el email del usuario al que quieres cancelar el plan.");
+
+    const ok = window.confirm(
+      wipeGenerationCredits
+        ? `Cancelar el plan de ${email} y borrar sus créditos de generación.`
+        : `Cancelar el plan de ${email} manteniendo sus créditos de generación.`
+    );
+    if (!ok) return;
+
+    setOwnerBusy(true);
+    setOwnerMsg("");
+    setErr("");
+
+    try {
+      const data = await ownerCancelPlanByEmail(email, { wipeGenerationCredits });
+      setOwnerMsg(`Plan cancelado para ${data?.user?.email || email}.`);
+      await refreshWallet();
+      await loadAll();
+    } catch (e: any) {
+      setErr(e?.message || "No se pudo cancelar el plan del usuario.");
+    } finally {
+      setOwnerBusy(false);
     }
   }
 
@@ -446,6 +540,96 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
                 </button>
               </div>
             </div>
+
+            {me?.ownerAdmin ? (
+              <div className="md:col-span-2 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4">
+                <div className="text-sm font-semibold text-emerald-100">Owner controls</div>
+                <div className="text-xs text-emerald-100/70 mt-1">
+                  Uso interno para pruebas: asignar planes mock, cancelar planes y dar créditos sin cobros reales.
+                </div>
+
+                <div className="mt-4 grid md:grid-cols-3 gap-3">
+                  <div className="md:col-span-2">
+                    <div className="text-xs text-white/60 mb-2">Email del usuario objetivo</div>
+                    <input
+                      value={ownerTargetEmail}
+                      onChange={(e) => setOwnerTargetEmail(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 focus:outline-none focus:border-white/25"
+                      placeholder="usuario@correo.com"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="text-xs text-white/60 mb-2">Créditos bonus</div>
+                    <input
+                      value={ownerCredits}
+                      onChange={(e) => setOwnerCredits(e.target.value)}
+                      inputMode="numeric"
+                      className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 focus:outline-none focus:border-white/25"
+                      placeholder="100"
+                    />
+                  </div>
+                </div>
+
+                <div className="mt-4 grid md:grid-cols-2 gap-3">
+                  <div>
+                    <div className="text-xs text-white/60 mb-2">Plan mock a asignar</div>
+                    <select
+                      value={ownerPlanSlug}
+                      onChange={(e) => setOwnerPlanSlug(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-black/30 border border-white/10 focus:outline-none focus:border-white/25"
+                    >
+                      <option value="">Selecciona un plan</option>
+                      {availablePlans.map((plan) => (
+                        <option key={plan.id || plan.slug} value={plan.slug}>
+                          {plan.name} · {plan.slug}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className={`px-4 py-2 rounded-xl bg-emerald-400 text-black font-bold ${ownerBusy ? "opacity-50 pointer-events-none" : ""}`}
+                    onClick={() => void ownerAssignPlan()}
+                  >
+                    Assign mock plan
+                  </button>
+
+                  <button
+                    type="button"
+                    className={`px-4 py-2 rounded-xl bg-white/10 border border-white/10 text-sm ${ownerBusy ? "opacity-50 pointer-events-none" : ""}`}
+                    onClick={() => void ownerGrantCredits()}
+                  >
+                    Grant bonus credits
+                  </button>
+
+                  <button
+                    type="button"
+                    className={`px-4 py-2 rounded-xl bg-red-500/20 border border-red-500/30 text-sm ${ownerBusy ? "opacity-50 pointer-events-none" : ""}`}
+                    onClick={() => void ownerCancelPlan(false)}
+                  >
+                    Cancel target plan
+                  </button>
+
+                  <button
+                    type="button"
+                    className={`px-4 py-2 rounded-xl bg-red-600/25 border border-red-500/40 text-sm ${ownerBusy ? "opacity-50 pointer-events-none" : ""}`}
+                    onClick={() => void ownerCancelPlan(true)}
+                  >
+                    Cancel + wipe target credits
+                  </button>
+                </div>
+
+                <div className="text-[11px] text-emerald-100/70 mt-3">
+                  Esto solo funciona si tu email está en OWNER_ADMIN_EMAILS o tu user ID está en OWNER_ADMIN_USER_IDS en Render.
+                </div>
+
+                {ownerMsg ? <div className="mt-3 text-sm text-emerald-100">{ownerMsg}</div> : null}
+              </div>
+            ) : null}
 
             <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4">
               <div className="text-sm font-semibold text-red-200">Danger zone</div>

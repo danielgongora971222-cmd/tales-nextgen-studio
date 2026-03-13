@@ -3,7 +3,7 @@ import express from "express";
 
 export function createBillingRouter(ctx) {
   const router = express.Router();
-  const { supabaseAdmin, requireUser } = ctx;
+  const { supabaseAdmin, requireUser, adminAuth } = ctx;
   const { requireActiveSubscription, getActiveSubscription, getIdempotencyKey } = ctx.billing;
 
   function err(res, status, code, message, details) {
@@ -24,6 +24,87 @@ export function createBillingRouter(ctx) {
     const concurrency = Number(plan?.max_concurrency || 2);
     const features = (plan?.can_sell ? 1 : 0) + (plan?.can_referrals ? 1 : 0);
     return creditsEqMonth * 1_000_000 + concurrency * 10_000 + features * 100 + Number(plan?.price_cents || 0);
+  }
+
+  async function requireAdmin(req, res) {
+    const auth = await adminAuth.requireAdminAccess(req);
+    if (!auth.ok) {
+      err(res, auth.status || 403, auth.error?.code || "FORBIDDEN", auth.error?.message || "Acceso denegado.", auth.error?.details);
+      return null;
+    }
+    return auth;
+  }
+
+  async function resolveTargetUserFromBody(req, res) {
+    const target = await adminAuth.resolveTargetUser({
+      userId: req.body?.userId ? String(req.body.userId) : "",
+      email: req.body?.email ? String(req.body.email) : "",
+    });
+
+    if (target.error || !target.user) {
+      err(res, 404, target.error?.code || "USER_NOT_FOUND", target.error?.message || "Usuario no encontrado.", target.error?.details);
+      return null;
+    }
+
+    return target.user;
+  }
+
+  async function activateMockPlanForUser({ userId, planSlug, idemPrefix = "admin-plan" }) {
+    const { data: plan, error: pErr } = await supabaseAdmin
+      .from("billing_plans")
+      .select("id, slug, billing_period, price_cents, plan_credits, bonus_credits, max_concurrency, can_sell, can_referrals")
+      .eq("slug", planSlug)
+      .eq("is_active", true)
+      .maybeSingle();
+
+    if (pErr) return { subscription: null, error: { code: "DB_QUERY_FAILED", message: pErr.message } };
+    if (!plan?.id) return { subscription: null, error: { code: "PLAN_NOT_FOUND", message: "Plan no existe o está inactivo." } };
+
+    const now = new Date();
+    const periodMs = plan.billing_period === "week" ? 7 * 24 * 60 * 60 * 1000 : 30 * 24 * 60 * 60 * 1000;
+    const start = new Date(now.getTime());
+    const end = new Date(now.getTime() + periodMs);
+
+    await supabaseAdmin
+      .from("billing_subscriptions")
+      .update({ status: "expired", updated_at: new Date().toISOString() })
+      .eq("user_id", userId)
+      .eq("status", "active");
+
+    const { data: sub, error: sErr } = await supabaseAdmin
+      .from("billing_subscriptions")
+      .insert({
+        user_id: userId,
+        plan_id: plan.id,
+        status: "active",
+        current_period_start: start.toISOString(),
+        current_period_end: end.toISOString(),
+        provider: "mock",
+      })
+      .select("id, plan_id, status, current_period_start, current_period_end")
+      .maybeSingle();
+
+    if (sErr) return { subscription: null, error: { code: "DB_INSERT_FAILED", message: sErr.message } };
+
+    const idem = `${idemPrefix}:${userId}:${Date.now()}`;
+    const { error: gErr } = await supabaseAdmin.rpc("wallet_grant_plan_credits", {
+      p_user_id: userId,
+      p_plan_id: plan.id,
+      p_period_start: start.toISOString(),
+      p_period_end: end.toISOString(),
+      p_idempotency_key: idem,
+    });
+
+    if (gErr) {
+      await supabaseAdmin
+        .from("billing_subscriptions")
+        .update({ status: "expired", updated_at: new Date().toISOString() })
+        .eq("id", sub.id);
+
+      return { subscription: null, error: { code: "PLAN_GRANT_FAILED", message: gErr.message } };
+    }
+
+    return { subscription: sub, plan, error: null };
   }
 
   // GET /api/billing/me -> plan activo (o null)
@@ -280,6 +361,72 @@ export function createBillingRouter(ctx) {
     const row = Array.isArray(data) ? data[0] : null;
     return res.json({
       ok: true,
+      wipeGenerationCredits: Boolean(row?.wipe_generation_credits),
+      balances: {
+        plan: Number(row?.plan_credits) || 0,
+        topup: Number(row?.topup_credits) || 0,
+        bonus: Number(row?.bonus_credits) || 0,
+      },
+    });
+  });
+
+  // POST /api/billing/admin/assign-plan { email|userId, planSlug }
+  router.post("/billing/admin/assign-plan", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
+
+    const targetUser = await resolveTargetUserFromBody(req, res);
+    if (!targetUser) return;
+
+    const planSlug = req.body?.planSlug ? String(req.body.planSlug) : "";
+    if (!planSlug) return err(res, 400, "BAD_REQUEST", "Falta planSlug.");
+
+    const result = await activateMockPlanForUser({ userId: targetUser.id, planSlug, idemPrefix: `owner-plan:${getIdempotencyKey(req)}` });
+    if (result.error) return err(res, 500, result.error.code, result.error.message, result.error.details);
+
+    return res.json({
+      ok: true,
+      user: {
+        id: targetUser.id,
+        email: targetUser.email || null,
+      },
+      plan: result.plan,
+      subscription: result.subscription,
+    });
+  });
+
+  // POST /api/billing/admin/cancel-plan { email|userId, wipeGenerationCredits? }
+  router.post("/billing/admin/cancel-plan", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
+
+    const targetUser = await resolveTargetUserFromBody(req, res);
+    if (!targetUser) return;
+
+    const idem = getIdempotencyKey(req);
+    const wipeGenerationCredits = req.body?.wipeGenerationCredits === true;
+
+    const { data, error: cErr } = await supabaseAdmin.rpc("billing_cancel_subscription", {
+      p_user_id: targetUser.id,
+      p_wipe_generation_credits: wipeGenerationCredits,
+      p_idempotency_key: `owner-cancel:${idem}`,
+    });
+
+    if (cErr) {
+      const msg = String(cErr.message || "");
+      if (msg.includes("NO_ACTIVE_SUBSCRIPTION")) {
+        return err(res, 400, "NO_ACTIVE_PLAN", "Ese usuario no tiene plan activo.");
+      }
+      return err(res, 500, "CANCEL_FAILED", cErr.message);
+    }
+
+    const row = Array.isArray(data) ? data[0] : null;
+    return res.json({
+      ok: true,
+      user: {
+        id: targetUser.id,
+        email: targetUser.email || null,
+      },
       wipeGenerationCredits: Boolean(row?.wipe_generation_credits),
       balances: {
         plan: Number(row?.plan_credits) || 0,

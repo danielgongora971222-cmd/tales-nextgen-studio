@@ -25,6 +25,7 @@ export type ProfileMeResponse = {
   avatarStoragePath: string | null;
   avatarUrl: string | null;
   autoRefillEnabled: boolean;
+  ownerAdmin?: boolean;
 };
 
 export async function profileMe(): Promise<ProfileMeResponse> {

@@ -3,27 +3,20 @@ import express from "express";
 export function createModerationRouter(ctx) {
   const router = express.Router();
 
-  const { supabaseAdmin, ADMIN_TOKEN } = ctx;
+  const { supabaseAdmin, adminAuth } = ctx;
 
-  function requireAdmin(req, res) {
-    const token = String(req.headers["x-admin-token"] || "");
-    if (!ADMIN_TOKEN) {
-      res.status(503).json({
-        ok: false,
-        error: { code: "ADMIN_NOT_CONFIGURED", message: "ADMIN_TOKEN no configurado en el server." },
-      });
-      return false;
+  async function requireAdmin(req, res) {
+    const auth = await adminAuth.requireAdminAccess(req);
+    if (!auth.ok) {
+      res.status(auth.status || 403).json({ ok: false, error: auth.error });
+      return null;
     }
-    if (!token || token !== ADMIN_TOKEN) {
-      res.status(403).json({ ok: false, error: { code: "FORBIDDEN", message: "Admin token inválido." } });
-      return false;
-    }
-    return true;
+    return auth;
   }
 
-  // GET estado moderación
   router.get("/moderation/users/:id", async (req, res) => {
-    if (!requireAdmin(req, res)) return;
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
 
     const userId = req.params.id;
 
@@ -40,9 +33,9 @@ export function createModerationRouter(ctx) {
     return res.json({ ok: true, moderation: data || null });
   });
 
-  // POST activar/desactivar shadow ban
   router.post("/moderation/users/:id/shadowban", async (req, res) => {
-    if (!requireAdmin(req, res)) return;
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
 
     const userId = req.params.id;
     const enabled = Boolean(req.body?.enabled);

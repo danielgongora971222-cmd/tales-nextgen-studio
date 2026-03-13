@@ -9,7 +9,7 @@ import express from "express";
 
 export function createProfileRouter(ctx) {
   const router = express.Router();
-  const { requireUser, signStoragePath } = ctx;
+  const { requireUser, signStoragePath, adminAuth } = ctx;
 
   function safeDisplayName(user) {
     const meta = user?.user_metadata || {};
@@ -44,6 +44,7 @@ export function createProfileRouter(ctx) {
         avatarStoragePath,
         avatarUrl,
         autoRefillEnabled: !!meta.autorefill_enabled,
+        ownerAdmin: Boolean(adminAuth?.isOwnerIdentity?.(user)),
       },
     });
   });

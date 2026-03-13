@@ -35,6 +35,7 @@ import {
   FalJobSchema,
 } from "./schemas/index.js";
 import { createAuthHelpers } from "./lib/auth.js";
+import { createAdminAuthHelpers } from "./lib/adminAuth.js";
 import { createStorageHelpers } from "./lib/storage.js";
 import { apiError, httpError } from "./lib/errors.js";
 import { getClientIp } from "./lib/net.js";
@@ -166,6 +167,14 @@ async function requireUser(req) {
   }
   return out;
 }
+
+const adminAuth = createAdminAuthHelpers({
+  requireUser,
+  adminToken: process.env.ADMIN_TOKEN,
+  ownerEmails: process.env.OWNER_ADMIN_EMAILS,
+  ownerUserIds: process.env.OWNER_ADMIN_USER_IDS,
+  supabaseAdmin,
+});
 
 const {
   parseDataUrl,
@@ -439,7 +448,11 @@ app.use("/api/ai", aiLimiter);
 app.use(express.json({ limit: "25mb" }));
 app.use(express.urlencoded({ extended: true, limit: "25mb" }));
 
-app.use("/api", createHealthRouter({ supabaseAdmin }));
+app.use("/api", createHealthRouter({
+  supabaseAdmin,
+  requireAdminAccess: adminAuth.requireAdminAccess,
+  HEALTHCHECK_SECRET: process.env.HEALTHCHECK_SECRET,
+}));
 
 app.use(
   "/api",
@@ -482,6 +495,8 @@ app.use(
   createWalletRouter({
     supabaseAdmin,
     requireUser,
+    adminAuth,
+    billing,
   })
 );
 
@@ -498,6 +513,7 @@ app.use(
   createProfileRouter({
     requireUser,
     signStoragePath,
+    adminAuth,
   })
 );
 
@@ -506,6 +522,7 @@ app.use(
   createBillingRouter({
     supabaseAdmin,
     requireUser,
+    adminAuth,
     billing,
   })
 );
@@ -641,7 +658,7 @@ app.use(
   "/api",
   createModerationRouter({
     supabaseAdmin,
-    ADMIN_TOKEN: process.env.ADMIN_TOKEN,
+    adminAuth,
   })
 );
 

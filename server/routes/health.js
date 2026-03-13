@@ -1,10 +1,40 @@
 import express from "express";
 
-export function createHealthRouter({ supabaseAdmin } = {}) {
+export function createHealthRouter({ supabaseAdmin, requireAdminAccess, HEALTHCHECK_SECRET } = {}) {
   const router = express.Router();
 
+  function hasDeepHealthSecret(req) {
+    const expected = String(HEALTHCHECK_SECRET || "").trim();
+    if (!expected) return false;
+
+    const provided = String(req.headers["x-health-secret"] || "").trim();
+    return Boolean(provided && provided === expected);
+  }
+
   router.get("/health", async (req, res) => {
-    const deep = String(req.query.deep || "").trim() === "1";
+    const wantsDeep = String(req.query.deep || "").trim() === "1";
+    let deep = false;
+
+    if (wantsDeep) {
+      let allowed = hasDeepHealthSecret(req);
+
+      if (!allowed && typeof requireAdminAccess === "function") {
+        const auth = await requireAdminAccess(req);
+        allowed = Boolean(auth?.ok);
+      }
+
+      if (!allowed) {
+        return res.status(403).json({
+          ok: false,
+          error: {
+            code: "FORBIDDEN",
+            message: "El health profundo requiere acceso admin u x-health-secret.",
+          },
+        });
+      }
+
+      deep = true;
+    }
 
     const capabilities = {
       supabase: Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY),
@@ -23,14 +53,12 @@ export function createHealthRouter({ supabaseAdmin } = {}) {
     };
 
     if (deep && supabaseAdmin) {
-      // DB ping
       const t0 = Date.now();
       const ping = await supabaseAdmin.from("jobs").select("id").limit(1);
       checks.db.latencyMs = Date.now() - t0;
       checks.db.ok = !ping.error;
       checks.db.error = ping.error ? String(ping.error.message || ping.error) : null;
 
-      // Worker heartbeats (si existe la tabla)
       const hb = await supabaseAdmin
         .from("worker_heartbeats")
         .select("worker_id,kind,updated_at")
@@ -42,7 +70,7 @@ export function createHealthRouter({ supabaseAdmin } = {}) {
         checks.workers.error = String(hb.error.message || hb.error);
       } else {
         const now = Date.now();
-        const activeWindowMs = 90_000; // 90s
+        const activeWindowMs = 90_000;
         const active = {};
         for (const row of hb.data || []) {
           const ts = Date.parse(row.updated_at);
