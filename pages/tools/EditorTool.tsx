@@ -993,7 +993,7 @@ useEffect(() => {
     if (next === GOOGLE_IMAGE_MODELS.NANO_BANANA) setQuality("1K");
     if (!supportsGoogleSearchGrounding(next)) setGoogleSearchGrounding(false);
 
-    setPanel(null); // auto-close
+    restoreCookFromPanel(); // auto-close
   }
 
   const refLabel =
@@ -1025,6 +1025,45 @@ useEffect(() => {
     onError: (error: any) => setError(error?.message || "No se pudo reanudar una generación pendiente."),
   });
   const [error, setError] = useState<string | null>(null);
+  const [isCookOpen, setIsCookOpen] = useState(false);
+  const isCookSidebarVisible = isCookOpen && !panel;
+  const isCookLayerVisible = isCookOpen || !!panel;
+  const refFileInputsRef = useRef<Record<RefSlot, HTMLInputElement | null>>(
+    Object.fromEntries(REF_SLOTS.map((slot) => [slot, null])) as Record<RefSlot, HTMLInputElement | null>
+  );
+
+  const closeCook = useCallback(() => {
+    setIsCookOpen(false);
+    setPanel(null);
+    setPickerSlot(null);
+    setPickerQuery("");
+  }, []);
+
+  const restoreCookFromPanel = useCallback(() => {
+    setPanel(null);
+    setPickerSlot(null);
+    setPickerQuery("");
+    setIsCookOpen(true);
+  }, []);
+
+  const openCook = useCallback(() => {
+    setPanel(null);
+    setPickerSlot(null);
+    setPickerQuery("");
+    setIsCookOpen(true);
+  }, []);
+
+  const toggleCookPanel = useCallback((next: Panel) => {
+    if (!next) {
+      restoreCookFromPanel();
+      return;
+    }
+    setPickerSlot(null);
+    setPickerQuery("");
+    setIsCookOpen(false);
+    setPanel((prev) => (prev === next ? null : next));
+  }, [restoreCookFromPanel]);
+
     // Cache de dimensiones por imagen (para layout del historial y viewer responsive)
   const [imgDims, setImgDims] = useState<Record<string, { w: number; h: number }>>({});
 
@@ -1700,13 +1739,19 @@ const promptReferences: PromptReference[] = useMemo(() => {
     setElementCreatePickerQuery("");
   }
 
-  function closeCreateModal() {
+  function closeCreateModal(options?: { restoreCook?: boolean }) {
     setIsElementCreateOpen(false);
     setElementCreatePickerSlot(null);
+    if (options?.restoreCook ?? true) {
+      openCook();
+    }
   }
 
-  function closeAllModal() {
+  function closeAllModal(options?: { restoreCook?: boolean }) {
     setIsElementAllOpen(false);
+    if (options?.restoreCook ?? true) {
+      openCook();
+    }
   }
 
   async function handleCreateElement() {
@@ -1866,22 +1911,32 @@ const promptReferences: PromptReference[] = useMemo(() => {
       const el = popoverRef.current;
       if (!el) return;
       if (!el.contains(e.target as Node)) {
-        setPanel(null);
-        setPickerSlot(null);
+        restoreCookFromPanel();
       }
     }
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
-  }, [panel]);
+  }, [panel, restoreCookFromPanel]);
 
-  // ESC cierra viewer
+  // ESC cierra viewer y panel Start Create
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setViewer(null);
+      if (e.key !== "Escape") return;
+      if (viewer) {
+        setViewer(null);
+        return;
+      }
+      if (panel) {
+        restoreCookFromPanel();
+        return;
+      }
+      if (isCookOpen) {
+        closeCook();
+      }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [viewer, panel, isCookOpen, closeCook, restoreCookFromPanel]);
 
   const refLibraryAssets = useMemo(() => {
     return refLibraryTab === "purchased" ? purchasedAssets : myAssets;
@@ -1940,9 +1995,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
     try {
       const uploaded = await uploadUserAsset(file, REF_TOOL_ID);
       setRefSlot(slot, uploaded);
-      setPanel(null); // auto-close
-      setPickerSlot(null);
-      setPickerQuery("");
+      restoreCookFromPanel();
     } catch (e: any) {
       setError(e?.message || "Upload falló.");
     }
@@ -2257,18 +2310,19 @@ const promptReferences: PromptReference[] = useMemo(() => {
 
     setPanel(null);
     setViewer(null);
+    openCook();
   }
 
   return (
     <div
       ref={rootRef}
-      className={styles.root}
+      className={`${styles.root} ${isCookOpen ? styles.rootCookOpen : ""}`}
       onMouseMove={handleRootMouseMove}
       onMouseLeave={handleRootMouseLeave}
     >
       {/* HISTORIAL (único contenido visible arriba) */}
-      <div className={styles.stage}>
-        <div className={styles.historyHeader}>
+      <div className={`${styles.stage} ${isCookOpen ? styles.stageCookOpen : ""}`}>
+        <div className={`${styles.historyHeader} ${isCookOpen ? styles.historyHeaderCookOpen : ""}`}>
           <div className={styles.historyTitle}>
             <span className={styles.kicker}>IMAGE GENERATOR</span>
             <div className={styles.historyMeta}>
@@ -2288,7 +2342,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
           </button>
         </div>
 
-        <div className={styles.historyGrid}>
+        <div className={`${styles.historyGrid} ${styles.historyGridCook} ${isCookOpen ? styles.historyGridCookOpen : ""}`}>
           {history.length === 0 && pendingSlots.length === 0 ? (
             <div className={styles.emptyState}>
               <div className={styles.emptyAnimator}>
@@ -2408,496 +2462,515 @@ const promptReferences: PromptReference[] = useMemo(() => {
         </div>
       </div>
 
-      {/* DOCK / BARRA DE PROMPT */}
-      <div className={styles.dockWrap}>
-        <div className={styles.dock}>
-          {REF_SLOTS.some((slot) => Boolean((refs as any)[slot])) && (
-            <div className={styles.refThumbStrip}>
-              {REF_SLOTS.map((slot) => {
-                const a = (refs as any)[slot] as Asset | null;
-                if (!a) return null;
+      {/* START CREATE / SIDEBAR DE PROMPT */}
+      {panel === null && (
+        <button
+          type="button"
+          className={`${styles.cookToggle} ${isCookSidebarVisible ? styles.cookToggleOpen : styles.cookTogglePulse}`}
+          onClick={() => {
+            if (isCookSidebarVisible) closeCook();
+            else openCook();
+          }}
+          aria-expanded={isCookSidebarVisible}
+          aria-controls="editor-pro-start-create"
+          aria-label={isCookSidebarVisible ? "Close Start Create" : "Open Start Create"}
+        >
+          <span className={styles.cookToggleLabel}>Start Create</span>
+          <span className={styles.cookToggleGlyph} aria-hidden="true">{isCookSidebarVisible ? "×" : "+"}</span>
+        </button>
+      )}
 
-                const idx = slotIndex(slot) + 1;
+      {isCookLayerVisible && (
+        <div
+          id="editor-pro-start-create"
+          className={`${styles.cookOverlay} ${styles.cookOverlayOpen}`}
+          aria-hidden={!isCookLayerVisible}
+        >
+          <button
+            type="button"
+            className={styles.cookBackdrop}
+            aria-label={panel ? "Back to Start Create" : "Close Start Create"}
+            tabIndex={isCookLayerVisible ? 0 : -1}
+            onClick={() => {
+              if (panel) restoreCookFromPanel();
+              else closeCook();
+            }}
+          />
 
-                return (
-                  <div key={slot} className={styles.refMini} title={SLOT_LABEL[slot]}>
-                    <img src={a.url} alt={slot} />
-                    <span className={styles.refMiniIcon}>{`R${idx}`}</span>
-                    <button
-                      type="button"
-                      className={styles.refMiniRemove}
-                      aria-label={`Remove ${SLOT_LABEL[slot]}`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setRefSlot(slot, null);
-                      }}
-                    >
-                      ×
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          <div className={styles.promptRow}>
-            <div className={styles.promptInputWrap}>
-              <div className={styles.klingDock} onMouseEnter={handleElementHoverStart} onMouseLeave={handleElementHoverEnd}>
-                <div className={`${styles.klingTooltip} ${isElementHovering ? styles.klingTooltipVisible : ""}`}>
-                  Crear Elemento Consistente
-                </div>
-                {/* Botón 1x1 */}
-                <button
-                  type="button"
-                  className={`${styles.klingElementBtn} ${elementCtaActive ? styles.klingElementBtnCta : ""}`}
-                  onClick={() => {
-                    setElementCtaActive(false); // apaga CTA al click
-                    setIsElementCreateOpen(true);
-                  }}
-                  title="Element/Person"
-                  aria-label="Element/Person"
-                >
-                  {/* ícono persona */}
-                  <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-                    <path
-                      fill="currentColor"
-                      d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm0 2c-4.4 0-8 2.24-8 5v2h16v-2c0-2.76-3.6-5-8-5z"
-                    />
-                  </svg>
-
-                  {/* badge con número si hay selección */}
-                  {selectedElementAssetIds.length > 0 && (
-                    <span className={styles.klingBadge}>{selectedElementAssetIds.length}</span>
-                  )}
-                </button>
-
-                {/* Popover al hover */}
-                <div className={`${styles.klingPopover} ${isElementHovering ? styles.klingPopoverVisible : ""}`}>
-                  <div className={styles.klingPopoverTop}>
-                    <button
-                      type="button"
-                      className={styles.klingAllBtn}
-                      onClick={() => setIsElementAllOpen(true)}
-                      title="Ver todos tus Elements"
-                    >
-                      All
-                    </button>
-
-                    {elements.length > 0 ? (
-                      <div className={styles.klingPopoverThumbRow}>
-                        {elements.slice(0, 6).map((el) => {
-                          const active = selectedElementAssetIds.includes(el.id);
-                          const src = el.previewUrl || el.url || "";
+          {panel && (
+            <div className={`${styles.cookPanelShell} ${!isCookSidebarVisible ? styles.cookPanelShellSolo : ""}`}>
+              <div ref={popoverRef} className={styles.cookPanel}>
+                {panel === "reference" && (
+                  <>
+                    <div className={styles.popoverHeader}>
+                      <div className={styles.popoverTitle}>Reference</div>
+                      <div className={styles.headerRight}>
+                        <div className={styles.cookSectionMeta}>{refLabel}</div>
+                        <button type="button" className={styles.closeBtn} onClick={restoreCookFromPanel} aria-label="Close Reference">
+                          ×
+                        </button>
+                      </div>
+                    </div>
+                    <div className={`${styles.popoverBody} ${styles.cookPanelBody}`}>
+                      <div className={`${styles.refSlots} ${styles.cookPanelScroll}`}>
+                        {REF_SLOTS.map((slot) => {
+                          const a = (refs as any)[slot] as Asset | null;
+                          const isPicking = pickerSlot === slot;
                           return (
-                            <div key={el.id} className={styles.klingThumbWrap}>
-                              <button
-                                type="button"
-                                className={`${styles.klingThumbBtn} ${active ? styles.klingThumbBtnActive : ""}`}
-                                onClick={() => {
-                                  setSelectedElementAssetIds((prev) => {
-                                    const has = prev.includes(el.id);
-                                    const tag = (el?.id ? elementTokenById.get(el.id) : null) || makeElementTag(el.name);
+                            <div key={slot} className={styles.refSlot}>
+                              <div className={styles.refSlotLeft}>
+                                <div className={styles.refSlotLabel}>{SLOT_LABEL[slot]}</div>
+                                {a ? (
+                                  <div className={styles.refSlotThumb}>
+                                    <img src={a.url} alt={a.name} />
+                                  </div>
+                                ) : (
+                                  <div className={styles.refSlotThumb}><div className={styles.refSlotEmpty}>+</div></div>
+                                )}
+                                
+                              </div>
 
-                                    if (has) {
-                                      if (tag) appendPromptTag(tag);
-                                      return prev;
-                                    }
-                                    if (prev.length >= 5) {
-                                      setError("Máximo 5 Elements a la vez.");
-                                      return prev;
-                                    }
-                                    if (tag) appendPromptTag(tag);
-                                    return [el.id, ...prev].slice(0, 5);
-                                  });
-                                }}
-                                title={el.name}
-                                aria-label={el.name}
-                              >
-                                {src ? <img src={src} alt={el.name} className={styles.klingThumbImg} /> : null}
-                              </button>
-                              {active && (
+                              <div className={styles.refSlotRight}>
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  className={styles.hiddenFileInput}
+                                  ref={(node) => {
+                                    refFileInputsRef.current[slot] = node;
+                                  }}
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (!file) return;
+                                    void handleUploadToSlot(slot, file);
+                                    e.currentTarget.value = "";
+                                  }}
+                                />
                                 <button
                                   type="button"
-                                  className={styles.klingThumbRemove}
-                                  onClick={() => {
-                                    const tag = (el?.id ? elementTokenById.get(el.id) : null) || makeElementTag(el.name);
-                                    if (tag) removePromptToken(tag);
-                                    setSelectedElementAssetIds((prev) => prev.filter((x) => x !== el.id));
-                                  }}
-                                  aria-label={`Deselect ${el.name}`}
+                                  className={styles.smallBtn}
+                                  onClick={() => refFileInputsRef.current[slot]?.click()}
                                 >
-                                  ×
+                                  Upload
                                 </button>
+                                <button
+                                  type="button"
+                                  className={`${styles.smallBtnGhost} ${isPicking ? styles.smallBtnGhostActive : ""}`}
+                                  onClick={() => {
+                                    setPickerQuery("");
+                                    setPickerSlot((prev) => (prev === slot ? null : slot));
+                                  }}
+                                >
+                                  Pick
+                                </button>
+                                {a && (
+                                  <button type="button" className={styles.smallBtnGhost} onClick={() => setRefSlot(slot, null)}>
+                                    Remove
+                                  </button>
+                                )}
+                              </div>
+
+                              {isPicking && (
+                                <div className={styles.cookPickerShell}>
+                                  <div className={styles.pickerTop}>
+                                    <div className={styles.pickerTitle}>Select asset for {SLOT_LABEL[slot]}</div>
+                                    <button
+                                      type="button"
+                                      className={styles.smallBtnGhost}
+                                      onClick={() => setPickerSlot(null)}
+                                    >
+                                      Close
+                                    </button>
+                                  </div>
+
+                                  <div className={styles.pickerTabs}>
+                                    <button
+                                      type="button"
+                                      className={`${styles.smallBtnGhost} ${refLibraryTab === "history" ? styles.smallBtnGhostActive : ""}`}
+                                      onClick={() => setRefLibraryTab("history")}
+                                    >
+                                      Your library
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className={`${styles.smallBtnGhost} ${refLibraryTab === "purchased" ? styles.smallBtnGhostActive : ""}`}
+                                      onClick={() => setRefLibraryTab("purchased")}
+                                    >
+                                      Purchased assets
+                                    </button>
+                                  </div>
+
+                                  <input
+                                    className={styles.search}
+                                    placeholder={refLibraryTab === "purchased" ? "Search in purchased assets..." : "Search in your library..."}
+                                    value={pickerQuery}
+                                    onChange={(e) => setPickerQuery(e.target.value)}
+                                  />
+
+                                  <div className={styles.pickerGrid}>
+                                    {filteredPickerAssets.map((asset) => (
+                                      <button
+                                        key={asset.id}
+                                        type="button"
+                                        className={styles.pickerTile}
+                                        onClick={() => {
+                                          setRefSlot(slot, asset);
+                                          restoreCookFromPanel();
+                                        }}
+                                      >
+                                        <img src={asset.url} alt={asset.name} />
+                                        <div className={styles.pickerTileMeta}>
+                                          <div className={styles.pickerTileCap}>
+                                            {removeStylePresetBlock(asset.prompt || "") || asset.name}
+                                          </div>
+                                          {asset.accessSource === "purchased" ? (
+                                            <span className={styles.pickerTileBadge}>Purchased</span>
+                                          ) : null}
+                                        </div>
+                                      </button>
+                                    ))}
+
+                                    {filteredPickerAssets.length === 0 ? (
+                                      <div className={styles.pickerEmpty}>
+                                        {refLibraryTab === "purchased"
+                                          ? "Aún no tienes assets comprados en Community Store."
+                                          : "No images found in your library."}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                </div>
                               )}
                             </div>
                           );
                         })}
+                      </div>
                     </div>
-                    ) : (
-                      <div className={styles.klingEmpty}>No elements yet</div>
-                    )}
-                  </div>
-                </div>
-              </div>           
+                  </>
+                )}
 
-              <div className={styles.promptEditor}>
-                <MentionTextarea
-                  value={prompt}
-                  onChange={setPrompt}
-                  placeholder="Escribe tu prompt y comienza a crear..."
-                  rows={2}
-                  textareaClassName={styles.prompt}
-                  items={promptMentionItems}
-                  onSelectItem={(it) => {
-                    if (it?.kind !== "element") return;
-
-                    const already = (selectedElementAssetIds || []).includes(it.id);
-                    if (already) return;
-
-                    if ((selectedElementAssetIds || []).length >= 5) {
-                      setError("No puedes usar más de 5 Elements a la vez. Quita uno y vuelve a intentar.");
-                      return false;
-                    }
-
-                    setSelectedElementAssetIds((prev) => [...(prev || []), it.id].slice(0, 5));
-                  }}
-                />
-              </div>
-            </div>
-
-            <div className={styles.generateCol}>
-              <button
-                type="button"
-                className={styles.generateBtn}
-                disabled={isGenerating || !prompt.trim()}
-                onClick={handleGenerate}
-                data-loading={isGenerating ? "true" : "false"}
-              >
-                <span className={styles.generateLabel}>{isGenerating ? "GENERATING" : "GENERATE"}</span>
-                {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
-              </button>
-            </div>
-          </div>
-
-          <div className={styles.controlsRow}>
-            <button
-              type="button"
-              className={`${styles.controlBtn} ${panel === "reference" ? styles.controlBtnActive : ""}`}
-              onClick={() => {
-                setPanel((p) => (p === "reference" ? null : "reference"));
-                setPickerSlot(null);
-              }}
-            >
-              <span>Reference</span>
-              <span className={styles.controlBtnMeta}>{refLabel}</span>
-            </button>
-
-            <button
-              type="button"
-              className={`${styles.controlBtn} ${panel === "model" ? styles.controlBtnActive : ""}`}
-              onClick={() => setPanel((p) => (p === "model" ? null : "model"))}
-            >
-              <span>Model</span>
-              <span className={styles.controlBtnMeta}>{modelLabel}</span>
-            </button>
-
-            <button
-              type="button"
-              className={`${styles.controlBtn} ${panel === "parameters" ? styles.controlBtnActive : ""}`}
-              onClick={() => setPanel((p) => (p === "parameters" ? null : "parameters"))}
-            >
-              <span>Parameters</span>
-              <span className={styles.controlBtnMeta}>{paramsLabel}</span>
-            </button>
-          </div>
-
-          {/* POPOVERS */}
-          {panel && (
-            <div ref={popoverRef} className={styles.popover}>
-              {/* Reference */}
-              {panel === "reference" && (
-                <div className={styles.popoverInner}>
-                  <div className={styles.popoverHeader}>
-                    <div className={styles.popoverTitle}>Reference</div>
-                    <button className={styles.closeBtn} onClick={() => setPanel(null)} type="button">
-                      <Icon name="close" />
-                    </button>
-                  </div>
-
-                  <div className={styles.refSlots}>
-                  {(() => {
-                    const visible: RefSlot[] = ["char1"];
-                    for (let i = 0; i < REF_SLOTS.length - 1; i++) {
-                      const cur = REF_SLOTS[i];
-                      const next = REF_SLOTS[i + 1];
-                      if (refs[cur]) visible.push(next);
-                    }
-                    return visible;
-                  })().map((slot) => {
-                      const a = refs[slot];
-                      return (
-                        <div key={slot} className={styles.refSlot}>
-                          <div className={styles.refSlotLeft}>
-                            <div className={styles.refSlotLabel}>{SLOT_LABEL[slot]}</div>
-                            <div className={styles.refSlotThumb}>
-                              {a ? <img src={a.url} alt={a.name} /> : <div className={styles.refSlotEmpty}>EMPTY</div>}
+                {panel === "model" && (
+                  <>
+                    <div className={styles.popoverHeader}>
+                      <div className={styles.popoverTitle}>Model</div>
+                      <div className={styles.headerRight}>
+                        <div className={styles.cookSectionMeta}>{modelLabel}</div>
+                        <button type="button" className={styles.closeBtn} onClick={restoreCookFromPanel} aria-label="Close Model">
+                          ×
+                        </button>
+                      </div>
+                    </div>
+                    <div className={`${styles.popoverBody} ${styles.cookPanelBody} ${styles.cookPanelScroll}`}>
+                      <div className={styles.modelGrid}>
+                        {modelGroups.map((group) => (
+                          <div key={group.label} className={styles.modelGroup}>
+                            <div className={styles.modelGroupLabel}>{group.label}</div>
+                            <div className={styles.modelGroupOptions}>
+                              {group.options.map((opt) => (
+                                <button
+                                  key={opt.value}
+                                  type="button"
+                                  className={`${styles.modelOption} ${model === opt.value ? styles.modelOptionActive : ""}`}
+                                  onClick={() => handleModelSelect(opt.value)}
+                                >
+                                  {opt.label}
+                                </button>
+                              ))}
                             </div>
                           </div>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
 
-                          <div className={styles.refSlotRight}>
+                {panel === "parameters" && (
+                  <>
+                    <div className={styles.popoverHeader}>
+                      <div className={styles.popoverTitle}>Parameters</div>
+                      <div className={styles.headerRight}>
+                        <div className={styles.cookSectionMeta}>{paramsLabel}</div>
+                        <button type="button" className={styles.closeBtn} onClick={restoreCookFromPanel} aria-label="Close Parameters">
+                          ×
+                        </button>
+                      </div>
+                    </div>
+                    <div className={`${styles.popoverBody} ${styles.cookPanelBody} ${styles.cookPanelScroll}`}>
+                      <div className={styles.paramGrid}>
+                        <div className={styles.formRow}>
+                          <label className={styles.formLabel}>Aspect Ratio</label>
+                          <select
+                            className={styles.select}
+                            value={aspectRatio}
+                            onChange={(e) => {
+                              setAspectRatio(e.target.value);
+                              restoreCookFromPanel();
+                            }}
+                          >
+                            {aspectRatioOptions.map((ar) => (
+                              <option key={ar.value} value={ar.value}>
+                                {ar.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className={styles.formRow}>
+                          <label className={styles.formLabel}>Count</label>
+                          <select
+                            className={styles.select}
+                            value={count}
+                            disabled={activeCaps.countOptions.length === 1}
+                            onChange={(e) => {
+                              setCount(Number(e.target.value));
+                              restoreCookFromPanel();
+                            }}
+                          >
+                            {activeCaps.countOptions.map((n) => (
+                              <option key={n} value={n}>
+                                {n}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className={styles.formRow}>
+                          <label className={styles.formLabel}>Grid</label>
+                          <select
+                            className={styles.select}
+                            value={gridMode}
+                            onChange={(e) => {
+                              setGridMode(e.target.value);
+                              restoreCookFromPanel();
+                            }}
+                          >
+                            {GRID_OPTIONS.map((opt) => (
+                              <option key={opt.value} value={opt.value}>
+                                {opt.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className={styles.formRow}>
+                          <label className={styles.formLabel}>Quality</label>
+                          <select
+                            className={styles.select}
+                            value={quality}
+                            onChange={(e) => {
+                              setQuality(e.target.value as Quality);
+                              restoreCookFromPanel();
+                            }}
+                          >
+                            {getActiveCaps(model).qualities.map((q) => (
+                              <option key={q} value={q}>
+                                {q}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {supportsGoogleSearchGrounding(model) && (
+                          <div className={styles.formRow}>
+                            <label className={styles.formLabel}>Web Grounding</label>
                             <button
                               type="button"
-                              className={styles.smallBtn}
+                              className={`${styles.modelOption} ${googleSearchGrounding ? styles.modelOptionActive : ""}`}
                               onClick={() => {
-                                setPickerSlot(slot);
-                                setPickerQuery("");
+                                setGoogleSearchGrounding((prev) => !prev);
+                                restoreCookFromPanel();
                               }}
                             >
-                              Pick
-                            </button>
-
-                            <label className={styles.smallBtn}>
-                              Upload
-                              <input
-                                type="file"
-                                accept="image/*"
-                                style={{ display: "none" }}
-                                onChange={(e) => {
-                                  const f = e.target.files?.[0];
-                                  if (f) handleUploadToSlot(slot, f);
-                                  e.currentTarget.value = "";
-                                }}
-                              />
-                            </label>
-
-                            <button
-                              type="button"
-                              className={styles.smallBtnGhost}
-                              onClick={() => setRefSlot(slot, null)}
-                              disabled={!a}
-                            >
-                              Clear
+                              {googleSearchGrounding ? "Enabled" : "Disabled"}
                             </button>
                           </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
 
-                  {pickerSlot && (
-                    <div className={styles.pickerArea}>
-                      <div className={styles.pickerTop}>
-                        <div className={styles.pickerTitle}>Pick for: {SLOT_LABEL[pickerSlot]}</div>
+                {panel === "styles" && (
+                  <>
+                    <div className={styles.popoverHeader}>
+                      <div className={styles.popoverTitle}>Styles</div>
+                      <div className={styles.headerRight}>
+                        <div className={styles.cookSectionMeta}>{styleLabel}</div>
                         <button
                           type="button"
                           className={styles.smallBtnGhost}
-                          onClick={() => setPickerSlot(null)}
-                        >
-                          Close
-                        </button>
-                      </div>
-
-                      <div className={styles.pickerTabs}>
-                        <button
-                          type="button"
-                          className={`${styles.smallBtnGhost} ${refLibraryTab === "history" ? styles.smallBtnGhostActive : ""}`}
-                          onClick={() => setRefLibraryTab("history")}
-                        >
-                          Your library
-                        </button>
-                        <button
-                          type="button"
-                          className={`${styles.smallBtnGhost} ${refLibraryTab === "purchased" ? styles.smallBtnGhostActive : ""}`}
-                          onClick={() => setRefLibraryTab("purchased")}
-                        >
-                          Purchased assets
-                        </button>
-                      </div>
-
-                      <input
-                        className={styles.search}
-                        placeholder={refLibraryTab === "purchased" ? "Search in purchased assets..." : "Search in your library..."}
-                        value={pickerQuery}
-                        onChange={(e) => setPickerQuery(e.target.value)}
-                      />
-
-                      <div className={styles.pickerGrid}>
-                        {filteredPickerAssets.map((a) => (
-                          <button
-                            key={a.id}
-                            type="button"
-                            className={styles.pickerTile}
-                            onClick={() => {
-                              setRefSlot(pickerSlot, a);
-                              setPickerSlot(null);
-                              setPanel(null);
-                            }}
-                          >
-                            <img src={a.url} alt={a.name} />
-                            <div className={styles.pickerTileMeta}>
-                              <div className={styles.pickerTileCap}>
-                                {removeStylePresetBlock(a.prompt || "") || a.name}
-                              </div>
-                              {a.accessSource === "purchased" ? (
-                                <span className={styles.pickerTileBadge}>Purchased</span>
-                              ) : null}
-                            </div>
-                          </button>
-                        ))}
-
-                        {filteredPickerAssets.length === 0 ? (
-                          <div className={styles.pickerEmpty}>
-                            {refLibraryTab === "purchased"
-                              ? "Aún no tienes assets comprados en Community Store."
-                              : "No images found in your library."}
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Model */}
-              {panel === "model" && (
-                <div className={styles.popoverInner}>
-                  <div className={styles.popoverHeader}>
-                    <div className={styles.popoverTitle}>Model</div>
-                    <button className={styles.closeBtn} onClick={() => setPanel(null)} type="button">
-                      <Icon name="close" />
-                    </button>
-                  </div>
-
-                  <div className={styles.formRow}>
-                    <label className={styles.formLabel}>Model</label>
-                    <div className={styles.modelGrid}>
-                      {modelGroups.map((group) => (
-                        <div key={group.label} className={styles.modelGroup}>
-                          <div className={styles.modelGroupLabel}>{group.label}</div>
-                          <div className={styles.modelGroupOptions}>
-                            {group.options.map((opt) => (
-                              <button
-                                key={opt.value}
-                                type="button"
-                                className={`${styles.modelOption} ${model === opt.value ? styles.modelOptionActive : ""}`}
-                                onClick={() => handleModelSelect(opt.value)}
-                              >
-                                {opt.label}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Parameters */}
-              {panel === "parameters" && (
-                <div className={styles.popoverInner}>
-                  <div className={styles.popoverHeader}>
-                    <div className={styles.popoverTitle}>Parameters</div>
-                    <button className={styles.closeBtn} onClick={() => setPanel(null)} type="button">
-                      <Icon name="close" />
-                    </button>
-                  </div>
-
-                  <div className={styles.paramGrid}>
-                    <div className={styles.formRow}>
-                      <label className={styles.formLabel}>Aspect Ratio</label>
-                      <select
-                        className={styles.select}
-                        value={aspectRatio}
-                        onChange={(e) => {
-                          setAspectRatio(e.target.value);
-                          setPanel(null); // auto-close
-                        }}
-                      >
-                        {aspectRatioOptions.map((ar) => (
-                          <option key={ar.value} value={ar.value}>
-                            {ar.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className={styles.formRow}>
-                      <label className={styles.formLabel}>Count</label>
-                      <select
-                        className={styles.select}
-                        value={count}
-                        disabled={activeCaps.countOptions.length === 1}
-                        onChange={(e) => {
-                          setCount(Number(e.target.value));
-                          setPanel(null); // auto-close
-                        }}
-                      >
-                        {activeCaps.countOptions.map((n) => (
-                          <option key={n} value={n}>
-                            {n}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className={styles.formRow}>
-                      <label className={styles.formLabel}>Grid</label>
-                      <select
-                        className={styles.select}
-                        value={gridMode}
-                        onChange={(e) => {
-                          setGridMode(e.target.value);
-                          setPanel(null);
-                        }}
-                      >
-                        {GRID_OPTIONS.map((opt) => (
-                          <option key={opt.value} value={opt.value}>
-                            {opt.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className={styles.formRow}>
-                      <label className={styles.formLabel}>Quality</label>
-                      <select
-                        className={styles.select}
-                        value={quality}
-                        onChange={(e) => {
-                          setQuality(e.target.value as Quality);
-                          setPanel(null); // auto-close
-                        }}
-                      >
-                        {getActiveCaps(model).qualities.map((q) => (
-                          <option key={q} value={q}>
-                            {q}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {supportsGoogleSearchGrounding(model) && (
-                      <div className={styles.formRow}>
-                        <label className={styles.formLabel}>Web Grounding</label>
-                        <button
-                          type="button"
-                          className={`${styles.modelOption} ${googleSearchGrounding ? styles.modelOptionActive : ""}`}
                           onClick={() => {
-                            setGoogleSearchGrounding((prev) => !prev);
-                            setPanel(null);
+                            setSelectedStyleId(null);
+                            restoreCookFromPanel();
                           }}
                         >
-                          {googleSearchGrounding ? "Enabled" : "Disabled"}
+                          Clear
+                        </button>
+                        <button type="button" className={styles.closeBtn} onClick={restoreCookFromPanel} aria-label="Close Styles">
+                          ×
                         </button>
                       </div>
-                    )}
+                    </div>
+                    <div className={`${styles.popoverBody} ${styles.cookPanelBody} ${styles.cookPanelScroll}`}>
+                      <div className={styles.presetGrid}>
+                        {STYLE_PRESETS.map((preset) => {
+                          const active = selectedStyleId === preset.id;
+                          return (
+                            <button
+                              key={preset.id}
+                              type="button"
+                              className={`${styles.presetCard} ${active ? styles.presetCardActive : ""}`}
+                              onClick={() => {
+                                setSelectedStyleId(preset.id);
+                                restoreCookFromPanel();
+                              }}
+                            >
+                              <div className={styles.presetCover}>
+                                {preset.coverUrl ? <img src={preset.coverUrl} alt={preset.name} /> : <div className={styles.presetCoverEmpty} />}
+
+                                {Array.isArray(preset.exampleUrls) && preset.exampleUrls.length > 0 ? (
+                                  <div className={styles.presetHoverExamples}>
+                                    {preset.exampleUrls.slice(0, 4).map((url, idx) => (
+                                      <div key={`${preset.id}_${idx}_${url}`} className={styles.presetHoverExample}>
+                                        <img src={url} alt={`${preset.name} example ${idx + 1}`} />
+                                        <span className={styles.presetHoverBadge}>{idx + 1}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : null}
+                              </div>
+                              <div className={styles.presetName}>{preset.name}</div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
+          {isCookSidebarVisible && (
+            <div className={styles.cookSidebarShell}>
+              <div className={styles.cookSidebar}>
+                <div className={`${styles.cookSectionCard} ${styles.cookPromptCard}`}>
+                  <div className={`${styles.promptRow} ${styles.cookPromptRow}`}>
+                    <div className={`${styles.promptInputWrap} ${styles.cookPromptInputWrap}`}>
+                      <div className={`${styles.klingDock} ${styles.cookKlingDock}`}>
+                        <button
+                          type="button"
+                          className={`${styles.klingElementBtn} ${elementCtaActive ? styles.klingElementBtnCta : ""}`}
+                          onClick={() => {
+                            setElementCtaActive(false);
+                            setIsCookOpen(false);
+                            setPanel(null);
+                            setPickerSlot(null);
+                            setPickerQuery("");
+                            setIsElementAllOpen(true);
+                          }}
+                          title="Element/Person"
+                          aria-label="Element/Person"
+                        >
+                          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                            <path
+                              fill="currentColor"
+                              d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm0 2c-4.4 0-8 2.24-8 5v2h16v-2c0-2.76-3.6-5-8-5z"
+                            />
+                          </svg>
+
+                          {selectedElementAssetIds.length > 0 && (
+                            <span className={styles.klingBadge}>{selectedElementAssetIds.length}</span>
+                          )}
+                        </button>
+                      </div>
+
+                      <div className={`${styles.promptEditor} ${styles.cookPromptEditor}`}>
+                        <MentionTextarea
+                          value={prompt}
+                          onChange={setPrompt}
+                          placeholder="Escribe tu prompt y comienza a crear..."
+                          rows={4}
+                          textareaClassName={`${styles.prompt} ${styles.cookPrompt}`}
+                          items={promptMentionItems}
+                          onSelectItem={(it) => {
+                            if (it?.kind !== "element") return;
+
+                            const already = (selectedElementAssetIds || []).includes(it.id);
+                            if (already) return;
+
+                            if ((selectedElementAssetIds || []).length >= 5) {
+                              setError("No puedes usar más de 5 Elements a la vez. Quita uno y vuelve a intentar.");
+                              return false;
+                            }
+
+                            setSelectedElementAssetIds((prev) => [...(prev || []), it.id].slice(0, 5));
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className={`${styles.generateCol} ${styles.cookGenerateCol}`}>
+                      <button
+                        type="button"
+                        className={`${styles.generateBtn} ${styles.cookGenerateBtn}`}
+                        disabled={isGenerating || !prompt.trim()}
+                        onClick={() => {
+                          void handleGenerate();
+                        }}
+                        data-loading={isGenerating ? "true" : "false"}
+                      >
+                        <span className={styles.generateLabel}>{isGenerating ? "GENERATING" : "GENERATE"}</span>
+                        {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
+                      </button>
+                    </div>
+
+                    <div className={styles.cookControlsRow}>
+                      <button
+                        type="button"
+                        className={`${styles.controlBtn} ${styles.cookControlBtn} ${panel === "reference" ? styles.controlBtnActive : ""}`}
+                        onClick={() => toggleCookPanel("reference")}
+                        aria-expanded={panel === "reference"}
+                      >
+                        <span className={styles.controlBtnLabel}>Reference</span>
+                        <span className={styles.controlBtnMeta}>{refLabel}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        className={`${styles.controlBtn} ${styles.cookControlBtn} ${panel === "model" ? styles.controlBtnActive : ""}`}
+                        onClick={() => toggleCookPanel("model")}
+                        aria-expanded={panel === "model"}
+                      >
+                        <span className={styles.controlBtnLabel}>Model</span>
+                        <span className={styles.controlBtnMeta}>{modelLabel}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        className={`${styles.controlBtn} ${styles.cookControlBtn} ${panel === "parameters" ? styles.controlBtnActive : ""}`}
+                        onClick={() => toggleCookPanel("parameters")}
+                        aria-expanded={panel === "parameters"}
+                      >
+                        <span className={styles.controlBtnLabel}>Parameters</span>
+                        <span className={styles.controlBtnMeta}>{paramsLabel}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        className={`${styles.controlBtn} ${styles.cookControlBtn} ${panel === "styles" ? styles.controlBtnActive : ""}`}
+                        onClick={() => toggleCookPanel("styles")}
+                        aria-expanded={panel === "styles"}
+                      >
+                        <span className={styles.controlBtnLabel}>Styles</span>
+                        <span className={styles.controlBtnMeta}>{styleLabel}</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
-              )}
+              </div>
             </div>
           )}
         </div>
-      </div>
+      )}
 
       {/* VIEWER OVERLAY (al click en imagen) */}
       {viewer && (
@@ -3356,6 +3429,17 @@ const promptReferences: PromptReference[] = useMemo(() => {
               {elements.length === 0 && <div className={styles.elementPickerEmpty}>No elements yet</div>}
 
               <div className={styles.elementFooter}>
+                <button
+                  type="button"
+                  className={styles.smallBtnGhost}
+                  onClick={() => {
+                    closeAllModal({ restoreCook: false });
+                    setIsElementCreateOpen(true);
+                  }}
+                >
+                  Create new
+                </button>
+
                 <button type="button" className={styles.elementPrimaryBtn} onClick={closeAllModal}>
                   Done
                 </button>
