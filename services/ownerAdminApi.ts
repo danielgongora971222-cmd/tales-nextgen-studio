@@ -70,3 +70,42 @@ export async function ownerGrantCreditsByEmail(email: string, amountCredits: num
   emitWalletRefresh();
   return data;
 }
+
+
+export type OwnerSystemStatusResponse = {
+  ok: boolean;
+  appEnv?: string;
+  nodeEnv?: string;
+  deep?: boolean;
+  checks?: {
+    db?: { ok?: boolean; latencyMs?: number | null; error?: string | null };
+    workers?: { ok?: boolean; active?: Record<string, { active: number; total: number; latestAt?: string | null }>; error?: string | null };
+    queue?: {
+      ok?: boolean;
+      summary?: {
+        image?: {
+          pendingTotal?: number;
+          oldestAgeSeconds?: number | null;
+          topModels?: Array<{ key: string; count: number }>;
+          capacity?: { recommendedCap?: number; hardCap?: number; perWorker?: number; activeWorkers?: number };
+        };
+        video?: {
+          pendingTotal?: number;
+          oldestAgeSeconds?: number | null;
+          byProvider?: Record<string, number>;
+          capacity?: { recommendedCap?: number; hardCap?: number; perWorker?: number; activeWorkers?: number };
+        };
+      } | null;
+      error?: string | null;
+    };
+  };
+};
+
+export async function ownerFetchSystemStatus(): Promise<OwnerSystemStatusResponse> {
+  const headers = await authHeaders();
+  const data = await request("/api/health?deep=1", {
+    method: "GET",
+    headers,
+  });
+  return data as OwnerSystemStatusResponse;
+}

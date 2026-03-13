@@ -7,9 +7,30 @@ import { supabase } from "../services/supabaseClient";
 import { profileMe, type ProfileMeResponse } from "../services/profileApi";
 import { billingMe, billingPlans, mockCancel } from "../services/billingApi";
 import { emitProfileRefresh, emitWalletRefresh } from "../services/appEvents";
-import { ownerAssignMockPlanByEmail, ownerCancelPlanByEmail, ownerGrantCreditsByEmail } from "../services/ownerAdminApi";
+import { ownerAssignMockPlanByEmail, ownerCancelPlanByEmail, ownerFetchSystemStatus, ownerGrantCreditsByEmail, type OwnerSystemStatusResponse } from "../services/ownerAdminApi";
 
 type TabKey = "profile" | "security" | "billing";
+
+function formatQueueAge(seconds?: number | null) {
+  if (!Number.isFinite(Number(seconds))) return "—";
+  const total = Math.max(0, Math.round(Number(seconds || 0)));
+  if (total < 60) return `${total}s`;
+  const mins = Math.floor(total / 60);
+  const secs = total % 60;
+  if (mins < 60) return secs ? `${mins}m ${secs}s` : `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  return remMins ? `${hours}h ${remMins}m` : `${hours}h`;
+}
+
+function formatProviderSummary(value: Record<string, number> | undefined) {
+  const entries = Object.entries(value || {});
+  if (!entries.length) return "—";
+  return entries
+    .slice(0, 3)
+    .map(([key, count]) => `${key}: ${count}`)
+    .join(" · ");
+}
 
 export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => void }) {
   const { user } = useAuth();
@@ -40,6 +61,8 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
   const [ownerCredits, setOwnerCredits] = useState("100");
   const [ownerBusy, setOwnerBusy] = useState(false);
   const [ownerMsg, setOwnerMsg] = useState("");
+  const [ownerSystem, setOwnerSystem] = useState<OwnerSystemStatusResponse | null>(null);
+  const [ownerSystemBusy, setOwnerSystemBusy] = useState(false);
 
   useEffect(() => {
     const focus = window.localStorage.getItem("tales_profile_focus");
@@ -62,6 +85,20 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
     if (first?.slug) setOwnerPlanSlug(String(first.slug));
   }, [availablePlans, ownerPlanSlug]);
 
+  async function loadOwnerSystemStatus(opts?: { silent?: boolean }) {
+    const silent = opts?.silent === true;
+    if (!silent) setOwnerSystemBusy(true);
+
+    try {
+      const data = await ownerFetchSystemStatus();
+      setOwnerSystem(data);
+    } catch (e: any) {
+      if (!silent) setErr(e?.message || "No se pudo cargar el estado del sistema.");
+    } finally {
+      if (!silent) setOwnerSystemBusy(false);
+    }
+  }
+
   async function loadAll() {
     setLoading(true);
     setErr("");
@@ -71,8 +108,20 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
     if (pR.status === "fulfilled") {
       setMe(pR.value);
       setDisplayName(pR.value.displayName || user?.username || "");
+
+      if (pR.value.ownerAdmin) {
+        try {
+          const system = await ownerFetchSystemStatus();
+          setOwnerSystem(system);
+        } catch {
+          setOwnerSystem(null);
+        }
+      } else {
+        setOwnerSystem(null);
+      }
     } else {
       setErr(pR.reason?.message || "No se pudo cargar tu perfil.");
+      setOwnerSystem(null);
     }
 
     if (sR.status === "fulfilled") setSub(sR.value || null);
@@ -314,6 +363,11 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
   const avatarSrc = me?.avatarUrl || avatarPreview || user?.avatarUrl || "";
   const email = me?.email || "";
   const handle = email ? email.split("@")[0] : "";
+  const ownerWorkers = ownerSystem?.checks?.workers?.active || {};
+  const ownerImageWorkers = ownerWorkers.image || { active: 0, total: 0, latestAt: null };
+  const ownerVideoWorkers = ownerWorkers.video || { active: 0, total: 0, latestAt: null };
+  const ownerImageQueue = ownerSystem?.checks?.queue?.summary?.image || null;
+  const ownerVideoQueue = ownerSystem?.checks?.queue?.summary?.video || null;
 
   if (loading) return <div className="p-6 text-white">Cargando...</div>;
 
@@ -546,6 +600,53 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
                 <div className="text-sm font-semibold text-emerald-100">Owner controls</div>
                 <div className="text-xs text-emerald-100/70 mt-1">
                   Uso interno para pruebas: asignar planes mock, cancelar planes y dar créditos sin cobros reales.
+                </div>
+
+                <div className="mt-4 grid md:grid-cols-2 gap-3">
+                  <div className="rounded-2xl border border-white/10 bg-black/25 p-3">
+                    <div className="text-xs text-white/60">Image queue</div>
+                    <div className="mt-1 text-sm font-semibold text-white">
+                      {ownerImageQueue?.pendingTotal ?? 0} pendientes / cap {ownerImageQueue?.capacity?.recommendedCap ?? "—"}
+                    </div>
+                    <div className="mt-1 text-xs text-white/60">
+                      Workers activos: {ownerImageWorkers.active || 0}/{ownerImageWorkers.total || 0}
+                    </div>
+                    <div className="text-xs text-white/60">
+                      Job más viejo: {formatQueueAge(ownerImageQueue?.oldestAgeSeconds ?? null)}
+                    </div>
+                    <div className="text-xs text-white/55 mt-2 break-words">
+                      Modelos cargados: {ownerImageQueue?.topModels?.length ? ownerImageQueue.topModels.map((row) => `${row.key} (${row.count})`).join(" · ") : "—"}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-white/10 bg-black/25 p-3">
+                    <div className="text-xs text-white/60">Video queue</div>
+                    <div className="mt-1 text-sm font-semibold text-white">
+                      {ownerVideoQueue?.pendingTotal ?? 0} pendientes / cap {ownerVideoQueue?.capacity?.recommendedCap ?? "—"}
+                    </div>
+                    <div className="mt-1 text-xs text-white/60">
+                      Workers activos: {ownerVideoWorkers.active || 0}/{ownerVideoWorkers.total || 0}
+                    </div>
+                    <div className="text-xs text-white/60">
+                      Job más viejo: {formatQueueAge(ownerVideoQueue?.oldestAgeSeconds ?? null)}
+                    </div>
+                    <div className="text-xs text-white/55 mt-2 break-words">
+                      Proveedores: {formatProviderSummary(ownerVideoQueue?.byProvider)}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    className={`px-3 py-2 rounded-xl bg-white/10 border border-white/10 text-xs ${ownerSystemBusy ? "opacity-50 pointer-events-none" : ""}`}
+                    onClick={() => void loadOwnerSystemStatus()}
+                  >
+                    {ownerSystemBusy ? "Refreshing…" : "Refresh system status"}
+                  </button>
+                  <div className="text-[11px] text-emerald-100/70">
+                    DB latency: {ownerSystem?.checks?.db?.latencyMs != null ? `${ownerSystem.checks.db.latencyMs}ms` : "—"}
+                  </div>
                 </div>
 
                 <div className="mt-4 grid md:grid-cols-3 gap-3">

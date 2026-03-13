@@ -34,6 +34,7 @@ export function createAiVideoRouter(ctx) {
     apiError,
     httpError,
     ensureAI,
+    assertQueueAdmission,
   
   // kling + fal helpers (vienen desde server.js)
     createImage2VideoTask,

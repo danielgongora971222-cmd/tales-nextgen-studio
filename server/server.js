@@ -54,6 +54,7 @@ import { createBillingRouter } from "./routes/billing.js";
 import { createReferralsRouter } from "./routes/referrals.js";
 import { FalFinalizeSchema } from "./schemas/index.js";
 import { assertJobLimits } from "./lib/jobLimits.js";
+import { assertQueueAdmission } from "./lib/queueOps.js";
 import { createLegalRouter } from "./routes/legal.js";
 import { createProfileRouter } from "./routes/profile.js";
 import {
@@ -538,6 +539,7 @@ app.use(
     apiError,
     httpError,
     ensureAI,
+    assertQueueAdmission,
 
     // kling + fal helpers (se usan dentro de routes/ai/video.js)
     createImage2VideoTask,
@@ -582,6 +584,7 @@ app.use(
     apiError,
     httpError,
     ensureAI,
+    assertQueueAdmission,
 
     // ai helpers (estos viven en este mismo archivo y se usan en routes/ai/image.js)
     maxCountForImageModel,

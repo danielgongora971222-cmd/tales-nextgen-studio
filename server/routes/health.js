@@ -1,3 +1,4 @@
+import { getQueueOpsSnapshot } from "../lib/queueOps.js";
 import express from "express";
 
 export function createHealthRouter({ supabaseAdmin, requireAdminAccess, HEALTHCHECK_SECRET } = {}) {
@@ -50,6 +51,7 @@ export function createHealthRouter({ supabaseAdmin, requireAdminAccess, HEALTHCH
     const checks = {
       db: { ok: null, latencyMs: null, error: null },
       workers: { ok: null, active: {}, latest: [], error: null },
+      queue: { ok: null, summary: null, error: null },
     };
 
     if (deep && supabaseAdmin) {
@@ -59,30 +61,19 @@ export function createHealthRouter({ supabaseAdmin, requireAdminAccess, HEALTHCH
       checks.db.ok = !ping.error;
       checks.db.error = ping.error ? String(ping.error.message || ping.error) : null;
 
-      const hb = await supabaseAdmin
-        .from("worker_heartbeats")
-        .select("worker_id,kind,updated_at")
-        .order("updated_at", { ascending: false })
-        .limit(50);
-
-      if (hb.error) {
-        checks.workers.ok = false;
-        checks.workers.error = String(hb.error.message || hb.error);
-      } else {
-        const now = Date.now();
-        const activeWindowMs = 90_000;
-        const active = {};
-        for (const row of hb.data || []) {
-          const ts = Date.parse(row.updated_at);
-          const isActive = Number.isFinite(ts) && now - ts <= activeWindowMs;
-          if (!active[row.kind]) active[row.kind] = { active: 0, total: 0, latestAt: row.updated_at };
-          active[row.kind].total += 1;
-          if (isActive) active[row.kind].active += 1;
-          if (Date.parse(active[row.kind].latestAt) < ts) active[row.kind].latestAt = row.updated_at;
-        }
-        checks.workers.active = active;
-        checks.workers.latest = hb.data || [];
+      try {
+        const queueSnapshot = await getQueueOpsSnapshot({ supabaseAdmin, activeWindowMs: 90_000 });
+        checks.workers.active = queueSnapshot.workers || {};
+        checks.workers.latest = [];
         checks.workers.ok = true;
+        checks.queue.ok = true;
+        checks.queue.summary = queueSnapshot.queues || null;
+      } catch (queueErr) {
+        const msg = String(queueErr?.message || queueErr);
+        checks.workers.ok = false;
+        checks.workers.error = msg;
+        checks.queue.ok = false;
+        checks.queue.error = msg;
       }
     }
 

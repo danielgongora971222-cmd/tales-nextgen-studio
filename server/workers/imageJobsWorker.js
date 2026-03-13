@@ -48,6 +48,8 @@ const WORKER_ID = process.env.WORKER_ID || `image-worker-${randomUUID()}`;
 const JOB_KIND = process.env.JOB_KIND || "image";
 
 const CLAIM_LIMIT = Math.max(1, Number(process.env.WORKER_BATCH_SIZE || 2));
+const WORKER_CONCURRENCY = Math.max(1, Math.min(12, Number(process.env.IMAGE_WORKER_CONCURRENCY || process.env.WORKER_CONCURRENCY || CLAIM_LIMIT || 2)));
+const EFFECTIVE_CLAIM_LIMIT = Math.max(CLAIM_LIMIT, WORKER_CONCURRENCY);
 const IDLE_SLEEP_MS = Math.max(250, Number(process.env.WORKER_IDLE_SLEEP_MS || 1500));
 const LOCK_MINUTES = Math.max(2, Number(process.env.WORKER_LOCK_MINUTES || 15));
 
@@ -715,7 +717,7 @@ function tryGetImageDimsFromBuffer(buf, mimeType) {
 async function claimJobsRpc() {
   const { data, error } = await supabaseAdmin.rpc("claim_jobs", {
     p_kind: JOB_KIND,
-    p_limit: CLAIM_LIMIT,
+    p_limit: EFFECTIVE_CLAIM_LIMIT,
     p_worker_id: WORKER_ID,
     p_lock_minutes: LOCK_MINUTES,
   });
@@ -739,7 +741,7 @@ async function claimJobsRpc() {
     .or(`next_check_at.is.null,next_check_at.lte.${nowIso}`)
     .or(`locked_at.is.null,locked_at.lte.${lockBeforeIso}`)
     .order("created_at", { ascending: true })
-    .limit(CLAIM_LIMIT);
+    .limit(EFFECTIVE_CLAIM_LIMIT);
 
   if (selErr) throw selErr;
   const picked = Array.isArray(rows) ? rows : [];
@@ -2164,6 +2166,27 @@ async function runFaceswapInsertTask({ userId, params }) {
 // =============================
 // Job processor
 // =============================
+async function processRowsConcurrently(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) return;
+
+  let cursor = 0;
+  const laneCount = Math.min(WORKER_CONCURRENCY, list.length);
+
+  async function runLane() {
+    while (true) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= list.length) return;
+
+      await heartbeatMaybe();
+      await processJob(list[index]);
+    }
+  }
+
+  await Promise.all(Array.from({ length: laneCount }, () => runLane()));
+}
+
 async function processJob(row) {
   const jobId = row.id;
   const params = row.params || {};
@@ -2250,25 +2273,26 @@ async function heartbeatMaybe() {
 // Main loop
 // =============================
 async function main() {
-  console.log(`[imageJobsWorker] start WORKER_ID=${WORKER_ID} JOB_KIND=${JOB_KIND} CLAIM_LIMIT=${CLAIM_LIMIT}`);
+  console.log(
+    `[imageJobsWorker] start WORKER_ID=${WORKER_ID} JOB_KIND=${JOB_KIND} CLAIM_LIMIT=${CLAIM_LIMIT} ` +
+      `WORKER_CONCURRENCY=${WORKER_CONCURRENCY} EFFECTIVE_CLAIM_LIMIT=${EFFECTIVE_CLAIM_LIMIT}`
+  );
 
   await heartbeatNow();
   await supabaseAdmin.from("jobs").select("id").limit(1);
 
-while (true) {
-  try {
-    await heartbeatMaybe();
+  while (true) {
+    try {
+      await heartbeatMaybe();
 
-    const rows = await claimJobsRpc();
+      const rows = await claimJobsRpc();
 
       if (!rows.length) {
         await sleep(IDLE_SLEEP_MS);
         continue;
       }
 
-      for (const row of rows) {
-        await processJob(row);
-      }
+      await processRowsConcurrently(rows);
     } catch (e) {
       const norm = normalizeError(e);
       console.error("[imageJobsWorker] loop error:", norm.message);

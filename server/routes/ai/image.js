@@ -28,6 +28,7 @@ export function createAiImageRouter(ctx) {
     apiError,
     httpError,
     ensureAI,
+    assertQueueAdmission,
 
     // ai helpers (definidos en server.js y pasados por ctx)
     maxCountForImageModel,
@@ -341,6 +342,13 @@ export function createAiImageRouter(ctx) {
 
     if (wantsAsync) {
       await ensureAsyncWorkerReadyOrThrow("image");
+      await assertQueueAdmission({
+        supabaseAdmin,
+        httpError,
+        kind: "image",
+        ownerId: user.id,
+        model: selectedModel,
+      });
       await assertJobLimits({
         supabaseAdmin,
         httpError,
@@ -1617,6 +1625,13 @@ router.post("/ai/restyle", async (req, res, next) => {
 
     if (wantsAsync) {
       await ensureAsyncWorkerReadyOrThrow("image");
+      await assertQueueAdmission({
+        supabaseAdmin,
+        httpError,
+        kind: "image",
+        ownerId: user.id,
+        model: selectedModel,
+      });
       if (!body.sourceAssetId) {
         throw httpError(
           400,
