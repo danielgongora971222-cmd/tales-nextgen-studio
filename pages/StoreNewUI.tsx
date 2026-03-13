@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Maximize, Layers, Check, ShoppingCart, CreditCard, ChevronRight, Image as ImageIcon, Sparkles, Scissors, ShieldCheck, Truck } from 'lucide-react';
+import { Maximize, Layers, Check, ShoppingCart, CreditCard, ChevronRight, Image as ImageIcon, Sparkles, Scissors, ShieldCheck, Truck, Edit2, Info } from 'lucide-react';
 import type { Asset, AppRoute, StoreArtDecoListing, StoreArtDecoPayload, StorePrefill } from "../types";
 import { listMyAssets } from "../services/assetsApi";
 import { supabase } from "../services/supabaseClient";
 import { apiUrl } from "../services/apiBase";
 import { createArtDecoListing } from "../services/communityStoreApi";
 import { useWallet } from "../contexts/WalletContext";
+import OneNationUpIcon from "../components/brand/OneNationUpIcon";
 import ConfirmDollarPurchaseModal from "@/components/ConfirmDollarPurchaseModal";
 
 // --- CONFIGURACIÓN DE PRODUCTOS ---
@@ -249,8 +250,7 @@ export default function StoreNewUI({ onNavigate, onRequestUpscale, prefill }: St
 }, []);
   
   // Flujo Secuencial (Acordeón)
-  const [activeStep, setActiveStep] = useState<Step>('UPLOAD');
-  const [expandedStep, setExpandedStep] = useState<Step | null>(null);
+  const [activeStep, setActiveStep] = useState<Step>('UPLOAD'); 
   
   // Estados Finales (Confirmados)
   const [selectedMaterial, setSelectedMaterial] = useState<(typeof MATERIALS)[number] | null>(null);
@@ -387,7 +387,6 @@ const resetFlowForNewImage = () => {
   setActivePointerId(null);
   setIsDragging(false);
   setCropGenError(null);
-  setExpandedStep(null);
   setPrefillArtDeco(null);
   setListingForm({ name: '', description: '', priceUsd: '' });
 };
@@ -414,21 +413,18 @@ const handleSelectFromHistory = async (a: Asset) => {
 
     // Gate estricto: si no es 4K, NO avanza a MATERIAL
     if (!ok) {
-      setExpandedStep(null);
-      setActiveStep('UPLOAD');
+      setActiveStep("UPLOAD");
       return;
     }
 
     // Si es 4K, sí avanza
     setTimeout(() => {
-      setActiveStep('MATERIAL');
-      setExpandedStep('MATERIAL');
+      setActiveStep("MATERIAL");
     }, 500);
   } catch {
     setDims(null);
     setIs4kOk(false);
-    setExpandedStep(null);
-    setActiveStep('UPLOAD');
+    setActiveStep("UPLOAD");
   } finally {
     setDimsLoading(false);
   }
@@ -489,7 +485,6 @@ const hydrateArtDecoPrefill = useCallback((listing: StoreArtDecoListing) => {
   });
   setPickerOpen(false);
   setActiveStep('CHECKOUT');
-  setExpandedStep('CHECKOUT');
 }, []);
 
 useEffect(() => {
@@ -631,23 +626,30 @@ const handleGoToUpscale = () => {
   // Acciones de cambio de pasos (Acordeón Navigation)
   const handleEditStep = (step: Step) => {
     if (isLockedArtDecoPurchase && (step === 'MATERIAL' || step === 'SIZE' || step === 'CROP' || step === 'MODE')) return;
+
+    if (step === 'CROP' || step === 'SIZE' || step === 'MATERIAL') {
+       setIsCropped(false); 
+       setFinalCrop(null);
+       setPurchaseMode('buy');
+    }
+    
+    if (step === 'MATERIAL') setPreviewMaterial(null);
+    if (step === 'SIZE') setPreviewSize(null);
+    
     setActiveStep(step);
-    setExpandedStep(step);
   };
 
   const handleConfirmMaterial = () => {
     if (!previewMaterial) return;
     setSelectedMaterial(previewMaterial);
-    setExpandedStep(null);
+    setActiveStep('SIZE');
   };
 
   const handleConfirmSize = () => {
     if (!previewSize) return;
     setSelectedSize(previewSize);
     setIsCropped(false);
-    setFinalCrop(null);
-    setCroppedDataUrl(null);
-    setExpandedStep(null);
+    setActiveStep('CROP');
   };
 
 async function makeCroppedDataUrl(
@@ -780,18 +782,22 @@ const handleConfirmCrop = async () => {
       const cdu = await makeCroppedDataUrl(image, normalized);
       if (cdu && typeof cdu === "string") {
         setCroppedDataUrl(cdu);
+        setCropGenError(null);
       } else {
         setCroppedDataUrl(null);
+        setCropGenError("No se pudo generar preview del recorte (salida vacía). Se usará el encuadre por coordenadas.");
       }
-      setCropGenError(null);
-    } catch {
+    } catch (e: any) {
       setCroppedDataUrl(null);
-      setCropGenError(null);
+      setCropGenError(
+        e?.message
+          ? `No se pudo generar preview del recorte (CORS/Canvas). Se usará el encuadre por coordenadas. Detalle: ${String(e.message)}`
+          : "No se pudo generar preview del recorte (CORS/Canvas). Se usará el encuadre por coordenadas."
+      );
     }
 
     setIsCropped(true);
     setPurchaseMode('buy');
-    setExpandedStep('CHECKOUT');
     setActiveStep('CHECKOUT');
   } catch (e: any) {
     setCroppedDataUrl(null);
@@ -1070,260 +1076,459 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
   setConfirmPayOpen(true);
   return;
 };
-  // --- INTERFAZ TIPO EDITOR PARA 1NATIONUP ---
-  const stepItems = [
-    { step: 'MATERIAL' as Step, label: 'Material', color: '#DE6C53', icon: <Layers className="w-4 h-4" /> },
-    { step: 'SIZE' as Step, label: 'Medida', color: '#7EAAED', icon: <Maximize className="w-4 h-4" /> },
-    { step: 'CROP' as Step, label: 'Encuadre', color: '#DFB142', icon: <Scissors className="w-4 h-4" /> },
-    { step: 'CHECKOUT' as Step, label: 'Pago', color: '#22c55e', icon: <CreditCard className="w-4 h-4" /> },
-  ];
+  // --- COMPONENTES VISUALES DINÁMICOS DEL LADO IZQUIERDO ---
 
-  const getStepStatus = (step: Step) => {
-    switch (step) {
-      case 'MATERIAL':
-        return selectedMaterial ? 'done' : activeStep === 'MATERIAL' ? 'current' : 'pending';
-      case 'SIZE':
-        return selectedSize ? 'done' : activeStep === 'SIZE' ? 'current' : 'pending';
-      case 'CROP':
-        return finalCrop ? 'done' : activeStep === 'CROP' ? 'current' : 'pending';
-      case 'CHECKOUT':
-        return activeStep === 'CHECKOUT' ? 'current' : finalCrop ? 'ready' : 'pending';
-      default:
-        return 'pending';
+  // Visualizador 3D del Material
+  const renderMaterialInfographic = () => {
+    if (!previewMaterial) {
+      return (
+        <div className="flex flex-col items-center justify-center animate-in fade-in duration-500">
+           <Layers className="w-16 h-16 text-gray-500 mb-4 opacity-50"/>
+           <p className="text-gray-400 font-medium">Material</p>
+        </div>
+      );
     }
+
+    const matId = previewMaterial.id;
+    const isPortrait = imageOrientation === 'portrait';
+    const baseClass = `iso-layer rounded-lg overflow-hidden bg-cover bg-center`;
+    
+    return (
+      <div className="flex flex-col items-center justify-center w-full h-full animate-in zoom-in-95 duration-500">
+         <div className="w-full max-w-sm mb-4 sm:mb-8 text-center relative z-10 bg-black/50 p-4 rounded-2xl border border-white/10 backdrop-blur-md">
+            <h3 className="text-2xl font-bold text-white mb-2 flex justify-center items-center">
+              {previewMaterial.icon} <span className="ml-2">{previewMaterial.label}</span>
+            </h3>
+                     </div>
+
+         <div className={`relative iso-container ${isPortrait ? 'w-[150px] h-[210px] sm:w-[200px] sm:h-[280px]' : 'w-[210px] h-[150px] sm:w-[280px] sm:h-[200px]'} mb-10`}>
+            {matId === 'acrylic' && (
+              <>
+                <div className={`${baseClass} shadow-[0_20px_50px_rgba(0,0,0,0.8)]`} style={{ transform: 'translateZ(-40px)', backgroundColor: '#111' }}>
+                    <div className="absolute inset-0 bg-black/80 flex items-center justify-center text-xs text-gray-600 font-mono">Backing</div>
+                </div>
+                <div className={`${baseClass}`} style={{ transform: 'translateZ(0px)', backgroundImage: `url(${image})` }}></div>
+                <div className={`${baseClass} border border-white/20`} style={{ transform: 'translateZ(20px)', background: 'linear-gradient(135deg, rgba(255,255,255,0.4) 0%, rgba(255,255,255,0) 50%, rgba(255,255,255,0.1) 100%)', backdropFilter: 'blur(1px)' }}>
+                   <div className="absolute top-2 right-2 flex text-[10px] text-white/50"><Info className="w-3 h-3 mr-1"/> Acrílico 1/4"</div>
+                </div>
+              </>
+            )}
+            {matId === 'canvas' && (
+              <>
+                <div className={`${baseClass} shadow-[0_20px_50px_rgba(0,0,0,0.8)] border-[8px] border-[#3e2723]`} style={{ transform: 'translateZ(-30px)', backgroundColor: '#e0c097' }}>
+                    <div className="absolute inset-0 bg-black/20 flex items-center justify-center text-xs text-[#3e2723] font-mono font-bold">Wood Frame</div>
+                </div>
+                <div className={`${baseClass} border-4 border-black/10`} style={{ transform: 'translateZ(10px)', backgroundImage: `url(${image})`, filter: 'sepia(0.1) contrast(0.95)' }}>
+                    <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/canvas-orange.png')] opacity-30 mix-blend-multiply"></div>
+                </div>
+              </>
+            )}
+            {matId === 'metal' && (
+              <>
+                <div className={`${baseClass} shadow-[0_30px_60px_rgba(0,0,0,0.9)]`} style={{ transform: 'translateZ(-50px)', backgroundColor: '#222', width: '50%', height: '50%', top: '25%', left: '25%' }}>
+                   <div className="absolute inset-0 flex items-center justify-center text-[10px] text-gray-500 font-mono">Wall Mount</div>
+                </div>
+                <div className={`${baseClass} border border-white/10`} style={{ transform: 'translateZ(0px)', backgroundImage: `url(${image})`, filter: 'contrast(1.1) saturate(1.2)' }}>
+                   <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/20 to-transparent"></div>
+                </div>
+              </>
+            )}
+            {matId === 'paper' && (
+              <>
+                <div className={`${baseClass} shadow-[0_15px_30px_rgba(0,0,0,0.6)] border-[10px] border-[#111]`} style={{ transform: 'translateZ(-20px)', backgroundColor: '#fff' }}>
+                </div>
+                <div className={`${baseClass} m-6 shadow-inner`} style={{ transform: 'translateZ(-19px)', backgroundImage: `url(${image})` }}></div>
+                <div className={`${baseClass} border-[10px] border-[#111]`} style={{ transform: 'translateZ(10px)', background: 'linear-gradient(135deg, rgba(255,255,255,0.2) 0%, rgba(255,255,255,0) 100%)' }}></div>
+              </>
+            )}
+         </div>
+        </div>
+    );
   };
 
-  const canOpenStep = (step: Step) => {
-    if (!image || !is4kOk) return false;
-    if (step === 'MATERIAL') return true;
-    if (step === 'SIZE') return Boolean(selectedMaterial);
-    if (step === 'CROP') return Boolean(selectedMaterial && selectedSize);
-    if (step === 'CHECKOUT') return Boolean(finalCrop || isLockedArtDecoPurchase);
-    return false;
-  };
-
-  const getOrientedSize = (size: (typeof SIZES)[number] | null) => {
-    if (!size) return null;
-    let w = Number(size.w || 1);
-    let h = Number(size.h || 1);
-    if (imageOrientation === 'landscape' && w < h) {
-      [w, h] = [h, w];
-    } else if (imageOrientation === 'portrait' && w > h) {
-      [w, h] = [h, w];
+  // Visualizador 2.5D Hiperrealista (Luxury Estética)
+  const renderSizeMockup = () => {
+    if (!previewSize) {
+      return (
+        <div className="flex flex-col items-center justify-center animate-in fade-in duration-500">
+           <Maximize className="w-16 h-16 text-gray-500 mb-4 opacity-50"/>
+           <p className="text-gray-400 font-medium">Medida</p>
+        </div>
+      );
     }
-    return { w, h, aspect: w / h };
-  };
 
-  const displayMaterial = previewMaterial || selectedMaterial;
-  const displaySize = previewSize || selectedSize;
-  const orientedDisplaySize = getOrientedSize(displaySize);
-  const displayAspect = finalCrop?.aspect || orientedDisplaySize?.aspect || (dims ? dims.w / Math.max(1, dims.h) : 1);
+    // Escala 1 a 1: 1 unidad de SVG = 1 pulgada real.
+    let mockupW = previewSize.w;
+    let mockupH = previewSize.h;
 
-  const handleMaterialPick = (mat: (typeof MATERIALS)[number]) => {
-    setPreviewMaterial(mat);
-    setSelectedMaterial(mat);
-    setExpandedStep(null);
-  };
-
-  const handleSizePick = (size: (typeof SIZES)[number]) => {
-    const changed = selectedSize?.id !== size.id;
-    setPreviewSize(size);
-    setSelectedSize(size);
-    if (changed) {
-      setIsCropped(false);
-      setFinalCrop(null);
-      setCroppedDataUrl(null);
-      setCropGenError(null);
+    // Auto-orientar si la foto es apaisada
+    if (imageOrientation === 'landscape' && mockupW < mockupH) {
+       const temp = mockupW;
+       mockupW = mockupH;
+       mockupH = temp;
+    } else if (imageOrientation === 'portrait' && mockupW > mockupH) {
+       const temp = mockupW;
+       mockupW = mockupH;
+       mockupH = temp;
     }
-    setExpandedStep(null);
-  };
 
-  const openStep = (step: Step) => {
-    if (!canOpenStep(step)) return;
-    setActiveStep(step);
-    setExpandedStep(step);
-  };
+    // --- ALGORITMO DE PREVENCIÓN DE SUPERPOSICIÓN ---
+    // La TV 42" tiene Height=21. Posicionada sobre la mesa (Y=98). Su parte superior es 98-21 = Y=77.
+    // Damos un margen de seguridad de 5 pulgadas.
+    const safeBottomY = 72; 
+    const idealCenterY = 45; 
+    
+    let picY = idealCenterY - mockupH / 2;
 
-  const handleNextStep = async () => {
-    if (activeStep === 'MATERIAL') {
-      if (!selectedMaterial) return;
-      setActiveStep('SIZE');
-      setExpandedStep('SIZE');
-      return;
+    // Proteger cuadros grandes
+    if (picY + mockupH > safeBottomY) {
+       picY = safeBottomY - mockupH;
     }
-    if (activeStep === 'SIZE') {
-      if (!selectedSize) return;
-      setActiveStep('CROP');
-      setExpandedStep('CROP');
-      return;
-    }
-    if (activeStep === 'CROP') {
-      await handleConfirmCrop();
-    }
-  };
+    
+    const picX = 100 - mockupW / 2;
 
-  const primaryAction = (() => {
-    if (activeStep === 'MATERIAL') {
-      return {
-        label: selectedMaterial ? 'Siguiente: medida' : 'Selecciona un material',
-        disabled: !selectedMaterial,
-      };
-    }
-    if (activeStep === 'SIZE') {
-      return {
-        label: selectedSize ? 'Siguiente: encuadre' : 'Selecciona una medida',
-        disabled: !selectedSize,
-      };
-    }
-    if (activeStep === 'CROP') {
-      return {
-        label: cropProcessing ? 'Confirmando encuadre...' : 'Confirmar encuadre',
-        disabled: cropProcessing || !selectedSize || !image,
-      };
-    }
-    return null;
-  })();
-
-  const renderArtworkFrame = () => {
-    if (!image) return null;
-    const frameClasses = displayMaterial?.id === 'acrylic'
-      ? 'border-white/25 shadow-[0_20px_60px_rgba(255,255,255,0.08)]'
-      : displayMaterial?.id === 'metal'
-      ? 'border-slate-200/20 shadow-[0_20px_60px_rgba(148,163,184,0.14)]'
-      : displayMaterial?.id === 'paper'
-      ? 'border-[#efe6d0]/35 shadow-[0_24px_70px_rgba(0,0,0,0.45)]'
-      : 'border-[#8a5c3c]/28 shadow-[0_20px_60px_rgba(0,0,0,0.45)]';
-
-    const surfaceClasses = displayMaterial?.id === 'acrylic'
-      ? 'bg-black/30 after:absolute after:inset-0 after:bg-[linear-gradient(135deg,rgba(255,255,255,0.18),rgba(255,255,255,0.02)_38%,transparent_65%)] after:pointer-events-none'
-      : displayMaterial?.id === 'metal'
-      ? 'bg-[#0f1115] after:absolute after:inset-0 after:bg-[linear-gradient(120deg,transparent,rgba(255,255,255,0.12),transparent_68%)] after:pointer-events-none'
-      : displayMaterial?.id === 'paper'
-      ? 'bg-[#f4efe4] after:absolute after:inset-0 after:bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.45),transparent_52%)] after:pointer-events-none'
-      : 'bg-[#201512] after:absolute after:inset-0 after:bg-[linear-gradient(180deg,rgba(255,255,255,0.06),transparent_28%)] after:pointer-events-none';
+    // CÁLCULO DE TECHO DINÁMICO
+    const minRequiredY = picY - 20;
+    const defaultMinY = -20;
+    const currentMinY = Math.min(defaultMinY, minRequiredY);
+    const viewBoxHeight = 150 - currentMinY; 
+    
+    const dynamicViewBox = `0 ${currentMinY} 200 ${viewBoxHeight}`;
 
     return (
-      <div className="w-full h-full flex items-center justify-center p-3 sm:p-6 lg:p-8">
-        <div
-          className="relative flex items-center justify-center w-full h-full"
-          style={{ maxHeight: '100%', maxWidth: '100%' }}
-        >
-          <div
-            className={`relative w-full max-w-[min(92vw,1200px)] max-h-full rounded-[28px] border ${frameClasses} bg-black/60 p-2 sm:p-3 lg:p-4 overflow-hidden`}
-            style={{ aspectRatio: Math.max(0.5, Math.min(2, displayAspect || 1)) }}
-          >
-            <div className={`relative w-full h-full rounded-[22px] overflow-hidden ${surfaceClasses}`}>
-              <img
-                src={croppedDataUrl || image}
-                alt={asset?.name || 'Artwork preview'}
-                className={`w-full h-full ${finalCrop || activeStep === 'CHECKOUT' ? 'object-cover' : 'object-contain'} select-none pointer-events-none`}
-                draggable={false}
-              />
+      <div className="flex flex-col w-full h-full relative overflow-hidden bg-[#0a0a0c] rounded-3xl animate-in zoom-in-95 duration-500 shadow-inner">
+         
+         {/* Badge Flotante Superior */}
+         <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-black/80 px-6 py-2 rounded-full backdrop-blur-xl border border-white/10 z-20 flex items-center space-x-2 shadow-[0_10px_30px_rgba(0,0,0,0.5)]">
+            <Maximize className="w-4 h-4 text-[#DFB142]" />
+            <span className="text-white font-bold tracking-widest text-sm uppercase">Simulación Realista</span>
+         </div>
+
+         {/* SVG Principal - Render 3D Simulado */}
+         <div className="flex-1 w-full h-full flex items-center justify-center p-0">
+           <svg viewBox={dynamicViewBox} preserveAspectRatio="xMidYMid slice" className="w-full h-full drop-shadow-2xl overflow-visible">
+              <defs>
+                 {/* Textura de Pared (Ruido sutil para simular concreto/yeso) */}
+                 <filter id="wallNoise" x="0%" y="0%" width="100%" height="100%">
+                    <feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="3" result="noise" stitchTiles="stitch" />
+                    <feColorMatrix type="matrix" values="1 0 0 0 0, 0 1 0 0 0, 0 0 1 0 0, 0 0 0 0.03 0" />
+                 </filter>
+                 
+                 {/* Iluminación de Galería (Foco sobre el cuadro) */}
+                 <radialGradient id="galleryLight" cx="50%" cy="40%" r="70%">
+                    <stop offset="0%" stopColor="#2a2d34" />
+                    <stop offset="100%" stopColor="#0f1015" />
+                 </radialGradient>
+                 
+                 {/* Sombreado HD (Drop Shadow Pesado) */}
+                 <filter id="shadowHD" x="-20%" y="-20%" width="150%" height="150%">
+                    <feDropShadow dx="0" dy="6" stdDeviation="5" floodColor="#000" floodOpacity="0.9"/>
+                 </filter>
+                 <filter id="shadowSoft" x="-20%" y="-20%" width="150%" height="150%">
+                    <feDropShadow dx="0" dy="2" stdDeviation="2" floodColor="#000" floodOpacity="0.5"/>
+                 </filter>
+
+                 {/* Materiales Lujosos */}
+                 <linearGradient id="goldMaterial" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stopColor="#C5A059"/>
+                    <stop offset="50%" stopColor="#8B6914"/>
+                    <stop offset="100%" stopColor="#E2C77D"/>
+                 </linearGradient>
+
+                 <linearGradient id="woodWalnut" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stopColor="#1e1511"/>
+                    <stop offset="50%" stopColor="#2a1e18"/>
+                    <stop offset="100%" stopColor="#1e1511"/>
+                 </linearGradient>
+
+                 <linearGradient id="tvScreen" x1="0%" y1="0%" x2="0%" y2="100%">
+                    <stop offset="0%" stopColor="#0b101d"/>
+                    <stop offset="100%" stopColor="#020306"/>
+                 </linearGradient>
+
+                 <linearGradient id="glassGlare" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stopColor="white" stopOpacity="0.08"/>
+                    <stop offset="35%" stopColor="white" stopOpacity="0.0"/>
+                 </linearGradient>
+
+                 <linearGradient id="floorMarble" x1="0%" y1="0%" x2="0%" y2="100%">
+                    <stop offset="0%" stopColor="#0a0a0c"/>
+                    <stop offset="100%" stopColor="#15151a"/>
+                 </linearGradient>
+
+                 {/* Flechas Doradas Premium */}
+                 <marker id="tickGold" markerWidth="4" markerHeight="4" refX="2" refY="2">
+                    <line x1="0" y1="0" x2="4" y2="4" stroke="#DFB142" strokeWidth="0.5" />
+                    <line x1="4" y1="0" x2="0" y2="4" stroke="#DFB142" strokeWidth="0.5" />
+                 </marker>
+              </defs>
+
+              {/* Pared Hiperrealista */}
+              <rect x="0" y={currentMinY} width="200" height={120 - currentMinY} fill="url(#galleryLight)" />
+              <rect x="0" y={currentMinY} width="200" height={120 - currentMinY} fill="url(#wallNoise)" />
+              
+              {/* Rodapié y Suelo de Mármol Oscuro */}
+              <rect x="0" y="118" width="200" height="2" fill="#050505" />
+              <polygon points="0,120 200,120 200,150 0,150" fill="url(#floorMarble)" />
+              <polygon points="0,120 200,120 200,150 0,150" fill="url(#wallNoise)" opacity="0.5" />
+              
+              {/* Reflejo base en el piso */}
+              <polygon points="0,120 200,120 200,125 0,125" fill="white" opacity="0.02" />
+
+              {/* Lámpara de Diseño (Latón Cepillado) - Izquierda */}
+              <g transform="translate(0, 0)">
+                 {/* Base pesada de mármol */}
+                 <ellipse cx="25" cy="120" rx="8" ry="2" fill="#111" />
+                 <path d="M 18,118 Q 25,115 32,118 L 33,120 L 17,120 Z" fill="#222" />
+                 {/* Poste principal dorado */}
+                 <rect x="24.5" y="45" width="1" height="73" fill="url(#goldMaterial)" filter="url(#shadowSoft)" />
+                 {/* Brazo curvo */}
+                 <path d="M 25,45 Q 35,35 45,45" fill="none" stroke="url(#goldMaterial)" strokeWidth="1" />
+                 {/* Cabezal tipo cono */}
+                 <path d="M 40,45 L 50,45 L 48,40 L 42,40 Z" fill="#111" />
+                 {/* Foco de Luz */}
+                 <polygon points="42,45 48,45 60,120 20,120" fill="#E2C77D" opacity="0.04" /> 
+              </g>
+
+              {/* Consola Flotante Luxury (Nogal Oscuro) */}
+              <g transform="translate(0, 0)">
+                 <rect x="60" y="98" width="80" height="12" fill="url(#woodWalnut)" rx="1.5" filter="url(#shadowHD)" />
+                 <rect x="60" y="98" width="80" height="0.5" fill="#3a2a22" /> {/* Luz en el borde superior */}
+                 {/* Cajones Seamless */}
+                 <line x1="86" y1="98" x2="86" y2="110" stroke="#000" strokeWidth="0.5" opacity="0.6" />
+                 <line x1="112" y1="98" x2="112" y2="110" stroke="#000" strokeWidth="0.5" opacity="0.6" />
+                 {/* Tiras LED debajo de la consola */}
+                 <rect x="65" y="110" width="70" height="4" fill="#E2C77D" opacity="0.1" filter="url(#shadowSoft)" />
+              </g>
+
+              {/* TV OLED 42" A Escala (37" ancho x 21" alto) */}
+              <g transform="translate(0, 0)">
+                 {/* Soporte Metálico Central */}
+                 <path d="M 92,98 L 108,98 L 105,95 L 95,95 Z" fill="#111" />
+                 <rect x="99.5" y="85" width="1" height="10" fill="#222" />
+                 
+                 {/* Panel OLED (Ultrafino y Glossy) */}
+                 <rect x="81.5" y="77" width="37" height="21" rx="0.5" fill="#020202" filter="url(#shadowHeavy)" />
+                 <rect x="81.8" y="77.3" width="36.4" height="20.4" fill="url(#tvScreen)" />
+                 
+                 {/* Texto en Pantalla */}
+                 <text x="100" y="88.5" fill="rgba(255,255,255,0.6)" fontSize="2.5" textAnchor="middle" fontFamily="sans-serif" letterSpacing="1" fontWeight="300">42" OLED 4K</text>
+                 
+                 {/* Reflejo del Cristal */}
+                 <polygon points="81.8,77.3 118.2,77.3 118.2,97.7 81.8,77.3" fill="url(#glassGlare)" pointerEvents="none" />
+                 <line x1="81.5" y1="77" x2="118.5" y2="77" stroke="#333" strokeWidth="0.2" />
+              </g>
+
+              {/* PS5 (Consola Next-Gen) */}
+              <g transform="translate(0, 0)">
+                 {/* Cuerpo blanco curvado */}
+                 <rect x="123" y="82" width="4" height="16" rx="2" fill="#e2e8f0" filter="url(#shadowSoft)" />
+                 {/* Núcleo Negro */}
+                 <rect x="124" y="82.5" width="2" height="15" fill="#000" />
+                 {/* Tira LED Azul Neón */}
+                 <rect x="124.5" y="82.5" width="0.4" height="15" fill="#3b82f6" filter="url(#shadowSoft)" />
+              </g>
+
+              {/* Planta Premium (Maceta de Concreto y Hojas Monstera) */}
+              <g transform="translate(0, 0)">
+                 {/* Maceta Cilíndrica Concreto */}
+                 <polygon points="146,120 160,120 162,95 144,95" fill="#2d2d30" filter="url(#shadowHD)" />
+                 <ellipse cx="153" cy="95" rx="9" ry="2" fill="#111" />
+                 
+                 {/* Follaje Orgánico Profundo */}
+                 <ellipse cx="153" cy="80" rx="7" ry="22" fill="#1b362c" transform="rotate(-15 153 80)" />
+                 <ellipse cx="153" cy="85" rx="8" ry="18" fill="#244d3d" transform="rotate(20 153 85)" />
+                 <ellipse cx="153" cy="75" rx="6" ry="15" fill="#2c634e" />
+                 <ellipse cx="153" cy="88" rx="8" ry="16" fill="#172b23" transform="rotate(-35 153 88)" />
+                 <ellipse cx="153" cy="86" rx="7" ry="14" fill="#2c634e" transform="rotate(45 153 86)" />
+              </g>
+
+              {/* TU CUADRO DINÁMICO */}
+              <g>
+                <foreignObject x={picX} y={picY} width={mockupW} height={mockupH}>
+                  <div 
+                    className="w-full h-full bg-cover bg-center shadow-[0_25px_50px_rgba(0,0,0,0.95)] border border-[#222]"
+                    style={{ backgroundImage: `url(${image})` }}
+                  />
+                </foreignObject>
+                
+                {/* Cotas Arquitectónicas Luxury (Cobre/Dorado) */}
+                <line x1={picX} y1={picY - 3} x2={picX + mockupW} y2={picY - 3} stroke="#DFB142" strokeWidth="0.4" markerStart="url(#tickGold)" markerEnd="url(#tickGold)" opacity="0.8" />
+                <text x={picX + mockupW/2} y={picY - 4.5} fill="#DFB142" fontSize="3.5" textAnchor="middle" fontWeight="bold" letterSpacing="0.5">{mockupW}"</text>
+
+                <line x1={picX - 3} y1={picY} x2={picX - 3} y2={picY + mockupH} stroke="#DFB142" strokeWidth="0.4" markerStart="url(#tickGold)" markerEnd="url(#tickGold)" opacity="0.8" />
+                <text x={picX - 4.5} y={picY + mockupH/2} fill="#DFB142" fontSize="3.5" textAnchor="middle" fontWeight="bold" transform={`rotate(-90, ${picX - 4.5}, ${picY + mockupH/2})`} letterSpacing="0.5">{mockupH}"</text>
+              </g>
+           </svg>
+         </div>
+
+         {/* Leyenda Arquitectónica (Dark Mode Lujoso) */}
+         <div className="w-full bg-[#050507] border-t border-[#1a1a24] p-4 lg:p-5 flex justify-between items-center text-[10px] sm:text-xs z-30">
+            <div className="flex items-center space-x-6">
+               <div className="flex items-center space-x-2 hidden lg:flex">
+                  <div className="w-2.5 h-2.5 bg-[#C5A059] rounded-sm shadow-sm border border-[#fff]/10"></div>
+                  <span className="text-[#888]">Lámpara Diseño: <b className="text-[#ccc] font-medium">Arc 65"</b></span>
+               </div>
+               <div className="flex items-center space-x-2 hidden sm:flex">
+                  <div className="w-2.5 h-2.5 bg-[#2a1e18] rounded-sm shadow-sm border border-[#fff]/10"></div>
+                  <span className="text-[#888]">Consola Flotante: <b className="text-[#ccc] font-medium">80" x 12"</b></span>
+               </div>
+               <div className="flex items-center space-x-2">
+                  <div className="w-2.5 h-2.5 bg-[#0b101d] rounded-sm shadow-sm border border-[#fff]/10"></div>
+                  <span className="text-[#888]">Smart TV: <b className="text-[#ccc] font-medium">42" (37" x 21")</b></span>
+               </div>
             </div>
-          </div>
-        </div>
+            
+            {/* Tag Resaltado del Cuadro */}
+            <div className="flex items-center space-x-2 bg-[#DFB142]/10 px-4 py-2 rounded-lg border border-[#DFB142]/30 flex-shrink-0">
+               <div className="w-2 h-2 rounded-full bg-[#DFB142] animate-pulse shadow-[0_0_8px_rgba(223,177,66,0.8)]"></div>
+               <span className="text-[#DFB142] font-semibold tracking-wide uppercase text-[10px]">
+                  Tu Arte: <b className="text-white ml-1">{mockupW}" x {mockupH}"</b>
+               </span>
+            </div>
+         </div>
       </div>
+    );
+  };
+
+  // Visualizador Definitivo del Corte (Se muestra en Checkout para dar seguridad)
+  const renderFinalCropPreview = () => {
+    if (!finalCrop) return null;
+    return (
+      <div className="flex flex-col items-center justify-center w-full h-full animate-in zoom-in duration-500">
+         <div className="absolute top-6 left-1/2 transform -translate-x-1/2 bg-green-500/20 text-green-400 px-6 py-2 rounded-full backdrop-blur-md border border-green-500/30 z-20 flex items-center space-x-2">
+            <Check className="w-4 h-4" />
+            <span className="font-bold tracking-widest">Encuadre Exacto Confirmado</span>
+         </div>
+
+         <div className="w-full flex-1 min-h-0 flex items-center justify-center relative mt-4">
+             <div 
+               className="relative overflow-hidden shadow-[0_30px_60px_rgba(0,0,0,0.8)] border-[3px] border-[#22c55e] rounded-xl bg-[#0a0a0a]"
+               style={{ 
+                   // Aseguramos que el contenedor respete el aspect ratio de la medida seleccionada y ocupe el mayor espacio posible
+                   width: finalCrop.aspect > 1 ? '100%' : 'auto',
+                   height: finalCrop.aspect > 1 ? 'auto' : '100%',
+                   aspectRatio: finalCrop.aspect,
+                   maxHeight: '100%',
+                   maxWidth: '100%'
+               }}
+             >
+                {/* Matemáticas CSS puras para ampliar y aislar solo la parte cortada */}
+                  {croppedDataUrl ? (
+                    <img
+                      src={croppedDataUrl}
+                      alt="Cropped Final"
+                      className="w-full h-full object-cover"
+                      style={{ position: "absolute", inset: 0 }}
+                    />
+                  ) : (
+                    <img
+                      src={image}
+                      style={{
+                        position: 'absolute',
+                        left: `-${(finalCrop.x / finalCrop.w) * 100}%`,
+                        top: `-${(finalCrop.y / finalCrop.h) * 100}%`,
+                        width: `${100 / finalCrop.w}%`,
+                        height: `${100 / finalCrop.h}%`,
+                        maxWidth: 'none',
+                        maxHeight: 'none',
+                      }}
+                      alt="Cropped Final"
+                    />
+                  )}
+                  {!croppedDataUrl && cropGenError && (
+                    <div className="absolute bottom-2 left-2 right-2 bg-white/10 border border-white/20 text-white text-[11px] p-2 rounded-xl backdrop-blur-sm">
+                      No se pudo mostrar el preview aquí, pero el encuadre se guardó y el servidor lo procesará.
+                      <div className="mt-1 text-white/70">Detalle: {cropGenError}</div>
+                    </div>
+                  )}
+             </div>
+         </div>
+         
+               </div>
     );
   };
 
   const renderCropper = () => {
     return (
-      <div className="w-full h-full min-h-0 flex items-center justify-center overflow-hidden overscroll-contain p-3 sm:p-6">
-        <div
-          ref={imageWrapperRef}
-          className="relative flex items-center justify-center max-w-full max-h-full rounded-[26px] overflow-hidden touch-none select-none bg-black/35 border border-white/10 shadow-[0_20px_70px_rgba(0,0,0,0.45)]"
-          style={{ width: '100%', height: '100%' }}
+      <div className="w-full h-full min-h-0 flex items-center justify-center overflow-hidden overscroll-contain px-1 sm:px-3 pb-1 sm:pb-2">
+        <div 
+          ref={imageWrapperRef} 
+          className="relative inline-flex items-center justify-center max-w-full max-h-full shadow-[0_0_50px_rgba(0,0,0,0.5)] rounded-md overflow-hidden touch-none select-none"
+          style={{ maxHeight: '100%', maxWidth: '100%' }}
         >
-          <img
-            src={image || undefined}
-            alt="Upload"
-            onLoad={updateCropSize}
-            className="block w-auto h-auto max-w-full max-h-full object-contain pointer-events-none select-none touch-none"
-            draggable={false}
-          />
+        <img 
+          src={image} 
+          alt="Upload" 
+          onLoad={updateCropSize}
+          className="block max-w-full max-h-full object-contain pointer-events-none select-none touch-none"
+          draggable={false}
+        />
 
-          {selectedSize && (
-            <>
-              <svg className="absolute inset-0 w-full h-full pointer-events-none z-10">
-                <defs>
+        {selectedSize && (
+          <svg className="absolute inset-0 w-full h-full pointer-events-none z-10 transition-opacity duration-300">
+              <defs>
                   <mask id="crop-mask">
-                    <rect width="100%" height="100%" fill="white" />
-                    <rect x={cropRect.x} y={cropRect.y} width={cropRect.w} height={cropRect.h} fill="black" />
+                      <rect width="100%" height="100%" fill="white" />
+                      <rect x={cropRect.x} y={cropRect.y} width={cropRect.w} height={cropRect.h} fill="black" />
                   </mask>
-                </defs>
-                <rect width="100%" height="100%" fill="rgba(0,0,0,0.58)" mask="url(#crop-mask)" />
-              </svg>
+              </defs>
+              <rect 
+                width="100%" 
+                height="100%" 
+                fill="rgba(0,0,0,0.65)" 
+                mask="url(#crop-mask)" 
+                className="transition-all duration-500"
+              />
+          </svg>
+        )}
 
-              <div
-                className={`absolute z-20 ${isLockedArtDecoPurchase ? 'cursor-default' : 'cursor-move'}`}
-                style={{
-                  left: `${cropRect.x}px`,
-                  top: `${cropRect.y}px`,
-                  width: `${cropRect.w}px`,
-                  height: `${cropRect.h}px`,
-                  touchAction: 'none',
-                  overscrollBehavior: 'contain',
-                }}
-                onPointerDown={handlePointerDown}
-              >
-                <div className="absolute inset-0 rounded-[18px] border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.45)]" />
-                <div className="absolute inset-0 rounded-[18px] border border-white/35" />
-                <div className="absolute inset-0 grid grid-cols-3 grid-rows-3 pointer-events-none opacity-55">
-                  <div className="border-r border-b border-white/55"></div>
-                  <div className="border-r border-b border-white/55"></div>
-                  <div className="border-b border-white/55"></div>
-                  <div className="border-r border-b border-white/55"></div>
-                  <div className="border-r border-b border-white/55"></div>
-                  <div className="border-b border-white/55"></div>
-                  <div className="border-r border-white/55"></div>
-                  <div className="border-r border-white/55"></div>
-                  <div></div>
-                </div>
+        {selectedSize && (
+          <div 
+            className={`absolute transition-transform z-20 ${activeStep !== 'CROP' ? 'pointer-events-none' : isLockedArtDecoPurchase ? 'cursor-default' : 'cursor-move hover:scale-[1.01]'}`}
+            style={{
+              left: `${cropRect.x}px`,
+              top: `${cropRect.y}px`,
+              width: `${cropRect.w}px`,
+              height: `${cropRect.h}px`,
+              touchAction: 'none',
+              overscrollBehavior: 'contain',
+            }}
+            onPointerDown={handlePointerDown}
+          >
+            <svg className={`absolute inset-0 w-full h-full pointer-events-none transition-opacity duration-300 ${activeStep === 'CROP' ? 'opacity-100' : 'opacity-0'}`}>
+               <rect x="0" y="0" width="100%" height="100%" fill="none" stroke="white" strokeWidth="2.5" strokeDasharray="10 10" className="animate-marching-ants drop-shadow-md" />
+            </svg>
+            
+            <div className={`absolute inset-0 border-2 transition-all duration-300 ${activeStep === 'CHECKOUT' || activeStep === 'SUCCESS' ? 'border-solid border-green-400 opacity-100 shadow-[0_0_15px_rgba(34,197,94,0.5)]' : 'opacity-0'}`}></div>
+            
+            {isDragging && activeStep === 'CROP' && (
+              <div className="absolute inset-0 grid grid-cols-3 grid-rows-3 pointer-events-none opacity-60">
+                <div className="border-r border-b border-white/50"></div>
+                <div className="border-r border-b border-white/50"></div>
+                <div className="border-b border-white/50"></div>
+                <div className="border-r border-b border-white/50"></div>
+                <div className="border-r border-b border-white/50"></div>
+                <div className="border-b border-white/50"></div>
+                <div className="border-r border-white/50"></div>
+                <div className="border-r border-white/50"></div>
+                <div></div>
               </div>
-            </>
-          )}
+            )}
+          </div>
+        )}
         </div>
       </div>
     );
   };
 
-  const renderViewport = () => {
-    if (!image) {
-      return (
-        <div className="w-full h-full rounded-[30px] border border-white/10 bg-white/5 backdrop-blur-sm shadow-2xl overflow-hidden p-6 flex flex-col items-center justify-center text-center">
-          <button
-            type="button"
-            onClick={() => setPickerOpen(true)}
-            className="w-24 h-24 sm:w-28 sm:h-28 rounded-3xl bg-white/10 hover:bg-white/18 border border-white/10 hover:border-[#7EAAED] transition flex items-center justify-center shadow-2xl"
-          >
-            <ImageIcon size={40} className="text-white/90" />
-          </button>
-          <button
-            type="button"
-            onClick={() => setPickerOpen(true)}
-            className="mt-6 px-6 py-3 rounded-2xl bg-[#7EAAED] text-black font-extrabold hover:brightness-110 transition"
-          >
-            Cargar imagen
-          </button>
-          <div className="mt-3 text-xs text-white/55">4K mínimo · 3840 × 2160</div>
-        </div>
-      );
-    }
+  const renderVisualEditor = () => {
+    if (!image) return null;
 
     return (
-      <div className="relative w-full h-full rounded-[30px] border border-white/8 bg-black/35 overflow-hidden backdrop-blur-sm shadow-2xl">
-        <div className="absolute top-3 left-3 z-30">
-          <button
-            type="button"
-            onClick={() => setPickerOpen(true)}
-            className="rounded-full border border-white/10 bg-black/60 px-3 py-2 text-[11px] font-semibold text-white/90 backdrop-blur hover:bg-black/75 transition"
-          >
-            Cambiar imagen
-          </button>
-        </div>
-
+      <div className="relative w-full h-full min-h-0 rounded-[28px] border border-white/8 bg-black/40 overflow-hidden backdrop-blur-sm shadow-2xl p-3 sm:p-4 lg:p-6">
         {activeStep === 'VERIFYING' && (
-          <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm">
+          <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
             <div className="w-16 h-16 border-4 border-purple-500 border-t-transparent rounded-full animate-spin mb-4"></div>
             <h3 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-[#7EAAED] to-[#7D45A9]">
               Analizando resolución 4K...
@@ -1332,16 +1537,22 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
         )}
 
         {image && !dimsLoading && dims && !is4kOk && (
-          <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-black/82 backdrop-blur-sm p-4 text-center">
+          <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-black/82 backdrop-blur-sm animate-in fade-in duration-300 p-4 text-center">
             <div className="max-w-xl w-full rounded-3xl border border-red-500/30 bg-black/60 p-5 shadow-[0_0_40px_rgba(239,68,68,0.15)]">
               <h3 className="text-2xl font-extrabold text-white">Resolución insuficiente</h3>
               <p className="text-gray-300 mt-2">
                 Tu imagen es <span className="text-white font-bold">{dims.w}×{dims.h}</span>. Se requiere <span className="text-white font-bold">4K (3840×2160)</span>.
               </p>
+
               <div className="flex flex-col sm:flex-row gap-3 justify-center mt-6">
-                <button type="button" onClick={handleGoToUpscale} className="px-5 py-3 rounded-2xl bg-[#DFB142] text-black font-extrabold hover:brightness-110 transition">
+                <button
+                  type="button"
+                  onClick={handleGoToUpscale}
+                  className="px-5 py-3 rounded-2xl bg-[#DFB142] text-black font-extrabold hover:brightness-110 transition"
+                >
                   Ir a Upscale
                 </button>
+
                 <button
                   type="button"
                   onClick={() => {
@@ -1349,8 +1560,7 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
                     setAsset(null);
                     setDims(null);
                     setIs4kOk(false);
-                    setExpandedStep(null);
-                    setActiveStep('UPLOAD');
+                    setActiveStep("UPLOAD");
                   }}
                   className="px-5 py-3 rounded-2xl bg-white/10 text-white font-bold hover:bg-white/20 transition"
                 >
@@ -1361,320 +1571,287 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
           </div>
         )}
 
-        <div className="w-full h-full">
-          {activeStep === 'CROP' ? renderCropper() : renderArtworkFrame()}
+        <div className="absolute top-3 left-3 z-30 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setPickerOpen(true)}
+            className="rounded-full border border-white/10 bg-black/60 px-3 py-2 text-[11px] font-semibold text-white/90 backdrop-blur hover:bg-black/75 transition"
+          >
+            {image ? 'Cambiar imagen' : 'Seleccionar imagen'}
+          </button>
+        </div>
+
+        {image ? (
+          <div className="absolute top-3 right-3 z-30 w-16 h-16 sm:w-20 sm:h-20 overflow-hidden rounded-2xl border border-white/15 bg-black/60 shadow-xl">
+            <img src={croppedDataUrl || image} alt={asset?.name || 'Preview actual'} className="w-full h-full object-cover" />
+          </div>
+        ) : null}
+
+        <div className="w-full h-full min-h-0 flex items-center justify-center pt-12 sm:pt-12 pb-1 sm:pb-2 overflow-hidden">
+          {activeStep === 'MATERIAL' && renderMaterialInfographic()}
+          {activeStep === 'SIZE' && renderSizeMockup()}
+          {activeStep === 'CROP' && renderCropper()}
+          {(activeStep === 'MODE' || activeStep === 'CHECKOUT' || activeStep === 'SUCCESS' || activeStep === 'PROCESSING') && renderFinalCropPreview()}
         </div>
       </div>
     );
   };
 
-  const renderStepOverlayContent = () => {
-    if (!expandedStep) return null;
-
-    if (expandedStep === 'MATERIAL') {
+  // --- RENDER DEL SIDEBAR (ACORDEÓN CONTINUO) ---
+  const renderSidebar = () => {
+    if (activeStep === 'PROCESSING') {
       return (
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-          {MATERIALS.map((mat) => {
-            const selected = selectedMaterial?.id === mat.id;
-            return (
-              <button
-                key={mat.id}
-                type="button"
-                onClick={() => handleMaterialPick(mat)}
-                className={`rounded-2xl border p-4 text-left transition-all ${selected ? 'border-[#DE6C53] bg-[#DE6C53]/18 shadow-[0_0_24px_rgba(222,108,83,0.18)]' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}
-              >
-                <div className={`mb-3 inline-flex rounded-2xl p-3 ${selected ? 'bg-[#DE6C53] text-black' : 'bg-black/35 text-white'}`}>{mat.icon}</div>
-                <div className="font-bold text-white">{mat.label}</div>
-                <div className="mt-1 text-sm text-white/62">{mat.desc}</div>
-              </button>
-            );
-          })}
+        <div className="flex flex-col items-center justify-center h-full space-y-6 text-center px-4">
+          <div className="w-20 h-20 border-4 border-[#DFB142] border-t-transparent rounded-full animate-spin shadow-[0_0_30px_rgba(223,177,66,0.3)]"></div>
+          <h2 className="text-2xl font-bold text-white">Procesando orden...</h2>
+          <p className="text-gray-400 text-sm max-w-md">Estamos registrando tu pedido físico y preparando la confirmación.</p>
         </div>
       );
     }
 
-    if (expandedStep === 'SIZE') {
+    if (activeStep === 'SUCCESS') {
+      const isListingSuccess = successMode === 'listing';
       return (
-        <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-          {SIZES.map((size) => {
-            const selected = selectedSize?.id === size.id;
-            return (
-              <button
-                key={size.id}
-                type="button"
-                onClick={() => handleSizePick(size)}
-                className={`rounded-2xl border p-4 text-left transition-all ${selected ? 'border-[#7EAAED] bg-[#7EAAED]/18 shadow-[0_0_24px_rgba(126,170,237,0.18)]' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="font-bold text-white">{size.label}</div>
-                    <div className="mt-1 text-sm text-white/62">Proporción {Number(size.w)}:{Number(size.h)}</div>
-                  </div>
-                  <Maximize className={`w-5 h-5 ${selected ? 'text-[#7EAAED]' : 'text-white/45'}`} />
-                </div>
-                <div className="mt-3 text-[#DFB142] font-bold">${(size.basePrice * (selectedMaterial?.multiplier || 1)).toFixed(2)}</div>
-              </button>
-            );
-          })}
-        </div>
-      );
-    }
-
-    if (expandedStep === 'CROP') {
-      return (
-        <div className="space-y-4">
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-white/76">
-            Arrastra el encuadre directamente sobre la imagen. La foto siempre se muestra completa dentro del viewport para que puedas alcanzar cualquier borde antes de confirmar.
+        <div className="flex flex-col items-center justify-center h-full space-y-6 text-center animate-in zoom-in duration-500 px-4">
+          <div className="w-24 h-24 bg-green-500/20 rounded-full flex items-center justify-center border-2 border-green-500 mb-4 shadow-[0_0_50px_rgba(34,197,94,0.4)]">
+            <Check className="w-12 h-12 text-green-400" />
           </div>
-          <div className="flex flex-wrap gap-3">
+          <h2 className="text-3xl font-bold text-white">{isListingSuccess ? '¡Art Deco publicado!' : '¡Pedido confirmado!'}</h2>
+          <div className="bg-black/50 border border-white/10 p-6 rounded-xl w-full mt-2">
+            <span className="block text-xs text-gray-500 uppercase tracking-widest mb-2">{isListingSuccess ? 'Listing ID' : 'Código de Fábrica'}</span>
+            <span className="block text-2xl font-mono text-[#7EAAED] tracking-widest font-bold">{orderCode || publishedListingId || '1NUP-UNKNOWN'}</span>
+          </div>
+          <button onClick={() => window.location.reload()} className="text-sm text-[#DFB142] hover:text-white transition-colors">
+            Comenzar una nueva creación
+          </button>
+        </div>
+      );
+    }
+
+    if (!image) {
+      return (
+        <div className="h-full overflow-y-auto pr-1 pb-6 custom-scrollbar">
+          <div className="rounded-2xl border border-[#7EAAED]/30 bg-black/55 p-5 shadow-[0_0_20px_rgba(126,170,237,0.15)]">
+            <div className="flex items-center gap-4">
+              <div className="w-8 h-8 rounded-full bg-[#7EAAED] text-black font-bold flex items-center justify-center">1</div>
+              <div>
+                <h3 className="text-xl font-bold text-white">Imagen</h3>
+                <p className="text-sm text-[#7EAAED]">Imagen 4K</p>
+              </div>
+            </div>
             <button
               type="button"
-              onClick={() => {
-                updateCropSize();
-                setIsCropped(false);
-                setFinalCrop(null);
-                setCroppedDataUrl(null);
-              }}
-              className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-white hover:bg-white/10 transition"
+              onClick={() => setPickerOpen(true)}
+              className="mt-5 w-full rounded-2xl bg-[#7EAAED] px-5 py-4 text-base font-extrabold text-black transition hover:brightness-110"
             >
-              Centrar encuadre
+              Abrir historial
             </button>
-            <button
-              type="button"
-              disabled={cropProcessing || !selectedSize}
-              onClick={handleConfirmCrop}
-              className={`rounded-2xl px-5 py-3 text-sm font-extrabold transition ${cropProcessing || !selectedSize ? 'bg-white/10 text-white/40 cursor-not-allowed' : 'bg-[#DFB142] text-black hover:brightness-110'}`}
-            >
-              {cropProcessing ? 'Confirmando...' : 'Confirmar encuadre'}
-            </button>
+            <div className="mt-3 text-xs text-white/55">Mínimo 3840 × 2160</div>
+            {historyLoading ? <div className="mt-3 text-sm text-white/65">Cargando historial...</div> : null}
+            {historyError ? <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{historyError}</div> : null}
           </div>
         </div>
       );
     }
 
-    if (expandedStep === 'CHECKOUT') {
-      return (
-        <div className="space-y-5">
-          <div className="bg-white/5 rounded-2xl p-4 border border-white/10">
-            <div className="flex justify-between items-center text-sm text-gray-300 mb-2">
-              <span>{isLockedArtDecoPurchase ? (prefillArtDeco?.name || 'Art Deco físico') : `${selectedMaterial?.label} · ${selectedSize?.label}`}</span>
-            </div>
-            <div className="space-y-2 border-t border-white/10 pt-3 text-sm">
-              <div className="flex justify-between items-center text-gray-300"><span>{isLockedArtDecoPurchase ? 'Precio Art Deco' : 'Costo de producción'}</span><span>{formatUsd(checkoutUnitPrice)}</span></div>
-              <div className="flex justify-between items-center text-gray-300"><span>{formData.method === 'pickup' ? 'Retiro' : 'Envío'}</span><span>{formatUsd(shippingCost)}</span></div>
-              <div className="flex justify-between items-center text-lg font-bold text-white pt-2"><span>Total</span><span className="text-[#DFB142]">{formatUsd(checkoutTotal)}</span></div>
-            </div>
-          </div>
-
-          <form onSubmit={handleCheckoutSubmit} className="space-y-4">
-            {submitError && (
-              <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-white">
-                {submitError}
-              </div>
-            )}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <input required type="text" className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Nombre completo" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})}/>
-              <input required type="email" className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Correo electrónico" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})}/>
-              <input required type="tel" className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Número de teléfono" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})}/>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <button type="button" onClick={() => setFormData({...formData, method: 'shipping'})} className={`py-3 rounded-xl border flex flex-col items-center justify-center space-y-1 transition-all ${formData.method === 'shipping' ? 'bg-green-500/20 border-green-500 text-green-400' : 'bg-white/5 border-white/10 text-gray-400'}`}>
-                <Truck className="w-5 h-5" />
-                <span className="text-xs font-medium">Envío</span>
-              </button>
-              <button type="button" onClick={() => setFormData({...formData, method: 'pickup'})} className={`py-3 rounded-xl border flex flex-col items-center justify-center space-y-1 transition-all ${formData.method === 'pickup' ? 'bg-green-500/20 border-green-500 text-green-400' : 'bg-white/5 border-white/10 text-gray-400'}`}>
-                <ShoppingCart className="w-5 h-5" />
-                <span className="text-xs font-medium">Recoger</span>
-              </button>
-            </div>
-
-            {formData.method === 'shipping' && (
-              <div className="space-y-3">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <input required type="text" className="md:col-span-2 w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Dirección" value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})}/>
-                  <input type="text" className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Apt / Suite" value={formData.apt} onChange={e => setFormData({...formData, apt: e.target.value})}/>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <input required type="text" className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Ciudad" value={formData.city} onChange={e => setFormData({...formData, city: e.target.value})}/>
-                  <input required type="text" className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Estado" value={formData.state} onChange={e => setFormData({...formData, state: e.target.value})}/>
-                  <input required type="text" className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Código postal" value={formData.zip} onChange={e => setFormData({...formData, zip: e.target.value})}/>
-                </div>
-              </div>
-            )}
-
-            <textarea className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm h-24 resize-none" placeholder="Notas (opcional)" value={formData.notes} onChange={e => setFormData({...formData, notes: e.target.value})}></textarea>
-
-            <button type="submit" className="w-full rounded-2xl bg-gradient-to-r from-green-500 to-emerald-700 px-6 py-4 text-lg font-extrabold text-white hover:brightness-110 transition">
-              {`Pagar ${formatUsd(checkoutTotal)}`}
-            </button>
-          </form>
-        </div>
-      );
-    }
-
-    return null;
-  };
-
-  const renderStepOverlay = () => {
-    if (!expandedStep || !image || activeStep === 'PROCESSING' || activeStep === 'SUCCESS') return null;
-    const item = stepItems.find((entry) => entry.step === expandedStep);
     return (
-      <div className="fixed inset-x-0 bottom-[102px] sm:bottom-[108px] z-40 px-2 sm:px-4 lg:px-6">
-        <div className="mx-auto max-w-[1800px] rounded-[28px] border border-white/12 bg-[#090909]/92 backdrop-blur-2xl shadow-[0_30px_90px_rgba(0,0,0,0.55)] overflow-hidden">
-          <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 sm:px-6 py-4">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/5" style={{ color: item?.color }}>
-                {item?.icon}
+      <div ref={stepsScrollRef} className="flex flex-col space-y-4 h-full overflow-y-auto pr-1 pb-8 custom-scrollbar">
+        <div ref={materialStepRef} className={`rounded-2xl border transition-all duration-500 overflow-hidden flex-shrink-0 ${activeStep === 'MATERIAL' ? 'border-[#DE6C53] bg-black/60 shadow-[0_0_20px_rgba(222,108,83,0.2)]' : selectedMaterial ? 'border-white/20 bg-black/40' : 'border-white/5 bg-black/20 opacity-60'}`}>
+          <div
+            className={`p-5 flex justify-between items-center ${selectedMaterial && activeStep !== 'MATERIAL' ? 'cursor-pointer hover:bg-white/5' : ''}`}
+            onClick={() => { if (selectedMaterial && activeStep !== 'MATERIAL' && !isLockedArtDecoPurchase) handleEditStep('MATERIAL') }}
+          >
+            <div className="flex items-center space-x-4">
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold ${activeStep === 'MATERIAL' ? 'bg-[#DE6C53] text-black' : selectedMaterial ? 'bg-green-500 text-black' : 'bg-white/10 text-white'}`}>
+                {selectedMaterial && activeStep !== 'MATERIAL' ? <Check className="w-5 h-5"/> : '1'}
               </div>
               <div>
-                <div className="text-sm font-semibold text-white">{item?.label}</div>
-                <div className="text-xs text-white/55">{expandedStep === 'CHECKOUT' ? 'Completa tu compra' : 'Selecciona y continúa'}</div>
+                <h3 className={`font-bold ${activeStep === 'MATERIAL' ? 'text-xl text-white' : 'text-lg text-gray-300'}`}>Material</h3>
+                {selectedMaterial && activeStep !== 'MATERIAL' && <p className="text-sm text-[#DE6C53]">{selectedMaterial.label}</p>}
               </div>
             </div>
-            <button
-              type="button"
-              onClick={() => setExpandedStep(null)}
-              className="rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs font-semibold text-white/75 hover:bg-white/10 transition"
-            >
-              Cerrar
-            </button>
-          </div>
-          <div className="max-h-[min(48dvh,560px)] overflow-y-auto p-4 sm:p-6 custom-scrollbar">
-            {renderStepOverlayContent()}
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const renderStepBar = () => {
-    if (!image || activeStep === 'PROCESSING' || activeStep === 'SUCCESS') return null;
-    return (
-      <div className="relative z-30 border-t border-white/8 bg-black/72 backdrop-blur-2xl">
-        <div className="mx-auto max-w-[1800px] px-2 sm:px-4 lg:px-6 py-3 sm:py-4">
-          {primaryAction && (
-            <button
-              type="button"
-              disabled={primaryAction.disabled}
-              onClick={() => { void handleNextStep(); }}
-              className={`mb-3 sm:mb-4 w-full rounded-2xl px-5 py-4 text-base font-extrabold transition ${primaryAction.disabled ? 'bg-white/10 text-white/35 cursor-not-allowed' : activeStep === 'CROP' ? 'bg-[#DFB142] text-black hover:brightness-110' : 'bg-white text-black hover:brightness-110'}`}
-            >
-              <span className="inline-flex items-center gap-2">
-                {primaryAction.label}
-                {!primaryAction.disabled && activeStep !== 'CROP' ? <ChevronRight className="w-5 h-5" /> : null}
-              </span>
-            </button>
-          )}
-
-          <div className="grid grid-cols-4 gap-2 sm:gap-3">
-            {stepItems.map((item, index) => {
-              const status = getStepStatus(item.step);
-              const enabled = canOpenStep(item.step);
-              const selected = activeStep === item.step || expandedStep === item.step;
-              return (
-                <button
-                  key={item.step}
-                  type="button"
-                  disabled={!enabled}
-                  onClick={() => openStep(item.step)}
-                  className={`rounded-2xl border px-2 py-3 sm:px-4 sm:py-4 text-left transition-all ${selected ? 'border-white/18 bg-white/10' : status === 'done' ? 'border-white/12 bg-white/6' : 'border-white/8 bg-white/[0.03]'} ${enabled ? 'hover:bg-white/10' : 'opacity-45 cursor-not-allowed'}`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-2xl text-white" style={{ background: status === 'done' ? '#22c55e' : `${item.color}22`, color: status === 'done' ? '#04130a' : item.color }}>
-                      {status === 'done' ? <Check className="w-4 h-4" /> : item.icon}
-                    </div>
-                    <span className="text-[11px] font-semibold text-white/45">0{index + 1}</span>
-                  </div>
-                  <div className="mt-3 text-sm font-bold text-white">{item.label}</div>
-                  <div className="mt-1 text-[11px] text-white/52">
-                    {item.step === 'MATERIAL' && (selectedMaterial?.label || 'Pendiente')}
-                    {item.step === 'SIZE' && (selectedSize?.label || 'Pendiente')}
-                    {item.step === 'CROP' && (finalCrop ? 'Confirmado' : 'Pendiente')}
-                    {item.step === 'CHECKOUT' && (finalCrop || isLockedArtDecoPurchase ? 'Listo para pagar' : 'Bloqueado')}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const renderHistoryPicker = () => {
-    if (!pickerOpen) return null;
-    return (
-      <div className="fixed inset-0 z-[100] bg-black/70 backdrop-blur-sm flex items-center justify-center p-0 sm:p-4">
-        <div className="w-full h-[100dvh] sm:h-auto sm:max-w-6xl sm:max-h-[85vh] rounded-none sm:rounded-3xl border border-white/10 bg-black/70 shadow-2xl overflow-hidden flex flex-col">
-          <div className="p-5 border-b border-white/10 flex items-center justify-between">
-            <div>
-              <div className="text-xl font-extrabold">Selecciona una imagen</div>
-              <div className="text-xs text-gray-400 mt-1">Se muestran todas tus imágenes 4K recientes disponibles en historial.</div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setPickerOpen(false)}
-              className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 transition text-sm font-bold"
-            >
-              Cerrar
-            </button>
+            {selectedMaterial && activeStep !== 'MATERIAL' && !isLockedArtDecoPurchase && <Edit2 className="w-4 h-4 text-gray-400 hover:text-white transition-colors"/>}
           </div>
 
-          <div className="flex-1 overflow-y-auto p-5 custom-scrollbar">
-            {historyLoading && <div className="text-gray-300">Cargando historial...</div>}
-            {historyError && <div className="text-red-400">{historyError}</div>}
-
-            {!historyLoading && !historyError && historyImages.length === 0 && (
-              <div className="text-gray-400">No hay imágenes disponibles en tu historial.</div>
-            )}
-
-            {!historyLoading && !historyError && historyImages.length > 0 && (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-                {historyImages.map((a) => (
+          {activeStep === 'MATERIAL' && (
+            <div className="p-5 pt-0 animate-in slide-in-from-top-2 duration-300">
+              <div className="grid grid-cols-1 gap-3 mb-4">
+                {MATERIALS.map(mat => (
                   <button
-                    key={a.id}
-                    type="button"
-                    onClick={() => {
-                      setPickerOpen(false);
-                      void handleSelectFromHistory(a);
-                    }}
-                    className="group relative aspect-square rounded-2xl overflow-hidden border border-white/10 bg-black/40 hover:border-[#7EAAED] transition"
-                    title={a.prompt || a.name}
+                    key={mat.id}
+                    onClick={() => setPreviewMaterial(mat)}
+                    className={`w-full flex items-center p-4 rounded-xl border transition-all text-left group ${previewMaterial?.id === mat.id ? 'bg-[#DE6C53]/20 border-[#DE6C53] shadow-[0_0_15px_rgba(222,108,83,0.3)]' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}
                   >
-                    <img src={a.url} alt={a.name} className="w-full h-full object-cover" />
-                    <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity bg-gradient-to-t from-black/85 via-transparent to-transparent flex items-end p-2">
-                      <span className="text-[10px] text-white/90 line-clamp-2 text-left">{a.prompt || a.name}</span>
+                    <div className={`p-2 rounded-lg mr-4 transition-colors ${previewMaterial?.id === mat.id ? 'bg-[#DE6C53] text-black' : 'text-white bg-black/30 group-hover:text-[#DE6C53]'}`}>{mat.icon}</div>
+                    <div>
+                      <span className="block font-bold text-white">{mat.label}</span>
                     </div>
                   </button>
                 ))}
               </div>
-            )}
+
+              <div className={`overflow-hidden transition-all duration-500 ${previewMaterial ? 'max-h-24 opacity-100' : 'max-h-0 opacity-0'}`}>
+                <button onClick={handleConfirmMaterial} className="w-full py-4 rounded-xl font-bold bg-[#DE6C53] text-black hover:bg-[#eb7d65] transition-colors shadow-[0_0_20px_rgba(222,108,83,0.4)] flex items-center justify-center">
+                  Confirmar material <ChevronRight className="w-5 h-5 ml-1"/>
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div ref={sizeStepRef} className={`rounded-2xl border transition-all duration-500 overflow-hidden flex-shrink-0 ${activeStep === 'SIZE' ? 'border-[#7EAAED] bg-black/60 shadow-[0_0_20px_rgba(126,170,237,0.2)]' : selectedSize ? 'border-white/20 bg-black/40' : 'border-white/5 bg-black/20 opacity-60'}`}>
+          <div
+            className={`p-5 flex justify-between items-center ${selectedSize && activeStep !== 'SIZE' ? 'cursor-pointer hover:bg-white/5' : ''}`}
+            onClick={() => { if (selectedSize && activeStep !== 'SIZE' && !isLockedArtDecoPurchase) handleEditStep('SIZE') }}
+          >
+            <div className="flex items-center space-x-4">
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold ${activeStep === 'SIZE' ? 'bg-[#7EAAED] text-black' : selectedSize ? 'bg-green-500 text-black' : 'bg-white/10 text-white'}`}>
+                {selectedSize && activeStep !== 'SIZE' ? <Check className="w-5 h-5"/> : '2'}
+              </div>
+              <div>
+                <h3 className={`font-bold ${activeStep === 'SIZE' ? 'text-xl text-white' : 'text-lg text-gray-300'}`}>Medida</h3>
+                {selectedSize && activeStep !== 'SIZE' && <p className="text-sm text-[#7EAAED]">{selectedSize.label}</p>}
+              </div>
+            </div>
+            {selectedSize && activeStep !== 'SIZE' && !isLockedArtDecoPurchase && <Edit2 className="w-4 h-4 text-gray-400 hover:text-white transition-colors"/>}
           </div>
 
-          <div className="p-5 border-t border-white/10 text-xs text-gray-400">
-            Requisito para avanzar: <span className="text-white font-bold">mínimo 4K (3840×2160)</span>.
-          </div>
-        </div>
-      </div>
-    );
-  };
+          {activeStep === 'SIZE' && (
+            <div className="p-5 pt-0 animate-in slide-in-from-top-2 duration-300">
+              <div className="grid grid-cols-1 gap-2 mb-4">
+                {SIZES.map(size => (
+                  <button
+                    key={size.id}
+                    onClick={() => setPreviewSize(size)}
+                    className={`w-full flex items-center justify-between p-4 rounded-xl border transition-all group ${previewSize?.id === size.id ? 'bg-[#7EAAED]/20 border-[#7EAAED] shadow-[0_0_15px_rgba(126,170,237,0.3)]' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}
+                  >
+                    <span className="font-bold text-white flex items-center"><Maximize className={`w-4 h-4 mr-2 ${previewSize?.id === size.id ? 'text-[#7EAAED]' : 'text-gray-500 group-hover:text-[#7EAAED]'}`}/> {size.label}</span>
+                    <span className="text-[#DFB142] font-bold">${(size.basePrice * (selectedMaterial?.multiplier || 1)).toFixed(2)}</span>
+                  </button>
+                ))}
+              </div>
 
-  const renderSuccess = () => {
-    const isListingSuccess = successMode === 'listing';
-    return (
-      <div className="absolute inset-0 z-50 flex flex-col items-center justify-center px-4 text-center bg-black/55 backdrop-blur-md">
-        <div className="w-24 h-24 bg-green-500/20 rounded-full flex items-center justify-center border-2 border-green-500 mb-6 shadow-[0_0_50px_rgba(34,197,94,0.4)]">
-          <Check className="w-12 h-12 text-green-400" />
+              <div className={`overflow-hidden transition-all duration-500 ${previewSize ? 'max-h-24 opacity-100' : 'max-h-0 opacity-0'}`}>
+                <button onClick={handleConfirmSize} className="w-full py-4 rounded-xl font-bold bg-[#7EAAED] text-black hover:bg-[#8ebfff] transition-colors shadow-[0_0_20px_rgba(126,170,237,0.4)] flex items-center justify-center">
+                  Confirmar medida <ChevronRight className="w-5 h-5 ml-1"/>
+                </button>
+              </div>
+            </div>
+          )}
         </div>
-        <h2 className="text-3xl font-bold text-white">{isListingSuccess ? '¡Art Deco publicado!' : '¡Pedido confirmado!'}</h2>
-        <div className="mt-4 rounded-2xl border border-white/10 bg-black/45 px-6 py-5">
-          <div className="text-xs uppercase tracking-[0.25em] text-white/45">{isListingSuccess ? 'Listing ID' : 'Código de fábrica'}</div>
-          <div className="mt-2 text-2xl font-mono font-bold text-[#7EAAED]">{orderCode || publishedListingId || '1NUP-UNKNOWN'}</div>
+
+        <div ref={cropStepRef} className={`rounded-2xl border transition-all duration-500 overflow-hidden flex-shrink-0 ${activeStep === 'CROP' ? 'border-[#DFB142] bg-black/60 shadow-[0_0_20px_rgba(223,177,66,0.2)]' : isCropped ? 'border-white/20 bg-black/40' : 'border-white/5 bg-black/20 opacity-60'}`}>
+          <div
+            className={`p-5 flex justify-between items-center ${isCropped && activeStep !== 'CROP' ? 'cursor-pointer hover:bg-white/5' : ''}`}
+            onClick={() => { if (isCropped && activeStep !== 'CROP' && !isLockedArtDecoPurchase) handleEditStep('CROP') }}
+          >
+            <div className="flex items-center space-x-4">
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold ${activeStep === 'CROP' ? 'bg-[#DFB142] text-black' : isCropped ? 'bg-green-500 text-black' : 'bg-white/10 text-white'}`}>
+                {isCropped && activeStep !== 'CROP' ? <Check className="w-5 h-5"/> : '3'}
+              </div>
+              <div>
+                <h3 className={`font-bold ${activeStep === 'CROP' ? 'text-xl text-white' : 'text-lg text-gray-300'}`}>Encuadre</h3>
+                {isCropped && activeStep !== 'CROP' && <p className="text-sm text-[#DFB142]">Confirmado</p>}
+              </div>
+            </div>
+            {isCropped && activeStep !== 'CROP' && !isLockedArtDecoPurchase && <Edit2 className="w-4 h-4 text-gray-400 hover:text-white transition-colors"/>}
+          </div>
+
+          {activeStep === 'CROP' && (
+            <div className="p-5 pt-0 animate-in slide-in-from-top-2 duration-300">
+              {cropGenError ? (
+                <div className="mb-4 rounded-xl border border-amber-400/30 bg-amber-500/10 p-3 text-xs text-amber-100">{cropGenError}</div>
+              ) : null}
+              {isLockedArtDecoPurchase ? (
+                <div className="mb-4 rounded-xl border border-sky-400/20 bg-sky-500/10 p-3 text-xs text-sky-100">Este Art Deco ya fue publicado. El encuadre se mantiene bloqueado para esta compra.</div>
+              ) : null}
+
+              <button
+                onClick={handleConfirmCrop}
+                disabled={cropProcessing}
+                className={`group relative w-full p-1 rounded-2xl ${cropProcessing ? "opacity-60 cursor-not-allowed" : "animate-[pulse_1.5s_ease-in-out_infinite]"}`}
+              >
+                <div className="absolute inset-0 bg-gradient-to-r from-[#DFB142] to-[#DE6C53] rounded-2xl blur opacity-70 group-hover:opacity-100 transition duration-500"></div>
+                <div className="relative flex items-center justify-center space-x-2 px-6 py-4 bg-[#0a0a0a] rounded-xl text-white font-bold">
+                  <Check className="w-5 h-5 text-[#DFB142] group-hover:scale-125 transition-transform" />
+                  <span>{cropProcessing ? "Generando recorte..." : "Confirmar encuadre"}</span>
+                </div>
+              </button>
+            </div>
+          )}
         </div>
-        <button onClick={() => window.location.reload()} className="mt-6 rounded-2xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-semibold text-white hover:bg-white/10 transition">
-          Comenzar una nueva creación
-        </button>
+
+        <div ref={checkoutStepRef} className={`rounded-2xl border transition-all duration-500 overflow-hidden flex-shrink-0 ${activeStep === 'CHECKOUT' ? 'border-green-500 bg-black/60 shadow-[0_0_20px_rgba(34,197,94,0.2)]' : 'border-white/5 bg-black/20 opacity-60'}`}>
+          <div className="p-5 flex justify-between items-center">
+            <div className="flex items-center space-x-4">
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold ${activeStep === 'CHECKOUT' ? 'bg-green-500 text-black' : 'bg-white/10 text-white'}`}>
+                {checkoutStepNumber}
+              </div>
+              <h3 className={`font-bold ${activeStep === 'CHECKOUT' ? 'text-xl text-white' : 'text-lg text-gray-300'}`}>{isLockedArtDecoPurchase ? 'Completar compra Art Deco' : 'Finalizar compra'}</h3>
+            </div>
+          </div>
+
+          {activeStep === 'CHECKOUT' && (
+            <div className="p-5 pt-0 animate-in slide-in-from-top-2 duration-300">
+              <div className="bg-white/5 rounded-xl p-4 mb-6 border border-white/10">
+                <div className="flex justify-between items-center text-sm text-gray-300 mb-2">
+                  <span>{isLockedArtDecoPurchase ? (prefillArtDeco?.name || 'Art Deco físico') : `${selectedMaterial?.label} (${selectedSize?.label})`}</span>
+                </div>
+                <div className="space-y-2 border-t border-white/10 pt-3 text-sm">
+                  <div className="flex justify-between items-center text-gray-300"><span>{isLockedArtDecoPurchase ? 'Precio Art Deco' : 'Costo de producción'}</span><span>{formatUsd(checkoutUnitPrice)}</span></div>
+                  <div className="flex justify-between items-center text-gray-300"><span>{formData.method === 'pickup' ? 'Retiro' : 'Envío'}</span><span>{formatUsd(shippingCost)}</span></div>
+                  <div className="flex justify-between items-center text-lg font-bold text-white pt-2"><span>Total</span><span className="text-[#DFB142]">{formatUsd(checkoutTotal)}</span></div>
+                </div>
+              </div>
+
+              <form onSubmit={handleCheckoutSubmit} className="space-y-4">
+                {submitError && (
+                  <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-white">
+                    {submitError}
+                  </div>
+                )}
+                <input required type="text" className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Nombre completo" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})}/>
+                <input required type="email" className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Correo electrónico" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})}/>
+                <input required type="tel" className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Número de teléfono" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})}/>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <button type="button" onClick={() => setFormData({...formData, method: 'shipping'})} className={`py-3 rounded-lg border flex flex-col items-center justify-center space-y-1 transition-all ${formData.method === 'shipping' ? 'bg-green-500/20 border-green-500 text-green-400' : 'bg-white/5 border-white/10 text-gray-400'}`}>
+                    <Truck className="w-5 h-5" />
+                    <span className="text-xs font-medium">Envío</span>
+                  </button>
+                  <button type="button" onClick={() => setFormData({...formData, method: 'pickup'})} className={`py-3 rounded-lg border flex flex-col items-center justify-center space-y-1 transition-all ${formData.method === 'pickup' ? 'bg-green-500/20 border-green-500 text-green-400' : 'bg-white/5 border-white/10 text-gray-400'}`}>
+                    <ShoppingCart className="w-5 h-5" />
+                    <span className="text-xs font-medium">Recoger</span>
+                  </button>
+                </div>
+
+                {formData.method === 'shipping' && (
+                  <div className="space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
+                    <div className="grid grid-cols-3 gap-2">
+                       <input required type="text" className="col-span-2 w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Dirección" value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})}/>
+                       <input type="text" className="col-span-1 w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Apt/Suite" value={formData.apt} onChange={e => setFormData({...formData, apt: e.target.value})}/>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <input required type="text" className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Ciudad" value={formData.city} onChange={e => setFormData({...formData, city: e.target.value})}/>
+                      <input required type="text" className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Estado" value={formData.state} onChange={e => setFormData({...formData, state: e.target.value})}/>
+                      <input required type="text" className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Cód. postal" value={formData.zip} onChange={e => setFormData({...formData, zip: e.target.value})}/>
+                    </div>
+                  </div>
+                )}
+
+                <textarea className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm h-20 resize-none" placeholder="Notas (opcional)" value={formData.notes} onChange={e => setFormData({...formData, notes: e.target.value})}></textarea>
+
+                <button type="submit" className="w-full relative group rounded-xl overflow-hidden mt-4">
+                  <div className="absolute inset-0 bg-gradient-to-r from-green-500 to-emerald-700 transition-transform duration-300 group-hover:scale-105"></div>
+                  <div className="relative px-6 py-4 flex items-center justify-center space-x-3 text-white font-bold text-lg">
+                    <CreditCard className="w-6 h-6" />
+                    <span>{`Pagar ${formatUsd(checkoutTotal)}`}</span>
+                  </div>
+                </button>
+              </form>
+            </div>
+          )}
+        </div>
       </div>
     );
   };
@@ -1697,30 +1874,128 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
         }}
       />
 
-      <main className="relative z-10 flex-1 min-h-0 w-full max-w-[1800px] mx-auto px-2 sm:px-4 lg:px-6 py-2 sm:py-4 lg:py-6 overflow-hidden">
-        <div className="relative h-full min-h-0">
-          {renderViewport()}
-          {activeStep === 'PROCESSING' && (
-            <div className="absolute inset-0 z-50 flex flex-col items-center justify-center space-y-6 text-center px-4 bg-black/50 backdrop-blur-md">
-              <div className="w-20 h-20 border-4 border-[#DFB142] border-t-transparent rounded-full animate-spin shadow-[0_0_30px_rgba(223,177,66,0.3)]"></div>
-              <h2 className="text-2xl font-bold text-white">Procesando orden...</h2>
-              <p className="text-gray-300 text-sm max-w-md">Estamos registrando tu pedido físico y preparando la confirmación.</p>
+
+      <main className="relative z-10 flex-1 min-h-0 flex flex-col lg:flex-row w-full max-w-[1800px] mx-auto overflow-hidden">
+        <div className="flex-none h-[38dvh] min-h-[260px] max-h-[420px] lg:h-auto lg:max-h-none lg:basis-[47%] lg:min-h-0 lg:flex-[1.3] p-2 sm:p-3 lg:p-8 flex flex-col items-center justify-center relative border-b lg:border-b-0 lg:border-r border-white/5 overflow-hidden bg-black/35 backdrop-blur-md">
+          {!image ? (
+            <div className="w-full h-full rounded-[28px] border border-white/10 bg-white/5 backdrop-blur-sm shadow-2xl overflow-hidden p-6 flex flex-col items-center justify-center text-center">
+              <button
+                type="button"
+                onClick={() => setPickerOpen(true)}
+                className="w-24 h-24 sm:w-28 sm:h-28 rounded-3xl bg-white/10 hover:bg-white/20 border border-white/10 hover:border-[#7EAAED] transition flex items-center justify-center shadow-2xl"
+                title="Cargar desde historial"
+              >
+                <ImageIcon size={42} className="text-white/90" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setPickerOpen(true)}
+                className="mt-6 px-6 py-3 rounded-2xl bg-[#7EAAED] text-black font-extrabold hover:brightness-110 transition"
+              >
+                Seleccionar imagen
+              </button>
+              <div className="mt-3 text-xs text-white/55">4K mínimo</div>
+            </div>
+          ) : (
+            renderVisualEditor()
+          )}
+
+          {pickerOpen && (
+            <div className="fixed inset-0 z-[100] bg-black/70 backdrop-blur-sm flex items-center justify-center p-0 sm:p-4">
+              <div className="w-full h-[100dvh] sm:h-auto sm:max-w-6xl sm:max-h-[85vh] rounded-none sm:rounded-3xl border border-white/10 bg-black/60 shadow-2xl overflow-hidden flex flex-col">
+                <div className="p-5 border-b border-white/10 flex items-center justify-between">
+                  <div>
+                    <div className="text-xl font-extrabold">Selecciona una imagen</div>
+                    <div className="text-xs text-gray-400 mt-1">
+                      Se muestran todas tus imágenes (excepto Camera Angles).
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setPickerOpen(false)}
+                    className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 transition text-sm font-bold"
+                  >
+                    Cerrar
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-5 custom-scrollbar">
+                  {historyLoading && <div className="text-gray-300">Cargando historial...</div>}
+                  {historyError && <div className="text-red-400">{historyError}</div>}
+
+                  {!historyLoading && !historyError && historyImages.length === 0 && (
+                    <div className="text-gray-400">No hay imágenes disponibles en tu historial.</div>
+                  )}
+
+                  {!historyLoading && !historyError && historyImages.length > 0 && (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                      {historyImages.map((a) => (
+                        <button
+                          key={a.id}
+                          type="button"
+                          onClick={() => {
+                            setPickerOpen(false);
+                            handleSelectFromHistory(a);
+                          }}
+                          className="group relative aspect-square rounded-2xl overflow-hidden border border-white/10 bg-black/40 hover:border-[#7EAAED] transition"
+                          title={a.prompt || a.name}
+                        >
+                          <img src={a.url} alt={a.name} className="w-full h-full object-cover" />
+
+                          <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity bg-gradient-to-t from-black/85 via-transparent to-transparent flex items-end p-2">
+                            <span className="text-[10px] text-white/90 line-clamp-2 text-left">
+                              {a.prompt || a.name}
+                            </span>
+                          </div>
+
+                          <div className="absolute top-2 left-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <div className="flex items-center gap-1 px-2 py-1 rounded-xl bg-black/60 border border-white/10 backdrop-blur-sm">
+                              <OneNationUpIcon size={14} />
+                              <span className="text-[10px] text-white font-bold">1NationUp</span>
+                            </div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-5 border-t border-white/10 text-xs text-gray-400">
+                  Requisito para avanzar: <span className="text-white font-bold">mínimo 4K (3840×2160)</span>.
+                </div>
+              </div>
             </div>
           )}
-          {activeStep === 'SUCCESS' ? renderSuccess() : null}
+        </div>
+
+        <div className="flex-1 min-h-0 w-full lg:max-w-[500px] lg:flex-[0.7] p-2 sm:p-3 lg:p-8 bg-black/40 backdrop-blur-xl border-t border-white/5 lg:border-t-0 overflow-hidden">
+          {renderSidebar()}
         </div>
       </main>
 
-      {renderStepOverlay()}
-      {renderStepBar()}
-      {renderHistoryPicker()}
-
       <style dangerouslySetInnerHTML={{__html: `
-        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: rgba(255,255,255,0.02); border-radius: 10px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 10px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.24); }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+
+        @keyframes marching-ants {
+          to { stroke-dashoffset: -20; }
+        }
+        .animate-marching-ants {
+          animation: marching-ants 1s linear infinite;
+        }
+
+        .iso-container {
+          transform-style: preserve-3d;
+          transform: rotateX(55deg) rotateZ(-45deg);
+        }
+        .iso-layer {
+          position: absolute;
+          top: 0; left: 0; right: 0; bottom: 0;
+          transition: transform 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+        }
       `}} />
-    </div>
-  );
+    </div>  );
 }
