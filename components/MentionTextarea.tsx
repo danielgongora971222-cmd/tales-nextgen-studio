@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import styles from "./MentionTextarea.module.css";
 
 export type MentionItem = {
@@ -50,6 +51,7 @@ export function MentionTextarea({
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const hiRef = useRef<HTMLDivElement | null>(null);
+  const pickerRef = useRef<HTMLDivElement | null>(null);
 
   const syncWrapperPaddingVars = useCallback(() => {
     const wrap = wrapRef.current;
@@ -73,10 +75,10 @@ export function MentionTextarea({
   }, [syncWrapperPaddingVars]);
 
   const [open, setOpen] = useState(false);
-
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const [mentionStart, setMentionStart] = useState<number | null>(null);
+  const [pickerStyle, setPickerStyle] = useState<React.CSSProperties>({});
 
   const visibleItems = useMemo(() => {
     const src = Array.isArray(items) ? items : [];
@@ -88,7 +90,6 @@ export function MentionTextarea({
     const src = visibleItems;
     if (!q) return src.slice(0, maxItems);
 
-    // match por token o label
     const re = new RegExp(escapeRegExp(q), "i");
     return src
       .filter((it) => re.test(it.token) || re.test(it.label))
@@ -104,20 +105,68 @@ export function MentionTextarea({
     return set;
   }, [items]);
 
-  // Cierra al click afuera (pero NO al click dentro del picker)
+  const updatePickerPosition = useCallback(() => {
+    if (!open) return;
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+
+    const rect = wrap.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const horizontalMargin = 10;
+    const verticalGap = 8;
+    const desiredWidth = Math.min(rect.width, viewportWidth - horizontalMargin * 2);
+    const left = Math.min(
+      Math.max(horizontalMargin, rect.left),
+      Math.max(horizontalMargin, viewportWidth - desiredWidth - horizontalMargin)
+    );
+
+    const maxHeight = Math.min(320, Math.max(180, viewportHeight * 0.42));
+    const spaceAbove = rect.top - horizontalMargin;
+    const spaceBelow = viewportHeight - rect.bottom - horizontalMargin;
+    const shouldOpenAbove = spaceAbove >= Math.min(maxHeight, 220) || spaceAbove > spaceBelow;
+
+    const top = shouldOpenAbove
+      ? Math.max(horizontalMargin, rect.top - verticalGap - Math.min(maxHeight, spaceAbove))
+      : Math.min(viewportHeight - horizontalMargin - Math.min(maxHeight, spaceBelow), rect.bottom + verticalGap);
+
+    setPickerStyle({
+      left,
+      top,
+      width: desiredWidth,
+      maxHeight: shouldOpenAbove ? Math.max(140, spaceAbove - verticalGap) : Math.max(140, spaceBelow - verticalGap),
+    });
+  }, [open]);
+
+  useLayoutEffect(() => {
+    updatePickerPosition();
+  }, [updatePickerPosition, value, filtered.length, query]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const handleViewportChange = () => updatePickerPosition();
+    window.addEventListener("resize", handleViewportChange);
+    window.addEventListener("scroll", handleViewportChange, true);
+    return () => {
+      window.removeEventListener("resize", handleViewportChange);
+      window.removeEventListener("scroll", handleViewportChange, true);
+    };
+  }, [open, updatePickerPosition]);
+
   useEffect(() => {
     const onDocMouseDown = (e: MouseEvent) => {
       if (!open) return;
       const wrap = wrapRef.current;
-      if (!wrap) return;
-      if (wrap.contains(e.target as Node)) return;
+      const picker = pickerRef.current;
+      const target = e.target as Node;
+      if (wrap?.contains(target) || picker?.contains(target)) return;
       setOpen(false);
     };
     document.addEventListener("mousedown", onDocMouseDown);
     return () => document.removeEventListener("mousedown", onDocMouseDown);
   }, [open]);
 
-  // Detecta "@..." cerca del caret
   const updateFromCaret = () => {
     const ta = taRef.current;
     if (!ta) return;
@@ -126,7 +175,6 @@ export function MentionTextarea({
     const text = ta.value ?? "";
     const upto = text.slice(0, caret);
 
-    // busca el último "@"
     const at = upto.lastIndexOf("@");
     if (at === -1) {
       setOpen(false);
@@ -135,7 +183,6 @@ export function MentionTextarea({
       return;
     }
 
-    // corta si hay espacio/linebreak entre @ y caret
     const between = upto.slice(at + 1);
     if (/\s/.test(between)) {
       setOpen(false);
@@ -171,7 +218,6 @@ export function MentionTextarea({
 
     onChange(inserted);
 
-    // mueve caret luego del token + espacio
     requestAnimationFrame(() => {
       const nextPos = (before + token + " ").length;
       ta.focus();
@@ -259,34 +305,9 @@ export function MentionTextarea({
     hi.scrollLeft = ta.scrollLeft;
   };
 
-  return (
-    <div ref={wrapRef} className={`${styles.wrap} ${textareaClassName || ""}`}>
-      <div ref={hiRef} className={styles.highlighter} aria-hidden="true">
-        {renderHighlighted}
-      </div>
-
-      <textarea
-        ref={taRef}
-        className={styles.textarea}
-        rows={rows}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={handleKeyDown}
-        onKeyUp={updateFromCaret}
-        onMouseUp={updateFromCaret}
-        onFocus={() => {
-          syncWrapperPaddingVars();
-          updateFromCaret();
-        }}
-
-        onScroll={syncScroll}
-        placeholder={placeholder}
-        aria-label={placeholder || "Prompt"}
-        spellCheck={true}
-      />
-
-      {open && (
-        <div className={styles.picker} role="listbox" aria-label="Insert reference">
+  const pickerNode = open
+    ? createPortal(
+        <div ref={pickerRef} className={styles.picker} style={pickerStyle} role="listbox" aria-label="Insert reference">
           {!filtered.length ? (
             <div className={styles.empty}>No hay coincidencias</div>
           ) : (
@@ -298,7 +319,6 @@ export function MentionTextarea({
                   type="button"
                   className={`${styles.item} ${active ? styles.itemActive : ""}`}
                   onMouseDown={(ev) => {
-                    // Evita que el textarea pierda el caret antes de insertar.
                     ev.preventDefault();
                     ev.stopPropagation();
                   }}
@@ -324,8 +344,38 @@ export function MentionTextarea({
               );
             })
           )}
+        </div>,
+        document.body
+      )
+    : null;
+
+  return (
+    <>
+      <div ref={wrapRef} className={`${styles.wrap} ${textareaClassName || ""}`}>
+        <div ref={hiRef} className={styles.highlighter} aria-hidden="true">
+          {renderHighlighted}
         </div>
-      )}
-    </div>
+
+        <textarea
+          ref={taRef}
+          className={styles.textarea}
+          rows={rows}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onKeyUp={updateFromCaret}
+          onMouseUp={updateFromCaret}
+          onFocus={() => {
+            syncWrapperPaddingVars();
+            updateFromCaret();
+          }}
+          onScroll={syncScroll}
+          placeholder={placeholder}
+          aria-label={placeholder || "Prompt"}
+          spellCheck={true}
+        />
+      </div>
+      {pickerNode}
+    </>
   );
 }

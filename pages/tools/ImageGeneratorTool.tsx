@@ -2969,7 +2969,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
         </div>
       </div>
 
-      {/* COOK / SIDEBAR DE PROMPT */}
+      {/* START CREATE / SIDEBAR DE PROMPT */}
       <button
         type="button"
         className={`${styles.cookToggle} ${isCookOpen ? styles.cookToggleOpen : styles.cookTogglePulse}`}
@@ -2979,9 +2979,10 @@ const promptReferences: PromptReference[] = useMemo(() => {
         }}
         aria-expanded={isCookOpen}
         aria-controls="image-generator-cook"
+        aria-label={isCookOpen ? "Close Start Create" : "Open Start Create"}
       >
-        <span className={styles.cookToggleLabel}>Cook</span>
-        <span className={styles.cookToggleGlyph} aria-hidden="true">{isCookOpen ? "×" : "›"}</span>
+        <span className={styles.cookToggleLabel}>Start Create</span>
+        <span className={styles.cookToggleGlyph} aria-hidden="true">{isCookOpen ? "×" : "+"}</span>
       </button>
 
       <div
@@ -2997,37 +2998,6 @@ const promptReferences: PromptReference[] = useMemo(() => {
           onClick={closeCook}
         />
 
-        {(pendingSlots.length > 0 || visibleHistory.length > 0) && (
-          <div className={styles.cookHistoryRail}>
-            {pendingSlots.slice(0, 2).map((id) => (
-              <div key={`cook_pending_${id}`} className={`${styles.cookHistoryThumb} ${styles.cookHistoryThumbPending}`} aria-hidden="true">
-                <div className={styles.pendingFrame}>
-                  <div className={styles.pendingShimmer} />
-                  <div className={styles.pendingSpinner} />
-                </div>
-              </div>
-            ))}
-
-            {visibleHistory.slice(0, 12).map((asset, index) => {
-              const caption = removeStylePresetBlock(asset.prompt || "") || asset.name || "—";
-              return (
-                <button
-                  key={`cook_thumb_${asset.id}`}
-                  type="button"
-                  className={styles.cookHistoryThumb}
-                  onClick={() => {
-                    closeCook();
-                    setViewer(asset);
-                  }}
-                  title={caption}
-                >
-                  <img src={asset.url} alt={asset.name} loading="lazy" decoding="async" />
-                  <span className={styles.cookHistoryThumbIndex}>{String(index + 1).padStart(2, "0")}</span>
-                </button>
-              );
-            })}
-          </div>
-        )}
 
         {panel && (
           <div className={styles.cookPanelShell}>
@@ -3452,20 +3422,13 @@ const promptReferences: PromptReference[] = useMemo(() => {
             <div className={`${styles.cookSectionCard} ${styles.cookPromptCard}`}>
               <div className={`${styles.promptRow} ${styles.cookPromptRow}`}>
                 <div className={`${styles.promptInputWrap} ${styles.cookPromptInputWrap}`}>
-                  <div
-                    className={`${styles.klingDock} ${styles.cookKlingDock}`}
-                    onMouseEnter={handleElementHoverStart}
-                    onMouseLeave={handleElementHoverEnd}
-                  >
-                    <div className={`${styles.klingTooltip} ${isElementHovering ? styles.klingTooltipVisible : ""}`}>
-                      Crear Elemento Consistente
-                    </div>
+                  <div className={`${styles.klingDock} ${styles.cookKlingDock}`}>
                     <button
                       type="button"
                       className={`${styles.klingElementBtn} ${elementCtaActive ? styles.klingElementBtnCta : ""}`}
                       onClick={() => {
                         setElementCtaActive(false);
-                        setIsElementCreateOpen(true);
+                        setIsElementAllOpen(true);
                       }}
                       title="Element/Person"
                       aria-label="Element/Person"
@@ -3481,73 +3444,6 @@ const promptReferences: PromptReference[] = useMemo(() => {
                         <span className={styles.klingBadge}>{selectedElementAssetIds.length}</span>
                       )}
                     </button>
-
-                    <div className={`${styles.klingPopover} ${isElementHovering ? styles.klingPopoverVisible : ""}`}>
-                      <div className={styles.klingPopoverTop}>
-                        <button
-                          type="button"
-                          className={styles.klingAllBtn}
-                          onClick={() => setIsElementAllOpen(true)}
-                          title="Ver todos tus Elements"
-                        >
-                          All
-                        </button>
-
-                        {elements.length > 0 ? (
-                          <div className={styles.klingPopoverThumbRow}>
-                            {elements.slice(0, 6).map((el) => {
-                              const active = selectedElementAssetIds.includes(el.id);
-                              const src = el.previewUrl || el.url || "";
-                              return (
-                                <div key={el.id} className={styles.klingThumbWrap}>
-                                  <button
-                                    type="button"
-                                    className={`${styles.klingThumbBtn} ${active ? styles.klingThumbBtnActive : ""}`}
-                                    onClick={() => {
-                                      setSelectedElementAssetIds((prev) => {
-                                        const has = prev.includes(el.id);
-                                        const tag = (el?.id ? elementTokenById.get(el.id) : null) || makeElementTag(el.name);
-
-                                        if (has) {
-                                          if (tag) appendPromptTag(tag);
-                                          return prev;
-                                        }
-                                        if (prev.length >= 5) {
-                                          setError("Máximo 5 Elements a la vez.");
-                                          return prev;
-                                        }
-                                        if (tag) appendPromptTag(tag);
-                                        return [el.id, ...prev].slice(0, 5);
-                                      });
-                                    }}
-                                    title={el.name}
-                                    aria-label={el.name}
-                                  >
-                                    {src ? <img src={src} alt={el.name} className={styles.klingThumbImg} /> : null}
-                                  </button>
-                                  {active && (
-                                    <button
-                                      type="button"
-                                      className={styles.klingThumbRemove}
-                                      onClick={() => {
-                                        const tag = (el?.id ? elementTokenById.get(el.id) : null) || makeElementTag(el.name);
-                                        if (tag) removePromptToken(tag);
-                                        setSelectedElementAssetIds((prev) => prev.filter((x) => x !== el.id));
-                                      }}
-                                      aria-label={`Deselect ${el.name}`}
-                                    >
-                                      ×
-                                    </button>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        ) : (
-                          <div className={styles.klingEmpty}>No elements yet</div>
-                        )}
-                      </div>
-                    </div>
                   </div>
 
                   <div className={`${styles.promptEditor} ${styles.cookPromptEditor}`}>
@@ -4108,6 +4004,17 @@ const promptReferences: PromptReference[] = useMemo(() => {
               {elements.length === 0 && <div className={styles.elementPickerEmpty}>No elements yet</div>}
 
               <div className={styles.elementFooter}>
+                <button
+                  type="button"
+                  className={styles.smallBtnGhost}
+                  onClick={() => {
+                    closeAllModal();
+                    setIsElementCreateOpen(true);
+                  }}
+                >
+                  Create new
+                </button>
+
                 <button type="button" className={styles.elementPrimaryBtn} onClick={closeAllModal}>
                   Done
                 </button>
