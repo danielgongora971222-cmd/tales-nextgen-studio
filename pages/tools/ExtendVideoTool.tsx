@@ -1420,6 +1420,10 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     setIsCookOpen(true);
   }
 
+  const stopCookPanelPointer = useCallback((e: React.SyntheticEvent) => {
+    e.stopPropagation();
+  }, []);
+
   return (
     <div ref={rootRef} className={`${styles.root} ${isCookOpen ? styles.rootCookOpen : ""}`} onMouseMove={handleRootMouseMove}>
       <ErrorModal error={error} onClose={() => setError(null)} />
@@ -1483,8 +1487,15 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
 
           {panel && (
             <div className={styles.cookPanelShell}>
-<div className={`${styles.popover} ${styles.cookInlinePopover}`} ref={popoverRef}>
-                <div className={styles.popoverInner}>
+              <div
+                className={styles.cookPanel}
+                onPointerDownCapture={stopCookPanelPointer}
+                onMouseDownCapture={stopCookPanelPointer}
+                onClickCapture={stopCookPanelPointer}
+                onTouchStartCapture={stopCookPanelPointer}
+              >
+                <div className={`${styles.popover} ${styles.cookInlinePopover}`} ref={popoverRef}>
+                  <div className={styles.popoverInner}>
                   <div className={styles.popoverHeader}>
                     <div className={styles.popoverTitle}>{panel === "model" ? "MODELOS" : "AJUSTES"}</div>
                     <button className={styles.closeBtn} type="button" onClick={() => setPanel(null)} title="Cerrar">
@@ -1645,6 +1656,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
                       </div>
                     </div>
                   )}
+                  </div>
                 </div>
               </div>
             </div>
