@@ -2173,3 +2173,409 @@
   from{ opacity: 0; transform: translateY(-6px); }
   to{ opacity: 1; transform: translateY(0); }
 }
+
+/* --- IMAGE GENERATOR / COOK SIDEBAR LAYOUT --- */
+.rootCookOpen {
+  --cook-rail-width: 88px;
+  --cook-sidebar-width: clamp(360px, 34vw, 470px);
+}
+
+.stageCookOpen {
+  isolation: isolate;
+}
+
+.historyGridCook {
+  padding-bottom: 24px;
+  transition: padding 0.28s var(--ease-smooth);
+}
+
+.historyGridCookOpen {
+  padding-left: calc(var(--cook-rail-width, 88px) + 28px);
+  padding-right: calc(var(--cook-sidebar-width, 420px) + 28px);
+}
+
+.historyHeaderCookOpen {
+  padding-left: calc(var(--cook-rail-width, 88px) + 20px);
+  padding-right: calc(var(--cook-sidebar-width, 420px) + 20px);
+  transition: padding 0.28s var(--ease-smooth);
+}
+
+.cookToggle {
+  position: absolute;
+  top: 50%;
+  right: 16px;
+  transform: translateY(-50%);
+  z-index: 360;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 46px;
+  padding: 0 14px 0 16px;
+  border: 1px solid rgba(241,225,148,0.18);
+  border-radius: 999px;
+  background: rgba(12, 10, 12, 0.86);
+  color: rgba(241,225,148,0.95);
+  cursor: pointer;
+  box-shadow:
+    0 18px 44px rgba(0,0,0,0.6),
+    inset 0 1px 0 rgba(255,255,255,0.08);
+  backdrop-filter: blur(20px) saturate(170%);
+  transition: transform 0.22s var(--ease-smooth), right 0.22s var(--ease-smooth), background 0.22s var(--ease-smooth), border-color 0.22s var(--ease-smooth), box-shadow 0.22s var(--ease-smooth);
+}
+
+.cookToggle:hover {
+  transform: translateY(-50%) translateX(-2px);
+  background: rgba(18, 14, 16, 0.94);
+  border-color: rgba(241,225,148,0.28);
+}
+
+.cookToggleOpen {
+  right: 26px;
+  background: rgba(91, 14, 20, 0.62);
+  border-color: rgba(241,225,148,0.34);
+  box-shadow:
+    0 22px 60px rgba(0,0,0,0.72),
+    0 0 36px rgba(91,14,20,0.22),
+    inset 0 1px 0 rgba(255,255,255,0.08);
+}
+
+.cookTogglePulse {
+  animation: cookTogglePulse 2.2s ease-in-out infinite;
+}
+
+.cookToggleLabel {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.cookToggleGlyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: rgba(241,225,148,0.12);
+  color: rgba(255,255,255,0.92);
+  font-size: 14px;
+  line-height: 1;
+}
+
+@keyframes cookTogglePulse {
+  0%, 100% {
+    box-shadow:
+      0 18px 44px rgba(0,0,0,0.6),
+      0 0 0 0 rgba(241,225,148,0),
+      inset 0 1px 0 rgba(255,255,255,0.08);
+  }
+  50% {
+    box-shadow:
+      0 20px 52px rgba(0,0,0,0.66),
+      0 0 0 10px rgba(241,225,148,0.05),
+      inset 0 1px 0 rgba(255,255,255,0.08);
+  }
+}
+
+.cookOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 340;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.26s var(--ease-smooth);
+}
+
+.cookOverlayOpen {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.cookBackdrop {
+  position: absolute;
+  inset: 0;
+  border: none;
+  background:
+    linear-gradient(90deg, rgba(3,1,2,0.35) 0%, rgba(3,1,2,0.14) 18%, rgba(3,1,2,0.12) 54%, rgba(3,1,2,0.68) 100%),
+    radial-gradient(circle at 75% 50%, rgba(91,14,20,0.16), transparent 42%);
+  backdrop-filter: blur(8px) saturate(140%);
+}
+
+.cookHistoryRail {
+  position: absolute;
+  left: 16px;
+  top: 16px;
+  bottom: 16px;
+  width: var(--cook-rail-width, 88px);
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.cookHistoryThumb {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  border: 1px solid rgba(241,225,148,0.14);
+  border-radius: 18px;
+  overflow: hidden;
+  background: rgba(12,10,12,0.84);
+  box-shadow:
+    0 18px 44px rgba(0,0,0,0.56),
+    inset 0 1px 0 rgba(255,255,255,0.06);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: transform 0.18s var(--ease-smooth), border-color 0.18s var(--ease-smooth), box-shadow 0.18s var(--ease-smooth);
+}
+
+.cookHistoryThumb:hover {
+  transform: translateX(2px);
+  border-color: rgba(241,225,148,0.3);
+  box-shadow:
+    0 22px 52px rgba(0,0,0,0.62),
+    0 0 0 1px rgba(241,225,148,0.12),
+    inset 0 1px 0 rgba(255,255,255,0.08);
+}
+
+.cookHistoryThumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.cookHistoryThumbPending {
+  cursor: default;
+}
+
+.cookHistoryThumbPending .pendingFrame {
+  width: 100%;
+  height: 100%;
+}
+
+.cookHistoryThumbIndex {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  min-width: 26px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: rgba(255,255,255,0.95);
+  background: rgba(0,0,0,0.62);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+}
+
+.cookSidebarShell {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  justify-content: flex-end;
+  align-items: stretch;
+  padding: 16px 16px 16px calc(var(--cook-rail-width, 88px) + 30px);
+}
+
+.cookSidebar {
+  width: min(100%, var(--cook-sidebar-width, 420px));
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.cookSectionCard {
+  position: relative;
+  background: rgba(12, 10, 12, 0.92);
+  border: 1px solid rgba(241,225,148,0.08);
+  border-radius: 24px;
+  backdrop-filter: blur(22px) saturate(170%);
+  box-shadow:
+    0 22px 70px rgba(0,0,0,0.72),
+    inset 0 1px 0 rgba(255,255,255,0.06),
+    inset 0 -14px 30px rgba(0,0,0,0.6);
+  overflow: hidden;
+}
+
+.cookPromptCard {
+  padding: 16px;
+}
+
+.cookPromptRow {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 14px;
+}
+
+.cookPromptInputWrap {
+  align-items: stretch;
+  gap: 12px;
+}
+
+.cookKlingDock {
+  transform: none;
+  align-self: flex-start;
+}
+
+.cookPromptEditor {
+  width: 100%;
+}
+
+.cookPrompt {
+  min-height: 128px;
+  height: 128px;
+  padding-top: 14px;
+  padding-bottom: 14px;
+}
+
+.cookPrompt:focus-within {
+  min-height: 168px;
+  height: 168px;
+}
+
+.cookGenerateCol {
+  width: 100%;
+}
+
+.cookGenerateBtn {
+  width: 100%;
+}
+
+.cookEstimate {
+  margin-top: 2px;
+  font-size: 12px;
+  color: rgba(255,255,255,0.65);
+  text-align: center;
+}
+
+.cookLimitHint {
+  font-size: 11px;
+  color: rgba(255,220,220,0.82);
+  text-align: center;
+}
+
+.cookSectionHeader {
+  gap: 12px;
+}
+
+.cookSectionMeta {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.58);
+  text-align: right;
+  max-width: 180px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cookRefThumbStrip {
+  padding: 14px 16px 0;
+}
+
+.cookRefSlots {
+  padding-top: 14px;
+}
+
+.cookFormRow {
+  padding-top: 16px;
+}
+
+.cookParamGrid {
+  gap: 0;
+}
+
+.cookPresetGrid {
+  max-height: none;
+  overflow: visible;
+}
+
+@media (max-width: 1100px) {
+  .historyGridCookOpen,
+  .historyHeaderCookOpen {
+    padding-left: 20px;
+    padding-right: 20px;
+  }
+
+  .cookToggle {
+    top: auto;
+    bottom: 18px;
+    right: 18px;
+    transform: none;
+  }
+
+  .cookToggle:hover {
+    transform: translateY(-2px);
+  }
+
+  .cookToggleOpen {
+    right: 18px;
+  }
+
+  .cookSidebarShell {
+    padding: 108px 16px 16px;
+  }
+
+  .cookSidebar {
+    width: min(100%, 720px);
+  }
+
+  .cookHistoryRail {
+    left: 16px;
+    right: 96px;
+    top: 16px;
+    bottom: auto;
+    width: auto;
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 6px;
+  }
+
+  .cookHistoryThumb {
+    width: 76px;
+  }
+}
+
+@media (max-width: 720px) {
+  .cookSidebarShell {
+    padding: 96px 12px 12px;
+  }
+
+  .cookPromptCard {
+    padding: 14px;
+  }
+
+  .cookSectionHeader {
+    flex-wrap: wrap;
+  }
+
+  .cookSectionMeta {
+    max-width: none;
+    text-align: left;
+  }
+
+  .cookHistoryRail {
+    right: 84px;
+    gap: 10px;
+  }
+
+  .cookHistoryThumb {
+    width: 68px;
+    border-radius: 16px;
+  }
+}
