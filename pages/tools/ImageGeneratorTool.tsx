@@ -1072,6 +1072,13 @@ useEffect(() => {
       refs.background ? "BG" : null,
     ].filter(Boolean).join(" ") || "None";
 
+  const referencePreviewAssets = useMemo(
+    () => [refs.char1, refs.char2, refs.char3, refs.background].filter((asset): asset is Asset => Boolean(asset)),
+    [refs.char1, refs.char2, refs.char3, refs.background],
+  );
+  const visibleReferencePreviewAssets = referencePreviewAssets.slice(0, 3);
+  const hiddenReferencePreviewCount = Math.max(0, referencePreviewAssets.length - visibleReferencePreviewAssets.length);
+
   const visibleRefSlots = useMemo(() => {
     const slots: RefSlot[] = ["char1"];
     if (refs.char1) slots.push("char2");
@@ -3505,8 +3512,27 @@ const promptReferences: PromptReference[] = useMemo(() => {
                     onClick={() => toggleCookPanel("reference")}
                     aria-expanded={panel === "reference"}
                   >
-                    <span className={styles.controlBtnLabel}>Reference</span>
-                    <span className={styles.controlBtnMeta}>{refLabel}</span>
+                    <span className={styles.controlBtnMain}>
+                      <span className={styles.controlBtnLabel}>Reference</span>
+                      <span className={styles.controlBtnMeta}>{refLabel}</span>
+                    </span>
+                    {visibleReferencePreviewAssets.length > 0 && (
+                      <span className={styles.controlBtnReferenceRail} aria-hidden="true">
+                        {visibleReferencePreviewAssets.map((asset, index) => (
+                          <span
+                            key={`reference-preview-${asset.id}`}
+                            className={styles.controlBtnReferenceThumb}
+                            style={{ zIndex: visibleReferencePreviewAssets.length - index }}
+                            title={asset.name || `Reference ${index + 1}`}
+                          >
+                            <img src={asset.url} alt="" loading="lazy" decoding="async" />
+                          </span>
+                        ))}
+                        {hiddenReferencePreviewCount > 0 && (
+                          <span className={styles.controlBtnReferenceMore}>+{hiddenReferencePreviewCount}</span>
+                        )}
+                      </span>
+                    )}
                   </button>
                   <button
                     type="button"

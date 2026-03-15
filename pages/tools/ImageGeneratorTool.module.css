@@ -718,11 +718,74 @@
   text-overflow: ellipsis;
 }
 
+.controlBtnMain {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+}
+
 .controlBtnMeta {
   font-family: var(--mono);
   font-size: 9px;
   opacity: 0.7;
   padding-left: 8px;
+}
+
+.controlBtnReferenceRail {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-left: 10px;
+  min-width: 0;
+}
+
+.controlBtnReferenceThumb,
+.controlBtnReferenceMore {
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
+  border: 1px solid rgba(241,225,148,0.24);
+  box-shadow:
+    0 12px 24px rgba(0,0,0,0.42),
+    inset 0 1px 0 rgba(255,255,255,0.08);
+}
+
+.controlBtnReferenceThumb {
+  overflow: hidden;
+  background: rgba(8, 6, 10, 0.94);
+  position: relative;
+}
+
+.controlBtnReferenceThumb + .controlBtnReferenceThumb,
+.controlBtnReferenceThumb + .controlBtnReferenceMore,
+.controlBtnReferenceMore + .controlBtnReferenceThumb {
+  margin-left: -8px;
+}
+
+.controlBtnReferenceThumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.controlBtnReferenceMore {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 7px;
+  min-width: 30px;
+  width: auto;
+  background: linear-gradient(135deg, rgba(33, 20, 22, 0.98), rgba(91, 14, 20, 0.82));
+  color: rgba(241,225,148,0.96);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  backdrop-filter: blur(10px) saturate(140%);
 }
 
 .refThumbStrip {
@@ -2498,13 +2561,21 @@
   justify-content: space-between;
 }
 
+.cookControlBtn .controlBtnMain {
+  gap: 8px;
+}
+
 .cookControlBtn .controlBtnLabel {
-  max-width: calc(100% - 72px);
+  flex: 0 1 auto;
+  max-width: none;
 }
 
 .cookControlBtn .controlBtnMeta {
   padding-left: 10px;
-  flex-shrink: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cookPanelShell {
@@ -2668,6 +2739,13 @@
 
   .cookControlBtn {
     flex-basis: 100%;
+  }
+
+  .controlBtnReferenceThumb,
+  .controlBtnReferenceMore {
+    width: 26px;
+    height: 26px;
+    border-radius: 9px;
   }
 
   .cookPrompt {
