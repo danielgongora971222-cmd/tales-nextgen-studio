@@ -22,7 +22,8 @@ type MotionPanelKey = "model" | "quality" | null;
 type PickerKind = "image" | "video";
 
 type PendingMotionControlJob = {
-  jobId: string;
+  clientJobId: string;
+  jobId?: string;
   taskId?: string;
   prompt: string;
   imageAssetId: string;
@@ -31,6 +32,7 @@ type PendingMotionControlJob = {
   characterOrientation: Orientation;
   mode: "std" | "pro";
   model: MotionControlModel;
+  state: "submitting" | "running";
   createdAt: number;
 };
 
@@ -38,7 +40,8 @@ const TOOL_ID = "motion-control";
 const HISTORY_INITIAL_COUNT = 12;
 const HISTORY_LOAD_MORE_COUNT = 9;
 const UPLOAD_TOOL = "motion-control-ref";
-const PENDING_MOTION_KEY = "tales_pending_motion_control_job_v1";
+const PENDING_MOTION_KEY = "tales_pending_motion_control_job_v2";
+const PENDING_MOTION_LEGACY_KEY = "tales_pending_motion_control_job_v1";
 
 function normalizeMotionControlModel(value: unknown): MotionControlModel {
   return value === "kling-v3-motion-control" ? "kling-v3-motion-control" : "kling-2.6-motion-control";
@@ -86,20 +89,40 @@ function byCreatedDesc(a: Asset, b: Asset) {
   return (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0);
 }
 
+function makeMotionClientJobId() {
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return `motion-${crypto.randomUUID()}`;
+    }
+  } catch {}
+  return `motion-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function buildMotionIdempotencyKey(clientJobId: string) {
+  return `motion-control:${clientJobId}`;
+}
+
 function savePending(job: PendingMotionControlJob) {
   try {
     localStorage.setItem(PENDING_MOTION_KEY, JSON.stringify(job));
+    localStorage.removeItem(PENDING_MOTION_LEGACY_KEY);
   } catch {}
 }
 
 function loadPending(): PendingMotionControlJob | null {
   try {
-    const raw = localStorage.getItem(PENDING_MOTION_KEY);
+    const raw = localStorage.getItem(PENDING_MOTION_KEY) || localStorage.getItem(PENDING_MOTION_LEGACY_KEY);
     if (!raw) return null;
+
     const parsed = JSON.parse(raw || "{}");
-    if (!parsed?.jobId || !parsed?.imageAssetId || !parsed?.videoAssetId) return null;
+    if (!parsed?.imageAssetId || !parsed?.videoAssetId) return null;
+
+    const jobId = typeof parsed?.jobId === "string" && parsed.jobId.trim() ? String(parsed.jobId) : undefined;
+    const clientJobIdRaw = typeof parsed?.clientJobId === "string" && parsed.clientJobId.trim() ? String(parsed.clientJobId) : "";
+
     return {
-      jobId: String(parsed.jobId),
+      clientJobId: clientJobIdRaw || jobId || makeMotionClientJobId(),
+      jobId,
       taskId: parsed?.taskId ? String(parsed.taskId) : undefined,
       prompt: typeof parsed?.prompt === "string" ? parsed.prompt : "",
       imageAssetId: String(parsed.imageAssetId),
@@ -108,6 +131,7 @@ function loadPending(): PendingMotionControlJob | null {
       characterOrientation: parsed?.characterOrientation === "image" ? "image" : "video",
       mode: parsed?.mode === "pro" ? "pro" : "std",
       model: normalizeMotionControlModel(parsed?.model),
+      state: parsed?.state === "submitting" || !jobId ? "submitting" : "running",
       createdAt: Number(parsed?.createdAt) || Date.now(),
     };
   } catch {
@@ -118,6 +142,7 @@ function loadPending(): PendingMotionControlJob | null {
 function clearPending() {
   try {
     localStorage.removeItem(PENDING_MOTION_KEY);
+    localStorage.removeItem(PENDING_MOTION_LEGACY_KEY);
   } catch {}
 }
 
@@ -270,7 +295,10 @@ export default function MotionControlTool() {
     [history, historyVisibleCount]
   );
   const hasMoreHistory = historyVisibleCount < history.length;
-  const pendingSlots = useMemo(() => (pendingJob ? [pendingJob.jobId] : []), [pendingJob]);
+  const pendingSlots = useMemo(
+    () => (pendingJob ? [pendingJob.jobId || `pending-${pendingJob.clientJobId}`] : []),
+    [pendingJob]
+  );
 
   const pickerAssets = pickerKind === "image" ? imageLibrary : videoLibrary;
   const pickerSelectedId = pickerKind === "image" ? refImage?.id || null : refVideo?.id || null;
@@ -280,6 +308,9 @@ export default function MotionControlTool() {
   const canGenerate = Boolean(user && refImage && refVideo && !isGenerating);
   const selectedModelLabel = getMotionControlModelLabel(model);
   const selectedQualityLabel = getMotionQualityLabel(mode);
+  const selectedCreateFromLabel = characterOrientation === "image" ? "From image" : "From video";
+  const isPendingSubmission = Boolean(isGenerating && pendingJob && pendingJob.state === "submitting" && !pendingJob.jobId);
+  const generateButtonLabel = isGenerating ? (isPendingSubmission ? "Starting" : "Generating") : "Generate";
   const estimatedCostCredits = useMemo(() => {
     const pricingModelNorm = resolveMotionControlPricingModel(model, mode);
     return estimateVideoCostCredits({
@@ -458,7 +489,7 @@ export default function MotionControlTool() {
     if (abortRef.current) abortRef.current.abort();
     abortRef.current = null;
     setIsGenerating(false);
-    setProgressMsg("Cancelled. You can resume later.");
+    setProgressMsg("Still generating in background. Resume anytime.");
   }, []);
 
   const restorePendingAssets = useCallback(async (job: PendingMotionControlJob) => {
@@ -480,20 +511,66 @@ export default function MotionControlTool() {
     }
   }, []);
 
+  const submitMotionControlJob = useCallback(async (job: PendingMotionControlJob) => {
+    setProgressMsg(`Queueing (${getMotionControlModelLabel(job.model)})…`);
+
+    const start = await apiPostJson<any>(
+      "/api/ai/video/motion-control",
+      {
+        tool: TOOL_ID,
+        nameHint: TOOL_ID,
+        prompt: job.prompt || undefined,
+        imageAssetId: job.imageAssetId,
+        videoAssetId: job.videoAssetId,
+        keepOriginalSound: job.keepOriginalSound,
+        characterOrientation: job.characterOrientation,
+        mode: job.mode,
+        model: job.model,
+        clientJobId: job.clientJobId,
+        async: true,
+      },
+      {
+        timeoutMs: 60_000,
+        retries: 3,
+        idempotencyKey: buildMotionIdempotencyKey(job.clientJobId),
+      }
+    );
+
+    const jobId = String(start?.jobId || "").trim();
+    if (!jobId) throw new Error("No llegó jobId.");
+
+    const nextJob: PendingMotionControlJob = {
+      ...job,
+      jobId,
+      taskId: start?.taskId ? String(start.taskId) : undefined,
+      state: "running",
+    };
+
+    savePending(nextJob);
+    setPendingJob(nextJob);
+    return nextJob;
+  }, []);
+
   const runMotionControlJob = useCallback(async (job: PendingMotionControlJob) => {
     setIsGenerating(true);
-    setProgressMsg(`Processing (${getMotionControlModelLabel(job.model)})…`);
-    abortRef.current = new AbortController();
 
     try {
-      const row = await waitJobCompletion(job.jobId, {
+      const runnableJob = job.jobId ? job : await submitMotionControlJob(job);
+
+      setPendingJob(runnableJob);
+      setProgressMsg(`Processing (${getMotionControlModelLabel(runnableJob.model)})…`);
+      abortRef.current = new AbortController();
+
+      const row = await waitJobCompletion(runnableJob.jobId!, {
         signal: abortRef.current.signal,
         onProgress: (message) => setProgressMsg(message),
         pollMs: 12_000,
       });
 
       if (row.status === "failed") {
-        throw new Error(row.error || "The job failed in background.");
+        const terminalErr: any = new Error(row.error || "The job failed in background.");
+        terminalErr.clearPending = true;
+        throw terminalErr;
       }
 
       await reloadHistory();
@@ -502,15 +579,32 @@ export default function MotionControlTool() {
       setProgressMsg("Done.");
     } catch (err: any) {
       if (err?.name === "AbortError" || err?.isCanceled) {
-        setProgressMsg("Cancelled. You can resume later.");
+        setProgressMsg("Still generating in background. Resume anytime.");
         return;
+      }
+      if (err?.clearPending || !job.jobId) {
+        clearPending();
+        setPendingJob(null);
       }
       setError(formatErr(err));
     } finally {
       setIsGenerating(false);
       abortRef.current = null;
     }
-  }, [reloadHistory]);
+  }, [reloadHistory, submitMotionControlJob]);
+
+  const resumePendingJob = useCallback(async (job: PendingMotionControlJob) => {
+    openCook();
+    setAdvancedOpen(true);
+    setPendingJob(job);
+    setIsGenerating(true);
+    setProgressMsg(
+      job.jobId
+        ? `Resuming (${getMotionControlModelLabel(job.model)})…`
+        : `Restoring (${getMotionControlModelLabel(job.model)})…`
+    );
+    await runMotionControlJob(job);
+  }, [openCook, runMotionControlJob]);
 
   const handleGenerate = useCallback(async () => {
     if (!user) {
@@ -524,60 +618,41 @@ export default function MotionControlTool() {
     }
 
     const rawPrompt = String(prompt || "").trim();
-    const finalPrompt = rawPrompt || "Motion Control";
     const keepOriginalSound = true;
+    const draftJob: PendingMotionControlJob = {
+      clientJobId: makeMotionClientJobId(),
+      prompt: rawPrompt,
+      imageAssetId: refImage.id,
+      videoAssetId: refVideo.id,
+      keepOriginalSound,
+      characterOrientation,
+      mode,
+      model,
+      state: "submitting",
+      createdAt: Date.now(),
+    };
 
+    setPendingJob(draftJob);
+    savePending(draftJob);
     setIsGenerating(true);
     setProgressMsg(`Queueing (${selectedModelLabel})…`);
-    abortRef.current = new AbortController();
+    openCook();
+    setAdvancedOpen(true);
 
     try {
-      const start = await apiPostJson<any>(
-        "/api/ai/video/motion-control",
-        {
-          tool: TOOL_ID,
-          nameHint: TOOL_ID,
-          prompt: finalPrompt,
-          imageAssetId: refImage.id,
-          videoAssetId: refVideo.id,
-          keepOriginalSound,
-          characterOrientation,
-          mode,
-          model,
-          async: true,
-        },
-        { timeoutMs: 60_000, retries: 0 }
-      );
-
-      const jobId = String(start?.jobId || "").trim();
-      if (!jobId) throw new Error("No llegó jobId.");
-
-      const job: PendingMotionControlJob = {
-        jobId,
-        taskId: start?.taskId ? String(start.taskId) : undefined,
-        prompt: rawPrompt,
-        imageAssetId: refImage.id,
-        videoAssetId: refVideo.id,
-        keepOriginalSound,
-        characterOrientation,
-        mode,
-        model,
-        createdAt: Date.now(),
-      };
-
-      savePending(job);
-      setPendingJob(job);
-      await runMotionControlJob(job);
+      await runMotionControlJob(draftJob);
     } catch (err: any) {
       if (err?.name === "AbortError" || err?.isCanceled) {
-        setProgressMsg("Cancelled. You can resume later.");
+        setProgressMsg("Still generating in background. Resume anytime.");
         return;
       }
+      clearPending();
+      setPendingJob(null);
       setError(formatErr(err));
       setIsGenerating(false);
       abortRef.current = null;
     }
-  }, [characterOrientation, mode, model, prompt, refImage, refVideo, runMotionControlJob, selectedModelLabel, user]);
+  }, [characterOrientation, mode, model, openCook, prompt, refImage, refVideo, runMotionControlJob, selectedModelLabel, user]);
 
   const openViewer = useCallback(async (asset: Asset) => {
     setViewer(asset);
@@ -621,9 +696,11 @@ export default function MotionControlTool() {
     setCharacterOrientation(pending.characterOrientation === "image" ? "image" : "video");
     setMode(pending.mode === "pro" ? "pro" : "std");
     setModel(normalizeMotionControlModel(pending.model));
+    setAdvancedOpen(true);
+    openCook();
     void restorePendingAssets(pending);
-    void runMotionControlJob(pending);
-  }, [reloadHistory, restorePendingAssets, runMotionControlJob]);
+    void resumePendingJob(pending);
+  }, [openCook, reloadHistory, restorePendingAssets, resumePendingJob]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -644,6 +721,16 @@ export default function MotionControlTool() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [closeCook, isCookOpen, panel, restoreCookFromPanel, viewer]);
+
+
+  useEffect(() => {
+    return () => {
+      if (abortRef.current) {
+        abortRef.current.abort();
+        abortRef.current = null;
+      }
+    };
+  }, []);
 
   const viewerMeta: any = (viewer as any)?.meta || {};
   const viewerMotion = viewerMeta?.motionControl || {};
@@ -683,7 +770,7 @@ export default function MotionControlTool() {
           <div className={styles.resumeBanner}>
             <div className={styles.motionResumeBannerText}>Pending motion generation detected.</div>
             <div className={styles.motionResumeBannerActions}>
-              <button type="button" className={styles.ghostBtn} onClick={() => void runMotionControlJob(pendingJob)}>
+              <button type="button" className={styles.ghostBtn} onClick={() => void resumePendingJob(pendingJob)}>
                 Resume
               </button>
               <button
@@ -808,7 +895,7 @@ export default function MotionControlTool() {
                       <div className={styles.resumeBanner}>
                         <div className={styles.motionResumeBannerText}>Pending motion generation detected.</div>
                         <div className={styles.motionResumeBannerActions}>
-                          <button type="button" className={styles.ghostBtn} onClick={() => void runMotionControlJob(pendingJob)}>
+                          <button type="button" className={styles.ghostBtn} onClick={() => void resumePendingJob(pendingJob)}>
                             Resume
                           </button>
                           <button
@@ -909,48 +996,61 @@ export default function MotionControlTool() {
                       </button>
                     </div>
 
-                    <details
-                      className={styles.motionAdvanced}
-                      open={advancedOpen}
-                      onToggle={(event) => setAdvancedOpen((event.currentTarget as HTMLDetailsElement).open)}
-                    >
-                      <summary className={styles.motionAdvancedSummary}>Advanced settings</summary>
-                      <div className={styles.motionAdvancedBody}>
-                        <div className={styles.motionField}>
-                          <label className={styles.formLabel}>Prompt · optional</label>
-                          <textarea
-                            value={prompt}
-                            onChange={(event) => setPrompt(event.target.value)}
-                            placeholder="Describe the character or scene details."
-                            className={`${styles.textarea} ${styles.motionPromptTextarea}`}
-                            maxLength={14_000}
-                          />
-                        </div>
+                    <div className={styles.motionAdvanced}>
+                      <button
+                        type="button"
+                        className={styles.motionAdvancedSummary}
+                        onClick={() => setAdvancedOpen((prev) => !prev)}
+                        aria-expanded={advancedOpen}
+                        aria-controls="motion-control-advanced-settings"
+                      >
+                        <span className={styles.motionAdvancedSummaryContent}>
+                          <span>Advanced settings</span>
+                          <span className={styles.motionAdvancedMeta}>Prompt optional · {selectedCreateFromLabel}</span>
+                        </span>
+                        <span className={styles.motionAdvancedToggleIcon} aria-hidden="true">
+                          {advancedOpen ? "−" : "+"}
+                        </span>
+                      </button>
 
-                        <div className={styles.motionField}>
-                          <label className={styles.formLabel}>Create from</label>
-                          <div className={styles.motionChoiceGrid}>
-                            <button
-                              type="button"
-                              className={`${styles.motionChoiceCard} ${characterOrientation === "video" ? styles.motionChoiceCardActive : ""}`}
-                              onClick={() => setCharacterOrientation("video")}
-                            >
-                              <span className={styles.motionChoiceTitle}>From video</span>
-                              <span className={styles.motionChoiceHint}>Best for complex body motion and action.</span>
-                            </button>
-                            <button
-                              type="button"
-                              className={`${styles.motionChoiceCard} ${characterOrientation === "image" ? styles.motionChoiceCardActive : ""}`}
-                              onClick={() => setCharacterOrientation("image")}
-                            >
-                              <span className={styles.motionChoiceTitle}>From image</span>
-                              <span className={styles.motionChoiceHint}>Best when camera moves matter more than pose.</span>
-                            </button>
+                      {advancedOpen && (
+                        <div id="motion-control-advanced-settings" className={styles.motionAdvancedBody}>
+                          <div className={styles.motionField}>
+                            <label className={styles.formLabel}>Prompt · optional</label>
+                            <textarea
+                              value={prompt}
+                              onChange={(event) => setPrompt(event.target.value)}
+                              placeholder="Describe the character or scene details."
+                              className={`${styles.textarea} ${styles.motionPromptTextarea}`}
+                              maxLength={14_000}
+                            />
                           </div>
-                          <div className={styles.motionFieldHint}>Match the source that should define the character orientation.</div>
+
+                          <div className={styles.motionField}>
+                            <label className={styles.formLabel}>Create from</label>
+                            <div className={styles.motionChoiceGrid}>
+                              <button
+                                type="button"
+                                className={`${styles.motionChoiceCard} ${characterOrientation === "video" ? styles.motionChoiceCardActive : ""}`}
+                                onClick={() => setCharacterOrientation("video")}
+                              >
+                                <span className={styles.motionChoiceTitle}>From video</span>
+                                <span className={styles.motionChoiceHint}>Best for complex body motion and action.</span>
+                              </button>
+                              <button
+                                type="button"
+                                className={`${styles.motionChoiceCard} ${characterOrientation === "image" ? styles.motionChoiceCardActive : ""}`}
+                                onClick={() => setCharacterOrientation("image")}
+                              >
+                                <span className={styles.motionChoiceTitle}>From image</span>
+                                <span className={styles.motionChoiceHint}>Best when camera moves matter more than pose.</span>
+                              </button>
+                            </div>
+                            <div className={styles.motionFieldHint}>Match the source that should define the character orientation.</div>
+                          </div>
                         </div>
-                      </div>
-                    </details>
+                      )}
+                    </div>
                   </div>
 
                   <div className={styles.motionCookFooter}>
@@ -964,10 +1064,17 @@ export default function MotionControlTool() {
                       disabled={!canGenerate}
                       data-loading={isGenerating ? "true" : "false"}
                     >
-                      <span className={styles.motionGenerateLabel}>{isGenerating ? "Generating" : "Generate"}</span>
+                      <span className={styles.motionGenerateLabel}>{generateButtonLabel}</span>
                       {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
                       <span className={styles.motionGenerateCost}>✦ {estimatedCostCredits}</span>
                     </button>
+
+                    {isGenerating && progressMsg && (
+                      <div className={styles.motionGeneratingStatus}>
+                        <span className={styles.generateSpinner} aria-hidden="true" />
+                        <span>{progressMsg}</span>
+                      </div>
+                    )}
 
                     {isGenerating ? (
                       <button type="button" className={styles.cancelBtn} onClick={cancelWaitOnly}>
@@ -976,8 +1083,6 @@ export default function MotionControlTool() {
                     ) : progressMsg ? (
                       <div className={styles.progressText}>{progressMsg}</div>
                     ) : null}
-
-                    {isGenerating && progressMsg && <div className={styles.progressText}>{progressMsg}</div>}
                   </div>
                 </div>
               </div>

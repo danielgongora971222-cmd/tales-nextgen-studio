@@ -145,6 +145,7 @@ export const MotionControlRequestSchema = z.object({
   async: z.boolean().optional(),
   tool: z.string().optional(),
   nameHint: z.string().optional(),
+  clientJobId: z.string().max(120).optional(),
 });
 
 // ===============================

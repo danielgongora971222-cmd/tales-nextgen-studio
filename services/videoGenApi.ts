@@ -193,6 +193,7 @@ export async function apiPostJson<T>(
     signal?: AbortSignal;
     retries?: number;
     retryBaseDelayMs?: number;
+    idempotencyKey?: string;
   }
 ): Promise<T> {
   const { data: sessionData } = await supabase.auth.getSession();
@@ -204,9 +205,11 @@ export async function apiPostJson<T>(
   // ✅ Idempotencia: misma key para TODOS los retries dentro de esta llamada
   // (evita cobrar créditos dos veces si apiPostJson reintenta por 429 / errores de red)
   const idem =
-    typeof crypto !== "undefined" && typeof (crypto as any).randomUUID === "function"
-      ? (crypto as any).randomUUID()
-      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    typeof opts?.idempotencyKey === "string" && opts.idempotencyKey.trim()
+      ? opts.idempotencyKey.trim()
+      : typeof crypto !== "undefined" && typeof (crypto as any).randomUUID === "function"
+        ? (crypto as any).randomUUID()
+        : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   headers["x-idempotency-key"] = idem;
 
   const timeoutMs = opts?.timeoutMs ?? 10 * 60 * 1000; // 10 min por defecto

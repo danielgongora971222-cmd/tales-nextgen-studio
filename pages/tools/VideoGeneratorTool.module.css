@@ -2365,7 +2365,7 @@
   display: flex;
   justify-content: center;
   align-items: flex-end;
-  padding: 16px 16px 88px 16px;
+  padding: 16px 16px calc(88px + env(safe-area-inset-bottom, 0px)) 16px;
   pointer-events: none;
 }
 
@@ -2481,7 +2481,7 @@
 }
 
 @media (max-width: 720px) {
-  .cookSidebarShell { padding: 0 12px 82px 12px; }
+  .cookSidebarShell { padding: 0 12px calc(82px + env(safe-area-inset-bottom, 0px)) 12px; }
   .cookSidebar { width: 100%; }
   .cookPromptCard { padding: 14px; }
   .cookControlBtn { flex-basis: calc(50% - 5px); }
@@ -2767,14 +2767,14 @@
 .motionCookCard {
   padding: 0;
   overflow: hidden;
-  max-height: min(78vh, 860px);
+  max-height: min(82vh, 860px);
 }
 
 .motionCookScroll {
   min-height: 0;
-  max-height: min(calc(78vh - 122px), 720px);
+  max-height: min(calc(82vh - 126px), 720px);
   overflow: auto;
-  padding: 16px;
+  padding: 16px 16px 20px;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -2786,7 +2786,7 @@
   position: sticky;
   bottom: 0;
   z-index: 2;
-  padding: 14px 16px 16px;
+  padding: 14px 16px calc(16px + env(safe-area-inset-bottom, 0px));
   background:
     linear-gradient(180deg, rgba(12,10,12,0) 0%, rgba(12,10,12,0.86) 24%, rgba(12,10,12,0.98) 100%);
   border-top: 1px solid rgba(255,255,255,0.06);
@@ -2799,6 +2799,7 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
+  align-items: start;
 }
 
 .motionReferenceGrid > * {
@@ -2996,7 +2997,9 @@
 }
 
 .motionAdvancedSummary {
-  list-style: none;
+  width: 100%;
+  border: none;
+  background: transparent;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -3006,21 +3009,28 @@
   font-weight: 700;
   color: rgba(255,255,255,0.96);
   cursor: pointer;
+  text-align: left;
 }
 
-.motionAdvancedSummary::-webkit-details-marker {
-  display: none;
+.motionAdvancedSummaryContent {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
-.motionAdvancedSummary::after {
-  content: "+";
+.motionAdvancedMeta {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: rgba(255,255,255,0.54);
+}
+
+.motionAdvancedToggleIcon {
+  flex-shrink: 0;
   color: rgba(255,255,255,0.48);
   font-size: 22px;
   line-height: 1;
-}
-
-.motionAdvanced[open] .motionAdvancedSummary::after {
-  content: "−";
 }
 
 .motionAdvancedBody {
@@ -3028,6 +3038,7 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
+  border-top: 1px solid rgba(255,255,255,0.05);
 }
 
 .motionField {
@@ -3152,17 +3163,34 @@
   gap: 6px;
 }
 
+
+.motionGeneratingStatus {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.04);
+  color: rgba(255,255,255,0.82);
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: center;
+}
+
 @media (max-width: 720px) {
   .motionResumeBannerWrap {
     bottom: 80px;
   }
 
   .motionCookScroll {
-    padding: 14px;
+    padding: 14px 14px 18px;
     gap: 14px;
   }
 
   .motionReferenceGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px;
   }
 
@@ -3190,6 +3218,7 @@
 
 @media (max-width: 420px) {
   .motionReferenceGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
   }
 

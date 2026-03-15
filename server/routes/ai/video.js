@@ -258,6 +258,33 @@ async function findKlingJobByClientJobId({ ownerId, clientJobId }) {
   return r.data || null;
 }
 
+async function findVideoJobByClientJobId({ ownerId, clientJobId }) {
+  if (!clientJobId) return null;
+
+  const r = await supabaseAdmin
+    .from("jobs")
+    .select("id, status, params, result_asset_id")
+    .eq("kind", "video")
+    .eq("owner_id", ownerId)
+    .filter("params->>clientJobId", "eq", String(clientJobId))
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (r.error && r.error.code !== "PGRST116") {
+    throw httpError(500, "DB_ERROR", "No pude buscar job de video por clientJobId.", {
+      supabase: {
+        message: r.error?.message,
+        code: r.error?.code,
+        details: r.error?.details,
+        hint: r.error?.hint,
+      },
+    });
+  }
+
+  return r.data || null;
+}
+
 function respondKlingBusy(res, { retryAfterSeconds, message, details }) {
     const ra = Math.max(5, Math.min(180, Number(retryAfterSeconds || 30)));
 
@@ -2438,8 +2465,33 @@ const isKling = selectedModelNorm.startsWith("kling-");
       const active = await ctx.billing.requireActiveSubscription(user.id);
       if (active.error) return res.status(403).json({ ok: false, error: active.error });
 
+      const asyncMode = body.async !== false;
+      const clientJobIdNorm = body.clientJobId ? String(body.clientJobId || "").trim() : "";
       const requestedModel =
         body.model === "kling-v3-motion-control" ? "kling-v3-motion-control" : "kling-2.6-motion-control";
+
+      if (asyncMode && clientJobIdNorm) {
+        const existing = await findVideoJobByClientJobId({
+          ownerId: user.id,
+          clientJobId: clientJobIdNorm,
+        });
+
+        if (existing?.id) {
+          const existingTaskId = existing?.params?.requestId || existing?.params?.taskId || null;
+          return res.json({
+            ok: true,
+            mode: "async",
+            jobId: existing.id,
+            deduped: true,
+            ...(existingTaskId ? { taskId: String(existingTaskId) } : {}),
+          });
+        }
+      }
+
+      if (requestedModel !== "kling-v3-motion-control" && asyncMode) {
+        const blocked = await enforceKlingParallelLimit(res, user.id);
+        if (blocked) return;
+      }
 
       // ✅ Spend de créditos ANTES de encolar motion-control
       // Esta ruta NO recibe duración explícita; usamos un costo estable basado en 5s.
@@ -2540,6 +2592,8 @@ const isKling = selectedModelNorm.startsWith("kling-");
           prompt,
           extra: {
             meta,
+            motionControl: meta.motionControl,
+            clientJobId: clientJobIdNorm || null,
           },
         });
 
@@ -2581,6 +2635,8 @@ const isKling = selectedModelNorm.startsWith("kling-");
         prompt,
         extra: {
           meta,
+          motionControl: meta.motionControl,
+          clientJobId: clientJobIdNorm || null,
         },
       });
 
