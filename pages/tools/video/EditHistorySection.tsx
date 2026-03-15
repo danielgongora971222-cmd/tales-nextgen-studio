@@ -3,51 +3,14 @@ import styles from "../VideoGeneratorTool.module.css";
 import { AppRoute, type Asset } from "../../../types";
 import { Icon } from "./icon";
 import { shortText } from "./text";
+import {
+  finalizeVideoStill,
+  prepareVideoPreview,
+  primeVideoStill,
+  resetVideoStill,
+  startVideoHoverPreview,
+} from "./videoPreview";
 
-
-const getPosterSeekTime = (video: HTMLVideoElement) => {
-  const saved = Number(video.dataset.posterTime || "");
-  if (Number.isFinite(saved) && saved > 0) return saved;
-  const duration = Number(video.duration || 0);
-  if (Number.isFinite(duration) && duration > 0) {
-    return Math.max(0.04, Math.min(0.18, duration / 12));
-  }
-  return 0.08;
-};
-
-const primeHistoryVideoFrame = (video: HTMLVideoElement | null) => {
-  if (!video) return;
-  if (video.dataset.posterPrimed === "true" || video.dataset.posterPriming === "true") return;
-  video.dataset.posterPriming = "true";
-  const targetTime = getPosterSeekTime(video);
-  video.dataset.posterTime = String(targetTime);
-  try {
-    video.currentTime = targetTime;
-  } catch {
-    video.dataset.posterPriming = "false";
-  }
-};
-
-const finalizeHistoryVideoFrame = (video: HTMLVideoElement | null) => {
-  if (!video) return;
-  if (video.dataset.posterPriming !== "true") return;
-  video.pause();
-  video.dataset.posterPriming = "false";
-  video.dataset.posterPrimed = "true";
-};
-
-const resetHistoryVideoFrame = (video: HTMLVideoElement | null) => {
-  if (!video) return;
-  video.pause();
-  const targetTime = getPosterSeekTime(video);
-  try {
-    video.currentTime = targetTime;
-  } catch {
-    try {
-      video.currentTime = 0;
-    } catch {}
-  }
-};
 
 type Props = {
   isLoading: boolean;
@@ -152,16 +115,10 @@ export function EditHistorySection({
                   key={asset.id}
                   className={styles.tile}
                   onMouseEnter={() => {
-                    const el = hoverVideoEls.current[asset.id];
-                    if (el) {
-                      try {
-                        el.currentTime = 0;
-                      } catch {}
-                      el.play().catch(() => {});
-                    }
+                    startVideoHoverPreview(hoverVideoEls.current[asset.id]);
                   }}
                   onMouseLeave={() => {
-                    resetHistoryVideoFrame(hoverVideoEls.current[asset.id]);
+                    resetVideoStill(hoverVideoEls.current[asset.id]);
                   }}
                 >
                   <button className={styles.tileMediaBtn} type="button" onClick={() => onOpenViewer(asset)} title="Open">
@@ -169,7 +126,7 @@ export function EditHistorySection({
                       ref={(el) => {
                         hoverVideoEls.current[asset.id] = el;
                         if (el) {
-                          primeHistoryVideoFrame(el);
+                          prepareVideoPreview(el);
                         }
                       }}
                       className={styles.tileMedia}
@@ -177,10 +134,15 @@ export function EditHistorySection({
                       muted
                       playsInline
                       loop
-                      preload="auto"
-                      onLoadedMetadata={(e) => primeHistoryVideoFrame(e.currentTarget)}
-                      onCanPlay={(e) => primeHistoryVideoFrame(e.currentTarget)}
-                      onSeeked={(e) => finalizeHistoryVideoFrame(e.currentTarget)}
+                      preload="metadata"
+                      onLoadedMetadata={(e) => {
+                        prepareVideoPreview(e.currentTarget);
+                        primeVideoStill(e.currentTarget);
+                      }}
+                      onLoadedData={(e) => primeVideoStill(e.currentTarget)}
+                      onCanPlay={(e) => primeVideoStill(e.currentTarget)}
+                      onCanPlayThrough={(e) => primeVideoStill(e.currentTarget)}
+                      onSeeked={(e) => finalizeVideoStill(e.currentTarget)}
                     />
                     <div className={styles.playOverlay} />
                   </button>

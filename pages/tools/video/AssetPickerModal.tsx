@@ -1,6 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import styles from "../VideoGeneratorTool.module.css";
 import type { Asset } from "../../../types";
+import {
+  finalizeVideoStill,
+  prepareVideoPreview,
+  primeVideoStill,
+  resetVideoStill,
+  startVideoHoverPreview,
+} from "./videoPreview";
 
 type Props = {
   open: boolean;
@@ -34,6 +41,7 @@ export function AssetPickerModal({
   const [visibleCount, setVisibleCount] = useState(INITIAL_COUNT);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const hoverVideoEls = useRef<Record<string, HTMLVideoElement | null>>({});
 
   useEffect(() => {
     if (!open) return;
@@ -146,6 +154,14 @@ export function AssetPickerModal({
                       onSelect(a);
                       onClose();
                     }}
+                    onMouseEnter={() => {
+                      if (kind !== "video") return;
+                      startVideoHoverPreview(hoverVideoEls.current[a.id]);
+                    }}
+                    onMouseLeave={() => {
+                      if (kind !== "video") return;
+                      resetVideoStill(hoverVideoEls.current[a.id]);
+                    }}
                     title={String((a as any)?.name || a.id)}
                   >
                     {url ? (
@@ -153,12 +169,25 @@ export function AssetPickerModal({
                         <img className={styles.pickerThumb} src={url} alt={String((a as any)?.name || a.id)} />
                       ) : (
                         <video
+                          ref={(el) => {
+                            hoverVideoEls.current[a.id] = el;
+                            if (el) prepareVideoPreview(el);
+                          }}
                           className={styles.pickerThumb}
                           src={url}
                           muted
                           playsInline
                           loop
+                          preload="metadata"
                           style={{ objectFit: "cover" }}
+                          onLoadedMetadata={(e) => {
+                            prepareVideoPreview(e.currentTarget);
+                            primeVideoStill(e.currentTarget);
+                          }}
+                          onLoadedData={(e) => primeVideoStill(e.currentTarget)}
+                          onCanPlay={(e) => primeVideoStill(e.currentTarget)}
+                          onCanPlayThrough={(e) => primeVideoStill(e.currentTarget)}
+                          onSeeked={(e) => finalizeVideoStill(e.currentTarget)}
                         />
                       )
                     ) : (

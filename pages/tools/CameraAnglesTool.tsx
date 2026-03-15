@@ -584,7 +584,10 @@ const CameraAnglesTool: React.FC = () => {
                   ) : (
                     <>
                       <IconSparkles className="h-4 w-4" />
-                      Generar
+                      <span>Generar</span>
+                      <span className="rounded-full bg-black/10 px-2.5 py-1 text-[11px] font-semibold tracking-[0.08em] text-black/80">
+                        ✦ {estimatedCostCredits} créditos
+                      </span>
                     </>
                   )}
                 </button>

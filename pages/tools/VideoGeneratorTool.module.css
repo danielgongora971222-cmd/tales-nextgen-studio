@@ -322,6 +322,14 @@
   object-fit: cover;
   display: block;
 }
+.pickerThumb {
+  width: 100%;
+  aspect-ratio: var(--video-thumb-aspect, 16 / 9);
+  min-height: 140px;
+  object-fit: cover;
+  display: block;
+  background: rgba(0,0,0,0.35);
+}
 .pickerCap {
   padding: 10px;
   font-size: 11px;
@@ -1610,6 +1618,9 @@
 .tileVideo {
   width: 100%;
   height: auto;          /* ✅ respeta relación de aspecto del video */
+  aspect-ratio: var(--video-thumb-aspect, 16 / 9);
+  min-height: 160px;
+  object-fit: cover;
   display: block;
   background: rgba(0,0,0,0.35);
   transition: transform 0.5s ease;
@@ -2626,6 +2637,9 @@
 
 .tileMedia {
   width: 100%;
+  aspect-ratio: var(--video-thumb-aspect, 16 / 9);
+  min-height: 160px;
+  object-fit: cover;
   display: block;
   background: rgba(0,0,0,0.35);
 }
@@ -2847,6 +2861,7 @@
 .motionReferencePreview {
   width: 100%;
   height: 100%;
+  aspect-ratio: var(--video-thumb-aspect, 4 / 5);
   object-fit: cover;
   display: block;
 }

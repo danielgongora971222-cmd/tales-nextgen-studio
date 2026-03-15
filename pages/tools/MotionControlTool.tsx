@@ -15,6 +15,11 @@ import { estimateVideoCostCredits } from "../../config/pricing.js";
 import { HistorySection } from "./video/HistorySection";
 import { AssetPickerModal } from "./video/AssetPickerModal";
 import { Icon } from "./video/icon";
+import {
+  finalizeVideoStill,
+  prepareVideoPreview,
+  primeVideoStill,
+} from "./video/videoPreview";
 
 type Orientation = "image" | "video";
 type MotionControlModel = "kling-2.6-motion-control" | "kling-v3-motion-control";
@@ -201,6 +206,16 @@ function MotionReferenceCard({
                 autoPlay
                 loop
                 preload="metadata"
+                ref={(el) => {
+                  if (el) prepareVideoPreview(el);
+                }}
+                onLoadedMetadata={(e) => {
+                  prepareVideoPreview(e.currentTarget);
+                  primeVideoStill(e.currentTarget);
+                }}
+                onLoadedData={(e) => primeVideoStill(e.currentTarget)}
+                onCanPlay={(e) => primeVideoStill(e.currentTarget)}
+                onSeeked={(e) => finalizeVideoStill(e.currentTarget)}
               />
             ) : (
               <img className={styles.motionReferencePreview} src={asset.url} alt={asset.name || title} />
@@ -268,7 +283,7 @@ export default function MotionControlTool() {
   const [characterOrientation, setCharacterOrientation] = useState<Orientation>("video");
   const [mode, setMode] = useState<"std" | "pro">("std");
   const [model, setModel] = useState<MotionControlModel>("kling-v3-motion-control");
-  const [advancedOpen, setAdvancedOpen] = useState(true);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const [panel, setPanel] = useState<MotionPanelKey>(null);
   const [isCookOpen, setIsCookOpen] = useState(false);
@@ -349,7 +364,6 @@ export default function MotionControlTool() {
 
   const openCook = useCallback(() => {
     setPanel(null);
-    setAdvancedOpen(true);
     setIsCookOpen(true);
   }, []);
 
@@ -1006,7 +1020,7 @@ export default function MotionControlTool() {
                       >
                         <span className={styles.motionAdvancedSummaryContent}>
                           <span>Advanced settings</span>
-                          <span className={styles.motionAdvancedMeta}>Prompt optional · {selectedCreateFromLabel}</span>
+                          <span className={styles.motionAdvancedMeta}>{prompt.trim() ? "Prompt on" : "Prompt optional"} · {selectedCreateFromLabel}</span>
                         </span>
                         <span className={styles.motionAdvancedToggleIcon} aria-hidden="true">
                           {advancedOpen ? "−" : "+"}
