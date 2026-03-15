@@ -26,6 +26,9 @@ import {
 import { LimitedTextarea } from "./video/LimitedTextarea";
 import { MultishotModeModal } from "./video/MultishotModeModal";
 import { estimateVideoCostCredits } from "../../config/pricing.js";
+import { toggleLike } from "../../services/socialApi";
+import { syncFavoriteAssetState } from "../../services/favoriteAssets";
+import { clearCommunityRecipePrefill, getCommunityPrefillTarget, readCommunityRecipePrefill } from "../../services/communityRecipePrefill";
 
 type EditModelId =
   | "kling-o3-ref-to-video-pro"
@@ -35,6 +38,7 @@ type EditModelId =
 type AspectRatio = "auto" | "16:9" | "9:16" | "1:1";
 
 const TOOL_NAME = "video-edit";
+const PREFILL_TARGET = getCommunityPrefillTarget(TOOL_NAME);
 const PENDING_KEY = "tales_pending_video_edit_job_v2:video-edit";
 
 // 🔒 Feature flag: oculta Storyboard/Multishot SOLO en Edit Video Tool (por ahora)
@@ -91,6 +95,36 @@ function downloadFromUrl(url: string, filename: string) {
   document.body.appendChild(a);
   a.click();
   a.remove();
+}
+
+function mergeAssetsById(base: Asset[], incoming: Asset[]) {
+  const map = new Map<string, Asset>();
+  for (const asset of [...base, ...incoming]) {
+    if (!asset?.id) continue;
+    map.set(asset.id, { ...(map.get(asset.id) || {} as Asset), ...asset });
+  }
+  return Array.from(map.values());
+}
+
+function makeResolvedAsset(item: any, type: Asset["type"]): Asset | null {
+  const assetId = typeof item?.assetId === "string" ? item.assetId.trim() : "";
+  const url = typeof item?.url === "string" ? item.url.trim() : "";
+  if (!assetId || !url) return null;
+  return {
+    id: assetId,
+    url,
+    type,
+    name: typeof item?.token === "string" && item.token ? item.token.replace(/^@/, "") : `prefill-${type}`,
+    prompt: "",
+    createdAt: Date.now(),
+    ownerId: "",
+    isPublic: false,
+    likedByMe: false,
+    likesCount: 0,
+    commentsCount: 0,
+    likes: [],
+    comments: [],
+  };
 }
 
 const FRAME_UPLOAD_TOOL = "video-gen-frame";
@@ -204,6 +238,9 @@ export default function EditVideoTool() {
   // Viewer
   const [viewer, setViewer] = useState<Asset | null>(null);
   const hoverVideoEls = useRef<Record<string, HTMLVideoElement | null>>({});
+  const [likeBusyById, setLikeBusyById] = useState<Record<string, boolean>>({});
+  const prefillAppliedRef = useRef(false);
+  const [pendingExternalPrefill, setPendingExternalPrefill] = useState<any | null>(null);
 
   // Modals
   const [pickerOpen, setPickerOpen] = useState<null | "start" | "end" | "video">(null);
@@ -472,6 +509,13 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     return true;
   }, [isStoryboardMode, shotsWithPrompt, multishotTotalSeconds]);
 
+  const referencePreviewAssets = useMemo(
+    () => referenceImageIds.map((id) => imageAssets.find((asset) => asset.id === id) || null).filter((asset): asset is Asset => Boolean(asset)),
+    [referenceImageIds, imageAssets]
+  );
+  const visibleReferencePreviewAssets = referencePreviewAssets.slice(0, 3);
+  const hiddenReferencePreviewCount = Math.max(0, referencePreviewAssets.length - visibleReferencePreviewAssets.length);
+
   const visibleHistory = useMemo(() => history.slice(0, visibleCount), [history, visibleCount]);
   const hasMore = history.length > visibleHistory.length;
 
@@ -669,6 +713,18 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
   }, [user]);
 
   useEffect(() => {
+    const readPrefill = () => {
+      const payload = readCommunityRecipePrefill(TOOL_NAME);
+      if (payload) setPendingExternalPrefill(payload);
+    };
+
+    readPrefill();
+    const onPrefill = () => readPrefill();
+    window.addEventListener(PREFILL_TARGET.event, onPrefill as any);
+    return () => window.removeEventListener(PREFILL_TARGET.event, onPrefill as any);
+  }, []);
+
+  useEffect(() => {
     if (!user) {
       setImageAssets([]);
       setVideoAssets([]);
@@ -729,6 +785,37 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
   }, [user, reloadImages, reloadVideos, reloadHistory, reloadKlingElements, loadPending, isGenerating]);
 
 
+  useEffect(() => {
+    if (prefillAppliedRef.current) return;
+    if (!pendingExternalPrefill) return;
+    if (isLoadingHistory || isLoadingImages || isLoadingVideos) return;
+
+    const payload = pendingExternalPrefill;
+    const source = payload?.recipe?.sourceAsset || {};
+    const fakeAsset: Asset = {
+      id: String(source?.id || `prefill-${TOOL_NAME}`),
+      url: "",
+      type: "video",
+      name: String(source?.tool || TOOL_NAME),
+      prompt: typeof source?.prompt === "string" ? source.prompt : "",
+      tool: source?.tool || undefined,
+      meta: source?.meta || {},
+      createdAt: Date.now(),
+      ownerId: String(user?.id || ""),
+      isPublic: false,
+      likedByMe: false,
+      likesCount: 0,
+      commentsCount: 0,
+      likes: [],
+      comments: [],
+    };
+
+    applyRecipeFromAsset(fakeAsset, payload);
+    prefillAppliedRef.current = true;
+    setPendingExternalPrefill(null);
+    clearCommunityRecipePrefill(TOOL_NAME);
+  }, [pendingExternalPrefill, isLoadingHistory, isLoadingImages, isLoadingVideos, applyRecipeFromAsset, user?.id]);
+
   // Keep state coherent when switching models
   useEffect(() => {
     // Si el feature flag está apagado, multishot queda siempre desactivado
@@ -787,6 +874,109 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
       }
     },
     [reloadHistory]
+  );
+
+  const onToggleLike = useCallback(
+    async (asset: Asset) => {
+      if (!user) {
+        setError("Debes iniciar sesión para dar Like.");
+        return;
+      }
+      if (likeBusyById[asset.id]) return;
+
+      setLikeBusyById((prev) => ({ ...prev, [asset.id]: true }));
+      try {
+        const res = await toggleLike(asset.id);
+        syncFavoriteAssetState(asset.id, res.liked);
+        setHistory((prev) =>
+          prev.map((entry) => (entry.id === asset.id ? { ...entry, likedByMe: res.liked, likesCount: res.likesCount } : entry))
+        );
+        setViewer((prev) =>
+          prev && prev.id === asset.id ? { ...prev, likedByMe: res.liked, likesCount: res.likesCount } : prev
+        );
+      } catch (err: any) {
+        setError(formatErr(err));
+      } finally {
+        setLikeBusyById((prev) => ({ ...prev, [asset.id]: false }));
+      }
+    },
+    [user, likeBusyById]
+  );
+
+  const applyRecipeFromAsset = useCallback(
+    (asset: Asset, payload?: { recipe?: any; resolvedAssets?: any[] } | null) => {
+      const source = payload?.recipe?.sourceAsset || asset;
+      const meta: any = source?.meta || (asset as any)?.meta || {};
+      const promptValue = typeof source?.prompt === "string" ? source.prompt : asset.prompt || "";
+      const resolvedAssets = Array.isArray(payload?.resolvedAssets) ? payload.resolvedAssets : [];
+      const byId = new Map<string, any>();
+      for (const item of resolvedAssets) {
+        if (item?.assetId) byId.set(String(item.assetId), item);
+      }
+
+      const incomingImages: Asset[] = [];
+      const incomingVideos: Asset[] = [];
+
+      const resolveImage = (id: any) => {
+        if (typeof id !== "string" || !id) return null;
+        const existing = imageAssets.find((entry) => entry.id === id) || null;
+        if (existing) return existing;
+        const temp = makeResolvedAsset(byId.get(id), "image");
+        if (temp) incomingImages.push(temp);
+        return temp;
+      };
+
+      const resolveVideo = (id: any) => {
+        if (typeof id !== "string" || !id) return null;
+        const existing = videoAssets.find((entry) => entry.id === id) || null;
+        if (existing) return existing;
+        const temp = makeResolvedAsset(byId.get(id), "video");
+        if (temp) incomingVideos.push(temp);
+        return temp;
+      };
+
+      setPrompt(promptValue);
+      if (typeof meta.model === "string") setModel(meta.model as any);
+      if (typeof meta.aspectRatio === "string") setAspectRatio(meta.aspectRatio as any);
+      if (typeof meta.durationSeconds === "number") setDurationSeconds(meta.durationSeconds);
+
+      const first = resolveImage(meta.firstFrameAssetId);
+      const last = resolveImage(meta.lastFrameAssetId);
+      setStartImage(resolveImage(meta?.editVideo?.startImageAssetId) || first);
+      setEndImage(resolveImage(meta?.editVideo?.endImageAssetId) || last);
+      setInputVideo(resolveVideo(meta?.editVideo?.videoAssetId));
+
+      const nextRefIds = Array.isArray(meta?.editVideo?.referenceImageAssetIds)
+        ? meta.editVideo.referenceImageAssetIds.map(String).filter(Boolean)
+        : [];
+      for (const id of nextRefIds) resolveImage(id);
+      setReferenceImageIds(nextRefIds);
+
+      const nextElementIds = Array.isArray(meta?.editVideo?.klingElementIds)
+        ? meta.editVideo.klingElementIds.map(String).filter(Boolean)
+        : [];
+      setKlingElementIds(nextElementIds);
+
+      if (typeof meta?.editVideo?.generateAudio === "boolean") setGenerateAudio(meta.editVideo.generateAudio);
+      if (typeof meta?.editVideo?.keepAudio === "boolean") setKeepAudio(meta.editVideo.keepAudio);
+
+      const multiPrompt = Array.isArray(meta?.editVideo?.multiPrompt) ? meta.editVideo.multiPrompt : [];
+      if (multiPrompt.length > 0) {
+        setShots(
+          multiPrompt.map((shot: any) => ({
+            prompt: String(shot?.prompt || ""),
+            durationSeconds: Number.isFinite(Number(shot?.durationSeconds ?? shot?.duration)) ? Number(shot?.durationSeconds ?? shot?.duration) : 5,
+          }))
+        );
+      }
+
+      if (incomingImages.length > 0) setImageAssets((prev) => mergeAssetsById(prev, incomingImages));
+      if (incomingVideos.length > 0) setVideoAssets((prev) => mergeAssetsById(prev, incomingVideos));
+
+      setPanel(null);
+      setViewer(null);
+    },
+    [imageAssets, videoAssets]
   );
 
     // ===== Limits for references (Elements modal + images modal) =====
@@ -1444,6 +1634,8 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
           }
         }}
         onOpenViewer={(asset) => setViewer(asset)}
+        onToggleLike={onToggleLike}
+        likeBusyById={likeBusyById}
         onTogglePublish={onTogglePublish}
         onDownload={onDownload}
         onDelete={onDelete}
@@ -1950,11 +2142,30 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
                 onClick={() => setRefPickerOpen(true)}
                 title={`Imágenes de referencia (máx ${maxCombinedRefs} combinado)`}
               >
-                <span className={styles.controlBtnLeft}>
-                  <Icon name="image" />
-                  Refs
+                <span className={styles.controlBtnMain}>
+                  <span className={styles.controlBtnLeft}>
+                    <Icon name="image" />
+                    Refs
+                  </span>
+                  <span className={styles.controlBtnMeta}>({referenceImageIds.length})</span>
                 </span>
-                <span className={styles.controlBtnMeta}>({referenceImageIds.length})</span>
+                {visibleReferencePreviewAssets.length > 0 && (
+                  <span className={styles.controlBtnReferenceRail} aria-hidden="true">
+                    {visibleReferencePreviewAssets.map((asset, index) => (
+                      <span
+                        key={`reference-preview-${asset.id}`}
+                        className={styles.controlBtnReferenceThumb}
+                        style={{ zIndex: visibleReferencePreviewAssets.length - index }}
+                        title={asset.name || `Reference ${index + 1}`}
+                      >
+                        <img src={asset.url} alt="" loading="lazy" decoding="async" />
+                      </span>
+                    ))}
+                    {hiddenReferencePreviewCount > 0 && (
+                      <span className={styles.controlBtnReferenceMore}>+{hiddenReferencePreviewCount}</span>
+                    )}
+                  </span>
+                )}
               </button>
 
               {VIDEO_ELEMENTS_UI_ENABLED && (
@@ -2128,7 +2339,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
           const p = String(meta?.editVideo?.prompt || meta?.prompt || "");
           navigator.clipboard?.writeText(p || "");
         }}
-        onReusePrompt={() => {}}
+        onReusePrompt={(asset) => applyRecipeFromAsset(asset)}
         onTogglePublish={onTogglePublish}
         onDownload={onDownload}
         onDelete={onDelete}

@@ -156,12 +156,12 @@ export function ViewerModal({
             </button>
 
             <button
-              className={styles.iconBtn}
+              className={`${styles.iconBtn} ${styles.iconBtnMoney}`}
               type="button"
               title="Vender / Administrar listing"
               onClick={() => onTogglePublish(viewer)}
             >
-              <Icon name="share" />
+              <Icon name="money" />
             </button>
 
             <button className={styles.iconBtn} type="button" title="Descargar" onClick={() => onDownload(viewer)}>

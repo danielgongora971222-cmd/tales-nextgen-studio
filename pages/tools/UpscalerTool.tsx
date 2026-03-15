@@ -7,6 +7,8 @@ import { AppRoute, Asset, GeminiModel } from "../../types";
 import { generateImageBatch } from "../../services/geminiService";
 import { deleteAsset, listMyAssets, uploadUserAsset, downloadAssetToDisk } from "../../services/assetsApi";
 import OneNationUpIcon from "@/components/brand/OneNationUpIcon";
+import { toggleLike } from "../../services/socialApi";
+import { syncFavoriteAssetState } from "../../services/favoriteAssets";
 import { estimateImageCostCredits } from "../../config/pricing.js";
 
 import { GOOGLE_IMAGE_MODELS } from "../../config/imageGenerationShared.js";
@@ -56,8 +58,17 @@ const MODEL_OPTIONS: Array<{ id: string; label: string; qualities: Quality[] }> 
   { id: "openai:gpt-image-1.5-high", label: "GPT 1.5 High", qualities: ["1K"] },
 ];
 
-function Icon({ name }: { name: "image" | "upload" | "share" | "download" | "trash" | "reuse" | "close" }) {
+function Icon({ name }: { name: "heart" | "image" | "upload" | "share" | "download" | "trash" | "reuse" | "close" }) {
   switch (name) {
+    case "heart":
+      return (
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <path
+            fill="currentColor"
+            d="M12 21s-7.2-4.35-9.6-8.55C.3 8.7 2.55 5.7 6 5.7c1.95 0 3.3 1.05 4 2.1.7-1.05 2.05-2.1 4-2.1 3.45 0 5.7 3 3.6 6.75C19.2 16.65 12 21 12 21z"
+          />
+        </svg>
+      );
     case "image":
       return (
         <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
@@ -193,6 +204,7 @@ const UpscalerTool: React.FC<{ prefillAsset?: Asset | null }> = ({ prefillAsset 
   const [myAssets, setMyAssets] = useState<Asset[]>([]);
   const [history, setHistory] = useState<Asset[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [likeBusyById, setLikeBusyById] = useState<Record<string, boolean>>({});
 
   const [viewer, setViewer] = useState<Asset | null>(null);
 
@@ -330,6 +342,34 @@ const UpscalerTool: React.FC<{ prefillAsset?: Asset | null }> = ({ prefillAsset 
 
   function handleTogglePublish(asset: Asset) {
     window.dispatchEvent(new CustomEvent("tales:open-sell", { detail: { asset } }));
+  }
+
+  async function handleToggleLike(asset: Asset) {
+    if (!user) {
+      setError("Debes iniciar sesión para dar Like.");
+      return;
+    }
+    if (likeBusyById[asset.id]) return;
+
+    setLikeBusyById((prev) => ({ ...prev, [asset.id]: true }));
+    try {
+      const res = await toggleLike(asset.id);
+      syncFavoriteAssetState(asset.id, res.liked);
+
+      const apply = (items: Asset[]) =>
+        items.map((entry) =>
+          entry.id === asset.id ? { ...entry, likedByMe: res.liked, likesCount: res.likesCount } : entry
+        );
+
+      setHistory((prev) => apply(prev));
+      setViewer((prev) =>
+        prev && prev.id === asset.id ? { ...prev, likedByMe: res.liked, likesCount: res.likesCount } : prev
+      );
+    } catch (e: any) {
+      setError(e?.message || "No se pudo actualizar el Like.");
+    } finally {
+      setLikeBusyById((prev) => ({ ...prev, [asset.id]: false }));
+    }
   }
 
   async function handleDownload(asset: Asset) {
@@ -529,11 +569,12 @@ const UpscalerTool: React.FC<{ prefillAsset?: Asset | null }> = ({ prefillAsset 
 
                       <button
                         type="button"
-                        className={styles.iconBtn}
-                        title="Vender / Administrar listing"
-                        onClick={() => handleTogglePublish(asset)}
+                        className={`${styles.iconBtn} ${styles.iconBtnHeart} ${asset.likedByMe ? styles.iconBtnHeartActive : ""}`}
+                        title={asset.likedByMe ? "Quitar Like" : "Dar Like"}
+                        disabled={Boolean(likeBusyById[asset.id])}
+                        onClick={() => handleToggleLike(asset)}
                       >
-                        <Icon name="share" />
+                        <Icon name="heart" />
                       </button>
 
                       <button type="button" className={styles.iconBtn} title="Descargar" onClick={() => handleDownload(asset)}>
@@ -620,9 +661,6 @@ const UpscalerTool: React.FC<{ prefillAsset?: Asset | null }> = ({ prefillAsset 
                   <Icon name="reuse" />
                 </button>
 
-                <button className={styles.iconBtn} type="button" title="Vender / Administrar listing" onClick={() => handleTogglePublish(viewer)}>
-                  <Icon name="share" />
-                </button>
 
                 <button className={styles.iconBtn} type="button" title="Descargar" onClick={() => handleDownload(viewer)}>
                   <Icon name="download" />

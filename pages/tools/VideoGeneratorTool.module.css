@@ -1713,6 +1713,30 @@
   transform: translateY(-1px);
 }
 
+.iconBtnMoney {
+  color: rgba(34, 197, 94, 0.95);
+}
+
+.iconBtnMoney:hover,
+.iconBtnOn.iconBtnMoney {
+  background: rgba(34, 197, 94, 0.90);
+  color: rgba(0, 0, 0, 0.92);
+}
+
+.iconBtnHeart {
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.iconBtnHeartActive {
+  background: rgba(239, 68, 68, 0.18);
+  color: rgba(239, 68, 68, 0.98);
+}
+
+.iconBtnHeartActive:hover {
+  background: rgba(239, 68, 68, 0.90);
+  color: rgba(0, 0, 0, 0.92);
+}
+
 /* Botón Refresh igual (sin marco) */
 .ghostBtn {
   background: rgba(0,0,0,0.18);
@@ -3249,4 +3273,68 @@
     font-size: 11px;
   }
 
+}
+
+
+.controlBtnMain {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.controlBtnReferenceRail {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-left: 10px;
+  min-width: 0;
+}
+
+.controlBtnReferenceThumb,
+.controlBtnReferenceMore {
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
+  border: 1px solid rgba(241,225,148,0.24);
+  box-shadow:
+    0 12px 24px rgba(0,0,0,0.42),
+    inset 0 1px 0 rgba(255,255,255,0.08);
+}
+
+.controlBtnReferenceThumb {
+  overflow: hidden;
+  background: rgba(8, 6, 10, 0.94);
+  position: relative;
+}
+
+.controlBtnReferenceThumb + .controlBtnReferenceThumb,
+.controlBtnReferenceThumb + .controlBtnReferenceMore,
+.controlBtnReferenceMore + .controlBtnReferenceThumb {
+  margin-left: -8px;
+}
+
+.controlBtnReferenceThumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.controlBtnReferenceMore {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 7px;
+  min-width: 30px;
+  width: auto;
+  background: linear-gradient(135deg, rgba(33, 20, 22, 0.98), rgba(91, 14, 20, 0.82));
+  color: rgba(241,225,148,0.96);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  backdrop-filter: blur(10px) saturate(140%);
 }

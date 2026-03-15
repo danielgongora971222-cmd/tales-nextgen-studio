@@ -19,7 +19,9 @@ import { ControlsRow } from "./video/ControlsRow";
 import { ControlsPopover } from "./video/ControlsPopover";
 import type { KlingShotType } from "../../services/videoModels/types";
 import { estimateVideoCostCredits } from "../../config/pricing.js";
-
+import { toggleLike } from "../../services/socialApi";
+import { syncFavoriteAssetState } from "../../services/favoriteAssets";
+import { clearCommunityRecipePrefill, getCommunityPrefillTarget, readCommunityRecipePrefill } from "../../services/communityRecipePrefill";
 
 import {
   DEFAULT_VIDEO_MODEL,
@@ -164,6 +166,7 @@ function moveItem<T>(arr: T[], from: number, to: number) {
 
 
 const TOOL_ID = "video-generator";
+const PREFILL_TARGET = getCommunityPrefillTarget(TOOL_ID);
 const FRAME_UPLOAD_TOOL = "video-gen-frame";
 
 const VIDEO_SETTINGS_VERSION = 1;
@@ -291,6 +294,9 @@ const VideoGeneratorTool: React.FC = () => {
 
   // refs para reproducir preview en hover
   const hoverVideoEls = useRef<Record<string, HTMLVideoElement | null>>({});
+  const [likeBusyById, setLikeBusyById] = useState<Record<string, boolean>>({});
+  const prefillAppliedRef = useRef(false);
+  const [pendingExternalPrefill, setPendingExternalPrefill] = useState<any | null>(null);
 
   const [error, setError] = useState<string | null>(null);
 
@@ -512,6 +518,30 @@ const VideoGeneratorTool: React.FC = () => {
 
   function handleTogglePublish(asset: Asset) {
     window.dispatchEvent(new CustomEvent("tales:open-sell", { detail: { asset } }));
+  }
+
+  async function handleToggleLike(asset: Asset) {
+    if (!user) {
+      setError("Debes iniciar sesión para dar Like.");
+      return;
+    }
+    if (likeBusyById[asset.id]) return;
+
+    setLikeBusyById((prev) => ({ ...prev, [asset.id]: true }));
+    try {
+      const res = await toggleLike(asset.id);
+      syncFavoriteAssetState(asset.id, res.liked);
+      setVideoAssets((prev) =>
+        prev.map((entry) => (entry.id === asset.id ? { ...entry, likedByMe: res.liked, likesCount: res.likesCount } : entry))
+      );
+      setViewer((prev) =>
+        prev && prev.id === asset.id ? { ...prev, likedByMe: res.liked, likesCount: res.likesCount } : prev
+      );
+    } catch (e: any) {
+      setError(e?.message || "No se pudo actualizar el Like.");
+    } finally {
+      setLikeBusyById((prev) => ({ ...prev, [asset.id]: false }));
+    }
   }
 
   async function handleDownload(asset: Asset) {
@@ -846,6 +876,18 @@ useEffect(() => {
     }
   }, [hasFirst, hasLast]);
 
+  useEffect(() => {
+    const readPrefill = () => {
+      const payload = readCommunityRecipePrefill(TOOL_ID);
+      if (payload) setPendingExternalPrefill(payload);
+    };
+
+    readPrefill();
+    const onPrefill = () => readPrefill();
+    window.addEventListener(PREFILL_TARGET.event, onPrefill as any);
+    return () => window.removeEventListener(PREFILL_TARGET.event, onPrefill as any);
+  }, []);
+
   // Cargar assets (imágenes para picker + videos para historial)
   useEffect(() => {
     if (!user?.id) return;
@@ -910,6 +952,55 @@ useEffect(() => {
       }
     })();
   }, [user?.id]);
+
+  useEffect(() => {
+    if (prefillAppliedRef.current) return;
+    if (!pendingExternalPrefill) return;
+    if (isLoadingHistory || isLoadingImages) return;
+
+    const payload = pendingExternalPrefill;
+    const recipe = payload?.recipe || null;
+    const resolvedAssets = Array.isArray(payload?.resolvedAssets) ? payload.resolvedAssets : [];
+    const source = recipe?.sourceAsset || {};
+    const meta = source?.meta || {};
+
+    if (typeof source?.prompt === "string") setPrompt(source.prompt);
+    if (typeof meta.model === "string") setModel(meta.model);
+    if (typeof meta.aspectRatio === "string") setAspectRatio(meta.aspectRatio);
+    if (typeof meta.resolution === "string") setResolution(meta.resolution);
+    if (typeof meta.durationSeconds === "number") setDurationSeconds(meta.durationSeconds);
+    if (typeof meta.klingMode === "string") setKlingMode(meta.klingMode);
+    if (typeof meta.klingSound === "boolean") {
+      setKlingSound(meta.klingSound);
+      setKlingSoundTouched(true);
+    }
+    if (typeof meta.klingShotType === "string") setKlingShotType(meta.klingShotType);
+    if (typeof meta.negativePrompt === "string") setNegativePrompt(meta.negativePrompt);
+    if (typeof meta.klingCfgScale === "number") setKlingCfgScale(meta.klingCfgScale);
+    if (Array.isArray(meta.klingVoiceIds)) setKlingVoiceIdsText(meta.klingVoiceIds.join(","));
+    if (typeof meta.multishotEnabled === "boolean") setMultishotEnabled(meta.multishotEnabled);
+    if (Array.isArray(meta.klingMultiPrompt)) setKlingShots(coerceShots(meta.klingMultiPrompt));
+
+    const byId = new Map<string, any>();
+    for (const item of resolvedAssets) {
+      if (item?.assetId) byId.set(String(item.assetId), item);
+    }
+
+    const first = makeResolvedAsset(byId.get(meta.firstFrameAssetId), "image");
+    const last = makeResolvedAsset(byId.get(meta.lastFrameAssetId), "image");
+
+    if (first || last) {
+      setImageAssets((prev) => mergeAssetsById(prev, [first, last].filter(Boolean) as Asset[]));
+    }
+
+    setFirstFrame(first);
+    setLastFrame(first ? last : null);
+
+    prefillAppliedRef.current = true;
+    setPendingExternalPrefill(null);
+    clearCommunityRecipePrefill(TOOL_ID);
+    setPanel(null);
+  }, [pendingExternalPrefill, isLoadingHistory, isLoadingImages]);
 
   useEffect(() => {
     if (!pickerOpen) return;
@@ -1643,6 +1734,8 @@ const clearModalSelectedIds = () => {
         onRefresh={reloadHistory}
         onLoadMore={handleLoadMoreHistory}
         onOpenViewer={(a) => setViewer(a)}
+        onToggleLike={handleToggleLike}
+        likeBusyById={likeBusyById}
         onTogglePublish={handleTogglePublish}
         onDownload={handleDownload}
         onDelete={handleDelete}

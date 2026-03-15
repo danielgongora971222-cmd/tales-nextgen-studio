@@ -24,6 +24,8 @@ type Props = {
   onRefresh: () => void;
   onLoadMore: () => void;
   onOpenViewer: (asset: Asset) => void;
+  onToggleLike: (asset: Asset) => void;
+  likeBusyById: Record<string, boolean>;
   onTogglePublish: (asset: Asset) => void;
   onDownload: (asset: Asset) => void;
   onDelete: (asset: Asset) => void;
@@ -43,6 +45,8 @@ export function HistorySection({
   onRefresh,
   onLoadMore,
   onOpenViewer,
+  onToggleLike,
+  likeBusyById,
   onTogglePublish,
   onDownload,
   onDelete,
@@ -153,20 +157,21 @@ export function HistorySection({
                   <div className={styles.tileActions} onClick={(e) => e.stopPropagation()}>
                     <button
                       type="button"
-                      className={styles.iconBtn}
-                      title="Favoritos (próximamente)"
-                      onClick={() => onShowError("Favoritos (Like) se habilita en el paso de Mis Creaciones / Favoritos.")}
+                      className={`${styles.iconBtn} ${styles.iconBtnHeart} ${asset.likedByMe ? styles.iconBtnHeartActive : ""}`}
+                      title={asset.likedByMe ? "Quitar Like" : "Dar Like"}
+                      disabled={Boolean(likeBusyById[asset.id])}
+                      onClick={() => onToggleLike(asset)}
                     >
                       <Icon name="heart" />
                     </button>
 
                     <button
                       type="button"
-                      className={styles.iconBtn}
+                      className={`${styles.iconBtn} ${styles.iconBtnMoney} ${isPublished ? styles.iconBtnOn : ""}`}
                       title="Vender / Administrar listing"
                       onClick={() => onTogglePublish(asset)}
                     >
-                      <Icon name="share" />
+                      <Icon name="money" />
                     </button>
 
                     <button type="button" className={styles.iconBtn} title="Descargar" onClick={() => onDownload(asset)}>

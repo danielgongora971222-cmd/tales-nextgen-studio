@@ -1273,6 +1273,22 @@ export function createCommunityStoreRouter(ctx) {
       if (typeof meta.backgroundAssetId === "string") pushRef(meta.backgroundAssetId, "background", "@bg");
     }
 
+    if (typeof meta.firstFrameAssetId === "string") pushRef(meta.firstFrameAssetId, "firstFrame", "@first");
+    if (typeof meta.lastFrameAssetId === "string") pushRef(meta.lastFrameAssetId, "lastFrame", "@last");
+
+    const edit = meta?.editVideo && typeof meta.editVideo === "object" ? meta.editVideo : null;
+    if (edit) {
+      if (typeof edit.videoAssetId === "string") pushRef(edit.videoAssetId, "inputVideo", "@video1");
+      if (typeof edit.startImageAssetId === "string") pushRef(edit.startImageAssetId, "startImage", "@start");
+      if (typeof edit.endImageAssetId === "string") pushRef(edit.endImageAssetId, "endImage", "@end");
+
+      const refIds = Array.isArray(edit.referenceImageAssetIds) ? edit.referenceImageAssetIds : [];
+      refIds.forEach((assetId, index) => pushRef(assetId, "reference", `@image${index + 1}`));
+
+      const elementIds = Array.isArray(edit.klingElementIds) ? edit.klingElementIds : [];
+      elementIds.forEach((assetId, index) => pushRef(assetId, "element", `@element${index + 1}`));
+    }
+
     const resolvedAssets = [];
     for (const r of refs) {
       const url = await signedUrlForAssetId(r.assetId);

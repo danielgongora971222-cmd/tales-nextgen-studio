@@ -8,6 +8,8 @@ import { generateImageBatch } from "../../services/geminiService";
 import { deleteAsset, listMyAssets, uploadUserAsset, downloadAssetToDisk } from "../../services/assetsApi";
 import { LIGHTING_PRESETS } from "../../config/presets/lightroom";
 import OneNationUpIcon from "@/components/brand/OneNationUpIcon";
+import { toggleLike } from "../../services/socialApi";
+import { syncFavoriteAssetState } from "../../services/favoriteAssets";
 import { estimateImageCostCredits } from "../../config/pricing.js";
 import { GOOGLE_IMAGE_MODELS } from "../../config/imageGenerationShared.js";
 import { usePendingImageToolJobs } from "../../hooks/usePendingImageToolJobs";
@@ -45,9 +47,18 @@ const MODEL_OPTIONS: Array<{ id: string; label: string; qualities: Quality[] }> 
 function Icon({
   name,
 }: {
-  name: "image" | "upload" | "mode" | "share" | "download" | "trash" | "copy" | "reuse" | "close";
+  name: "heart" | "image" | "upload" | "mode" | "share" | "download" | "trash" | "copy" | "reuse" | "close";
 }) {
   switch (name) {
+    case "heart":
+      return (
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <path
+            fill="currentColor"
+            d="M12 21s-7.2-4.35-9.6-8.55C.3 8.7 2.55 5.7 6 5.7c1.95 0 3.3 1.05 4 2.1.7-1.05 2.05-2.1 4-2.1 3.45 0 5.7 3 3.6 6.75C19.2 16.65 12 21 12 21z"
+          />
+        </svg>
+      );
     case "image":
       return (
         <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
@@ -365,6 +376,7 @@ const LightroomTool: React.FC = () => {
   const [visibleHistory, setVisibleHistory] = useState<Asset[]>([]);
   const [historyVisibleCount, setHistoryVisibleCount] = useState(HISTORY_INITIAL_COUNT);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [likeBusyById, setLikeBusyById] = useState<Record<string, boolean>>({});
   const [isLoadingMoreHistory, setIsLoadingMoreHistory] = useState(false);
 
   const [viewer, setViewer] = useState<Asset | null>(null);
@@ -534,6 +546,35 @@ const LightroomTool: React.FC = () => {
 
   function handleTogglePublish(asset: Asset) {
     window.dispatchEvent(new CustomEvent("tales:open-sell", { detail: { asset } }));
+  }
+
+  async function handleToggleLike(asset: Asset) {
+    if (!user) {
+      setError("Debes iniciar sesión para dar Like.");
+      return;
+    }
+    if (likeBusyById[asset.id]) return;
+
+    setLikeBusyById((prev) => ({ ...prev, [asset.id]: true }));
+    try {
+      const res = await toggleLike(asset.id);
+      syncFavoriteAssetState(asset.id, res.liked);
+
+      const apply = (items: Asset[]) =>
+        items.map((entry) =>
+          entry.id === asset.id ? { ...entry, likedByMe: res.liked, likesCount: res.likesCount } : entry
+        );
+
+      setHistory((prev) => apply(prev));
+      setVisibleHistory((prev) => apply(prev));
+      setViewer((prev) =>
+        prev && prev.id === asset.id ? { ...prev, likedByMe: res.liked, likesCount: res.likesCount } : prev
+      );
+    } catch (e: any) {
+      setError(e?.message || "No se pudo actualizar el Like.");
+    } finally {
+      setLikeBusyById((prev) => ({ ...prev, [asset.id]: false }));
+    }
   }
 
   async function handleDownload(asset: Asset) {
@@ -754,11 +795,12 @@ const LightroomTool: React.FC = () => {
 
                       <button
                         type="button"
-                        className={styles.iconBtn}
-                        title="Vender / Administrar listing"
-                        onClick={() => handleTogglePublish(asset)}
+                        className={`${styles.iconBtn} ${styles.iconBtnHeart} ${asset.likedByMe ? styles.iconBtnHeartActive : ""}`}
+                        title={asset.likedByMe ? "Quitar Like" : "Dar Like"}
+                        disabled={Boolean(likeBusyById[asset.id])}
+                        onClick={() => handleToggleLike(asset)}
                       >
-                        <Icon name="share" />
+                        <Icon name="heart" />
                       </button>
 
                       <button type="button" className={styles.iconBtn} title="Descargar" onClick={() => handleDownload(asset)}>
@@ -1005,9 +1047,6 @@ const LightroomTool: React.FC = () => {
                   <Icon name="reuse" />
                 </button>
 
-                <button className={styles.iconBtn} type="button" title="Vender / Administrar listing" onClick={() => handleTogglePublish(viewer)}>
-                  <Icon name="share" />
-                </button>
 
                 <button className={styles.iconBtn} type="button" title="Descargar" onClick={() => handleDownload(viewer)}>
                   <Icon name="download" />

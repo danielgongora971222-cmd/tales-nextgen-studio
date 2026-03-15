@@ -25,6 +25,7 @@ import {
   type CommunityMediaKey,
   type CommunitySortKey,
 } from "../services/communityFeedState";
+import { writeCommunityRecipePrefill } from "../services/communityRecipePrefill";
 import {
   Heart,
   Loader2,
@@ -36,6 +37,8 @@ import {
   ShoppingCart,
   SlidersHorizontal,
   Sparkles,
+  Volume2,
+  VolumeX,
   X,
 } from "lucide-react";
 
@@ -66,9 +69,6 @@ type ReelItem = {
   ownedByMe?: boolean;
   purchasedByMe?: boolean;
 };
-
-const PREFILL_KEY = "tales.prefill.imageGenerator";
-const PREFILL_EVENT = "tales:prefill-image-generator";
 
 function compact(value: any) {
   return new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(Number(value || 0));
@@ -131,6 +131,7 @@ export default function ReelFeed({ onNavigate }: Props) {
   const [actionBusyId, setActionBusyId] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [expandedCaptionId, setExpandedCaptionId] = useState<string | null>(null);
+  const [reelMuted, setReelMuted] = useState(true);
 
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [commentsTarget, setCommentsTarget] = useState<ReelItem | null>(null);
@@ -276,14 +277,17 @@ export default function ReelFeed({ onNavigate }: Props) {
   useEffect(() => {
     for (const [id, video] of Object.entries(videoRefs.current)) {
       if (!video) continue;
-      if (id === activeId && !commentsOpen) {
+      const isActive = id === activeId && !commentsOpen;
+      video.muted = reelMuted;
+      video.defaultMuted = reelMuted;
+      if (isActive) {
         const playPromise = video.play();
         if (playPromise && typeof playPromise.catch === "function") playPromise.catch(() => undefined);
       } else {
         video.pause();
       }
     }
-  }, [activeId, commentsOpen, items]);
+  }, [activeId, commentsOpen, items, reelMuted]);
 
   useEffect(() => {
     const root = feedRef.current;
@@ -396,19 +400,16 @@ export default function ReelFeed({ onNavigate }: Props) {
       const recipe = recipeCache[item.id] || (await getCommunityListingRecipe(item.id));
       setRecipeCache((prev) => ({ ...prev, [item.id]: recipe }));
 
-      window.localStorage.setItem(
-        PREFILL_KEY,
-        JSON.stringify({
-          listingId: item.id,
-          recipe: recipe.recipe,
-          recipeHash: recipe.recipeHash || null,
-          createdAt: recipe.createdAt || null,
-          resolvedAssets: Array.isArray(recipe.resolvedAssets) ? recipe.resolvedAssets : [],
-        })
-      );
+      const toolId = recipe?.recipe?.sourceAsset?.tool || recipe?.recipe?.sourceAsset?.meta?.tool || "image-generator";
+      const target = writeCommunityRecipePrefill(toolId, {
+        listingId: item.id,
+        recipe: recipe.recipe,
+        recipeHash: recipe.recipeHash || null,
+        createdAt: recipe.createdAt || null,
+        resolvedAssets: Array.isArray(recipe.resolvedAssets) ? recipe.resolvedAssets : [],
+      });
 
-      window.dispatchEvent(new CustomEvent(PREFILL_EVENT));
-      onNavigate(AppRoute.TOOL_GENERATOR);
+      onNavigate(target.route);
     } catch (err: any) {
       setError(err?.message || "No se pudo cargar la receta.");
     } finally {
@@ -644,6 +645,15 @@ export default function ReelFeed({ onNavigate }: Props) {
                       </span>
                       <span className="text-[11px] font-semibold text-white/84">{compact(item.commentsCount)}</span>
                     </button>
+
+                    {item.mediaTag === "video" ? (
+                      <button type="button" onClick={() => setReelMuted((prev) => !prev)} className="flex flex-col items-center gap-1">
+                        <span className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-black/35 text-white/92 backdrop-blur-md transition hover:bg-black/55">
+                          {reelMuted ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
+                        </span>
+                        <span className="text-[11px] font-semibold text-white/84">{reelMuted ? "Mute" : "Audio"}</span>
+                      </button>
+                    ) : null}
 
                     <div className="animate-pulse text-[15px] font-black text-[rgba(241,225,148,0.98)] drop-shadow-[0_0_12px_rgba(241,225,148,0.4)]">
                       {formatListingPrice(item)}

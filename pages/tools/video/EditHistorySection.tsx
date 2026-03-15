@@ -24,6 +24,8 @@ type Props = {
   onRefresh: () => void;
   onLoadMore: () => void;
   onOpenViewer: (asset: Asset) => void;
+  onToggleLike: (asset: Asset) => void;
+  likeBusyById: Record<string, boolean>;
   onTogglePublish: (asset: Asset) => void;
   onDownload: (asset: Asset) => void;
   onDelete: (asset: Asset) => void;
@@ -43,6 +45,8 @@ export function EditHistorySection({
   onRefresh,
   onLoadMore,
   onOpenViewer,
+  onToggleLike,
+  likeBusyById,
   onTogglePublish,
   onDownload,
   onDelete,
@@ -159,18 +163,28 @@ export function EditHistorySection({
                     <div className={styles.tileActions}>
                       <button
                         type="button"
-                        className={`${styles.iconBtn} ${isPublished ? styles.iconBtnOn : ""}`}
+                        className={`${styles.iconBtn} ${styles.iconBtnHeart} ${asset.likedByMe ? styles.iconBtnHeartActive : ""}`}
+                        title={asset.likedByMe ? "Quitar Like" : "Dar Like"}
+                        disabled={Boolean(likeBusyById[asset.id])}
+                        onClick={() => onToggleLike(asset)}
+                      >
+                        <Icon name="heart" />
+                      </button>
+
+                      <button
+                        type="button"
+                        className={`${styles.iconBtn} ${styles.iconBtnMoney} ${isPublished ? styles.iconBtnOn : ""}`}
                         title="Vender / Administrar listing"
                         onClick={() => onTogglePublish(asset)}
                       >
-                        <Icon name="share" />
+                        <Icon name="money" />
                       </button>
 
                       <button type="button" className={styles.iconBtn} title="Download" onClick={() => onDownload(asset)}>
                         <Icon name="download" />
                       </button>
 
-                      <button type="button" className={styles.iconBtn} title="Delete" onClick={() => onDelete(asset)}>
+                      <button type="button" className={styles.iconBtnDanger} title="Delete" onClick={() => onDelete(asset)}>
                         <Icon name="trash" />
                       </button>
                     </div>

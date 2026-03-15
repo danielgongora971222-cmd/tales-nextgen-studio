@@ -170,7 +170,6 @@ const CameraAngleSimulator3D: React.FC<Props> = ({
     setIsDragging(true);
   };
 
-  const semanticAz = typeof displayAzimuth === "number" ? wrap360(displayAzimuth) : wrap360(value.azimuth);
   const az = value.azimuth;
   const el = value.elevation;
   const zm = value.zoom;
@@ -207,15 +206,6 @@ const CameraAngleSimulator3D: React.FC<Props> = ({
         <div className="pointer-events-none absolute left-1/2 top-1/2 h-[76%] w-[76%] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[radial-gradient(circle,rgba(91,14,20,0.26),transparent_68%)] blur-3xl" />
         <div className="pointer-events-none absolute inset-x-[18%] bottom-[8%] h-24 rounded-full bg-[radial-gradient(circle,rgba(91,14,20,0.46),transparent_74%)] blur-[56px]" />
 
-        <div className="absolute left-1/2 top-3 z-20 -translate-x-1/2 sm:top-5">
-          <div className="inline-flex items-center gap-2 rounded-full border border-[rgba(241,225,148,0.1)] bg-[rgba(8,4,5,0.62)] px-3 py-2 text-[10px] font-mono text-[rgba(255,245,220,0.86)] shadow-[0_18px_50px_rgba(0,0,0,0.28)] backdrop-blur-xl sm:px-4 sm:text-[11px]">
-            <span className="text-[rgba(241,225,148,0.72)]">AZ</span>
-            <span>{Math.round(semanticAz)}°</span>
-            <span className="mx-1 h-3.5 w-px bg-[rgba(241,225,148,0.12)]" />
-            <span className="text-[rgba(241,225,148,0.72)]">EL</span>
-            <span>{Math.round(el)}°</span>
-          </div>
-        </div>
 
         <div
           data-role="zoom-slider"
