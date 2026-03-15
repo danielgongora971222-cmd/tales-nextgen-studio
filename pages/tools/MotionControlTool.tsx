@@ -1020,7 +1020,7 @@ export default function MotionControlTool() {
                       >
                         <span className={styles.motionAdvancedSummaryContent}>
                           <span>Advanced settings</span>
-                          <span className={styles.motionAdvancedMeta}>{prompt.trim() ? "Prompt on" : "Prompt optional"} · {selectedCreateFromLabel}</span>
+                          <span className={styles.motionAdvancedMeta}>{prompt.trim() ? "Prompt added" : "Prompt optional"} · {selectedCreateFromLabel}</span>
                         </span>
                         <span className={styles.motionAdvancedToggleIcon} aria-hidden="true">
                           {advancedOpen ? "−" : "+"}
@@ -1030,11 +1030,11 @@ export default function MotionControlTool() {
                       {advancedOpen && (
                         <div id="motion-control-advanced-settings" className={styles.motionAdvancedBody}>
                           <div className={styles.motionField}>
-                            <label className={styles.formLabel}>Prompt · optional</label>
+                            <label className={styles.formLabel}>Prompt optional</label>
                             <textarea
                               value={prompt}
                               onChange={(event) => setPrompt(event.target.value)}
-                              placeholder="Describe the character or scene details."
+                              placeholder="Describe the character or scene (optional)."
                               className={`${styles.textarea} ${styles.motionPromptTextarea}`}
                               maxLength={14_000}
                             />
@@ -1049,7 +1049,7 @@ export default function MotionControlTool() {
                                 onClick={() => setCharacterOrientation("video")}
                               >
                                 <span className={styles.motionChoiceTitle}>From video</span>
-                                <span className={styles.motionChoiceHint}>Best for complex body motion and action.</span>
+                                <span className={styles.motionChoiceHint}>Use the video as the motion reference.</span>
                               </button>
                               <button
                                 type="button"
@@ -1057,10 +1057,10 @@ export default function MotionControlTool() {
                                 onClick={() => setCharacterOrientation("image")}
                               >
                                 <span className={styles.motionChoiceTitle}>From image</span>
-                                <span className={styles.motionChoiceHint}>Best when camera moves matter more than pose.</span>
+                                <span className={styles.motionChoiceHint}>Use the image as the character orientation source.</span>
                               </button>
                             </div>
-                            <div className={styles.motionFieldHint}>Match the source that should define the character orientation.</div>
+                            <div className={styles.motionFieldHint}>Choose whether the final orientation should follow the video or the image.</div>
                           </div>
                         </div>
                       )}
