@@ -2805,6 +2805,7 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-width: 0;
 }
 
 .motionReferenceMediaButton {
@@ -3031,6 +3032,12 @@
   gap: 8px;
 }
 
+.motionFieldHint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(255,255,255,0.52);
+}
+
 .motionPromptTextarea {
   min-height: 120px;
   resize: vertical;
@@ -3039,10 +3046,10 @@
 .motionGenerateBtn {
   width: 100%;
   min-height: 56px;
-  border: none;
+  border: 1px solid rgba(255,255,255,0.22);
   border-radius: 18px;
-  background: linear-gradient(180deg, #e7ff2f 0%, #cfee0b 100%);
-  color: #101500;
+  background: linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(236,239,243,0.98) 100%);
+  color: #101317;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3050,22 +3057,27 @@
   padding: 0 18px;
   box-shadow:
     0 24px 52px rgba(0,0,0,0.62),
-    inset 0 1px 0 rgba(255,255,255,0.48);
+    inset 0 1px 0 rgba(255,255,255,0.7);
   font-weight: 800;
   cursor: pointer;
-  transition: transform 0.18s ease, filter 0.18s ease, opacity 0.18s ease;
+  transition: transform 0.18s ease, filter 0.18s ease, opacity 0.18s ease, background 0.18s ease;
 }
 
 .motionGenerateBtn:hover {
   transform: translateY(-1px);
-  filter: brightness(1.02);
+  filter: brightness(1.01);
 }
 
 .motionGenerateBtn:disabled {
-  opacity: 0.45;
+  border-color: rgba(255,255,255,0.08);
+  background: linear-gradient(180deg, rgba(255,255,255,0.18) 0%, rgba(169,175,184,0.14) 100%);
+  color: rgba(255,255,255,0.56);
   cursor: not-allowed;
   transform: none;
   filter: none;
+  box-shadow:
+    0 18px 40px rgba(0,0,0,0.48),
+    inset 0 1px 0 rgba(255,255,255,0.12);
 }
 
 .motionGenerateLabel,
@@ -3082,9 +3094,38 @@
   gap: 6px;
 }
 
+.motionGenerateBtn:disabled .motionGenerateLabel,
+.motionGenerateBtn:disabled .motionGenerateCost {
+  color: rgba(255,255,255,0.56);
+}
+
 @media (max-width: 720px) {
   .motionReferenceGrid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .motionReferenceMedia {
+    aspect-ratio: 1 / 1.28;
+  }
+
+  .motionReferenceEmpty {
+    gap: 10px;
+    padding: 14px;
+  }
+
+  .motionReferenceEmptyTitle {
+    font-size: 14px;
+  }
+
+  .motionReferenceActions {
+    gap: 6px;
+  }
+
+  .motionReferenceActions .ghostBtn {
+    min-width: 0;
+    padding-left: 10px;
+    padding-right: 10px;
   }
 
   .motionResumeBannerWrap {

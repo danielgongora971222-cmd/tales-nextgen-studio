@@ -920,29 +920,32 @@ export default function MotionControlTool() {
                           <textarea
                             value={prompt}
                             onChange={(event) => setPrompt(event.target.value)}
-                            placeholder="Describe the character or scene details."
+                            placeholder='Describe background and scene details — e.g., "A corgi runs in" or "Snowy park setting". Motion is controlled by your reference video.'
                             className={`${styles.textarea} ${styles.motionPromptTextarea}`}
                             maxLength={14_000}
                           />
                         </div>
 
                         <div className={styles.motionField}>
-                          <label className={styles.formLabel}>Orientation</label>
+                          <label className={styles.formLabel}>Create from</label>
                           <div className={styles.segment}>
                             <button
                               type="button"
                               className={`${styles.segmentBtn} ${characterOrientation === "video" ? styles.segmentBtnActive : ""}`}
                               onClick={() => setCharacterOrientation("video")}
                             >
-                              Video
+                              From video
                             </button>
                             <button
                               type="button"
                               className={`${styles.segmentBtn} ${characterOrientation === "image" ? styles.segmentBtnActive : ""}`}
                               onClick={() => setCharacterOrientation("image")}
                             >
-                              Image
+                              From image
                             </button>
+                          </div>
+                          <div className={styles.motionFieldHint}>
+                            When character orientation matches the video, complex motions perform better; when it matches the image, camera movement is better supported.
                           </div>
                         </div>
                       </div>
