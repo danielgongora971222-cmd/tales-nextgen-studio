@@ -327,6 +327,47 @@ function StylePickerModal(props: {
   );
 }
 
+function StartCreateCard({
+  title,
+  badge,
+  previewUrl,
+  meta,
+  iconName,
+  onClick,
+}: {
+  title: string;
+  badge: string;
+  previewUrl: string | null;
+  meta: string;
+  iconName: "image" | "mode";
+  onClick: () => void;
+}) {
+  return (
+    <div className={videoStyles.motionReferenceCard}>
+      <button type="button" className={videoStyles.motionReferenceMediaButton} onClick={onClick} title={title}>
+        <div className={videoStyles.motionReferenceMedia}>
+          {previewUrl ? (
+            <img className={videoStyles.motionReferencePreview} src={previewUrl} alt={title} />
+          ) : (
+            <div className={videoStyles.motionReferenceEmpty}>
+              <div className={videoStyles.motionReferenceEmptyIcon}>
+                <Icon name={iconName} />
+              </div>
+              <div className={videoStyles.motionReferenceEmptyTitle}>{title}</div>
+            </div>
+          )}
+          <span className={videoStyles.motionReferenceBadge}>{badge}</span>
+        </div>
+      </button>
+
+      <div className={videoStyles.motionReferenceFooter}>
+        <div className={videoStyles.motionReferenceTitle}>{title}</div>
+        <div className={videoStyles.motionReferenceName} title={meta}>{meta}</div>
+      </div>
+    </div>
+  );
+}
+
 const RestylerTool: React.FC = () => {
   const { user } = useAuth();
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -405,6 +446,7 @@ const RestylerTool: React.FC = () => {
 
   const referenceLabel = baseRef ? "Ready" : "Add image";
   const styleLabel = selectedStyle?.name || "Select";
+  const styleLabelPreviewUrl = selectedStyle?.coverUrl || selectedStyle?.exampleUrls?.[0] || null;
   const parametersLabel = qualityLabel;
   const isCookSidebarVisible = isCookOpen && !panel;
   const isCookLayerVisible = isCookOpen || !!panel;
@@ -1042,15 +1084,25 @@ const RestylerTool: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className={styles.cookControlsRow}>
-                    <button type="button" className={`${styles.controlBtn} ${styles.cookControlBtn}`} onClick={() => openPanel("reference")}>
-                      <span className={styles.controlBtnLabel}>Reference</span>
-                      <span className={styles.controlBtnMeta}>{referenceLabel}</span>
-                    </button>
-                    <button type="button" className={`${styles.controlBtn} ${styles.cookControlBtn}`} onClick={() => openPanel("style")}>
-                      <span className={styles.controlBtnLabel}>Style</span>
-                      <span className={styles.controlBtnMeta}>{styleLabel}</span>
-                    </button>
+                  <div className={videoStyles.motionReferenceGrid} style={{ marginTop: 14 }}>
+                    <StartCreateCard
+                      title="Reference"
+                      badge="REFERENCE"
+                      previewUrl={baseRef?.url || null}
+                      meta={baseRef?.name || "From library or upload"}
+                      iconName="image"
+                      onClick={() => openPanel("reference")}
+                    />
+                    <StartCreateCard
+                      title="Presets"
+                      badge="PRESET"
+                      previewUrl={styleLabelPreviewUrl}
+                      meta={selectedStyle?.name || "Choose preset"}
+                      iconName="mode"
+                      onClick={() => openPanel("style")}
+                    />
+                  </div>
+                  <div className={styles.cookControlsRow} style={{ marginTop: 14 }}>
                     <button type="button" className={`${styles.controlBtn} ${styles.cookControlBtn}`} onClick={() => openPanel("model")}>
                       <span className={styles.controlBtnLabel}>Model</span>
                       <span className={styles.controlBtnMeta}>{modelLabel}</span>

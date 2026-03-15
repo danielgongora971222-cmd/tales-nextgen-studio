@@ -23,7 +23,7 @@ import {
 
 type Orientation = "image" | "video";
 type MotionControlModel = "kling-2.6-motion-control" | "kling-v3-motion-control";
-type MotionPanelKey = "model" | "quality" | null;
+type MotionPanelKey = "model" | "quality" | "advanced" | null;
 type PickerKind = "image" | "video";
 
 type PendingMotionControlJob = {
@@ -247,10 +247,11 @@ function MotionReferenceCard({
         </div>
       </div>
 
-      <div className={styles.motionReferenceFooter}>
-        <div className={styles.motionReferenceTitle}>{title}</div>
-        <div className={styles.motionReferenceName}>{asset?.name || "From history or upload"}</div>
-      </div>
+      {asset?.name ? (
+        <div className={styles.motionReferenceFooter}>
+          <div className={styles.motionReferenceName} title={asset.name}>{asset.name}</div>
+        </div>
+      ) : null}
 
       <div className={styles.motionReferenceActions}>
         <button type="button" className={styles.ghostBtn} onClick={onChoose}>
@@ -283,7 +284,6 @@ export default function MotionControlTool() {
   const [characterOrientation, setCharacterOrientation] = useState<Orientation>("video");
   const [mode, setMode] = useState<"std" | "pro">("std");
   const [model, setModel] = useState<MotionControlModel>("kling-v3-motion-control");
-  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const [panel, setPanel] = useState<MotionPanelKey>(null);
   const [isCookOpen, setIsCookOpen] = useState(false);
@@ -324,6 +324,7 @@ export default function MotionControlTool() {
   const selectedModelLabel = getMotionControlModelLabel(model);
   const selectedQualityLabel = getMotionQualityLabel(mode);
   const selectedCreateFromLabel = characterOrientation === "image" ? "From image" : "From video";
+  const selectedAdvancedLabel = `${prompt.trim() ? "Prompt added" : "Prompt optional"} · ${selectedCreateFromLabel}`;
   const isPendingSubmission = Boolean(isGenerating && pendingJob && pendingJob.state === "submitting" && !pendingJob.jobId);
   const generateButtonLabel = isGenerating ? (isPendingSubmission ? "Starting" : "Generating") : "Generate";
   const estimatedCostCredits = useMemo(() => {
@@ -838,7 +839,7 @@ export default function MotionControlTool() {
             <div className={styles.cookPanelShell}>
               <div className={styles.cookPanel}>
                 <div className={styles.popoverHeader}>
-                  <div className={styles.popoverTitle}>{panel === "model" ? "Model" : "Quality"}</div>
+                  <div className={styles.popoverTitle}>{panel === "model" ? "Model" : panel === "quality" ? "Quality" : "Advanced settings"}</div>
                   <button className={styles.closeBtn} onClick={restoreCookFromPanel} type="button" title="Close">
                     <Icon name="close" />
                   </button>
@@ -871,7 +872,7 @@ export default function MotionControlTool() {
                         <div className={styles.modelDesc}>Fallback model with the legacy motion stack.</div>
                       </button>
                     </div>
-                  ) : (
+                  ) : panel === "quality" ? (
                     <div className={styles.durationGrid}>
                       <button
                         type="button"
@@ -893,6 +894,42 @@ export default function MotionControlTool() {
                       >
                         1080p
                       </button>
+                    </div>
+                  ) : (
+                    <div className={styles.motionAdvancedBody}>
+                      <div className={styles.motionField}>
+                        <label className={styles.formLabel}>Prompt optional</label>
+                        <textarea
+                          value={prompt}
+                          onChange={(event) => setPrompt(event.target.value)}
+                          placeholder="Describe the character or scene (optional)."
+                          className={`${styles.textarea} ${styles.motionPromptTextarea}`}
+                          maxLength={14_000}
+                        />
+                      </div>
+
+                      <div className={styles.motionField}>
+                        <label className={styles.formLabel}>Create from</label>
+                        <div className={styles.motionChoiceGrid}>
+                          <button
+                            type="button"
+                            className={`${styles.motionChoiceCard} ${characterOrientation === "video" ? styles.motionChoiceCardActive : ""}`}
+                            onClick={() => setCharacterOrientation("video")}
+                          >
+                            <span className={styles.motionChoiceTitle}>From video</span>
+                            <span className={styles.motionChoiceHint}>Use the video as the motion reference.</span>
+                          </button>
+                          <button
+                            type="button"
+                            className={`${styles.motionChoiceCard} ${characterOrientation === "image" ? styles.motionChoiceCardActive : ""}`}
+                            onClick={() => setCharacterOrientation("image")}
+                          >
+                            <span className={styles.motionChoiceTitle}>From image</span>
+                            <span className={styles.motionChoiceHint}>Use the image as the character orientation source.</span>
+                          </button>
+                        </div>
+                        <div className={styles.motionFieldHint}>Choose whether the final orientation should follow the video or the image.</div>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1008,62 +1045,19 @@ export default function MotionControlTool() {
                         </span>
                         <span className={styles.motionSettingChevron}>›</span>
                       </button>
-                    </div>
 
-                    <div className={styles.motionAdvanced}>
                       <button
                         type="button"
-                        className={styles.motionAdvancedSummary}
-                        onClick={() => setAdvancedOpen((prev) => !prev)}
-                        aria-expanded={advancedOpen}
-                        aria-controls="motion-control-advanced-settings"
+                        className={styles.motionSettingRow}
+                        onClick={() => setPanel("advanced")}
+                        aria-label="Open advanced settings"
                       >
-                        <span className={styles.motionAdvancedSummaryContent}>
-                          <span>Advanced settings</span>
-                          <span className={styles.motionAdvancedMeta}>{prompt.trim() ? "Prompt added" : "Prompt optional"} · {selectedCreateFromLabel}</span>
+                        <span className={styles.motionSettingText}>
+                          <span className={styles.motionSettingLabel}>Advanced settings</span>
+                          <span className={styles.motionSettingValue}>{selectedAdvancedLabel}</span>
                         </span>
-                        <span className={styles.motionAdvancedToggleIcon} aria-hidden="true">
-                          {advancedOpen ? "−" : "+"}
-                        </span>
+                        <span className={styles.motionSettingChevron}>›</span>
                       </button>
-
-                      {advancedOpen && (
-                        <div id="motion-control-advanced-settings" className={styles.motionAdvancedBody}>
-                          <div className={styles.motionField}>
-                            <label className={styles.formLabel}>Prompt optional</label>
-                            <textarea
-                              value={prompt}
-                              onChange={(event) => setPrompt(event.target.value)}
-                              placeholder="Describe the character or scene (optional)."
-                              className={`${styles.textarea} ${styles.motionPromptTextarea}`}
-                              maxLength={14_000}
-                            />
-                          </div>
-
-                          <div className={styles.motionField}>
-                            <label className={styles.formLabel}>Create from</label>
-                            <div className={styles.motionChoiceGrid}>
-                              <button
-                                type="button"
-                                className={`${styles.motionChoiceCard} ${characterOrientation === "video" ? styles.motionChoiceCardActive : ""}`}
-                                onClick={() => setCharacterOrientation("video")}
-                              >
-                                <span className={styles.motionChoiceTitle}>From video</span>
-                                <span className={styles.motionChoiceHint}>Use the video as the motion reference.</span>
-                              </button>
-                              <button
-                                type="button"
-                                className={`${styles.motionChoiceCard} ${characterOrientation === "image" ? styles.motionChoiceCardActive : ""}`}
-                                onClick={() => setCharacterOrientation("image")}
-                              >
-                                <span className={styles.motionChoiceTitle}>From image</span>
-                                <span className={styles.motionChoiceHint}>Use the image as the character orientation source.</span>
-                              </button>
-                            </div>
-                            <div className={styles.motionFieldHint}>Choose whether the final orientation should follow the video or the image.</div>
-                          </div>
-                        </div>
-                      )}
                     </div>
                   </div>
 
