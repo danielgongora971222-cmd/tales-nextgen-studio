@@ -243,7 +243,7 @@ export default function MotionControlTool() {
   const [characterOrientation, setCharacterOrientation] = useState<Orientation>("video");
   const [mode, setMode] = useState<"std" | "pro">("std");
   const [model, setModel] = useState<MotionControlModel>("kling-v3-motion-control");
-  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(true);
 
   const [panel, setPanel] = useState<MotionPanelKey>(null);
   const [isCookOpen, setIsCookOpen] = useState(false);
@@ -318,6 +318,7 @@ export default function MotionControlTool() {
 
   const openCook = useCallback(() => {
     setPanel(null);
+    setAdvancedOpen(true);
     setIsCookOpen(true);
   }, []);
 
@@ -920,7 +921,7 @@ export default function MotionControlTool() {
                           <textarea
                             value={prompt}
                             onChange={(event) => setPrompt(event.target.value)}
-                            placeholder='Describe background and scene details — e.g., "A corgi runs in" or "Snowy park setting". Motion is controlled by your reference video.'
+                            placeholder="Describe the character or scene details."
                             className={`${styles.textarea} ${styles.motionPromptTextarea}`}
                             maxLength={14_000}
                           />
@@ -928,25 +929,25 @@ export default function MotionControlTool() {
 
                         <div className={styles.motionField}>
                           <label className={styles.formLabel}>Create from</label>
-                          <div className={styles.segment}>
+                          <div className={styles.motionChoiceGrid}>
                             <button
                               type="button"
-                              className={`${styles.segmentBtn} ${characterOrientation === "video" ? styles.segmentBtnActive : ""}`}
+                              className={`${styles.motionChoiceCard} ${characterOrientation === "video" ? styles.motionChoiceCardActive : ""}`}
                               onClick={() => setCharacterOrientation("video")}
                             >
-                              From video
+                              <span className={styles.motionChoiceTitle}>From video</span>
+                              <span className={styles.motionChoiceHint}>Best for complex body motion and action.</span>
                             </button>
                             <button
                               type="button"
-                              className={`${styles.segmentBtn} ${characterOrientation === "image" ? styles.segmentBtnActive : ""}`}
+                              className={`${styles.motionChoiceCard} ${characterOrientation === "image" ? styles.motionChoiceCardActive : ""}`}
                               onClick={() => setCharacterOrientation("image")}
                             >
-                              From image
+                              <span className={styles.motionChoiceTitle}>From image</span>
+                              <span className={styles.motionChoiceHint}>Best when camera moves matter more than pose.</span>
                             </button>
                           </div>
-                          <div className={styles.motionFieldHint}>
-                            When character orientation matches the video, complex motions perform better; when it matches the image, camera movement is better supported.
-                          </div>
+                          <div className={styles.motionFieldHint}>Match the source that should define the character orientation.</div>
                         </div>
                       </div>
                     </details>
