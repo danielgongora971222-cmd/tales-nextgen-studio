@@ -189,9 +189,9 @@ export default function StoreNewUI({ onNavigate, onRequestUpscale, prefill }: St
       let items: Asset[] = [];
 
       try {
-        items = await listMyAssets({ type: "image", limit: 250, fresh: true });
+        items = await listMyAssets({ type: "image", limit: 250 });
         if (!items || items.length === 0) {
-          items = await listMyAssets({ limit: 250, fresh: true });
+          items = await listMyAssets({ limit: 250 });
         }
       } catch {
         items = await listMyAssets({ limit: 250 });

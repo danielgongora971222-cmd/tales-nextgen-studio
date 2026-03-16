@@ -381,10 +381,10 @@ export default function MotionControlTool() {
     setIsCookOpen(true);
   }, []);
 
-  const reloadHistory = useCallback(async () => {
+  const reloadHistory = useCallback(async (fresh = false) => {
     setIsLoadingHistory(true);
     try {
-      const videos = await listMyAssets({ type: "video", limit: 200, fresh: true });
+      const videos = await listMyAssets({ type: "video", limit: 200, fresh });
       const next = videos.filter(isMotionControlAsset).sort(byCreatedDesc);
       setHistory(next);
       setHistoryVisibleCount((prev) => {
@@ -611,7 +611,7 @@ export default function MotionControlTool() {
         throw terminalErr;
       }
 
-      await reloadHistory();
+      await reloadHistory(true);
       clearPending();
       setPendingJob(null);
       setProgressMsg("Done.");
@@ -724,7 +724,7 @@ export default function MotionControlTool() {
   }, [history.length]);
 
   useEffect(() => {
-    void reloadHistory();
+    void reloadHistory(false);
 
     const pending = typeof window !== "undefined" ? loadPending() : null;
     if (!pending) return;
@@ -793,7 +793,7 @@ export default function MotionControlTool() {
         visibleHistory={visibleHistory}
         hasMore={hasMoreHistory}
         isLoadingMore={isLoadingMoreHistory}
-        onRefresh={reloadHistory}
+        onRefresh={() => void reloadHistory(true)}
         onLoadMore={handleLoadMoreHistory}
         onOpenViewer={openViewer}
         onToggleLike={handleToggleLike}

@@ -140,6 +140,7 @@ export function HistorySection({
                     src={asset.url}
                     muted
                     playsInline
+                    loop
                     preload="metadata"
                     onLoadedMetadata={(e) => {
                       prepareVideoPreview(e.currentTarget);

@@ -29,6 +29,7 @@ export function applyVideoAspectRatio(video: HTMLVideoElement | null) {
 export function primeVideoStill(video: HTMLVideoElement | null) {
   if (!video) return;
   applyVideoAspectRatio(video);
+  if (video.dataset.hoverPreview === "true") return;
   if (video.dataset.posterPrimed === "true" || video.dataset.posterPriming === "true") return;
 
   video.dataset.posterPriming = "true";
@@ -59,7 +60,7 @@ export function primeVideoStill(video: HTMLVideoElement | null) {
 export function finalizeVideoStill(video: HTMLVideoElement | null) {
   if (!video) return;
   applyVideoAspectRatio(video);
-  if (video.dataset.posterPriming !== "true" && video.dataset.posterPrimed === "true") return;
+  if (video.dataset.posterPriming !== "true") return;
   video.pause();
   video.dataset.posterPriming = "false";
   video.dataset.posterPrimed = "true";
@@ -68,6 +69,7 @@ export function finalizeVideoStill(video: HTMLVideoElement | null) {
 export function resetVideoStill(video: HTMLVideoElement | null) {
   if (!video) return;
   applyVideoAspectRatio(video);
+  video.dataset.hoverPreview = "false";
   video.pause();
   video.dataset.posterPrimed = "false";
   const targetTime = getPosterSeekTime(video);
@@ -81,20 +83,38 @@ export function resetVideoStill(video: HTMLVideoElement | null) {
   window.requestAnimationFrame(() => primeVideoStill(video));
 }
 
-export function startVideoHoverPreview(video: HTMLVideoElement | null) {
-  if (!video) return;
-  applyVideoAspectRatio(video);
-  video.dataset.posterPrimed = "false";
-  video.dataset.posterPriming = "false";
-  try {
-    video.currentTime = 0;
-  } catch {}
+function attemptHoverPlay(video: HTMLVideoElement | null, retries = 4) {
+  if (!video || video.dataset.hoverPreview !== "true") return;
+
   const playPromise = video.play();
   if (playPromise && typeof playPromise.catch === "function") {
     playPromise.catch(() => {
-      primeVideoStill(video);
+      if (video.dataset.hoverPreview !== "true") return;
+      if (retries <= 0) {
+        primeVideoStill(video);
+        return;
+      }
+      window.setTimeout(() => attemptHoverPlay(video, retries - 1), 120);
     });
   }
+}
+
+export function startVideoHoverPreview(video: HTMLVideoElement | null) {
+  if (!video) return;
+  applyVideoAspectRatio(video);
+  video.dataset.hoverPreview = "true";
+  video.dataset.posterPrimed = "false";
+  video.dataset.posterPriming = "false";
+  video.preload = "auto";
+  try {
+    video.currentTime = 0;
+  } catch {}
+  if (video.readyState < 2) {
+    try {
+      video.load();
+    } catch {}
+  }
+  window.requestAnimationFrame(() => attemptHoverPlay(video));
 }
 
 export function prepareVideoPreview(video: HTMLVideoElement | null) {

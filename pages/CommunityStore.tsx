@@ -24,6 +24,13 @@ import {
   type CommunitySortKey,
 } from "../services/communityFeedState";
 import styles from "./CommunityStore.module.css";
+import {
+  finalizeVideoStill,
+  prepareVideoPreview,
+  primeVideoStill,
+  resetVideoStill,
+  startVideoHoverPreview,
+} from "./tools/video/videoPreview";
 
 interface Props {
   onNavigate: (route: AppRoute) => void;
@@ -83,6 +90,7 @@ export default function CommunityStore({ onNavigate }: Props) {
   const [busyLikeById, setBusyLikeById] = useState<Record<string, boolean>>({});
 
   const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const previewVideoEls = useRef<Record<string, HTMLVideoElement | null>>({});
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -346,15 +354,36 @@ export default function CommunityStore({ onNavigate }: Props) {
                 className={styles.mediaButton}
                 onClick={() => openInReel(item.id)}
                 aria-label={`Ver ${listingTitle}`}
+                onMouseEnter={() => {
+                  if (item.mediaTag !== "video") return;
+                  startVideoHoverPreview(previewVideoEls.current[item.id]);
+                }}
+                onMouseLeave={() => {
+                  if (item.mediaTag !== "video") return;
+                  resetVideoStill(previewVideoEls.current[item.id]);
+                }}
               >
                 {item.previewUrl ? (
                   item.mediaTag === "video" ? (
                     <video
+                      ref={(el) => {
+                        previewVideoEls.current[item.id] = el;
+                        if (el) prepareVideoPreview(el);
+                      }}
                       src={item.previewUrl}
                       muted
                       playsInline
+                      loop
                       preload="metadata"
                       className={styles.media}
+                      onLoadedMetadata={(event) => {
+                        prepareVideoPreview(event.currentTarget);
+                        primeVideoStill(event.currentTarget);
+                      }}
+                      onLoadedData={(event) => primeVideoStill(event.currentTarget)}
+                      onCanPlay={(event) => primeVideoStill(event.currentTarget)}
+                      onCanPlayThrough={(event) => primeVideoStill(event.currentTarget)}
+                      onSeeked={(event) => finalizeVideoStill(event.currentTarget)}
                     />
                   ) : (
                     <img src={item.previewUrl} alt={listingTitle} className={styles.media} loading="lazy" decoding="async" />
