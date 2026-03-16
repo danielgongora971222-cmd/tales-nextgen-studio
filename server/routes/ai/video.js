@@ -18,6 +18,36 @@ function clampInt(n, min, max) {
   return x;
 }
 
+
+const DEFAULT_KLING_OMNI_MODEL_NAME = "kling-v3-omni";
+
+function coerceKlingOmniModelName(raw) {
+  const v = String(raw || "").trim().toLowerCase();
+  if (!v) return null;
+
+  // Alias legacy / internos que NO son válidos en /videos/omni-video.
+  // Los coercionamos al modelo oficial actual para evitar 1201 por model_name inválido.
+  if (
+    v === "kling-video-o3" ||
+    v === "kling-o3-pro" ||
+    v === "kling-v3" ||
+    v === "kling-v3-0" ||
+    v === "kling-v3.0"
+  ) {
+    return "kling-v3-omni";
+  }
+
+  if (v === "kling-v3-omni" || v === "kling-video-o1") return v;
+  return null;
+}
+function resolveKlingOmniModelName(...candidates) {
+  for (const raw of candidates) {
+    const normalized = coerceKlingOmniModelName(raw);
+    if (normalized) return normalized;
+  }
+  return DEFAULT_KLING_OMNI_MODEL_NAME;
+}
+
 export function createAiVideoRouter(ctx) {
 
   // Utilidad: pausa para loops de "polling" (Node.js)
@@ -698,10 +728,16 @@ const isKling = selectedModelNorm.startsWith("kling-");
         const ar = aspectRatio || "16:9";
 
         // ✅ Kling Omni API (Tasks)
+        const omniModelName = resolveKlingOmniModelName(
+          process.env.KLING_O3_MODEL_NAME,
+          process.env.KLING_OMNI_MODEL_NAME,
+          process.env.KLING_V3_OMNI_MODEL_NAME
+        );
+
         const omniPayload = {
-          // ✅ O3 Pro debe usar un model_name O3 (video character elements requieren O3+)
-          // Docs: video customization elements soportados para modelos `kling-video-o3` y posteriores. :contentReference[oaicite:4]{index=4}
-          model_name: String(process.env.KLING_O3_MODEL_NAME || "kling-video-o3"),
+          // ⚠️ /videos/omni-video NO acepta `kling-video-o3`.
+          // Si el entorno conserva ese alias legacy, lo normalizamos al model_name oficial válido.
+          model_name: omniModelName,
           mode: klingModeValue,
           duration: String(dur),
           ...(soundValue !== undefined ? { sound: soundValue } : {}),
@@ -1177,7 +1213,10 @@ const isKling = selectedModelNorm.startsWith("kling-");
             // Docs: Omni soporta templating `<<element_1>>` y `element_list`. :contentReference[oaicite:5]{index=5} :contentReference[oaicite:6]{index=6}
             taskType = "omni-video";
 
-            const omniModelName = String(process.env.KLING_V3_OMNI_MODEL_NAME || "kling-v3-omni");
+            const omniModelName = resolveKlingOmniModelName(
+              process.env.KLING_V3_OMNI_MODEL_NAME,
+              process.env.KLING_OMNI_MODEL_NAME
+            );
 
             const ar = aspectRatio || "16:9";
 
@@ -2231,7 +2270,10 @@ const isKling = selectedModelNorm.startsWith("kling-");
         }
 
         // ✅ Construimos payload para Omni-Video
-        const modelName = String(process.env.KLING_OMNI_MODEL_NAME || "kling-v3-omni");
+        const modelName = resolveKlingOmniModelName(
+          process.env.KLING_OMNI_MODEL_NAME,
+          process.env.KLING_V3_OMNI_MODEL_NAME
+        );
         const omniPayload = {
           model_name: modelName,
           ...(imageList.length ? { image_list: imageList } : {}),
