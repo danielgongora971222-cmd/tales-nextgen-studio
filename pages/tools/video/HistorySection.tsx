@@ -24,9 +24,9 @@ type Props = {
   onRefresh: () => void;
   onLoadMore: () => void;
   onOpenViewer: (asset: Asset) => void;
-  onToggleLike: (asset: Asset) => void;
-  likeBusyById: Record<string, boolean>;
-  onTogglePublish: (asset: Asset) => void;
+  onToggleLike?: (asset: Asset) => void;
+  likeBusyById?: Record<string, boolean>;
+  onTogglePublish?: (asset: Asset) => void;
   onDownload: (asset: Asset) => void;
   onDelete: (asset: Asset) => void;
   onShowError: (message: string) => void;
@@ -46,7 +46,7 @@ export function HistorySection({
   onLoadMore,
   onOpenViewer,
   onToggleLike,
-  likeBusyById,
+  likeBusyById = {},
   onTogglePublish,
   onDownload,
   onDelete,
@@ -112,6 +112,8 @@ export function HistorySection({
 
             {visibleHistory.map((asset) => {
               const caption = shortText((asset.prompt || asset.name || "—").trim(), 70);
+              const meta: any = (asset as any)?.meta || {};
+              const isPublished = Boolean(asset.isPublic || meta?.published || meta?.listing?.published);
 
               return (
                 <button
@@ -155,24 +157,28 @@ export function HistorySection({
                   </div>
 
                   <div className={styles.tileActions} onClick={(e) => e.stopPropagation()}>
-                    <button
-                      type="button"
-                      className={`${styles.iconBtn} ${styles.iconBtnHeart} ${asset.likedByMe ? styles.iconBtnHeartActive : ""}`}
-                      title={asset.likedByMe ? "Quitar Like" : "Dar Like"}
-                      disabled={Boolean(likeBusyById[asset.id])}
-                      onClick={() => onToggleLike(asset)}
-                    >
-                      <Icon name="heart" />
-                    </button>
+                    {onToggleLike ? (
+                      <button
+                        type="button"
+                        className={`${styles.iconBtn} ${styles.iconBtnHeart} ${asset.likedByMe ? styles.iconBtnHeartActive : ""}`}
+                        title={asset.likedByMe ? "Quitar Like" : "Dar Like"}
+                        disabled={Boolean(likeBusyById[asset.id])}
+                        onClick={() => onToggleLike(asset)}
+                      >
+                        <Icon name="heart" />
+                      </button>
+                    ) : null}
 
-                    <button
-                      type="button"
-                      className={`${styles.iconBtn} ${styles.iconBtnMoney} ${isPublished ? styles.iconBtnOn : ""}`}
-                      title="Vender / Administrar listing"
-                      onClick={() => onTogglePublish(asset)}
-                    >
-                      <Icon name="money" />
-                    </button>
+                    {onTogglePublish ? (
+                      <button
+                        type="button"
+                        className={`${styles.iconBtn} ${styles.iconBtnMoney} ${isPublished ? styles.iconBtnOn : ""}`}
+                        title="Vender / Administrar listing"
+                        onClick={() => onTogglePublish(asset)}
+                      >
+                        <Icon name="money" />
+                      </button>
+                    ) : null}
 
                     <button type="button" className={styles.iconBtn} title="Descargar" onClick={() => onDownload(asset)}>
                       <Icon name="download" />

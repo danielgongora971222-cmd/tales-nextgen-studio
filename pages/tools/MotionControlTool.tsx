@@ -10,6 +10,8 @@ import {
   uploadUserAsset,
 } from "../../services/assetsApi";
 import { apiPostJson, formatErr } from "../../services/videoGenApi";
+import { toggleLike } from "../../services/socialApi";
+import { syncFavoriteAssetState } from "../../services/favoriteAssets";
 import { waitJobCompletion } from "../../services/jobsApi";
 import { estimateVideoCostCredits } from "../../config/pricing.js";
 import { HistorySection } from "./video/HistorySection";
@@ -271,6 +273,7 @@ export default function MotionControlTool() {
   const [error, setError] = useState<string | null>(null);
 
   const [history, setHistory] = useState<Asset[]>([]);
+  const [likeBusyById, setLikeBusyById] = useState<Record<string, boolean>>({});
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [historyVisibleCount, setHistoryVisibleCount] = useState(HISTORY_INITIAL_COUNT);
   const [isLoadingMoreHistory, setIsLoadingMoreHistory] = useState(false);
@@ -479,6 +482,26 @@ export default function MotionControlTool() {
     window.dispatchEvent(new CustomEvent("tales:open-sell", { detail: { asset } }));
   }, []);
 
+  const handleToggleLike = useCallback(async (asset: Asset) => {
+    if (!user) {
+      setError("Debes iniciar sesión para dar Like.");
+      return;
+    }
+    if (likeBusyById[asset.id]) return;
+
+    setLikeBusyById((prev) => ({ ...prev, [asset.id]: true }));
+    try {
+      const res = await toggleLike(asset.id);
+      syncFavoriteAssetState(asset.id, res.liked);
+      setHistory((prev) => prev.map((entry) => (entry.id === asset.id ? { ...entry, likedByMe: res.liked, likesCount: res.likesCount } : entry)));
+      setViewer((prev) => (prev && prev.id === asset.id ? { ...prev, likedByMe: res.liked, likesCount: res.likesCount } : prev));
+    } catch (err: any) {
+      setError(formatErr(err));
+    } finally {
+      setLikeBusyById((prev) => ({ ...prev, [asset.id]: false }));
+    }
+  }, [likeBusyById, user]);
+
   const copyToClipboard = useCallback(async (text: string) => {
     const next = String(text || "").trim();
     if (!next) {
@@ -495,7 +518,7 @@ export default function MotionControlTool() {
 
   const reusePromptFromAsset = useCallback((asset: Asset) => {
     setPrompt(String(asset.prompt || ""));
-    setAdvancedOpen(true);
+    setPanel("advanced");
     setViewer(null);
     openCook();
   }, [openCook]);
@@ -610,7 +633,7 @@ export default function MotionControlTool() {
 
   const resumePendingJob = useCallback(async (job: PendingMotionControlJob) => {
     openCook();
-    setAdvancedOpen(true);
+    setPanel("advanced");
     setPendingJob(job);
     setIsGenerating(true);
     setProgressMsg(
@@ -652,7 +675,7 @@ export default function MotionControlTool() {
     setIsGenerating(true);
     setProgressMsg(`Queueing (${selectedModelLabel})…`);
     openCook();
-    setAdvancedOpen(true);
+    setPanel("advanced");
 
     try {
       await runMotionControlJob(draftJob);
@@ -711,7 +734,7 @@ export default function MotionControlTool() {
     setCharacterOrientation(pending.characterOrientation === "image" ? "image" : "video");
     setMode(pending.mode === "pro" ? "pro" : "std");
     setModel(normalizeMotionControlModel(pending.model));
-    setAdvancedOpen(true);
+    setPanel("advanced");
     openCook();
     void restorePendingAssets(pending);
     void resumePendingJob(pending);
@@ -773,6 +796,8 @@ export default function MotionControlTool() {
         onRefresh={reloadHistory}
         onLoadMore={handleLoadMoreHistory}
         onOpenViewer={openViewer}
+        onToggleLike={handleToggleLike}
+        likeBusyById={likeBusyById}
         onTogglePublish={handleTogglePublish}
         onDownload={handleDownload}
         onDelete={handleDelete}

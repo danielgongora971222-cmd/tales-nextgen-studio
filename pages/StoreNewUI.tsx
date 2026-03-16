@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Maximize, Layers, Check, ShoppingCart, CreditCard, ChevronRight, Image as ImageIcon, Sparkles, ShieldCheck, Truck, Edit2 } from 'lucide-react';
-import type { Asset, AppRoute, StoreArtDecoListing, StoreArtDecoPayload, StorePrefill } from "../types";
+import { AppRoute, type Asset, type StoreArtDecoListing, type StoreArtDecoPayload, type StorePrefill } from "../types";
 import { listMyAssets } from "../services/assetsApi";
 import { supabase } from "../services/supabaseClient";
 import { apiUrl } from "../services/apiBase";

@@ -3723,7 +3723,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
           <div className={styles.elementModal} onMouseDown={(e) => e.stopPropagation()}>
             <div className={styles.elementHeader}>
               <div className={styles.elementTitle}>Create Element/Person</div>
-              <button type="button" className={styles.iconBtn} onClick={closeCreateModal} title="Close">
+              <button type="button" className={styles.iconBtn} onClick={() => closeCreateModal()} title="Close">
                 <Icon name="close" />
               </button>
             </div>
@@ -3885,7 +3885,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
               )}
 
               <div className={styles.elementFooter}>
-                <button type="button" className={styles.smallBtnGhost} onClick={closeCreateModal} disabled={isCreatingElement}>
+                <button type="button" className={styles.smallBtnGhost} onClick={() => closeCreateModal()} disabled={isCreatingElement}>
                   Cancel
                 </button>
 
@@ -3915,7 +3915,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
           <div className={styles.elementModal} onMouseDown={(e) => e.stopPropagation()}>
             <div className={styles.elementHeader}>
               <div className={styles.elementTitle}>All Elements</div>
-              <button type="button" className={styles.iconBtn} onClick={closeAllModal} title="Close">
+              <button type="button" className={styles.iconBtn} onClick={() => closeAllModal()} title="Close">
                 <Icon name="close" />
               </button>
             </div>
@@ -4038,7 +4038,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
                   Create new
                 </button>
 
-                <button type="button" className={styles.elementPrimaryBtn} onClick={closeAllModal}>
+                <button type="button" className={styles.elementPrimaryBtn} onClick={() => closeAllModal()}>
                   Done
                 </button>
               </div>

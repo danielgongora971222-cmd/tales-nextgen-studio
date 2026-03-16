@@ -904,8 +904,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     [user, likeBusyById]
   );
 
-  const applyRecipeFromAsset = useCallback(
-    (asset: Asset, payload?: { recipe?: any; resolvedAssets?: any[] } | null) => {
+  function applyRecipeFromAsset(asset: Asset, payload?: { recipe?: any; resolvedAssets?: any[] } | null) {
       const source = payload?.recipe?.sourceAsset || asset;
       const meta: any = source?.meta || (asset as any)?.meta || {};
       const promptValue = typeof source?.prompt === "string" ? source.prompt : asset.prompt || "";
@@ -976,9 +975,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
 
       setPanel(null);
       setViewer(null);
-    },
-    [imageAssets, videoAssets]
-  );
+  }
 
     // ===== Limits for references (Elements modal + images modal) =====
   const setKlingElementIdsLimited = useCallback<React.Dispatch<React.SetStateAction<string[]>>>(

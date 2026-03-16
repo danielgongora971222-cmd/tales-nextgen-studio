@@ -3338,3 +3338,11 @@
   letter-spacing: 0.08em;
   backdrop-filter: blur(10px) saturate(140%);
 }
+
+@media (max-width: 820px) {
+  .prompt,
+  .textarea,
+  .limitSurface {
+    font-size: 16px !important;
+  }
+}

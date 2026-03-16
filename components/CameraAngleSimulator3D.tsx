@@ -72,7 +72,7 @@ const CameraAngleSimulator3D: React.FC<Props> = ({
       const widthBudget = width - (compact ? 46 : 118);
       const heightBudget = height - (compact ? 132 : 104);
       const base = Math.min(widthBudget, heightBudget);
-      const next = clamp(Math.round(base), compact ? 212 : 240, 520);
+      const next = clamp(Math.round(base * 0.5), compact ? 106 : 120, 260);
       setCubeSize(next);
     };
 
@@ -245,7 +245,7 @@ const CameraAngleSimulator3D: React.FC<Props> = ({
             }
             className="w-4 accent-[rgba(241,225,148,0.96)]"
             style={{
-              writingMode: "bt-lr",
+              writingMode: "vertical-lr" as any,
               WebkitAppearance: "slider-vertical" as any,
               height: cubeSize < 260 ? "132px" : "176px",
             }}

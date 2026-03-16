@@ -164,6 +164,36 @@ function moveItem<T>(arr: T[], from: number, to: number) {
   return out;
 }
 
+function mergeAssetsById(base: Asset[], incoming: Asset[]) {
+  const map = new Map<string, Asset>();
+  for (const asset of [...base, ...incoming]) {
+    if (!asset?.id) continue;
+    map.set(asset.id, { ...((map.get(asset.id) || {}) as Asset), ...asset });
+  }
+  return Array.from(map.values());
+}
+
+function makeResolvedAsset(item: any, type: Asset["type"]): Asset | null {
+  const assetId = typeof item?.assetId === "string" ? item.assetId.trim() : "";
+  const url = typeof item?.url === "string" ? item.url.trim() : "";
+  if (!assetId || !url) return null;
+  return {
+    id: assetId,
+    url,
+    type,
+    name: typeof item?.token === "string" && item.token ? item.token.replace(/^@/, "") : `prefill-${type}`,
+    prompt: "",
+    createdAt: Date.now(),
+    ownerId: "",
+    isPublic: false,
+    likedByMe: false,
+    likesCount: 0,
+    commentsCount: 0,
+    likes: [],
+    comments: [],
+  };
+}
+
 
 const TOOL_ID = "video-generator";
 const PREFILL_TARGET = getCommunityPrefillTarget(TOOL_ID);

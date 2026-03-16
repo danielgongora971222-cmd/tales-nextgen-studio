@@ -161,3 +161,10 @@
     max-height: min(46vh, 320px) !important;
   }
 }
+
+
+@media (max-width: 820px) {
+  .wrap {
+    font-size: 16px !important;
+  }
+}
