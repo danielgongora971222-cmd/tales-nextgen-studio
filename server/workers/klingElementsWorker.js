@@ -191,6 +191,92 @@ function extractExplicitTaskIdFromAny(obj) {
   return values.length ? values[0] : null;
 }
 
+function extractAdvancedCreateTaskIdFromAny(obj) {
+  return (
+    readExactString(obj?.data?.task_id) ||
+    readExactString(obj?.data?.taskId) ||
+    readExactString(obj?.task_id) ||
+    readExactString(obj?.taskId) ||
+    null
+  );
+}
+
+function extractAdvancedElementIdFromTaskEnvelope(obj) {
+  const roots = [];
+  if (isPlainObject(obj?.data)) roots.push(obj.data);
+  if (isPlainObject(obj)) roots.push(obj);
+
+  for (const root of roots) {
+    const taskResult = isPlainObject(root?.task_result)
+      ? root.task_result
+      : isPlainObject(root?.taskResult)
+        ? root.taskResult
+        : null;
+
+    if (!taskResult) continue;
+
+    const elements = Array.isArray(taskResult?.elements)
+      ? taskResult.elements
+      : Array.isArray(taskResult?.Elements)
+        ? taskResult.Elements
+        : null;
+
+    if (!Array.isArray(elements)) continue;
+
+    for (const element of elements) {
+      const explicit =
+        readExactString(element?.element_id) ||
+        readExactString(element?.elementId) ||
+        readExactString(element?.element?.element_id) ||
+        readExactString(element?.element?.elementId) ||
+        readExactString(element?.element_info?.element_id) ||
+        readExactString(element?.elementInfo?.elementId);
+
+      if (explicit) return explicit;
+    }
+  }
+
+  return null;
+}
+
+function extractVerifiedElementInfoFromRaw(raw, opts = {}) {
+  const env = getKlingRawEnvelope(raw);
+  const strictAdvanced = opts?.strictAdvanced !== false;
+  const verified = readExactString(env?.verification?.elementId ?? env?.verification?.element_id);
+  if (verified) return { elementId: verified, source: "verification" };
+
+  const advancedCandidates = [
+    ["last_poll_response", env?.last_poll_response],
+    ["list_response", env?.list_response],
+    ["legacy_response", env?.legacy_response],
+    ["raw", env?.raw],
+  ];
+
+  for (const [source, candidate] of advancedCandidates) {
+    if (!candidate) continue;
+    const elementId = extractAdvancedElementIdFromTaskEnvelope(candidate);
+    if (elementId) return { elementId: String(elementId), source };
+  }
+
+  if (!strictAdvanced) {
+    const legacyCandidates = [
+      ["create_response", env?.create_response],
+      ["last_poll_response", env?.last_poll_response],
+      ["list_response", env?.list_response],
+      ["legacy_response", env?.legacy_response],
+      ["raw", env?.raw],
+    ];
+
+    for (const [source, candidate] of legacyCandidates) {
+      if (!candidate) continue;
+      const elementId = extractExplicitElementIdFromAny(candidate);
+      if (elementId) return { elementId: String(elementId), source };
+    }
+  }
+
+  return { elementId: null, source: null };
+}
+
 function isKlingRawEnvelope(raw) {
   return (
     isPlainObject(raw) &&
@@ -218,26 +304,6 @@ function rawResponseCandidates(raw) {
     env?.legacy_response,
     env?.raw,
   ].filter(Boolean);
-}
-
-function extractVerifiedElementInfoFromRaw(raw) {
-  const env = getKlingRawEnvelope(raw);
-  const candidates = [
-    ["verification", env?.verification],
-    ["last_poll_response", env?.last_poll_response],
-    ["list_response", env?.list_response],
-    ["create_response", env?.create_response],
-    ["legacy_response", env?.legacy_response],
-    ["raw", env?.raw],
-  ];
-
-  for (const [source, candidate] of candidates) {
-    if (!candidate) continue;
-    const elementId = extractExplicitElementIdFromAny(candidate);
-    if (elementId) return { elementId: String(elementId), source };
-  }
-
-  return { elementId: null, source: null };
 }
 
 function buildKlingEnvSnapshot() {
@@ -326,7 +392,7 @@ function assessKlingElementRecord(row) {
   const apiVersion = String(row?.api_version || "").trim().toLowerCase();
   const referenceType = String(row?.reference_type || "").trim().toLowerCase();
   const isAdvanced = /advanced/.test(apiVersion) || referenceType === "video_refer" || Boolean(taskId);
-  const verifiedInfo = extractVerifiedElementInfoFromRaw(row?.kling_raw);
+  const verifiedInfo = extractVerifiedElementInfoFromRaw(row?.kling_raw, { strictAdvanced: isAdvanced });
   const envSnapshotStored = row?.kling_raw?.requested?.envSnapshot || row?.kling_raw?.envSnapshot || null;
   const envSnapshotCurrent = buildKlingEnvSnapshot();
   const envMismatch = envSnapshotsMismatch(envSnapshotStored, envSnapshotCurrent);
@@ -428,7 +494,7 @@ async function klingFindElementIdInAdvancedList({ createPath, taskId }) {
         if (!tid) continue;
 
         if (String(tid) === targetTaskId) {
-          const elementId = extractExplicitElementIdFromAny(entry);
+          const elementId = extractAdvancedElementIdFromTaskEnvelope(entry);
           if (elementId) return { elementId: String(elementId), raw: entry, pathUsed: path };
           return null;
         }
@@ -452,7 +518,9 @@ async function pollOnce({ createPath, taskId }) {
       const raw = await klingGetWithRetry(p, { timeoutMs: 20_000, retries: 2 });
       const status = extractTaskStatusFromAny(raw);
       const msg = extractTaskMsgFromAny(raw);
-      const elementId = extractExplicitElementIdFromAny(raw);
+      const elementId = /advanced-custom-elements/i.test(String(createPath || ""))
+        ? extractAdvancedElementIdFromTaskEnvelope(raw)
+        : extractExplicitElementIdFromAny(raw);
 
       const out = { ok: true, pathUsed: p, raw, status, msg, elementId };
       if (!firstOk) firstOk = out;

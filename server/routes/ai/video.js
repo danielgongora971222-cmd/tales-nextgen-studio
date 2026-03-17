@@ -141,6 +141,43 @@ export function createAiVideoRouter(ctx) {
     return out;
   };
 
+  const extractAdvancedElementIdFromTaskEnvelope = (value) => {
+    const roots = [];
+    if (isPlainObject(value?.data)) roots.push(value.data);
+    if (isPlainObject(value)) roots.push(value);
+
+    for (const root of roots) {
+      const taskResult = isPlainObject(root?.task_result)
+        ? root.task_result
+        : isPlainObject(root?.taskResult)
+          ? root.taskResult
+          : null;
+
+      if (!taskResult) continue;
+
+      const elements = Array.isArray(taskResult?.elements)
+        ? taskResult.elements
+        : Array.isArray(taskResult?.Elements)
+          ? taskResult.Elements
+          : null;
+
+      if (!Array.isArray(elements)) continue;
+
+      for (const element of elements) {
+        const explicit =
+          readExactString(element?.element_id) ||
+          readExactString(element?.elementId) ||
+          readExactString(element?.element?.element_id) ||
+          readExactString(element?.element?.elementId) ||
+          readExactString(element?.element_info?.element_id) ||
+          readExactString(element?.elementInfo?.elementId);
+        if (explicit) return explicit;
+      }
+    }
+
+    return null;
+  };
+
   const isKlingRawEnvelope = (raw) =>
     isPlainObject(raw) &&
     ["create_response", "last_poll_response", "list_response", "requested", "verification", "legacy_response", "diagnostics"].some(
@@ -156,7 +193,46 @@ export function createAiVideoRouter(ctx) {
     return [raw];
   };
 
-  const extractVerifiedElementIdFromRaw = (raw) => {
+  const mergeKlingRawEnvelope = (existing, patch) => {
+    const env = isKlingRawEnvelope(existing)
+      ? { ...existing }
+      : existing == null
+        ? {}
+        : { legacy_response: existing };
+
+    if (patch && typeof patch === "object") {
+      for (const [key, value] of Object.entries(patch)) {
+        if (value === undefined) continue;
+        if (key === "diagnostics") {
+          env.diagnostics = {
+            ...(isPlainObject(env.diagnostics) ? env.diagnostics : {}),
+            ...(isPlainObject(value) ? value : {}),
+          };
+          continue;
+        }
+        env[key] = value;
+      }
+    }
+
+    return env;
+  };
+
+  const extractVerifiedElementIdFromRaw = (raw, opts = {}) => {
+    const strictAdvanced = opts?.strictAdvanced !== false;
+
+    if (isKlingRawEnvelope(raw)) {
+      const verified = readExactString(raw?.verification?.elementId ?? raw?.verification?.element_id);
+      if (verified) return verified;
+    }
+
+    if (strictAdvanced) {
+      for (const candidate of rawCandidates(raw)) {
+        const elementId = extractAdvancedElementIdFromTaskEnvelope(candidate);
+        if (elementId) return elementId;
+      }
+      return null;
+    }
+
     for (const candidate of rawCandidates(raw)) {
       const ids = collectExplicitElementIds(candidate);
       if (ids.length) return ids[0];
@@ -270,6 +346,20 @@ export function createAiVideoRouter(ctx) {
             status: "ready",
             status_detail: null,
             kling_element_id: remoteElementId,
+            kling_raw: mergeKlingRawEnvelope(row?.kling_raw, {
+              last_poll_response: polled.raw || null,
+              last_poll_path: polled.pathUsed || null,
+              verification: {
+                elementId: remoteElementId,
+                source: polled.pathUsed && String(polled.pathUsed).includes("pageNum=") ? "list_response" : "task_status",
+                verifiedAt: nowIso,
+                taskId,
+              },
+              diagnostics: {
+                lastPreflightVerifiedAt: nowIso,
+                lastPreflightStatus: statusNorm || null,
+              },
+            }),
             updated_at: nowIso,
           })
           .eq("id", row.id)
@@ -346,7 +436,7 @@ export function createAiVideoRouter(ctx) {
     const apiVersion = String(row?.api_version || "").trim().toLowerCase();
     const referenceType = String(row?.reference_type || "").trim().toLowerCase();
     const isAdvanced = /advanced/.test(apiVersion) || referenceType === "video_refer" || Boolean(taskId);
-    const verifiedFromRaw = extractVerifiedElementIdFromRaw(row?.kling_raw);
+    const verifiedFromRaw = extractVerifiedElementIdFromRaw(row?.kling_raw, { strictAdvanced: isAdvanced });
 
     let issue = null;
     if (statusDb !== "ready") issue = statusDb === "failed" ? "failed" : "not_ready";
