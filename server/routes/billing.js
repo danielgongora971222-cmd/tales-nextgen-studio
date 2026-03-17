@@ -17,12 +17,28 @@ export function createBillingRouter(ctx) {
     return 1;
   }
 
+  function planTierRank(plan) {
+    const slug = String(plan?.slug || "").toLowerCase();
+    if (slug.includes("basic")) return 10;
+    if (slug.includes("standard")) return 20;
+    if (slug.includes("pro")) return 30;
+    if (slug.includes("partner")) return 40;
+    if (slug.includes("business")) return 50;
+    return null;
+  }
+
   function planPowerScore(plan) {
+    const explicitRank = planTierRank(plan);
+    const concurrency = Number(plan?.max_concurrency || 2);
+    const features = (plan?.can_sell ? 1 : 0) + (plan?.can_referrals ? 1 : 0);
+
+    if (explicitRank !== null) {
+      return explicitRank * 1_000_000_000 + concurrency * 10_000 + features * 100 + Number(plan?.price_cents || 0);
+    }
+
     const factor = planPeriodFactor(plan?.billing_period);
     const creditsEqMonth =
       (Number(plan?.plan_credits || 0) + Number(plan?.bonus_credits || 0)) * factor;
-    const concurrency = Number(plan?.max_concurrency || 2);
-    const features = (plan?.can_sell ? 1 : 0) + (plan?.can_referrals ? 1 : 0);
     return creditsEqMonth * 1_000_000 + concurrency * 10_000 + features * 100 + Number(plan?.price_cents || 0);
   }
 

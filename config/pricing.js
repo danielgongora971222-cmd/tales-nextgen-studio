@@ -8,6 +8,7 @@
 export const CREDITS_PER_USD = 222;
 export const OWNER_MARKUP_RATE = 0.35;
 export const PROVIDER_TO_SELLING_MULTIPLIER = 1 + OWNER_MARKUP_RATE;
+export const VIDEO_PRICE_UPLIFT_MULTIPLIER = 1.15;
 
 function clampInt(n, min, max, fallback = min) {
   const x = Math.trunc(Number(n));
@@ -120,6 +121,59 @@ function flux2FlexUsd(quality) {
   return mp * 0.05;
 }
 
+function fixedImageUnitCredits({ model, quality } = {}) {
+  const selectedModel = String(model || "").trim();
+  const q = normalizeImageQuality(quality);
+
+  if (!selectedModel) return null;
+
+  // Cambio solicitado:
+  // - Nano Banana conserva ahora el precio que antes tenía Nano Banana 2.
+  // - Nano Banana 2 se iguala a Nano Banana Pro.
+  if (selectedModel === "gemini-2.5-flash-image") {
+    return 24;
+  }
+
+  if (
+    selectedModel === "gemini-3.1-flash-image-preview" ||
+    selectedModel === "gemini-3-pro-image-preview"
+  ) {
+    if (q === "4K") return 90;
+    if (q === "2K") return 68;
+    return 45;
+  }
+
+  if (selectedModel === "fal-ai/flux-2-max" || selectedModel.startsWith("fal-ai/flux-2-max")) {
+    if (q === "4K") return 250;
+    if (q === "2K") return 222;
+    return 175;
+  }
+
+  if (
+    selectedModel === "fal-ai/flux-2-pro" ||
+    selectedModel.startsWith("fal-ai/flux-2-pro") ||
+    selectedModel === "fal-ai/flux-2-flex" ||
+    selectedModel.startsWith("fal-ai/flux-2-flex")
+  ) {
+    if (q === "4K") return 200;
+    if (q === "2K") return 178;
+    return 140;
+  }
+
+  if (
+    selectedModel === "kling:kling-image-o1" ||
+    selectedModel === "kling-image-o1" ||
+    selectedModel === "fal-ai/kling-image/v3/text-to-image" ||
+    selectedModel === "fal-ai/kling-image/v3/image-to-image" ||
+    selectedModel === "fal-ai/kling-image/o3/image-to-image" ||
+    selectedModel.startsWith("fal-ai/kling-image/")
+  ) {
+    return 45;
+  }
+
+  return null;
+}
+
 function imageUnitUsd({ model, quality, aspectRatio }) {
   const selectedModel = String(model || "").trim();
   const q = normalizeImageQuality(quality);
@@ -203,11 +257,17 @@ function imageUnitUsd({ model, quality, aspectRatio }) {
 }
 
 export function estimateImageUnitCredits({ model, quality, aspectRatio } = {}) {
+  const fixedCredits = fixedImageUnitCredits({ model, quality });
+  if (fixedCredits != null) return fixedCredits;
+
   return roundCreditsFromUsd(imageUnitUsd({ model, quality, aspectRatio }));
 }
 
 export function estimateImageCostCredits({ model, quality, count, aspectRatio } = {}) {
   const n = Math.max(1, Number(count || 1));
+  const fixedCredits = fixedImageUnitCredits({ model, quality });
+  if (fixedCredits != null) return Math.max(1, Math.ceil(fixedCredits * n));
+
   const usd = imageUnitUsd({ model, quality, aspectRatio }) * n;
   return roundCreditsFromUsd(usd);
 }
@@ -324,7 +384,7 @@ export function estimateVideoCostCredits({
     klingMode,
     voiceControl,
     isKling,
-  }) * n;
+  }) * VIDEO_PRICE_UPLIFT_MULTIPLIER * n;
 
   return roundCreditsFromUsd(usd);
 }

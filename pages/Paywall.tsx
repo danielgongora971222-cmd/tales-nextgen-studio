@@ -37,11 +37,27 @@ function planPeriodFactor(bp: any) {
   return 1;
 }
 
+function planTierRank(plan: any) {
+  const slug = String(plan?.slug || "").toLowerCase();
+  if (slug.includes("basic")) return 10;
+  if (slug.includes("standard")) return 20;
+  if (slug.includes("pro")) return 30;
+  if (slug.includes("partner")) return 40;
+  if (slug.includes("business")) return 50;
+  return null;
+}
+
 function planPowerScore(p: any) {
-  const factor = planPeriodFactor(p?.billing_period);
-  const creditsEqMonth = (Number(p?.plan_credits || 0) + Number(p?.bonus_credits || 0)) * factor;
+  const explicitRank = planTierRank(p);
   const concurrency = Number(p?.max_concurrency || 2);
   const features = (p?.can_sell ? 1 : 0) + (p?.can_referrals ? 1 : 0);
+
+  if (explicitRank !== null) {
+    return explicitRank * 1_000_000_000 + concurrency * 10_000 + features * 100 + Number(p?.price_cents || 0);
+  }
+
+  const factor = planPeriodFactor(p?.billing_period);
+  const creditsEqMonth = (Number(p?.plan_credits || 0) + Number(p?.bonus_credits || 0)) * factor;
   return creditsEqMonth * 1_000_000 + concurrency * 10_000 + features * 100 + Number(p?.price_cents || 0);
 }
 
@@ -301,7 +317,8 @@ export default function Paywall({
 
       const factor = planPeriodFactor(p?.billing_period);
       const creditsEqMonth = Number(p?.plan_credits || 0) * factor;
-      const ratio = creditsEqMonth / dollars;
+      const dollarsEqMonth = dollars * factor;
+      const ratio = dollarsEqMonth > 0 ? creditsEqMonth / dollarsEqMonth : 0;
 
       if (ratio > bestRatio) {
         bestRatio = ratio;
@@ -357,13 +374,13 @@ export default function Paywall({
 
   return (
     <div className="text-white">
-      <div className="flex items-start justify-between gap-4 mb-6">
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">My Account</h1>
           <div className="text-sm text-white/60 mt-1">Plans and extra credits</div>
         </div>
 
-        <div className="flex gap-2">
+        <div className="flex shrink-0 flex-wrap gap-2">
           {onContinueExploring ? (
             <button
               type="button"
@@ -380,9 +397,10 @@ export default function Paywall({
       {error ? <div className="mb-4 p-3 rounded-xl bg-red-500/20 border border-red-500/40">{error}</div> : null}
 
       {/* Hero cards */}
-      <div className="grid lg:grid-cols-3 gap-4 mb-6">
+      <div className="-mx-3 mb-6 overflow-x-auto overscroll-x-contain px-3 pb-2 md:mx-0 md:px-0 md:pb-0">
+        <div className="grid min-w-[780px] grid-cols-3 gap-4">
         <div
-          className="premium-hero-card p-5"
+          className="premium-hero-card p-4 md:p-5"
           style={premiumVars("rgba(244, 197, 66, 0.55)", "rgba(240, 107, 87, 0.28)")}
         >
           <div className="flex items-start justify-between gap-4">
@@ -392,8 +410,8 @@ export default function Paywall({
                 <span>Plan</span>
               </div>
 
-              <div className="text-2xl font-extrabold mt-3 truncate">{heroPlanName}</div>
-              <div className="text-sm text-white/60 mt-2">Next renewal: {heroNext}</div>
+              <div className="text-xl md:text-2xl font-extrabold mt-3 truncate">{heroPlanName}</div>
+              <div className="text-xs md:text-sm text-white/60 mt-2">Next renewal: {heroNext}</div>
             </div>
 
             <div className="premium-hero-icon" aria-hidden="true" title="Plan">
@@ -428,7 +446,7 @@ export default function Paywall({
         </div>
 
         <div
-          className="premium-hero-card p-5"
+          className="premium-hero-card p-4 md:p-5"
           style={premiumVars("rgba(111, 168, 255, 0.55)", "rgba(46, 229, 157, 0.32)")}
         >
           <div className="flex items-start justify-between gap-4">
@@ -438,7 +456,7 @@ export default function Paywall({
                 <span>Credits</span>
               </div>
 
-              <div className="text-2xl font-extrabold mt-3">{formatK(availableCredits)}</div>
+              <div className="text-xl md:text-2xl font-extrabold mt-3">{formatK(availableCredits)}</div>
               <div className="text-[12px] text-white/60 mt-2">
                 Plan {formatK(planCredits)} · Extra {formatK(topupCredits)} · Bonus {formatK(bonusCredits)}
               </div>
@@ -466,7 +484,7 @@ export default function Paywall({
         </div>
 
         <div
-          className="premium-hero-card p-5"
+          className="premium-hero-card p-4 md:p-5"
           style={premiumVars("rgba(123, 77, 255, 0.55)", "rgba(240, 107, 87, 0.30)")}
         >
           <div className="flex items-start justify-between gap-4">
@@ -499,7 +517,7 @@ export default function Paywall({
             </div>
           </div>
 
-          <div className="mt-5 flex gap-2">
+          <div className="mt-5 flex flex-wrap gap-2">
             <button
               type="button"
               className="premium-hero-btn premium-hero-btn--primary px-4 py-2 text-sm"
@@ -516,6 +534,7 @@ export default function Paywall({
               Extra credits
             </button>
           </div>
+        </div>
         </div>
       </div>
 
@@ -558,7 +577,7 @@ export default function Paywall({
                 </div>
               </div>
 
-              <div className="flex flex-col items-end gap-2">
+              <div className="flex w-full flex-col items-start gap-2 sm:w-auto sm:items-end">
                 {appliedReferral?.code ? (
                   <div className="referral-applied-pill">
                     <div className="text-[11px] text-white/60">Código activo</div>
@@ -590,7 +609,7 @@ export default function Paywall({
               </div>
             </div>
 
-            <div className="mt-4 flex flex-col lg:flex-row gap-3">
+            <div className="mt-4 flex flex-col gap-3 xl:flex-row">
               <div className="flex-1 referral-input">
                 <div className="referral-input__shine" aria-hidden="true" />
                 <input
@@ -715,7 +734,8 @@ export default function Paywall({
             </div>
           </div>
 
-          <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
+          <div className="-mx-3 overflow-x-auto overscroll-x-contain px-3 pb-2 md:mx-0 md:px-0 md:pb-0">
+            <div className="grid min-w-[940px] grid-cols-3 gap-4">
             {filteredPlans.map((p) => {
               const isCurrent = currentPlanSlug && p.slug === currentPlanSlug;
 
@@ -756,7 +776,7 @@ export default function Paywall({
                 <div
                   key={p.id}
                   className={[
-                    "premium-hero-card plan-tier-card p-5 transition-transform duration-200 group",
+                    "premium-hero-card plan-tier-card min-w-0 p-4 md:p-5 transition-transform duration-200 group",
                     isLower ? "plan-tier-card--locked" : "",
                     isCurrent ? "plan-tier-card--current" : "",
                   ]
@@ -773,7 +793,7 @@ export default function Paywall({
                         {isLower ? <span className="plan-tier-pill">Bloqueado</span> : null}
                       </div>
 
-                      <div className="text-2xl font-extrabold mt-3">{p.name}</div>
+                      <div className="text-xl md:text-2xl font-extrabold mt-3">{p.name}</div>
                       <div className="text-sm text-white/70 mt-1">{mk.tagline}</div>
                     </div>
 
@@ -799,7 +819,7 @@ export default function Paywall({
                   <div className="mt-5 flex items-end justify-between gap-3">
                     <div>
                       <div className="flex items-end gap-2">
-                        <div className="text-3xl font-extrabold">{priceNow}</div>
+                        <div className="text-2xl md:text-3xl font-extrabold">{priceNow}</div>
                         <div className="text-sm text-white/60 pb-1">{perLabel}</div>
                       </div>
 
@@ -921,6 +941,7 @@ export default function Paywall({
                 {period === "year" ? "Planes anuales próximamente." : "No hay planes disponibles en este momento."}
               </div>
             ) : null}
+            </div>
           </div>
         </div>
       ) : null}
@@ -933,7 +954,8 @@ export default function Paywall({
             <div className="text-sm text-white/60 mt-1">One-time purchases. Requires a plan.</div>
           </div>
 
-          <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-4">
+          <div className="-mx-3 overflow-x-auto overscroll-x-contain px-3 pb-2 md:mx-0 md:px-0 md:pb-0">
+            <div className="grid min-w-[980px] grid-cols-4 gap-4">
             {uniqueTopups.map((t) => {
               const credits = Number(t._credits ?? t.credits_amount ?? t.credits ?? 0);
               const priceCents = Number(t._price_cents ?? t.price_cents ?? 0);
@@ -953,7 +975,7 @@ export default function Paywall({
               const [accent, accent2] = topupPalette(credits);
 
               return (
-                <div key={key} className="premium-hero-card p-5" style={premiumVars(accent, accent2)}>
+                <div key={key} className="premium-hero-card p-4 md:p-5" style={premiumVars(accent, accent2)}>
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="premium-hero-badge">
@@ -961,8 +983,8 @@ export default function Paywall({
                         <span>{topupBadge(credits)}</span>
                       </div>
 
-                      <div className="text-3xl font-extrabold mt-3">{formatK(credits)}</div>
-                      <div className="text-sm text-white/65 mt-1">credits</div>
+                      <div className="text-2xl md:text-3xl font-extrabold mt-3">{formatK(credits)}</div>
+                      <div className="text-xs md:text-sm text-white/65 mt-1">credits</div>
                       <div className="text-xs text-white/55 mt-2">{t.name}</div>
                     </div>
 
@@ -1003,7 +1025,8 @@ export default function Paywall({
                 </div>
               );
             })}
-            {!uniqueTopups.length ? <div className="text-white/60">No credit packs available.</div> : null}
+              {!uniqueTopups.length ? <div className="text-white/60">No credit packs available.</div> : null}
+            </div>
           </div>
         </div>
       ) : null}
