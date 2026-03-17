@@ -4,12 +4,12 @@ const preset: ImagePreset = {
   id: "pixar_3d",
   name: "3D Pixar-ish",
   kind: "restyle",
-  coverUrl: "/presets/restyle/pixar_3d/cover.jpg",
+  coverUrl: "/presets/restyle/pixar_3d/cover.png",
   exampleUrls: [
-    "/presets/restyle/pixar_3d/1.jpg",
-    "/presets/restyle/pixar_3d/2.jpg",
-    "/presets/restyle/pixar_3d/3.jpg",
-    "/presets/restyle/pixar_3d/4.jpg",
+    "/presets/restyle/pixar_3d/1.png",
+    "/presets/restyle/pixar_3d/2.png",
+    "/presets/restyle/pixar_3d/3.png",
+    "/presets/restyle/pixar_3d/4.png",
   ],
   referenceGridUrl: "/presets/restyle/pixar_3d/reference_grid.jpg",
   prompt: `

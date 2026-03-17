@@ -1,13 +1,15 @@
 import type { ImagePreset } from "../presetTypes";
 
+import crazyPencil from "./crazy_pencil";
+import foldPaper from "./fold_paper";
 import liveAction from "./live_action";
-import luxuryProduct from "./luxury_product";
 import pixar3d from "./pixar_3d";
 import popArt from "./pop_art";
 
 export const STYLE_PRESETS: ImagePreset[] = [
+  crazyPencil,
+  foldPaper,
   liveAction,
-  luxuryProduct,
   pixar3d,
   popArt,
 ];
