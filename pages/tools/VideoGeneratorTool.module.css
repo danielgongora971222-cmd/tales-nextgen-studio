@@ -304,7 +304,7 @@
   padding: 6px 0 2px;
 }
 .pickerTile {
-  border-radius: 16px;
+  border-radius: 14px;
   border: 1px solid rgba(241,225,148,0.10);
   background: rgba(0,0,0,0.22);
   overflow: hidden;
@@ -2036,7 +2036,7 @@
 .resumeBanner {
   margin: 10px 0 12px;
   padding: 12px 12px;
-  border-radius: 16px;
+  border-radius: 14px;
   border: 1px solid rgba(255,255,255,0.14);
   background: rgba(255,255,255,0.06);
 }
@@ -2096,7 +2096,7 @@
 .elementsMap {
   margin-top: 10px;
   padding: 10px;
-  border-radius: 16px;
+  border-radius: 14px;
   border: 1px solid rgba(255,255,255,0.14);
   background: rgba(0,0,0,0.28);
 }
@@ -2200,7 +2200,7 @@
 .previewPanel {
   margin-top: 10px;
   padding: 10px;
-  border-radius: 16px;
+  border-radius: 14px;
   border: 1px solid rgba(255,255,255,0.14);
   background: rgba(0,0,0,0.28);
 }
@@ -2310,7 +2310,7 @@
 }
 
 .rootCookOpen {
-  --cook-sidebar-width: min(980px, calc(100vw - 32px));
+  --cook-sidebar-width: min(820px, calc(100vw - 32px));
 }
 
 .stageCookOpen {
@@ -2334,7 +2334,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: 10px;
   min-width: 196px;
   height: 54px;
   padding: 0 22px;
@@ -2402,14 +2402,19 @@
   align-items: flex-end;
   padding: 16px 16px calc(88px + env(safe-area-inset-bottom, 0px)) 16px;
   pointer-events: none;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 
 .cookSidebar {
-  width: min(100%, var(--cook-sidebar-width, 980px));
+  width: min(100%, var(--cook-sidebar-width, 820px));
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
   pointer-events: auto;
+  min-height: 0;
+  max-height: 100%;
 }
 
 .cookSectionCard {
@@ -2423,6 +2428,7 @@
     inset 0 1px 0 rgba(255,255,255,0.06),
     inset 0 -14px 30px rgba(0,0,0,0.6);
   overflow: visible;
+  min-height: 0;
 }
 
 .cookPromptCard { padding: 16px; }
@@ -2520,14 +2526,14 @@
   .cookSidebar { width: 100%; }
   .cookPromptCard { padding: 14px; }
   .cookControlBtn { flex-basis: calc(50% - 5px); }
-  .cookPanelShell { inset: 12px 12px 90px 12px; }
+  .cookPanelShell { inset: 10px 10px 78px 10px; }
   .cookSectionMeta { max-width: 120px; }
 }
 
 @media (max-width: 520px) {
   .cookToggle { bottom: 12px; min-width: 170px; height: 48px; padding: 0 18px; }
   .cookControlBtn { flex-basis: 100%; }
-  .cookPanelShell { inset: 10px 10px 76px 10px; }
+  .cookPanelShell { inset: 8px 8px 70px 8px; }
   .cookSectionMeta { max-width: 92px; }
 }
 
@@ -2634,7 +2640,7 @@
   flex-direction: column;
   gap: 10px;
   padding: 12px;
-  border-radius: 16px;
+  border-radius: 14px;
   border: 1px solid rgba(241,225,148,0.12);
   background: rgba(0,0,0,0.24);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
@@ -3020,7 +3026,7 @@
 .motionSettingChevron {
   flex-shrink: 0;
   color: rgba(255,255,255,0.48);
-  font-size: 24px;
+  font-size: 20px;
   line-height: 1;
 }
 
@@ -3103,7 +3109,7 @@
   min-width: 0;
   min-height: 92px;
   border: 1px solid rgba(255,255,255,0.08);
-  border-radius: 16px;
+  border-radius: 14px;
   background: rgba(18,18,20,0.88);
   color: rgba(255,255,255,0.9);
   padding: 14px;
@@ -3209,7 +3215,7 @@
   justify-content: center;
   gap: 10px;
   padding: 12px 14px;
-  border-radius: 16px;
+  border-radius: 14px;
   border: 1px solid rgba(255,255,255,0.08);
   background: rgba(255,255,255,0.04);
   color: rgba(255,255,255,0.82);
@@ -3354,15 +3360,21 @@
 .videoCreateFrameRow {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-  margin-bottom: 18px;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.videoCreateFrameSlot {
+  position: relative;
+  min-width: 0;
 }
 
 .videoCreateFrameCard {
   position: relative;
-  min-height: 172px;
+  width: 100%;
+  min-height: clamp(118px, 18vw, 150px);
   border: 1px dashed rgba(255, 255, 255, 0.12);
-  border-radius: 24px;
+  border-radius: 22px;
   background: radial-gradient(circle at 50% 26%, rgba(255,255,255,0.05), rgba(255,255,255,0.01) 42%, rgba(0,0,0,0.08) 100%);
   color: rgba(255,255,255,0.92);
   overflow: hidden;
@@ -3371,10 +3383,10 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 14px;
-  padding: 20px 16px 22px;
+  gap: 10px;
+  padding: 16px 14px 18px;
   box-shadow:
-    0 20px 44px rgba(0,0,0,0.48),
+    0 18px 38px rgba(0,0,0,0.46),
     inset 0 1px 0 rgba(255,255,255,0.04);
   transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
 }
@@ -3400,7 +3412,9 @@
   inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
+  background: rgba(6,6,8,0.9);
+  padding: 12px;
 }
 
 .videoCreateFrameShade {
@@ -3426,11 +3440,35 @@
   letter-spacing: 0.02em;
 }
 
+.videoCreateFrameRemove {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 3;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(8,10,14,0.84);
+  color: rgba(255,255,255,0.94);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 12px 24px rgba(0,0,0,0.35);
+  transition: transform 0.18s ease, background 0.18s ease, opacity 0.18s ease;
+}
+
+.videoCreateFrameRemove:hover {
+  transform: translateY(-1px);
+  background: rgba(91,14,20,0.84);
+}
+
 .videoCreateFrameIconOrb {
   position: relative;
   z-index: 2;
-  width: 72px;
-  height: 72px;
+  width: 58px;
+  height: 58px;
   border-radius: 999px;
   display: inline-flex;
   align-items: center;
@@ -3445,10 +3483,14 @@
 .videoCreateFrameLabel {
   position: relative;
   z-index: 2;
-  font-size: clamp(18px, 2.3vw, 24px);
+  font-size: clamp(15px, 1.8vw, 20px);
   font-weight: 600;
   text-align: center;
   color: rgba(255,255,255,0.9);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .videoComposerCard {
@@ -3466,7 +3508,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 14px;
-  padding: 18px 18px 14px;
+  padding: 14px 14px 12px;
 }
 
 .videoComposerTitleWrap {
@@ -3477,7 +3519,7 @@
 }
 
 .videoComposerTitle {
-  font-size: clamp(20px, 2.4vw, 26px);
+  font-size: clamp(17px, 2vw, 22px);
   font-weight: 700;
   color: rgba(255,255,255,0.96);
 }
@@ -3497,8 +3539,8 @@
 
 .videoSwitch {
   position: relative;
-  width: 94px;
-  height: 50px;
+  width: 82px;
+  height: 44px;
   border: none;
   border-radius: 999px;
   background: rgba(112,116,138,0.88);
@@ -3516,10 +3558,10 @@
 
 .videoSwitchThumb {
   position: absolute;
-  top: 5px;
-  left: 5px;
-  width: 40px;
-  height: 40px;
+  top: 4px;
+  left: 4px;
+  width: 36px;
+  height: 36px;
   border-radius: 999px;
   background: rgba(255,255,255,0.98);
   box-shadow: 0 8px 16px rgba(0,0,0,0.3);
@@ -3527,7 +3569,7 @@
 }
 
 .videoSwitchActive .videoSwitchThumb {
-  transform: translateX(44px);
+  transform: translateX(38px);
 }
 
 .videoModeTabs {
@@ -3538,7 +3580,7 @@
 }
 
 .videoModeTab {
-  min-height: 58px;
+  min-height: 50px;
   border: none;
   border-radius: 18px;
   background: rgba(6,8,12,0.72);
@@ -3569,33 +3611,37 @@
 }
 
 .videoPromptSurface {
-  padding: 16px 18px 0;
+  padding: 12px 14px 0;
 }
 
 .videoPromptTextarea {
-  min-height: 200px;
-  border-radius: 22px;
+  min-height: clamp(128px, 22vh, 164px);
+  border-radius: 20px;
   background: rgba(17,17,21,0.82);
   box-shadow:
     inset 0 1px 0 rgba(255,255,255,0.04),
     inset 0 -10px 22px rgba(0,0,0,0.34);
-  padding: 20px 18px;
-  font-size: clamp(18px, 2.1vw, 20px);
+  padding: 16px 14px;
+  font-size: clamp(15px, 1.8vw, 18px);
   line-height: 1.45;
   color: rgba(255,255,255,0.92);
+  overflow: hidden;
+  min-width: 0;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .videoPromptFooter {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
-  padding: 16px 18px 18px;
+  padding: 12px 14px 14px;
 }
 
 .videoActionBtn {
-  min-height: 48px;
+  min-height: 42px;
   padding: 0 16px;
-  border-radius: 16px;
+  border-radius: 14px;
   border: none;
   background: rgba(8,10,14,0.88);
   color: rgba(255,255,255,0.96);
@@ -3632,7 +3678,7 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  margin-top: 18px;
+  margin-top: 14px;
 }
 
 .videoSelectorButton,
@@ -3663,7 +3709,7 @@
   flex-direction: column;
   align-items: flex-start;
   gap: 8px;
-  padding: 16px 18px;
+  padding: 13px 14px;
   text-align: left;
 }
 
@@ -3678,7 +3724,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  font-size: clamp(20px, 2.2vw, 24px);
+  font-size: clamp(16px, 1.8vw, 20px);
   font-weight: 600;
 }
 
@@ -3698,28 +3744,29 @@
 }
 
 .videoQuickButton {
-  min-height: 92px;
-  padding: 16px 14px;
+  min-height: 68px;
+  padding: 12px 12px;
   display: inline-flex;
   align-items: center;
   justify-content: flex-start;
   gap: 10px;
-  font-size: clamp(19px, 2vw, 22px);
+  font-size: clamp(15px, 1.6vw, 18px);
   font-weight: 600;
+  min-width: 0;
 }
 
 .videoGenerateWrap {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  margin-top: 18px;
+  margin-top: 14px;
 }
 
 .videoGenerateButton {
   width: 100%;
-  min-height: 88px;
+  min-height: 64px;
   border: none;
-  border-radius: 28px;
+  border-radius: 22px;
   background: linear-gradient(135deg, #d9a731, #f4d36a 58%, #c79016);
   color: #170f04;
   cursor: pointer;
@@ -3746,22 +3793,22 @@
   align-items: center;
   justify-content: center;
   gap: 14px;
-  font-size: clamp(24px, 3vw, 28px);
+  font-size: clamp(18px, 2.2vw, 22px);
   font-weight: 700;
 }
 
 .videoShotList {
-  max-height: min(48vh, 520px);
+  max-height: min(42vh, 440px);
   overflow-y: auto;
-  padding: 16px 18px 4px;
+  padding: 12px 14px 4px;
   display: flex;
   flex-direction: column;
   gap: 14px;
 }
 
 .videoShotCard {
-  padding: 16px;
-  border-radius: 22px;
+  padding: 12px;
+  border-radius: 18px;
   background: rgba(28,28,32,0.94);
   box-shadow:
     0 20px 42px rgba(0,0,0,0.34),
@@ -3779,7 +3826,7 @@
 }
 
 .videoShotTitle {
-  font-size: clamp(20px, 2.2vw, 22px);
+  font-size: clamp(16px, 1.8vw, 19px);
   font-weight: 600;
   color: rgba(255,255,255,0.96);
 }
@@ -3798,15 +3845,19 @@
 }
 
 .videoShotPromptSurface {
-  min-height: 158px;
-  border-radius: 18px;
+  min-height: 118px;
+  border-radius: 16px;
   background: rgba(12,12,16,0.88);
   color: rgba(255,255,255,0.92);
-  font-size: 18px;
+  font-size: 16px;
   line-height: 1.45;
   box-shadow:
     inset 0 1px 0 rgba(255,255,255,0.04),
     inset 0 -10px 20px rgba(0,0,0,0.36);
+  overflow: hidden;
+  min-width: 0;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .videoShotFooter {
@@ -3817,9 +3868,9 @@
 }
 
 .videoShotDurationChip {
-  min-height: 46px;
-  padding: 0 14px;
-  border-radius: 16px;
+  min-height: 42px;
+  padding: 0 12px;
+  border-radius: 14px;
   background: rgba(9,10,14,0.9);
   color: rgba(255,255,255,0.96);
   display: inline-flex;
@@ -3828,39 +3879,41 @@
   box-shadow:
     0 12px 26px rgba(0,0,0,0.3),
     inset 0 1px 0 rgba(255,255,255,0.04);
+  min-width: min(100%, 220px);
 }
 
-.videoShotDurationInput {
-  width: 34px;
+.videoShotDurationLabel {
+  font-size: 13px;
+  color: rgba(255,255,255,0.72);
+}
+
+.videoShotDurationSelect {
+  min-width: 72px;
   border: none;
   background: transparent;
   color: rgba(255,255,255,0.96);
   font: inherit;
   font-weight: 700;
-  text-align: center;
   outline: none;
-  appearance: textfield;
-  -moz-appearance: textfield;
-}
-
-.videoShotDurationInput::-webkit-outer-spin-button,
-.videoShotDurationInput::-webkit-inner-spin-button {
+  appearance: none;
   -webkit-appearance: none;
-  margin: 0;
-}
-
-.videoShotDurationSuffix {
-  font-weight: 700;
+  -moz-appearance: none;
+  cursor: pointer;
+  padding-right: 18px;
+  background-image: linear-gradient(45deg, transparent 50%, rgba(255,255,255,0.9) 50%), linear-gradient(135deg, rgba(255,255,255,0.9) 50%, transparent 50%);
+  background-position: calc(100% - 12px) calc(50% - 2px), calc(100% - 7px) calc(50% - 2px);
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
 }
 
 .videoAddShotWrap {
   display: flex;
   justify-content: center;
-  padding: 10px 18px 18px;
+  padding: 10px 14px 14px;
 }
 
 .videoAddShotButton {
-  min-height: 48px;
+  min-height: 42px;
   padding: 0 18px;
   border: none;
   border-radius: 999px;
@@ -3879,61 +3932,73 @@
 
 @media (max-width: 720px) {
   .videoCreateFrameRow {
-    gap: 12px;
+    gap: 10px;
   }
 
   .videoCreateFrameCard {
-    min-height: 148px;
-    padding: 18px 14px 20px;
-    border-radius: 22px;
+    min-height: 120px;
+    padding: 14px 12px 16px;
+    border-radius: 20px;
   }
 
   .videoCreateFrameIconOrb {
-    width: 60px;
-    height: 60px;
+    width: 50px;
+    height: 50px;
   }
 
   .videoComposerHeader {
-    padding: 16px 16px 12px;
+    padding: 12px 12px 10px;
   }
 
   .videoModeTabs,
   .videoPromptSurface,
   .videoShotList,
   .videoAddShotWrap {
-    padding-left: 16px;
-    padding-right: 16px;
+    padding-left: 12px;
+    padding-right: 12px;
   }
 
   .videoPromptTextarea {
-    min-height: 170px;
-    padding: 18px 16px;
-    font-size: 18px;
+    min-height: 136px;
+    padding: 14px 12px;
+    font-size: 16px;
   }
 
   .videoPromptFooter {
-    padding: 14px 16px 16px;
+    padding: 12px;
+  }
+
+  .videoQuickGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .videoQuickGridCompact {
+    grid-template-columns: 1fr;
   }
 
   .videoQuickButton {
-    min-height: 82px;
-    padding: 14px 12px;
+    min-height: 58px;
+    padding: 10px 12px;
   }
 
   .videoGenerateButton {
-    min-height: 76px;
-    border-radius: 24px;
+    min-height: 58px;
+    border-radius: 20px;
   }
 
   .videoGenerateLabelRow {
-    font-size: clamp(20px, 6vw, 24px);
+    font-size: clamp(17px, 5vw, 20px);
   }
 }
 
-@media (max-width: 520px) {
+@media (max-width: 560px) {
+  .videoCreateFrameRow {
+    grid-template-columns: 1fr;
+  }
+
   .videoCreateFrameCard {
-    min-height: 132px;
-    gap: 10px;
+    min-height: 112px;
+    gap: 8px;
   }
 
   .videoCreateFrameBadge {
@@ -3943,36 +4008,29 @@
     font-size: 11px;
   }
 
-  .videoCreateFrameIconOrb {
-    width: 52px;
-    height: 52px;
+  .videoCreateFrameRemove {
+    top: 10px;
+    left: 10px;
+    width: 30px;
+    height: 30px;
   }
 
   .videoModeTab {
-    min-height: 52px;
-    font-size: 18px;
-  }
-
-  .videoQuickGrid {
-    gap: 10px;
-  }
-
-  .videoQuickButton {
-    min-height: 74px;
-    font-size: 18px;
+    min-height: 46px;
+    font-size: 16px;
   }
 
   .videoSelectorValueRow {
-    font-size: 20px;
+    font-size: 17px;
   }
 
   .videoShotCard {
-    padding: 14px;
+    padding: 10px;
   }
 
   .videoShotPromptSurface {
-    min-height: 142px;
-    font-size: 16px;
+    min-height: 104px;
+    font-size: 15px;
   }
 
   .videoShotFooter,
@@ -3982,8 +4040,21 @@
   }
 
   .videoActionBtn,
-  .videoShotDurationChip {
+  .videoShotDurationChip,
+  .videoShotDurationSelect {
     width: 100%;
-    justify-content: center;
   }
+}
+
+
+.videoSelectorButton,
+.videoQuickButton,
+.videoGenerateButton {
+  min-width: 0;
+}
+
+.videoSelectorButton span,
+.videoQuickButton span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }

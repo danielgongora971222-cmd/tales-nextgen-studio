@@ -1943,55 +1943,94 @@ const clearModalSelectedIds = () => {
               <div className={styles.cookSidebar}>
                 <div className={`${styles.dock} ${styles.cookSectionCard} ${styles.cookPromptCard}`}>
                   <div className={styles.videoCreateFrameRow}>
-                    <button
-                      type="button"
-                      className={`${styles.videoCreateFrameCard} ${hasFirst ? styles.videoCreateFrameCardFilled : ""}`}
-                      onClick={() => openPicker("first")}
-                    >
-                      <span className={styles.videoCreateFrameBadge}>Optional</span>
-                      {firstFramePreviewUrl && (
-                        <img
-                          src={firstFramePreviewUrl}
-                          alt={firstFrame?.name || "Start frame"}
-                          className={styles.videoCreateFramePreview}
-                        />
-                      )}
-                      <span className={styles.videoCreateFrameShade} aria-hidden="true" />
-                      <span className={styles.videoCreateFrameIconOrb} aria-hidden="true">
-                        <Icon name="image" />
-                      </span>
-                      <span className={styles.videoCreateFrameLabel}>Start frame</span>
-                    </button>
+                    <div className={styles.videoCreateFrameSlot}>
+                      <button
+                        type="button"
+                        className={`${styles.videoCreateFrameCard} ${hasFirst ? styles.videoCreateFrameCardFilled : ""}`}
+                        onClick={() => openPicker("first")}
+                      >
+                        <span className={styles.videoCreateFrameBadge}>Optional</span>
+                        {firstFramePreviewUrl && (
+                          <img
+                            src={firstFramePreviewUrl}
+                            alt={firstFrame?.name || "Start frame"}
+                            className={styles.videoCreateFramePreview}
+                          />
+                        )}
+                        <span className={styles.videoCreateFrameShade} aria-hidden="true" />
+                        {!firstFramePreviewUrl && (
+                          <span className={styles.videoCreateFrameIconOrb} aria-hidden="true">
+                            <Icon name="image" />
+                          </span>
+                        )}
+                        <span className={styles.videoCreateFrameLabel}>Start frame</span>
+                      </button>
 
-                    <button
-                      type="button"
-                      className={`${styles.videoCreateFrameCard} ${hasLast ? styles.videoCreateFrameCardFilled : ""} ${
-                        !hasFirst || lastFrameBlockedByMultishot ? styles.videoCreateFrameCardDisabled : ""
-                      }`}
-                      onClick={() => openPicker("last")}
-                      disabled={!hasFirst || lastFrameBlockedByMultishot}
-                      title={
-                        !hasFirst
-                          ? "End frame disponible después de seleccionar Start frame"
-                          : lastFrameBlockedByMultishot
-                            ? "End frame bloqueado mientras Multi-shot está activo"
-                            : "Seleccionar End frame"
-                      }
-                    >
-                      <span className={styles.videoCreateFrameBadge}>Optional</span>
-                      {lastFramePreviewUrl && (
-                        <img
-                          src={lastFramePreviewUrl}
-                          alt={lastFrame?.name || "End frame"}
-                          className={styles.videoCreateFramePreview}
-                        />
+                      {hasFirst && (
+                        <button
+                          type="button"
+                          className={styles.videoCreateFrameRemove}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setFirstFrame(null);
+                            setLastFrame(null);
+                          }}
+                          aria-label="Quitar Start frame"
+                          title="Quitar Start frame"
+                        >
+                          <Icon name="close" />
+                        </button>
                       )}
-                      <span className={styles.videoCreateFrameShade} aria-hidden="true" />
-                      <span className={styles.videoCreateFrameIconOrb} aria-hidden="true">
-                        <Icon name="image" />
-                      </span>
-                      <span className={styles.videoCreateFrameLabel}>End frame</span>
-                    </button>
+                    </div>
+
+                    <div className={styles.videoCreateFrameSlot}>
+                      <button
+                        type="button"
+                        className={`${styles.videoCreateFrameCard} ${hasLast ? styles.videoCreateFrameCardFilled : ""} ${
+                          !hasFirst || lastFrameBlockedByMultishot ? styles.videoCreateFrameCardDisabled : ""
+                        }`}
+                        onClick={() => openPicker("last")}
+                        disabled={!hasFirst || lastFrameBlockedByMultishot}
+                        title={
+                          !hasFirst
+                            ? "End frame disponible después de seleccionar Start frame"
+                            : lastFrameBlockedByMultishot
+                              ? "End frame bloqueado mientras Multi-shot está activo"
+                              : "Seleccionar End frame"
+                        }
+                      >
+                        <span className={styles.videoCreateFrameBadge}>Optional</span>
+                        {lastFramePreviewUrl && (
+                          <img
+                            src={lastFramePreviewUrl}
+                            alt={lastFrame?.name || "End frame"}
+                            className={styles.videoCreateFramePreview}
+                          />
+                        )}
+                        <span className={styles.videoCreateFrameShade} aria-hidden="true" />
+                        {!lastFramePreviewUrl && (
+                          <span className={styles.videoCreateFrameIconOrb} aria-hidden="true">
+                            <Icon name="image" />
+                          </span>
+                        )}
+                        <span className={styles.videoCreateFrameLabel}>End frame</span>
+                      </button>
+
+                      {hasLast && (
+                        <button
+                          type="button"
+                          className={styles.videoCreateFrameRemove}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setLastFrame(null);
+                          }}
+                          aria-label="Quitar End frame"
+                          title="Quitar End frame"
+                        >
+                          <Icon name="close" />
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   <div className={styles.videoComposerCard}>
@@ -2076,17 +2115,22 @@ const clearModalSelectedIds = () => {
                               <div className={styles.videoShotFooter}>
                                 <div className={styles.videoShotDurationChip}>
                                   <Icon name="clock" />
-                                  <input
-                                    type="number"
-                                    min={3}
-                                    max={15}
-                                    step={1}
+                                  <label className={styles.videoShotDurationLabel} htmlFor={`shot-duration-${shotIndex}`}>
+                                    Duration
+                                  </label>
+                                  <select
+                                    id={`shot-duration-${shotIndex}`}
                                     value={shot.durationSeconds}
                                     onChange={(e) => handleShotDurationChange(shotIndex, Number(e.target.value))}
-                                    className={styles.videoShotDurationInput}
+                                    className={styles.videoShotDurationSelect}
                                     aria-label={`Duración del Shot ${shotIndex + 1}`}
-                                  />
-                                  <span className={styles.videoShotDurationSuffix}>s</span>
+                                  >
+                                    {allowedDurations.map((duration) => (
+                                      <option key={duration} value={duration}>
+                                        {duration}s
+                                      </option>
+                                    ))}
+                                  </select>
                                 </div>
 
                                 {supportsElementsPlaceholder && (
