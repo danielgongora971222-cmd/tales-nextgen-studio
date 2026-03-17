@@ -4058,3 +4058,382 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
+
+
+/* =========================================================
+   MOBILE STABILITY HOTFIX — preserve desktop structure
+   ========================================================= */
+
+.videoComposerCard,
+.videoPromptSurface,
+.videoShotList,
+.videoShotCard,
+.videoSelectorsStack {
+  min-width: 0;
+}
+
+.videoShotCard {
+  flex: 0 0 auto;
+}
+
+.videoShotList {
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.videoActionBtn {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.videoActionBtn span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.videoPromptSurface textarea,
+.videoShotPromptSurface textarea,
+.limitInput {
+  touch-action: manipulation;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 720px) {
+  .cookSidebarShell {
+    align-items: stretch;
+    padding: 8px 10px calc(76px + env(safe-area-inset-bottom, 0px)) 10px;
+  }
+
+  .cookSidebar {
+    width: 100%;
+    height: 100%;
+    justify-content: flex-start;
+    min-height: 0;
+  }
+
+  .cookPromptCard {
+    max-height: 100%;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    padding: 12px;
+  }
+
+  .videoCreateFrameRow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .videoCreateFrameCard {
+    min-height: 108px;
+    padding: 12px 10px 14px;
+    border-radius: 20px;
+  }
+
+  .videoCreateFrameIconOrb {
+    width: 46px;
+    height: 46px;
+  }
+
+  .videoCreateFrameLabel {
+    font-size: 14px;
+  }
+
+  .videoCreateFrameBadge {
+    top: 10px;
+    right: 10px;
+    padding: 5px 9px;
+    font-size: 10px;
+  }
+
+  .videoCreateFrameRemove {
+    top: 10px;
+    left: 10px;
+    width: 30px;
+    height: 30px;
+  }
+
+  .videoComposerCard {
+    border-radius: 20px;
+  }
+
+  .videoComposerHeader {
+    padding: 12px 12px 10px;
+  }
+
+  .videoComposerTitle {
+    font-size: 15px;
+  }
+
+  .videoComposerInfo {
+    width: 24px;
+    height: 24px;
+    font-size: 13px;
+  }
+
+  .videoSwitch {
+    width: 72px;
+    height: 40px;
+  }
+
+  .videoSwitchThumb {
+    width: 32px;
+    height: 32px;
+  }
+
+  .videoSwitchActive .videoSwitchThumb {
+    transform: translateX(32px);
+  }
+
+  .videoModeTabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    padding: 0 12px 12px;
+  }
+
+  .videoModeTab {
+    min-height: 44px;
+    font-size: 15px;
+    border-radius: 14px;
+  }
+
+  .videoPromptSurface {
+    padding: 10px 12px 0;
+  }
+
+  .videoPromptTextarea {
+    min-height: 132px;
+    padding: 14px 12px;
+    font-size: 15px;
+  }
+
+  .videoPromptFooter {
+    padding: 10px 12px 12px;
+    gap: 8px;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .videoActionBtn {
+    min-height: 40px;
+    padding: 0 12px;
+    gap: 8px;
+    font-size: 14px;
+    border-radius: 12px;
+  }
+
+  .videoSelectorsStack {
+    gap: 10px;
+    margin-top: 12px;
+  }
+
+  .videoSelectorButton {
+    padding: 12px;
+    border-radius: 16px;
+  }
+
+  .videoSelectorTopLabel {
+    font-size: 11px;
+  }
+
+  .videoSelectorValueRow {
+    font-size: 15px;
+    gap: 8px;
+  }
+
+  .videoQuickGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .videoQuickGridCompact {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .videoQuickButton {
+    min-height: 56px;
+    padding: 10px 8px;
+    gap: 6px;
+    font-size: 13px;
+    justify-content: center;
+  }
+
+  .videoQuickButton svg {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+  }
+
+  .videoGenerateWrap {
+    gap: 8px;
+    margin-top: 12px;
+  }
+
+  .videoGenerateButton {
+    min-height: 56px;
+    border-radius: 18px;
+  }
+
+  .videoGenerateLabelRow {
+    gap: 10px;
+    font-size: 18px;
+  }
+
+  .videoShotList {
+    max-height: min(48dvh, 540px);
+    padding: 10px 12px 6px;
+    gap: 12px;
+  }
+
+  .videoShotCard {
+    padding: 10px;
+    border-radius: 16px;
+  }
+
+  .videoShotTitle {
+    font-size: 15px;
+  }
+
+  .videoShotRemove {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+  }
+
+  .videoShotPromptSurface {
+    min-height: 116px;
+    font-size: 15px;
+    border-radius: 14px;
+  }
+
+  .videoShotFooter {
+    gap: 8px;
+    align-items: center;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .videoShotDurationChip {
+    min-width: 118px;
+    width: auto;
+    padding: 0 10px;
+  }
+
+  .videoShotDurationLabel {
+    font-size: 12px;
+  }
+
+  .videoShotDurationSelect {
+    min-width: 58px;
+    width: auto;
+  }
+
+  .videoAddShotWrap {
+    padding: 8px 12px 12px;
+  }
+
+  .videoAddShotButton {
+    min-height: 40px;
+    padding: 0 16px;
+    font-size: 15px;
+  }
+}
+
+@media (max-width: 560px) {
+  .cookSidebarShell {
+    padding: 6px 8px calc(72px + env(safe-area-inset-bottom, 0px)) 8px;
+  }
+
+  .cookPanelShell {
+    inset: 6px 6px 68px 6px;
+  }
+
+  .videoCreateFrameRow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .videoCreateFrameCard {
+    min-height: 100px;
+    gap: 8px;
+    border-radius: 18px;
+  }
+
+  .videoCreateFramePreview {
+    padding: 10px;
+  }
+
+  .videoCreateFrameIconOrb {
+    width: 42px;
+    height: 42px;
+  }
+
+  .videoCreateFrameLabel {
+    font-size: 13px;
+  }
+
+  .videoComposerTitle {
+    font-size: 14px;
+  }
+
+  .videoModeTab {
+    min-height: 42px;
+    font-size: 14px;
+  }
+
+  .videoSelectorValueRow {
+    font-size: 14px;
+  }
+
+  .videoSelectorChevron {
+    font-size: 20px;
+  }
+
+  .videoQuickButton {
+    min-height: 52px;
+    padding: 8px 6px;
+    gap: 4px;
+    font-size: 12px;
+  }
+
+  .videoQuickButton svg {
+    width: 15px;
+    height: 15px;
+  }
+
+  .videoActionBtn {
+    min-height: 38px;
+    padding: 0 10px;
+    font-size: 13px;
+  }
+
+  .videoShotFooter,
+  .videoPromptFooter {
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .videoShotDurationChip {
+    min-width: 110px;
+  }
+
+  .videoShotList {
+    max-height: min(50dvh, 560px);
+  }
+}
+
+@media (max-width: 400px) {
+  .videoQuickButton {
+    font-size: 11.5px;
+  }
+
+  .videoQuickButton span {
+    line-height: 1.2;
+  }
+}

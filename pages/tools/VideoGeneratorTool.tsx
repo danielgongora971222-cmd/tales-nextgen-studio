@@ -2139,9 +2139,10 @@ const clearModalSelectedIds = () => {
                                     className={`${styles.videoActionBtn} ${styles.videoActionBtnMuted}`}
                                     disabled
                                     title="Reactivación pendiente próximamente"
+                                    aria-label="Elements · Reactivación pendiente próximamente"
                                   >
                                     <Icon name="elements" />
-                                    <span>Reactivación pendiente próximamente</span>
+                                    <span>Elements</span>
                                   </button>
                                 )}
                               </div>
@@ -2209,9 +2210,10 @@ const clearModalSelectedIds = () => {
                                 className={`${styles.videoActionBtn} ${styles.videoActionBtnMuted}`}
                                 disabled
                                 title="Reactivación pendiente próximamente"
+                                aria-label="Elements · Reactivación pendiente próximamente"
                               >
                                 <Icon name="elements" />
-                                <span>Reactivación pendiente próximamente</span>
+                                <span>Elements</span>
                               </button>
                             )}
                           </div>
