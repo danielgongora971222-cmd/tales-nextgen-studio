@@ -299,14 +299,16 @@ function StylePickerModal(props: {
           </button>
         </div>
 
-        <div className={styles.presetGrid} style={{ padding: 16 }}>
+        <div className={styles.presetGridFixed}>
           {filtered.map((p: StylePreset) => {
             const active = selectedStyleId === p.id;
+            const previewCount = Array.isArray(p.exampleUrls) ? Math.min(p.exampleUrls.length, 4) : 0;
             return (
               <button
                 key={p.id}
                 type="button"
-                className={`${styles.presetCard} ${active ? styles.presetCardActive : ""}`}
+                title={p.name}
+                className={`${styles.presetCardFixed} ${active ? styles.presetCardFixedActive : ""}`}
                 onClick={() => {
                   onSelect(p.id);
                   onClose();
@@ -326,7 +328,11 @@ function StylePickerModal(props: {
                     </div>
                   ) : null}
                 </div>
-                <div className={styles.presetName}>{p.name}</div>
+                <div className={styles.presetCardBody}>
+                  <div className={styles.presetCardKicker}>Restyle preset</div>
+                  <div className={styles.presetName}>{p.name}</div>
+                  <div className={styles.presetCardHint}>{previewCount ? `${previewCount} preview references` : "Tap to apply"}</div>
+                </div>
               </button>
             );
           })}
@@ -992,14 +998,16 @@ const RestylerTool: React.FC = () => {
                         value={pickerQuery}
                         onChange={(e) => setPickerQuery(e.target.value)}
                       />
-                      <div className={styles.presetGrid}>
+                      <div className={styles.presetGridFixed}>
                         {filteredStylePresets.map((preset) => {
                           const active = selectedStyleId === preset.id;
+                          const previewCount = Array.isArray(preset.exampleUrls) ? Math.min(preset.exampleUrls.length, 4) : 0;
                           return (
                             <button
                               key={preset.id}
                               type="button"
-                              className={`${styles.presetCard} ${active ? styles.presetCardActive : ""}`}
+                              title={preset.name}
+                              className={`${styles.presetCardFixed} ${active ? styles.presetCardFixedActive : ""}`}
                               onClick={() => {
                                 setSelectedStyleId(preset.id);
                                 restoreCookFromPanel();
@@ -1018,7 +1026,11 @@ const RestylerTool: React.FC = () => {
                                   </div>
                                 ) : null}
                               </div>
-                              <div className={styles.presetName}>{preset.name}</div>
+                              <div className={styles.presetCardBody}>
+                                <div className={styles.presetCardKicker}>Restyle preset</div>
+                                <div className={styles.presetName}>{preset.name}</div>
+                                <div className={styles.presetCardHint}>{previewCount ? `${previewCount} preview references` : "Tap to apply"}</div>
+                              </div>
                             </button>
                           );
                         })}

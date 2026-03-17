@@ -706,6 +706,8 @@ const VideoGeneratorTool: React.FC = () => {
   // - Antes de enviar al modelo, los convertimos a @Element1, @Element2...
   // ===============================
   const isKlingV3ElementsUI = isKlingV3 && VIDEO_ELEMENTS_UI_ENABLED;
+  // UX: en General Video Generator ocultamos el CTA de Elements para Kling V3 / O3.
+  const showKlingElementsButtons = false;
 
   const allKlingElements = useMemo(() => {
     const out: KlingElement[] = [];
@@ -1827,7 +1829,8 @@ const clearModalSelectedIds = () => {
     }
   };
 
-  const canShowComposerActions = !isMultishotCustomize && (capability.supportsSound || isKlingV3ElementsUI);
+  const canShowComposerActions =
+    !isMultishotCustomize && (capability.supportsSound || (showKlingElementsButtons && isKlingV3ElementsUI));
 
   const toggleMultishot = () => {
     if (!supportsMultishotUi) return;
@@ -2185,7 +2188,7 @@ const clearModalSelectedIds = () => {
                                   </select>
                                 </div>
 
-                                {isKlingV3ElementsUI && (
+                                {showKlingElementsButtons && isKlingV3ElementsUI && (
                                   <button
                                     type="button"
                                     className={`${styles.videoActionBtn} ${styles.videoActionBtnMuted} ${Array.isArray(shot.elementIds) && shot.elementIds.length ? styles.videoActionBtnActive : ""}`}
@@ -2217,7 +2220,7 @@ const clearModalSelectedIds = () => {
                           <MentionTextarea
                             value={prompt}
                             onChange={setPrompt}
-                            placeholder='Describe your video, like "A woman walking through a neon-lit city". Add elements using @'
+                            placeholder='Describe your video, like "A woman walking through a neon-lit city".'
                             rows={4}
                             textareaClassName={styles.videoPromptTextarea}
                             items={isKlingV3ElementsUI ? elementMentionItems : []}
@@ -2257,7 +2260,7 @@ const clearModalSelectedIds = () => {
                               </button>
                             )}
 
-                            {isKlingV3ElementsUI && (
+                            {showKlingElementsButtons && isKlingV3ElementsUI && (
                               <button
                                 type="button"
                                 className={`${styles.videoActionBtn} ${styles.videoActionBtnMuted} ${selectedKlingElementIds.length ? styles.videoActionBtnActive : ""}`}

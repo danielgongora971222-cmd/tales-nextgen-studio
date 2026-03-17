@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   ArrowRightLeft,
   ChevronRight,
@@ -64,6 +64,48 @@ function ActionButton({
   );
 }
 
+type CreateCardTone = "image" | "video" | "assistant" | "audio";
+
+const CREATE_CARD_THEME: Record<
+  CreateCardTone,
+  {
+    shell: string;
+    glow: string;
+    icon: string;
+    badge: string;
+    cta: string;
+  }
+> = {
+  image: {
+    shell: "border-[rgba(111,244,255,0.18)] hover:border-[rgba(111,244,255,0.34)]",
+    glow: "bg-[radial-gradient(circle_at_top_left,rgba(96,245,255,0.24),transparent_46%),radial-gradient(circle_at_bottom_right,rgba(56,112,255,0.18),transparent_52%)]",
+    icon: "border-[rgba(111,244,255,0.28)] bg-[rgba(4,28,38,0.72)] text-[#8af7ff] shadow-[0_0_26px_rgba(91,241,255,0.16),inset_0_1px_0_rgba(255,255,255,0.18)]",
+    badge: "border-[rgba(111,244,255,0.22)] bg-[rgba(10,53,74,0.54)] text-[#a8fbff]",
+    cta: "border-[rgba(111,244,255,0.42)] bg-[linear-gradient(180deg,rgba(17,98,122,0.72),rgba(7,47,62,0.88))] text-[#b8fdff] shadow-[0_0_28px_rgba(91,241,255,0.18),inset_0_1px_0_rgba(255,255,255,0.24)]",
+  },
+  video: {
+    shell: "border-[rgba(255,108,232,0.18)] hover:border-[rgba(255,108,232,0.34)]",
+    glow: "bg-[radial-gradient(circle_at_top_left,rgba(255,93,226,0.26),transparent_44%),radial-gradient(circle_at_bottom_right,rgba(161,107,255,0.2),transparent_54%)]",
+    icon: "border-[rgba(255,108,232,0.28)] bg-[rgba(43,11,46,0.76)] text-[#ff83f0] shadow-[0_0_26px_rgba(255,93,226,0.16),inset_0_1px_0_rgba(255,255,255,0.18)]",
+    badge: "border-[rgba(255,108,232,0.22)] bg-[rgba(81,19,74,0.56)] text-[#ffb2f6]",
+    cta: "border-[rgba(255,108,232,0.42)] bg-[linear-gradient(180deg,rgba(138,40,132,0.74),rgba(69,17,75,0.88))] text-[#ffc0f9] shadow-[0_0_28px_rgba(255,93,226,0.18),inset_0_1px_0_rgba(255,255,255,0.24)]",
+  },
+  assistant: {
+    shell: "border-[rgba(245,205,92,0.18)] hover:border-[rgba(245,205,92,0.34)]",
+    glow: "bg-[radial-gradient(circle_at_top_left,rgba(245,205,92,0.24),transparent_46%),radial-gradient(circle_at_bottom_right,rgba(255,245,186,0.16),transparent_56%)]",
+    icon: "border-[rgba(245,205,92,0.28)] bg-[rgba(44,30,8,0.76)] text-[#f7d96d] shadow-[0_0_26px_rgba(245,205,92,0.16),inset_0_1px_0_rgba(255,255,255,0.18)]",
+    badge: "border-[rgba(245,205,92,0.22)] bg-[rgba(84,61,18,0.56)] text-[#ffe8a6]",
+    cta: "border-[rgba(245,205,92,0.34)] bg-[linear-gradient(180deg,rgba(116,86,28,0.72),rgba(62,46,15,0.88))] text-[#ffefb2] shadow-[0_0_28px_rgba(245,205,92,0.16),inset_0_1px_0_rgba(255,255,255,0.18)]",
+  },
+  audio: {
+    shell: "border-[rgba(102,255,197,0.18)] hover:border-[rgba(102,255,197,0.34)]",
+    glow: "bg-[radial-gradient(circle_at_top_left,rgba(102,255,197,0.24),transparent_46%),radial-gradient(circle_at_bottom_right,rgba(36,195,167,0.18),transparent_54%)]",
+    icon: "border-[rgba(102,255,197,0.28)] bg-[rgba(9,39,32,0.76)] text-[#88ffd7] shadow-[0_0_26px_rgba(102,255,197,0.16),inset_0_1px_0_rgba(255,255,255,0.18)]",
+    badge: "border-[rgba(102,255,197,0.22)] bg-[rgba(11,69,55,0.56)] text-[#b9ffe8]",
+    cta: "border-[rgba(102,255,197,0.38)] bg-[linear-gradient(180deg,rgba(19,108,88,0.72),rgba(10,55,46,0.88))] text-[#c8ffef] shadow-[0_0_28px_rgba(102,255,197,0.18),inset_0_1px_0_rgba(255,255,255,0.22)]",
+  },
+};
+
 function CreateHeroCard({
   title,
   description,
@@ -71,7 +113,8 @@ function CreateHeroCard({
   icon,
   onClick,
   disabled = false,
-  glowClassName,
+  tone = "image",
+  ctaLabel,
 }: {
   title: string;
   description: string;
@@ -79,40 +122,52 @@ function CreateHeroCard({
   icon: React.ReactNode;
   onClick?: () => void;
   disabled?: boolean;
-  glowClassName?: string;
+  tone?: CreateCardTone;
+  ctaLabel?: string;
 }) {
   const Tag = disabled ? "div" : "button";
+  const theme = CREATE_CARD_THEME[tone];
 
   return (
     <Tag
       {...(disabled ? {} : { type: "button", onClick })}
-      className={`group relative min-h-[164px] overflow-hidden rounded-[28px] border border-white/12 bg-[linear-gradient(180deg,rgba(255,255,255,0.11),rgba(255,255,255,0.04))] p-4 text-left shadow-[0_18px_48px_rgba(0,0,0,0.3)] transition ${
+      className={`group relative min-h-[182px] overflow-hidden rounded-[30px] border bg-[linear-gradient(180deg,rgba(255,255,255,0.14),rgba(255,255,255,0.04))] p-4 text-left shadow-[0_20px_52px_rgba(0,0,0,0.34)] transition ${theme.shell} ${
         disabled
-          ? "cursor-default opacity-80"
-          : "hover:-translate-y-0.5 hover:border-white/28 hover:bg-[linear-gradient(180deg,rgba(255,255,255,0.14),rgba(255,255,255,0.06))]"
+          ? "cursor-default opacity-82"
+          : "hover:-translate-y-0.5 hover:bg-[linear-gradient(180deg,rgba(255,255,255,0.18),rgba(255,255,255,0.06))]"
       }`}
     >
-      <div className={`pointer-events-none absolute inset-0 opacity-90 blur-2xl ${glowClassName || "bg-white/10"}`} />
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/35 to-transparent" />
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.18),transparent_42%)]" />
+      <div className={`pointer-events-none absolute inset-0 opacity-95 blur-2xl ${theme.glow}`} />
+      <div className="pointer-events-none absolute inset-[1px] rounded-[29px] bg-[linear-gradient(180deg,rgba(10,12,18,0.58),rgba(5,6,10,0.86))]" />
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/40 to-transparent" />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.14),transparent_42%)]" />
+
       <div className="relative z-10 flex h-full flex-col">
         <div className="flex items-start justify-between gap-3">
-          <div className="inline-flex h-12 w-12 items-center justify-center rounded-[18px] border border-white/14 bg-black/30 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.18)]">
+          <div className={`inline-flex h-12 w-12 items-center justify-center rounded-[18px] border backdrop-blur-xl transition-transform group-hover:scale-[1.03] ${theme.icon}`}>
             {icon}
           </div>
-          <span className="rounded-full border border-white/12 bg-black/25 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.24em] text-white/70">
+          <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.24em] ${theme.badge}`}>
             {badge || (disabled ? "Soon" : "Launch")}
           </span>
         </div>
 
         <div className="mt-5 space-y-2">
           <div className="text-[15px] font-semibold leading-tight text-white">{title}</div>
-          <div className="text-xs leading-5 text-white/62">{description}</div>
+          <div className="text-xs leading-5 text-white/64">{description}</div>
         </div>
 
-        <div className="mt-auto flex items-center justify-between pt-5 text-[11px] font-semibold uppercase tracking-[0.22em] text-white/58">
-          <span>{disabled ? "Coming soon" : "Open toolset"}</span>
-          <span className={`transition ${disabled ? "" : "group-hover:translate-x-1 group-hover:text-white"}`}>↗</span>
+        <div className="mt-auto pt-5">
+          <span
+            className={`inline-flex min-h-[44px] items-center gap-2 rounded-full border px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.24em] backdrop-blur-xl transition ${
+              disabled
+                ? "border-white/12 bg-white/[0.06] text-white/[0.44] shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
+                : `${theme.cta} group-hover:-translate-y-px`
+            }`}
+          >
+            <span>{disabled ? "Coming soon" : ctaLabel || "Open toolset"}</span>
+            <span className={`text-sm ${disabled ? "text-white/[0.35]" : "group-hover:translate-x-0.5"}`}>↗</span>
+          </span>
         </div>
       </div>
     </Tag>
@@ -204,7 +259,7 @@ export default function Layout({
     currentRoute === AppRoute.TOOL_MOTION_CONTROL;
 
   const isToolRoute = isImageZone || isVideoZone;
-  const plusActive = useMemo(() => isToolRoute, [isToolRoute]);
+  const plusActive = createSheetOpen;
 
   function goProfileTab(tab: "profile" | "security" | "billing") {
     window.localStorage.setItem("tales_profile_focus", tab);
@@ -436,15 +491,24 @@ export default function Layout({
             <button
               type="button"
               onClick={() => setCreateSheetOpen(true)}
-              className={`pointer-events-auto -mt-5 inline-flex h-16 w-16 shrink-0 items-center justify-center rounded-full border text-white shadow-[0_18px_44px_rgba(0,0,0,0.48)] transition ${
+              className={`group pointer-events-auto relative -mt-6 inline-flex h-[72px] w-[72px] shrink-0 items-center justify-center overflow-hidden rounded-[24px] border text-white shadow-[0_22px_50px_rgba(0,0,0,0.52)] transition ${
                 plusActive
-                  ? "border-[rgba(241,225,148,0.34)] bg-[rgba(241,225,148,0.18)]"
-                  : "border-white/10 bg-white/10 hover:bg-white/14"
+                  ? "border-[rgba(123,246,255,0.34)]"
+                  : "border-white/12 hover:-translate-y-0.5 hover:border-[rgba(123,246,255,0.26)]"
               }`}
               aria-label="Crear"
               title="Crear"
             >
-              <Plus className="h-7 w-7" />
+              <span className="pointer-events-none absolute inset-[1px] rounded-[23px] bg-[linear-gradient(180deg,rgba(14,18,26,0.96),rgba(5,7,12,0.96))]" />
+              <span className={`pointer-events-none absolute inset-0 rounded-[24px] bg-[radial-gradient(circle_at_28%_20%,rgba(107,247,255,0.26),transparent_38%),radial-gradient(circle_at_74%_78%,rgba(255,88,234,0.24),transparent_42%)] transition ${plusActive ? "opacity-100" : "opacity-[0.88] group-hover:opacity-100"}`} />
+              <span className="pointer-events-none absolute inset-x-3 top-1.5 h-px bg-gradient-to-r from-transparent via-white/45 to-transparent" />
+              <span className={`relative z-10 inline-flex h-12 w-12 items-center justify-center rounded-[18px] border backdrop-blur-xl transition ${
+                plusActive
+                  ? "border-[rgba(123,246,255,0.34)] bg-[rgba(8,30,42,0.7)] text-[#a5fbff] shadow-[0_0_26px_rgba(107,247,255,0.18),inset_0_1px_0_rgba(255,255,255,0.22)]"
+                  : "border-white/14 bg-black/24 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.18)] group-hover:border-[rgba(123,246,255,0.26)] group-hover:text-[#a5fbff]"
+              }`}>
+                <Plus className="h-7 w-7" />
+              </span>
             </button>
 
             {bottomItems.slice(2).map((item) => (
@@ -473,8 +537,9 @@ export default function Layout({
               title="Crear o editar imagen"
               description="Generación, edición avanzada, restyling, relighting y más."
               badge="Image"
+              tone="image"
+              ctaLabel="Access image"
               icon={<ImageIcon className="h-5 w-5" />}
-              glowClassName="bg-[radial-gradient(circle_at_top_left,rgba(241,225,148,0.26),transparent_62%)]"
               onClick={() => {
                 setCreateSheetOpen(false);
                 onNavigate(AppRoute.IMAGE_GEN_ROOT);
@@ -485,8 +550,9 @@ export default function Layout({
               title="Crear o editar video"
               description="Generación, edición, motion control y flujos guiados por referencia."
               badge="Video"
+              tone="video"
+              ctaLabel="Access video"
               icon={<Video className="h-5 w-5" />}
-              glowClassName="bg-[radial-gradient(circle_at_top_left,rgba(113,197,255,0.24),transparent_62%)]"
               onClick={() => {
                 setCreateSheetOpen(false);
                 onNavigate(AppRoute.VIDEO_GEN);
@@ -497,8 +563,9 @@ export default function Layout({
               title="Smart assistant"
               description="Asistencia creativa y automatización contextual dentro del estudio."
               badge="Soon"
+              tone="assistant"
+              ctaLabel="Open chat"
               icon={<Sparkles className="h-5 w-5" />}
-              glowClassName="bg-[radial-gradient(circle_at_top_left,rgba(196,144,255,0.24),transparent_62%)]"
               disabled
             />
 
@@ -506,8 +573,9 @@ export default function Layout({
               title="Crear o editar audio"
               description="Flujos premium para voz, música y postproducción dentro de la app."
               badge="Soon"
+              tone="audio"
+              ctaLabel="Access audio"
               icon={<Music2 className="h-5 w-5" />}
-              glowClassName="bg-[radial-gradient(circle_at_top_left,rgba(116,255,184,0.22),transparent_62%)]"
               disabled
             />
           </div>

@@ -294,14 +294,16 @@ function LightingPickerModal(props: {
           </button>
         </div>
 
-        <div className={styles.presetGrid} style={{ padding: 16 }}>
+        <div className={styles.presetGridFixed}>
           {filtered.map((p: LightingPreset) => {
             const active = selectedLightingId === p.id;
+            const previewCount = Array.isArray(p.exampleUrls) ? Math.min(p.exampleUrls.length, 4) : 0;
             return (
               <button
                 key={p.id}
                 type="button"
-                className={`${styles.presetCard} ${active ? styles.presetCardActive : ""}`}
+                title={p.name}
+                className={`${styles.presetCardFixed} ${active ? styles.presetCardFixedActive : ""}`}
                 onClick={() => {
                   onSelect(p.id);
                   onClose();
@@ -309,8 +311,22 @@ function LightingPickerModal(props: {
               >
                 <div className={styles.presetCover}>
                   {p.coverUrl ? <img src={p.coverUrl} alt={p.name} /> : <div className={styles.presetCoverEmpty} />}
+                  {Array.isArray(p.exampleUrls) && p.exampleUrls.length > 0 ? (
+                    <div className={styles.presetHoverExamples}>
+                      {p.exampleUrls.slice(0, 4).map((url, idx) => (
+                        <div key={`${p.id}_${idx}_${url}`} className={styles.presetHoverExample}>
+                          <img src={url} alt={`${p.name} example ${idx + 1}`} />
+                          <span className={styles.presetHoverBadge}>{idx + 1}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
-                <div className={styles.presetName}>{p.name}</div>
+                <div className={styles.presetCardBody}>
+                  <div className={styles.presetCardKicker}>Lighting preset</div>
+                  <div className={styles.presetName}>{p.name}</div>
+                  <div className={styles.presetCardHint}>{previewCount ? `${previewCount} lighting examples` : "Tap to apply"}</div>
+                </div>
               </button>
             );
           })}
@@ -953,13 +969,36 @@ const LightroomTool: React.FC = () => {
                     </div>
                     <div className={`${styles.popoverBody} ${styles.cookPanelBody} ${styles.cookPanelScroll}`}>
                       <input className={styles.search} placeholder="Search lighting..." value={pickerQuery} onChange={(e) => setPickerQuery(e.target.value)} />
-                      <div className={styles.presetGrid}>
+                      <div className={styles.presetGridFixed}>
                         {filteredLightingPresets.map((preset) => {
                           const active = selectedLightingId === preset.id;
+                          const previewCount = Array.isArray(preset.exampleUrls) ? Math.min(preset.exampleUrls.length, 4) : 0;
                           return (
-                            <button key={preset.id} type="button" className={`${styles.presetCard} ${active ? styles.presetCardActive : ""}`} onClick={() => { setSelectedLightingId(preset.id); restoreCookFromPanel(); }}>
-                              <div className={styles.presetCover}>{preset.coverUrl ? <img src={preset.coverUrl} alt={preset.name} /> : <div className={styles.presetCoverEmpty} />}</div>
-                              <div className={styles.presetName}>{preset.name}</div>
+                            <button
+                              key={preset.id}
+                              type="button"
+                              title={preset.name}
+                              className={`${styles.presetCardFixed} ${active ? styles.presetCardFixedActive : ""}`}
+                              onClick={() => { setSelectedLightingId(preset.id); restoreCookFromPanel(); }}
+                            >
+                              <div className={styles.presetCover}>
+                                {preset.coverUrl ? <img src={preset.coverUrl} alt={preset.name} /> : <div className={styles.presetCoverEmpty} />}
+                                {Array.isArray(preset.exampleUrls) && preset.exampleUrls.length > 0 ? (
+                                  <div className={styles.presetHoverExamples}>
+                                    {preset.exampleUrls.slice(0, 4).map((url, idx) => (
+                                      <div key={`${preset.id}_${idx}_${url}`} className={styles.presetHoverExample}>
+                                        <img src={url} alt={`${preset.name} example ${idx + 1}`} />
+                                        <span className={styles.presetHoverBadge}>{idx + 1}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : null}
+                              </div>
+                              <div className={styles.presetCardBody}>
+                                <div className={styles.presetCardKicker}>Lighting preset</div>
+                                <div className={styles.presetName}>{preset.name}</div>
+                                <div className={styles.presetCardHint}>{previewCount ? `${previewCount} lighting examples` : "Tap to apply"}</div>
+                              </div>
                             </button>
                           );
                         })}
