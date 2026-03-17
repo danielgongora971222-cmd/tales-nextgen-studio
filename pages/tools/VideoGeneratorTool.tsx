@@ -9,7 +9,6 @@ import {
   listKlingElements,
   listKlingPresetElements,
   refreshKlingElementsStatus,
-  isKlingElementReadyForVideoGenerator,
   type KlingElement,
 } from "../../services/klingElementsService";
 import { formatErr } from "../../services/videoGenApi";
@@ -722,14 +721,9 @@ const VideoGeneratorTool: React.FC = () => {
     return out;
   }, [klingElements, presetKlingElements]);
 
-  const selectableKlingElements = useMemo(
-    () => allKlingElements.filter((el) => isKlingElementReadyForVideoGenerator(el)),
-    [allKlingElements]
-  );
-
   const elementTokenById = useMemo(
-    () => (isKlingV3ElementsUI ? buildElementTokenMap(selectableKlingElements) : new Map<string, string>()),
-    [isKlingV3ElementsUI, selectableKlingElements]
+    () => (isKlingV3ElementsUI ? buildElementTokenMap(allKlingElements) : new Map<string, string>()),
+    [isKlingV3ElementsUI, allKlingElements]
   );
 
   const elementTokenToId = useMemo(() => {
@@ -743,7 +737,8 @@ const VideoGeneratorTool: React.FC = () => {
 const elementMentionItems = useMemo<MentionItem[]>(() => {
   if (!isKlingV3ElementsUI) return [];
 
-  return selectableKlingElements
+  return allKlingElements
+    .filter((el) => (el.status ?? "ready") === "ready" && Boolean(el.klingElementId || el.remoteElementId))
     .map((el) => {
       const token = elementTokenById.get(el.id) || `@element${Math.floor(Math.random() * 1000)}`;
 
@@ -754,7 +749,7 @@ const elementMentionItems = useMemo<MentionItem[]>(() => {
         kind: "element",
       };
     });
-}, [isKlingV3ElementsUI, selectableKlingElements, elementTokenById]);
+}, [isKlingV3ElementsUI, allKlingElements, elementTokenById]);
 
   // Sync Elements con el prompt:
   // - Si borras un token de Element del prompt -> se deselecciona.
@@ -1216,7 +1211,6 @@ useEffect(() => {
 
       const validIds = new Set(
         [...customItems, ...presetItems]
-          .filter((e: any) => isKlingElementReadyForVideoGenerator(e))
           .map((e: any) => String(e?.id ?? "").trim())
           .filter(Boolean)
       );
@@ -1518,21 +1512,16 @@ const durationLabel = useMemo(() => {
       return out;
     };
 
-    const normalizeLegacyElementRefs = (text: string) =>
-      String(text || "").replace(/<<\s*element_(\d+)\s*>>/gi, "<<<element_$1>>>");
-
     const replaceTokensWithElementRefs = (text: string, indexById: Map<string, number>) => {
-      const replaced = String(text || "").replace(tokenRe, (m) => {
+      return String(text || "").replace(tokenRe, (m) => {
         const id = elementTokenToId.get(m.toLowerCase());
         if (!id) return m;
         const n = indexById.get(id);
         if (!n) return m;
 
-        // Kling Video 3.0 / Omni: sintaxis oficial de prompt con triple brackets.
-        return `<<<element_${n}>>>`;
+        // Kling V3/Omni: templating recomendado con <<element_N>>
+        return `<<element_${n}>>`;
       });
-
-      return normalizeLegacyElementRefs(replaced);
     };
 
     if (!multishotEnabled || klingShotType === "intelligence") {
@@ -1596,7 +1585,7 @@ const durationLabel = useMemo(() => {
 
     const notReady = selected
       .map((id) => byId.get(id))
-      .filter((e) => e && !isKlingElementReadyForVideoGenerator(e));
+      .filter((e) => e && ((e.status ?? "ready") !== "ready" || !e.klingElementId));
 
     if (missingIds.length || notReady.length) {
       const missingLabel = missingIds.length ? `missingIds: ${missingIds.join(", ")}` : "";

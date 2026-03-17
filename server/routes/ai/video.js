@@ -72,8 +72,6 @@ export function createAiVideoRouter(ctx) {
     createMotionControlTask,
     pollTaskUntilDone,
     klingPostWithRetry,
-    klingGetElementTaskStatusOnce,
-    resolveKlingCreateElementPath,
     falQueueSubmit,
     falQueueRun,
     signJobToken,
@@ -106,355 +104,6 @@ export function createAiVideoRouter(ctx) {
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
       String(value || "").trim()
     );
-
-  const isPlainObject = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
-
-  const readExactString = (value) => {
-    if (value == null) return null;
-    const out = String(value).trim();
-    return out ? out : null;
-  };
-
-  const collectExplicitElementIds = (value, out = [], depth = 0) => {
-    if (value == null || depth > 8) return out;
-
-    if (Array.isArray(value)) {
-      for (const item of value) collectExplicitElementIds(item, out, depth + 1);
-      return out;
-    }
-
-    if (!isPlainObject(value)) return out;
-
-    for (const key of ["element_id", "elementId"]) {
-      if (Object.prototype.hasOwnProperty.call(value, key)) {
-        const candidate = readExactString(value[key]);
-        if (candidate && !out.includes(candidate)) out.push(candidate);
-      }
-    }
-
-    for (const nested of Object.values(value)) {
-      if (Array.isArray(nested) || isPlainObject(nested)) {
-        collectExplicitElementIds(nested, out, depth + 1);
-      }
-    }
-
-    return out;
-  };
-
-  const extractAdvancedElementIdFromTaskEnvelope = (value) => {
-    const roots = [];
-    if (isPlainObject(value?.data)) roots.push(value.data);
-    if (isPlainObject(value)) roots.push(value);
-
-    for (const root of roots) {
-      const taskResult = isPlainObject(root?.task_result)
-        ? root.task_result
-        : isPlainObject(root?.taskResult)
-          ? root.taskResult
-          : null;
-
-      if (!taskResult) continue;
-
-      const elements = Array.isArray(taskResult?.elements)
-        ? taskResult.elements
-        : Array.isArray(taskResult?.Elements)
-          ? taskResult.Elements
-          : null;
-
-      if (!Array.isArray(elements)) continue;
-
-      for (const element of elements) {
-        const explicit =
-          readExactString(element?.element_id) ||
-          readExactString(element?.elementId) ||
-          readExactString(element?.element?.element_id) ||
-          readExactString(element?.element?.elementId) ||
-          readExactString(element?.element_info?.element_id) ||
-          readExactString(element?.elementInfo?.elementId);
-        if (explicit) return explicit;
-      }
-    }
-
-    return null;
-  };
-
-  const isKlingRawEnvelope = (raw) =>
-    isPlainObject(raw) &&
-    ["create_response", "last_poll_response", "list_response", "requested", "verification", "legacy_response", "diagnostics"].some(
-      (key) => Object.prototype.hasOwnProperty.call(raw, key)
-    );
-
-  const rawCandidates = (raw) => {
-    if (!raw) return [];
-    if (isKlingRawEnvelope(raw)) {
-      const verified = readExactString(raw?.verification?.elementId ?? raw?.verification?.element_id);
-      return [verified ? { element_id: verified } : null, raw?.last_poll_response, raw?.list_response, raw?.create_response, raw?.legacy_response, raw?.raw].filter(Boolean);
-    }
-    return [raw];
-  };
-
-  const mergeKlingRawEnvelope = (existing, patch) => {
-    const env = isKlingRawEnvelope(existing)
-      ? { ...existing }
-      : existing == null
-        ? {}
-        : { legacy_response: existing };
-
-    if (patch && typeof patch === "object") {
-      for (const [key, value] of Object.entries(patch)) {
-        if (value === undefined) continue;
-        if (key === "diagnostics") {
-          env.diagnostics = {
-            ...(isPlainObject(env.diagnostics) ? env.diagnostics : {}),
-            ...(isPlainObject(value) ? value : {}),
-          };
-          continue;
-        }
-        env[key] = value;
-      }
-    }
-
-    return env;
-  };
-
-  const extractVerifiedElementIdFromRaw = (raw, opts = {}) => {
-    const strictAdvanced = opts?.strictAdvanced !== false;
-
-    if (isKlingRawEnvelope(raw)) {
-      const verified = readExactString(raw?.verification?.elementId ?? raw?.verification?.element_id);
-      if (verified) return verified;
-    }
-
-    if (strictAdvanced) {
-      for (const candidate of rawCandidates(raw)) {
-        const elementId = extractAdvancedElementIdFromTaskEnvelope(candidate);
-        if (elementId) return elementId;
-      }
-      return null;
-    }
-
-    for (const candidate of rawCandidates(raw)) {
-      const ids = collectExplicitElementIds(candidate);
-      if (ids.length) return ids[0];
-    }
-    return null;
-  };
-
-  const buildCorruptedElementMessage = (issue) => {
-    switch (issue) {
-      case "missing_task_id":
-      case "missing_remote_id":
-      case "remote_id_matches_task_id":
-      case "missing_verified_evidence":
-      case "verified_evidence_mismatch":
-        return "Este Element parece corrupto o no está verificado todavía. Refresca su estado o recréalo.";
-      default:
-        return "Este Element todavía no está listo. Espera o usa Refresh status.";
-    }
-  };
-
-  const normalizeKlingTaskStatus = (raw) => String(raw || "").trim().toLowerCase();
-
-  const isKlingSuccessStatus = (status) => {
-    const s = normalizeKlingTaskStatus(status);
-    return (
-      s === "succeed" ||
-      s === "succeeded" ||
-      s === "success" ||
-      s === "completed" ||
-      s === "done" ||
-      s === "finished"
-    );
-  };
-
-  const isKlingFailureStatus = (status) => {
-    const s = normalizeKlingTaskStatus(status);
-    return (
-      s === "failed" ||
-      s === "fail" ||
-      s === "error" ||
-      s === "canceled" ||
-      s === "cancelled" ||
-      s === "timeout"
-    );
-  };
-
-  async function revalidateCustomKlingElementBeforeVideo({ row, assessment, ownerId, codePrefix }) {
-    const taskId = readExactString(row?.kling_task_id);
-    if (!taskId || typeof klingGetElementTaskStatusOnce !== "function") {
-      return {
-        remoteElementId: assessment.storedRemoteId,
-        assessment,
-        remotelyVerified: false,
-      };
-    }
-
-    const createPath = typeof resolveKlingCreateElementPath === "function"
-      ? resolveKlingCreateElementPath()
-      : "/general/advanced-custom-elements";
-    const nowIso = new Date().toISOString();
-    const polled = await klingGetElementTaskStatusOnce({ createPath, taskId });
-
-    console.info("[kling-video:element-preflight]", {
-      codePrefix,
-      ownerId,
-      elementUuid: row?.id || null,
-      taskId,
-      ok: Boolean(polled?.ok),
-      pathUsed: polled?.pathUsed || null,
-      status: polled?.status || null,
-      elementId: polled?.elementId ? String(polled.elementId) : null,
-      error: polled?.error || null,
-    });
-
-    if (!polled?.ok) {
-      const detail = `preflight_remote_verify_failed: ${polled?.error || "unknown"}`;
-      await supabaseAdmin
-        .from("kling_elements")
-        .update({ status_detail: detail, updated_at: nowIso })
-        .eq("id", row.id)
-        .eq("owner_id", ownerId);
-
-      throw httpError(
-        400,
-        `${codePrefix}_ELEMENT_REMOTE_VERIFY_FAILED`,
-        "No pude validar este Element con la cuenta Kling activa. Refresca su estado o recréalo.",
-        {
-          elementUuid: row.id,
-          klingTaskId: taskId,
-          status: row?.status || null,
-          statusDetail: detail,
-          storedRemoteId: assessment.storedRemoteId || null,
-        }
-      );
-    }
-
-    const statusNorm = normalizeKlingTaskStatus(polled.status);
-
-    if (isKlingSuccessStatus(statusNorm) && polled.elementId) {
-      const remoteElementId = String(polled.elementId).trim();
-      const needsUpdate =
-        row?.status !== "ready" ||
-        assessment.storedRemoteId !== remoteElementId ||
-        !assessment.isVerified ||
-        String(row?.status_detail || "").toLowerCase().startsWith("preflight_remote_verify_failed");
-
-      if (needsUpdate) {
-        await supabaseAdmin
-          .from("kling_elements")
-          .update({
-            status: "ready",
-            status_detail: null,
-            kling_element_id: remoteElementId,
-            kling_raw: mergeKlingRawEnvelope(row?.kling_raw, {
-              last_poll_response: polled.raw || null,
-              last_poll_path: polled.pathUsed || null,
-              verification: {
-                elementId: remoteElementId,
-                source: polled.pathUsed && String(polled.pathUsed).includes("pageNum=") ? "list_response" : "task_status",
-                verifiedAt: nowIso,
-                taskId,
-              },
-              diagnostics: {
-                lastPreflightVerifiedAt: nowIso,
-                lastPreflightStatus: statusNorm || null,
-              },
-            }),
-            updated_at: nowIso,
-          })
-          .eq("id", row.id)
-          .eq("owner_id", ownerId);
-      }
-
-      return {
-        remoteElementId,
-        assessment: {
-          ...assessment,
-          statusDb: "ready",
-          storedRemoteId: remoteElementId,
-          verifiedFromRaw: remoteElementId,
-          issue: null,
-          isVerified: true,
-        },
-        remotelyVerified: true,
-      };
-    }
-
-    if (isKlingFailureStatus(statusNorm)) {
-      const detail = polled.msg || `remote task failed (${statusNorm || "failed"})`;
-      await supabaseAdmin
-        .from("kling_elements")
-        .update({
-          status: "failed",
-          status_detail: detail,
-          updated_at: nowIso,
-        })
-        .eq("id", row.id)
-        .eq("owner_id", ownerId);
-
-      throw httpError(
-        400,
-        `${codePrefix}_ELEMENT_FAILED`,
-        "Este Element falló en Kling y debes recrearlo.",
-        {
-          elementUuid: row.id,
-          klingTaskId: taskId,
-          status: statusNorm,
-          statusDetail: detail,
-        }
-      );
-    }
-
-    const detail = polled.msg || (statusNorm || "awaiting_verified_element_id");
-    await supabaseAdmin
-      .from("kling_elements")
-      .update({
-        status: "creating",
-        status_detail: detail,
-        updated_at: nowIso,
-      })
-      .eq("id", row.id)
-      .eq("owner_id", ownerId);
-
-    throw httpError(
-      400,
-      `${codePrefix}_ELEMENT_NOT_READY`,
-      "Uno o más Elements todavía se están verificando en Kling. Refresca su estado y vuelve a intentar.",
-      {
-        elementUuid: row.id,
-        klingTaskId: taskId,
-        status: statusNorm || null,
-        statusDetail: detail,
-      }
-    );
-  }
-
-  const assessCustomKlingElementRow = (row) => {
-    const statusDb = String(row?.status || "ready").trim().toLowerCase() || "ready";
-    const storedRemoteId = readExactString(row?.kling_element_id);
-    const taskId = readExactString(row?.kling_task_id);
-    const apiVersion = String(row?.api_version || "").trim().toLowerCase();
-    const referenceType = String(row?.reference_type || "").trim().toLowerCase();
-    const isAdvanced = /advanced/.test(apiVersion) || referenceType === "video_refer" || Boolean(taskId);
-    const verifiedFromRaw = extractVerifiedElementIdFromRaw(row?.kling_raw, { strictAdvanced: isAdvanced });
-
-    let issue = null;
-    if (statusDb !== "ready") issue = statusDb === "failed" ? "failed" : "not_ready";
-    else if (!storedRemoteId) issue = "missing_remote_id";
-    else if (isAdvanced && !taskId) issue = "missing_task_id";
-    else if (isAdvanced && storedRemoteId === taskId) issue = "remote_id_matches_task_id";
-    else if (isAdvanced && !verifiedFromRaw) issue = "missing_verified_evidence";
-    else if (isAdvanced && verifiedFromRaw !== storedRemoteId) issue = "verified_evidence_mismatch";
-
-    return {
-      statusDb,
-      storedRemoteId,
-      taskId,
-      verifiedFromRaw,
-      issue,
-      isVerified: !issue && Boolean(storedRemoteId),
-    };
-  };
 
   async function resolveKlingElementList({
     elementRefs,
@@ -497,7 +146,7 @@ export function createAiVideoRouter(ctx) {
     if (localRefs.length) {
       const { data: rows, error: rowsErr } = await supabaseAdmin
         .from("kling_elements")
-        .select("id, owner_id, kling_element_id, kling_task_id, status, status_detail, api_version, reference_type, kling_raw")
+        .select("id, owner_id, kling_element_id, status, status_detail")
         .in("id", localRefs)
         .eq("owner_id", ownerId);
 
@@ -534,32 +183,8 @@ export function createAiVideoRouter(ctx) {
       }
 
       const row = byId.get(ref);
-      let assessment = assessCustomKlingElementRow(row);
-
-      console.info("[kling-video:resolve-element]", {
-        codePrefix,
-        ownerId,
-        elementUuid: ref,
-        status: row?.status || null,
-        taskId: assessment.taskId,
-        storedRemoteId: assessment.storedRemoteId,
-        verifiedRemoteId: assessment.verifiedFromRaw,
-        issue: assessment.issue,
-      });
-
-      let finalRemoteId = assessment.storedRemoteId;
-      if (assessment.taskId) {
-        const preflight = await revalidateCustomKlingElementBeforeVideo({
-          row,
-          assessment,
-          ownerId,
-          codePrefix,
-        });
-        assessment = preflight.assessment || assessment;
-        finalRemoteId = preflight.remoteElementId || finalRemoteId;
-      }
-
-      if (assessment.statusDb !== "ready") {
+      const st = String(row?.status || "ready");
+      if (st !== "ready") {
         throw httpError(
           400,
           `${codePrefix}_ELEMENT_NOT_READY`,
@@ -568,28 +193,17 @@ export function createAiVideoRouter(ctx) {
         );
       }
 
-      if (!assessment.isVerified || !finalRemoteId) {
+      const rawRemoteId = row?.kling_element_id;
+      if (!rawRemoteId) {
         throw httpError(
           400,
-          `${codePrefix}_ELEMENT_CORRUPTED`,
-          buildCorruptedElementMessage(assessment.issue),
-          {
-            elementUuid: ref,
-            status: row?.status || null,
-            statusDetail: row?.status_detail || null,
-            issue: assessment.issue,
-            klingTaskId: assessment.taskId,
-            storedRemoteId: assessment.storedRemoteId,
-            verifiedRemoteId: assessment.verifiedFromRaw || null,
-          }
+          `${codePrefix}_ELEMENT_MISSING_KLING_ID`,
+          "Un Element no tiene kling_element_id guardado (no se puede mandar a Kling).",
+          { elementUuid: ref }
         );
       }
 
-      out.push({ element_id: String(finalRemoteId).trim() });
-    }
-
-    if (out.length) {
-      console.info("[kling-video:element-list]", { codePrefix, ownerId, elementList: out });
+      out.push({ element_id: String(rawRemoteId).trim() });
     }
 
     return out.length ? out : undefined;

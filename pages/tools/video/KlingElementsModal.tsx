@@ -7,7 +7,6 @@ import {
   createKlingElement,
   deleteKlingElement,
   listKlingVoices,
-  isKlingElementReadyForVideoGenerator,
   type KlingElement,
   type KlingElementTagId,
   type KlingVoice,
@@ -66,55 +65,28 @@ function formatReferenceType(el: KlingElement) {
 }
 
 function getElementStatus(el: KlingElement) {
-  const ready = isKlingElementReadyForVideoGenerator(el);
-  const status = String(el.status || (ready ? "ready" : "creating")).toLowerCase();
-
-  if (status === "corrupted") {
-    return {
-      status,
-      label: "CORRUPTED",
-      className: `${styles.elementStatusBadge} ${styles.elementStatusFailed}`,
-      ready: false,
-      actionable: true,
-    };
-  }
-
+  const status = String(el.status || (el.klingElementId || el.remoteElementId ? "ready" : "creating"));
   if (status === "failed") {
     return {
       status,
       label: "FAILED",
       className: `${styles.elementStatusBadge} ${styles.elementStatusFailed}`,
       ready: false,
-      actionable: true,
     };
   }
-
   if (status === "creating" || status === "submitted" || status === "processing") {
     return {
       status,
       label: "CREATING",
       className: `${styles.elementStatusBadge} ${styles.elementStatusCreating}`,
       ready: false,
-      actionable: true,
     };
   }
-
-  if (!ready) {
-    return {
-      status: "corrupted",
-      label: "CORRUPTED",
-      className: `${styles.elementStatusBadge} ${styles.elementStatusFailed}`,
-      ready: false,
-      actionable: true,
-    };
-  }
-
   return {
-    status: "ready",
-    label: el.isPreset || el.source === "preset" ? "READY" : "READY VERIFIED",
+    status,
+    label: "READY",
     className: `${styles.elementStatusBadge} ${styles.elementStatusReady}`,
-    ready: true,
-    actionable: false,
+    ready: Boolean(el.klingElementId || el.remoteElementId),
   };
 }
 
@@ -573,31 +545,12 @@ export function KlingElementsModal({
     }
   }
 
-
-  async function handleRefreshElement(el: KlingElement) {
-    setLocalError(null);
-    setBusy(true);
-    try {
-      await onRefresh();
-    } catch (e: any) {
-      setLocalError(e?.message || `No pude refrescar el estado de "${el.name || "Element"}".`);
-    } finally {
-      setBusy(false);
-    }
-  }
-
   function renderElementCard(el: KlingElement) {
     const active = selectedIdSet.has(String(el.id));
     const statusMeta = getElementStatus(el);
     const isPreset = Boolean(el.isPreset || el.source === "preset");
     const src = elementThumb(el);
     const type = el.previewType === "video" || el.referenceType === "video_refer" ? "video" : "image";
-    const blockedMessage =
-      statusMeta.status === "corrupted"
-        ? `El Element "${el.name}" tiene un ID remoto inválido o no verificado. Usa Refresh status o recréalo.`
-        : statusMeta.status === "failed"
-          ? `El Element "${el.name}" falló y no se puede usar.`
-          : `El Element "${el.name}" todavía no está listo.`;
 
     return (
       <div key={el.id} className={`${styles.elementAllCard} ${active ? styles.elementAllCardActive : ""}`}>
@@ -606,7 +559,11 @@ export function KlingElementsModal({
           className={styles.elementAllThumb}
           onClick={() => {
             if (!active && !statusMeta.ready) {
-              setLocalError(blockedMessage);
+              setLocalError(
+                statusMeta.status === "failed"
+                  ? `El Element "${el.name}" falló y no se puede usar.`
+                  : `El Element "${el.name}" todavía no está listo.`
+              );
               return;
             }
             toggleSelectElement(String(el.id));
@@ -617,7 +574,7 @@ export function KlingElementsModal({
           <MediaThumb src={src} type={type} alt={el.name || "Element"} />
           <span className={statusMeta.className}>{statusMeta.label}</span>
           <span className={styles.elementSourceBadge}>{formatElementSource(el)}</span>
-          <span className={styles.elementAllBadge}>{active ? "SELECTED" : statusMeta.ready ? "SELECT" : statusMeta.status === "corrupted" ? "INVALID" : "PENDING"}</span>
+          <span className={styles.elementAllBadge}>{active ? "SELECTED" : statusMeta.ready ? "SELECT" : "PENDING"}</span>
         </button>
 
         {active && (
@@ -639,9 +596,6 @@ export function KlingElementsModal({
         </div>
 
         {!!el.description && <div className={styles.elementCardDescription}>{el.description}</div>}
-        {!!el.statusDetail && !statusMeta.ready && (
-          <div className={styles.elementCardDescription}>{el.statusDetail}</div>
-        )}
 
         {!!(el.tagLabels || []).length && (
           <div className={styles.elementTagRail}>
@@ -661,30 +615,24 @@ export function KlingElementsModal({
         )}
 
         <div className={styles.elementAllActions}>
-          {statusMeta.ready ? (
-            <button
-              type="button"
-              className={styles.smallBtn}
-              onClick={() => {
-                if (!active && !statusMeta.ready) {
-                  setLocalError(blockedMessage);
-                  return;
-                }
-                toggleSelectElement(String(el.id));
-              }}
-              disabled={busy}
-            >
-              {active ? "Deselect" : "Select"}
-            </button>
-          ) : !isPreset ? (
-            <button type="button" className={styles.smallBtn} onClick={() => handleRefreshElement(el)} disabled={busy}>
-              Refresh status
-            </button>
-          ) : (
-            <button type="button" className={styles.smallBtn} disabled>
-              Unavailable
-            </button>
-          )}
+          <button
+            type="button"
+            className={styles.smallBtn}
+            onClick={() => {
+              if (!active && !statusMeta.ready) {
+                setLocalError(
+                  statusMeta.status === "failed"
+                    ? `El Element "${el.name}" falló y no se puede usar.`
+                    : `El Element "${el.name}" todavía no está listo.`
+                );
+                return;
+              }
+              toggleSelectElement(String(el.id));
+            }}
+            disabled={busy}
+          >
+            {active ? "Deselect" : "Select"}
+          </button>
 
           {!isPreset ? (
             <button type="button" className={styles.smallBtnGhost} onClick={() => handleDelete(el)} disabled={busy}>
@@ -768,7 +716,7 @@ export function KlingElementsModal({
               </div>
 
               <div className={styles.elementHint}>
-                Usa el botón <b>Elements</b> para abrir esta biblioteca y luego menciona tus Elements en el prompt con <b>@</b>. Solo los custom Elements con estado <b>READY VERIFIED</b> pueden insertarse o enviarse a Kling; los demás deben refrescarse o recrearse.
+                Usa el botón <b>Elements</b> para abrir esta biblioteca y luego menciona tus Elements en el prompt con <b>@</b>. El sistema convertirá esas menciones al formato que Kling espera en el envío final.
               </div>
 
               <div className={styles.elementAllGrid}>
