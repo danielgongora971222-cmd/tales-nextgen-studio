@@ -575,6 +575,8 @@ app.use(
     createMotionControlTask,
     pollTaskUntilDone,
     klingPostWithRetry,
+    klingGetElementTaskStatusOnce,
+    resolveKlingCreateElementPath,
     falQueueSubmit,
     falQueueRun,
     signJobToken,
@@ -2099,7 +2101,7 @@ function extractVerifiedElementInfoFromRaw(raw) {
 function buildKlingEnvSnapshot() {
   const accessKey = String(process.env.KLING_ACCESS_KEY || "").trim();
   const secretKey = String(process.env.KLING_SECRET_KEY || "").trim();
-  const baseUrl = String(process.env.KLING_BASE_URL || "https://api.klingai.com").trim().replace(/\/+$/g, "");
+  const baseUrl = String(process.env.KLING_API_ORIGIN || process.env.KLING_BASE_URL || "https://api.klingai.com").trim().replace(/\/+$/g, "");
   const createPath = resolveKlingCreateElementPath();
   const taskStatusPath = String(process.env.KLING_ELEMENT_TASK_STATUS_PATH || "").trim() || null;
   const fingerprint = createHmac("sha256", "kling-elements-env")

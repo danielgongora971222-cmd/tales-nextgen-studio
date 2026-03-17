@@ -17,15 +17,19 @@ function uniqueNumbers(xs: number[]) {
   return out;
 }
 
+function normalizeLegacyElementRefs(prompt: string) {
+  return String(prompt || "").replace(/<<\s*element_(\d+)\s*>>/gi, "<<<element_$1>>>");
+}
+
 function refsFromIndexes(indexes: number[]) {
   const uniq = uniqueNumbers(indexes).sort((a, b) => a - b);
-  return uniq.map((i) => `<<element_${i}>>`).join(" ");
+  return uniq.map((i) => `<<<element_${i}>>>`).join(" ");
 }
 
 function injectRefsIfMissing(prompt: string, indexes: number[]) {
-  const p = String(prompt || "").trim();
+  const p = normalizeLegacyElementRefs(String(prompt || "").trim());
   if (indexes.length <= 0) return p;
-  if (/<<\s*element_\s*\d+\s*>>/i.test(p)) return p;
+  if (/(?:<<<|<<)\s*element_\s*\d+\s*(?:>>>|>>)/i.test(p)) return p;
 
   const refs = refsFromIndexes(indexes).trim();
   if (!refs) return p;

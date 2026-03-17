@@ -72,6 +72,8 @@ export function createAiVideoRouter(ctx) {
     createMotionControlTask,
     pollTaskUntilDone,
     klingPostWithRetry,
+    klingGetElementTaskStatusOnce,
+    resolveKlingCreateElementPath,
     falQueueSubmit,
     falQueueRun,
     signJobToken,
@@ -174,6 +176,168 @@ export function createAiVideoRouter(ctx) {
         return "Este Element todavía no está listo. Espera o usa Refresh status.";
     }
   };
+
+  const normalizeKlingTaskStatus = (raw) => String(raw || "").trim().toLowerCase();
+
+  const isKlingSuccessStatus = (status) => {
+    const s = normalizeKlingTaskStatus(status);
+    return (
+      s === "succeed" ||
+      s === "succeeded" ||
+      s === "success" ||
+      s === "completed" ||
+      s === "done" ||
+      s === "finished"
+    );
+  };
+
+  const isKlingFailureStatus = (status) => {
+    const s = normalizeKlingTaskStatus(status);
+    return (
+      s === "failed" ||
+      s === "fail" ||
+      s === "error" ||
+      s === "canceled" ||
+      s === "cancelled" ||
+      s === "timeout"
+    );
+  };
+
+  async function revalidateCustomKlingElementBeforeVideo({ row, assessment, ownerId, codePrefix }) {
+    const taskId = readExactString(row?.kling_task_id);
+    if (!taskId || typeof klingGetElementTaskStatusOnce !== "function") {
+      return {
+        remoteElementId: assessment.storedRemoteId,
+        assessment,
+        remotelyVerified: false,
+      };
+    }
+
+    const createPath = typeof resolveKlingCreateElementPath === "function"
+      ? resolveKlingCreateElementPath()
+      : "/general/advanced-custom-elements";
+    const nowIso = new Date().toISOString();
+    const polled = await klingGetElementTaskStatusOnce({ createPath, taskId });
+
+    console.info("[kling-video:element-preflight]", {
+      codePrefix,
+      ownerId,
+      elementUuid: row?.id || null,
+      taskId,
+      ok: Boolean(polled?.ok),
+      pathUsed: polled?.pathUsed || null,
+      status: polled?.status || null,
+      elementId: polled?.elementId ? String(polled.elementId) : null,
+      error: polled?.error || null,
+    });
+
+    if (!polled?.ok) {
+      const detail = `preflight_remote_verify_failed: ${polled?.error || "unknown"}`;
+      await supabaseAdmin
+        .from("kling_elements")
+        .update({ status_detail: detail, updated_at: nowIso })
+        .eq("id", row.id)
+        .eq("owner_id", ownerId);
+
+      throw httpError(
+        400,
+        `${codePrefix}_ELEMENT_REMOTE_VERIFY_FAILED`,
+        "No pude validar este Element con la cuenta Kling activa. Refresca su estado o recréalo.",
+        {
+          elementUuid: row.id,
+          klingTaskId: taskId,
+          status: row?.status || null,
+          statusDetail: detail,
+          storedRemoteId: assessment.storedRemoteId || null,
+        }
+      );
+    }
+
+    const statusNorm = normalizeKlingTaskStatus(polled.status);
+
+    if (isKlingSuccessStatus(statusNorm) && polled.elementId) {
+      const remoteElementId = String(polled.elementId).trim();
+      const needsUpdate =
+        row?.status !== "ready" ||
+        assessment.storedRemoteId !== remoteElementId ||
+        !assessment.isVerified ||
+        String(row?.status_detail || "").toLowerCase().startsWith("preflight_remote_verify_failed");
+
+      if (needsUpdate) {
+        await supabaseAdmin
+          .from("kling_elements")
+          .update({
+            status: "ready",
+            status_detail: null,
+            kling_element_id: remoteElementId,
+            updated_at: nowIso,
+          })
+          .eq("id", row.id)
+          .eq("owner_id", ownerId);
+      }
+
+      return {
+        remoteElementId,
+        assessment: {
+          ...assessment,
+          statusDb: "ready",
+          storedRemoteId: remoteElementId,
+          verifiedFromRaw: remoteElementId,
+          issue: null,
+          isVerified: true,
+        },
+        remotelyVerified: true,
+      };
+    }
+
+    if (isKlingFailureStatus(statusNorm)) {
+      const detail = polled.msg || `remote task failed (${statusNorm || "failed"})`;
+      await supabaseAdmin
+        .from("kling_elements")
+        .update({
+          status: "failed",
+          status_detail: detail,
+          updated_at: nowIso,
+        })
+        .eq("id", row.id)
+        .eq("owner_id", ownerId);
+
+      throw httpError(
+        400,
+        `${codePrefix}_ELEMENT_FAILED`,
+        "Este Element falló en Kling y debes recrearlo.",
+        {
+          elementUuid: row.id,
+          klingTaskId: taskId,
+          status: statusNorm,
+          statusDetail: detail,
+        }
+      );
+    }
+
+    const detail = polled.msg || (statusNorm || "awaiting_verified_element_id");
+    await supabaseAdmin
+      .from("kling_elements")
+      .update({
+        status: "creating",
+        status_detail: detail,
+        updated_at: nowIso,
+      })
+      .eq("id", row.id)
+      .eq("owner_id", ownerId);
+
+    throw httpError(
+      400,
+      `${codePrefix}_ELEMENT_NOT_READY`,
+      "Uno o más Elements todavía se están verificando en Kling. Refresca su estado y vuelve a intentar.",
+      {
+        elementUuid: row.id,
+        klingTaskId: taskId,
+        status: statusNorm || null,
+        statusDetail: detail,
+      }
+    );
+  }
 
   const assessCustomKlingElementRow = (row) => {
     const statusDb = String(row?.status || "ready").trim().toLowerCase() || "ready";
@@ -280,7 +444,7 @@ export function createAiVideoRouter(ctx) {
       }
 
       const row = byId.get(ref);
-      const assessment = assessCustomKlingElementRow(row);
+      let assessment = assessCustomKlingElementRow(row);
 
       console.info("[kling-video:resolve-element]", {
         codePrefix,
@@ -293,6 +457,18 @@ export function createAiVideoRouter(ctx) {
         issue: assessment.issue,
       });
 
+      let finalRemoteId = assessment.storedRemoteId;
+      if (assessment.taskId) {
+        const preflight = await revalidateCustomKlingElementBeforeVideo({
+          row,
+          assessment,
+          ownerId,
+          codePrefix,
+        });
+        assessment = preflight.assessment || assessment;
+        finalRemoteId = preflight.remoteElementId || finalRemoteId;
+      }
+
       if (assessment.statusDb !== "ready") {
         throw httpError(
           400,
@@ -302,7 +478,7 @@ export function createAiVideoRouter(ctx) {
         );
       }
 
-      if (!assessment.isVerified) {
+      if (!assessment.isVerified || !finalRemoteId) {
         throw httpError(
           400,
           `${codePrefix}_ELEMENT_CORRUPTED`,
@@ -319,7 +495,7 @@ export function createAiVideoRouter(ctx) {
         );
       }
 
-      out.push({ element_id: String(assessment.storedRemoteId).trim() });
+      out.push({ element_id: String(finalRemoteId).trim() });
     }
 
     if (out.length) {

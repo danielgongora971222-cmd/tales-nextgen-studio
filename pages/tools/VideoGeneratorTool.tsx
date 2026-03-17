@@ -1518,16 +1518,21 @@ const durationLabel = useMemo(() => {
       return out;
     };
 
+    const normalizeLegacyElementRefs = (text: string) =>
+      String(text || "").replace(/<<\s*element_(\d+)\s*>>/gi, "<<<element_$1>>>");
+
     const replaceTokensWithElementRefs = (text: string, indexById: Map<string, number>) => {
-      return String(text || "").replace(tokenRe, (m) => {
+      const replaced = String(text || "").replace(tokenRe, (m) => {
         const id = elementTokenToId.get(m.toLowerCase());
         if (!id) return m;
         const n = indexById.get(id);
         if (!n) return m;
 
-        // Kling V3/Omni: templating recomendado con <<element_N>>
-        return `<<element_${n}>>`;
+        // Kling Video 3.0 / Omni: sintaxis oficial de prompt con triple brackets.
+        return `<<<element_${n}>>>`;
       });
+
+      return normalizeLegacyElementRefs(replaced);
     };
 
     if (!multishotEnabled || klingShotType === "intelligence") {

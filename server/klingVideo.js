@@ -59,6 +59,29 @@ function base64urlEncode(input) {
     .replace(/=+$/g, "");
 }
 
+function shouldQuoteKlingNumericIdField(key) {
+  const raw = String(key || "").trim();
+  if (!raw) return false;
+  if (raw === "id") return true;
+  if (/_[iI]d$/.test(raw)) return true;
+  if (/[a-z]Id$/.test(raw)) return true;
+  return raw === "owned_by" || raw === "ownedBy";
+}
+
+function patchKlingNumericIdFields(text) {
+  if (!text || typeof text !== "string") return text;
+
+  return text.replace(/"([^"\\]+)"\s*:\s*(-?\d+)(?=\s*[,}\]])/g, (full, key, num) => {
+    if (!shouldQuoteKlingNumericIdField(key)) return full;
+    return `"${key}":"${num}"`;
+  });
+}
+
+function parseKlingJson(text) {
+  if (!text) return null;
+  return JSON.parse(patchKlingNumericIdFields(text));
+}
+
 function makeKlingJwt(accessKey, secretKey, ttlSeconds = 300) {
   const now = Math.floor(Date.now() / 1000);
   const header = { alg: "HS256", typ: "JWT" };
@@ -157,7 +180,7 @@ async function klingFetch(path, options = {}) {
 
   let json = null;
   try {
-    json = text ? JSON.parse(text) : null;
+    json = parseKlingJson(text);
   } catch {}
 
   if (!resp.ok || (json && json.code !== undefined && json.code !== 0)) {
