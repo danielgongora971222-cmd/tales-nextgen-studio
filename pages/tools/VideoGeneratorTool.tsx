@@ -1281,6 +1281,11 @@ const multishotHasOverLimitPrompt = useMemo(() => {
   return klingShots.some((s) => (s.prompt || "").length > KLING_V3_SHOT_PROMPT_LIMIT);
 }, [isMultishotCustomize, klingShots]);
 
+const multishotDurationOverLimit = useMemo(() => {
+  if (!isMultishotCustomize) return false;
+  return multishotTotalSeconds > 15;
+}, [isMultishotCustomize, multishotTotalSeconds]);
+
 const multishotIsReady = useMemo(() => {
   if (!supportsMultishotUi || !multishotEnabled) return true;
 
@@ -2044,6 +2049,12 @@ const clearModalSelectedIds = () => {
                               i
                             </span>
                           </div>
+
+                          {multishotDurationOverLimit && (
+                            <span className={styles.videoComposerAlert} aria-live="polite">
+                              La suma de los shots no debe superar los 15 segundos.
+                            </span>
+                          )}
 
                           <button
                             type="button"
