@@ -143,52 +143,234 @@ function resolveTaskStatusPaths({ createPath, taskId }) {
   return [...new Set(paths.map((p) => (p.startsWith("/v1/") ? p.slice(3) : p)).map((p) => p.replace(/\/+$/g, "")))];
 }
 
-function extractElementIdFromAny(obj) {
-  if (!obj) return null;
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function readExactString(value) {
+  if (value == null) return null;
+  const out = String(value).trim();
+  return out ? out : null;
+}
+
+function collectExplicitNamedValues(value, keyNames, out = [], depth = 0) {
+  if (value == null || depth > 8) return out;
+
+  if (Array.isArray(value)) {
+    for (const item of value) collectExplicitNamedValues(item, keyNames, out, depth + 1);
+    return out;
+  }
+
+  if (!isPlainObject(value)) return out;
+
+  for (const key of keyNames) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) {
+      const candidate = readExactString(value[key]);
+      if (candidate && !out.includes(candidate)) out.push(candidate);
+    }
+  }
+
+  for (const nested of Object.values(value)) {
+    if (Array.isArray(nested) || isPlainObject(nested)) {
+      collectExplicitNamedValues(nested, keyNames, out, depth + 1);
+    }
+  }
+
+  return out;
+}
+
+function extractExplicitElementIdFromAny(obj) {
   const d = obj?.data || obj;
+  const values = collectExplicitNamedValues(d, ["element_id", "elementId"]);
+  return values.length ? values[0] : null;
+}
 
-  const direct =
-    d?.element_id ||
-    d?.elementId ||
-    d?.element?.element_id ||
-    d?.element?.elementId ||
-    d?.element?.id;
+function extractExplicitTaskIdFromAny(obj) {
+  const d = obj?.data || obj;
+  const values = collectExplicitNamedValues(d, ["task_id", "taskId"]);
+  return values.length ? values[0] : null;
+}
 
-  if (direct) return String(direct);
+function isKlingRawEnvelope(raw) {
+  return (
+    isPlainObject(raw) &&
+    ["create_response", "last_poll_response", "list_response", "requested", "verification", "legacy_response", "diagnostics"].some(
+      (key) => Object.prototype.hasOwnProperty.call(raw, key)
+    )
+  );
+}
 
-  const tr = d?.task_result || d?.taskResult || d?.result || null;
+function getKlingRawEnvelope(raw) {
+  if (isKlingRawEnvelope(raw)) return raw;
+  if (raw == null) return {};
+  return { legacy_response: raw };
+}
 
-  const fromTaskResult =
-    tr?.element_id ||
-    tr?.elementId ||
-    tr?.id ||
-    tr?.element?.element_id ||
-    tr?.element?.elementId ||
-    tr?.element?.id ||
-    tr?.element_info?.element_id ||
-    tr?.element_info?.elementId ||
-    tr?.element_info?.id;
+function rawResponseCandidates(raw) {
+  if (!raw) return [];
+  const env = getKlingRawEnvelope(raw);
+  const verified = readExactString(env?.verification?.elementId ?? env?.verification?.element_id);
+  return [
+    verified ? { element_id: verified } : null,
+    env?.last_poll_response,
+    env?.list_response,
+    env?.create_response,
+    env?.legacy_response,
+    env?.raw,
+  ].filter(Boolean);
+}
 
-  if (fromTaskResult) return String(fromTaskResult);
+function extractVerifiedElementInfoFromRaw(raw) {
+  const env = getKlingRawEnvelope(raw);
+  const candidates = [
+    ["verification", env?.verification],
+    ["last_poll_response", env?.last_poll_response],
+    ["list_response", env?.list_response],
+    ["create_response", env?.create_response],
+    ["legacy_response", env?.legacy_response],
+    ["raw", env?.raw],
+  ];
 
-  const arr =
-    (Array.isArray(tr?.elements) && tr.elements) ||
-    (Array.isArray(tr?.element_list) && tr.element_list) ||
-    (Array.isArray(tr?.items) && tr.items) ||
-    null;
+  for (const [source, candidate] of candidates) {
+    if (!candidate) continue;
+    const elementId = extractExplicitElementIdFromAny(candidate);
+    if (elementId) return { elementId: String(elementId), source };
+  }
 
-  const first = arr?.[0];
-  const fromArray =
-    first?.element_id ||
-    first?.elementId ||
-    first?.id ||
-    first?.element?.element_id ||
-    first?.element?.elementId ||
-    first?.element?.id;
+  return { elementId: null, source: null };
+}
 
-  if (fromArray) return String(fromArray);
+function buildKlingEnvSnapshot() {
+  const accessKey = String(process.env.KLING_ACCESS_KEY || "").trim();
+  const secretKey = String(process.env.KLING_SECRET_KEY || "").trim();
+  const baseUrl = String(process.env.KLING_BASE_URL || "https://api.klingai.com").trim().replace(/\/+$/g, "");
+  const createPath = resolveKlingCreateElementPath();
+  const taskStatusPath = String(process.env.KLING_ELEMENT_TASK_STATUS_PATH || "").trim() || null;
+  const fingerprint = crypto
+    .createHash("sha256")
+    .update([accessKey, secretKey, baseUrl, createPath, taskStatusPath || ""].join("|"))
+    .digest("hex")
+    .slice(0, 12);
 
-  return null;
+  return {
+    fingerprint,
+    accessKeyHint: accessKey ? `${accessKey.slice(0, 4)}…${accessKey.slice(-4)}` : null,
+    baseUrl,
+    createPath,
+    taskStatusPath,
+  };
+}
+
+function envSnapshotsMismatch(a, b) {
+  const fa = readExactString(a?.fingerprint);
+  const fb = readExactString(b?.fingerprint);
+  return Boolean(fa && fb && fa !== fb);
+}
+
+function buildKlingRawEnvelope({
+  existing,
+  requested,
+  createResponse,
+  createPath,
+  createMode,
+  createTaskId,
+  createElementId,
+  lastPollResponse,
+  lastPollPath,
+  listResponse,
+  verification,
+  diagnostics,
+}) {
+  const env = { ...getKlingRawEnvelope(existing) };
+
+  if (requested !== undefined) env.requested = requested;
+  if (createResponse !== undefined) env.create_response = createResponse;
+  if (createPath !== undefined) env.create_path = createPath;
+  if (createMode !== undefined) env.create_mode = createMode;
+  if (createTaskId !== undefined) env.create_task_id = createTaskId;
+  if (createElementId !== undefined) env.create_element_id = createElementId;
+  if (lastPollResponse !== undefined) env.last_poll_response = lastPollResponse;
+  if (lastPollPath !== undefined) env.last_poll_path = lastPollPath;
+  if (listResponse !== undefined) env.list_response = listResponse;
+  if (verification !== undefined) env.verification = verification;
+  if (diagnostics !== undefined) {
+    env.diagnostics = {
+      ...(isPlainObject(env.diagnostics) ? env.diagnostics : {}),
+      ...(isPlainObject(diagnostics) ? diagnostics : {}),
+    };
+  }
+
+  return env;
+}
+
+function buildKlingCorruptedDetail(issue, details = {}) {
+  const baseByIssue = {
+    missing_task_id: "corrupted: missing kling_task_id for advanced element.",
+    missing_remote_id: "corrupted: missing kling_element_id.",
+    remote_id_matches_task_id: "corrupted: kling_element_id matches kling_task_id.",
+    missing_verified_evidence: "corrupted: no explicit element_id evidence found in kling_raw.",
+    verified_evidence_mismatch: "corrupted: stored kling_element_id does not match verified element_id from Kling.",
+  };
+
+  let detail = baseByIssue[issue] || `corrupted: ${issue || "invalid_remote_id"}`;
+  if (details.envMismatch) {
+    detail += ` env_mismatch:create=${details.createFingerprint || "?"}, current=${details.currentFingerprint || "?"}`;
+  }
+  return detail;
+}
+
+function assessKlingElementRecord(row) {
+  const statusDb = String(row?.status || "ready").trim().toLowerCase() || "ready";
+  const storedRemoteId = readExactString(row?.kling_element_id);
+  const taskId = readExactString(row?.kling_task_id);
+  const apiVersion = String(row?.api_version || "").trim().toLowerCase();
+  const referenceType = String(row?.reference_type || "").trim().toLowerCase();
+  const isAdvanced = /advanced/.test(apiVersion) || referenceType === "video_refer" || Boolean(taskId);
+  const verifiedInfo = extractVerifiedElementInfoFromRaw(row?.kling_raw);
+  const envSnapshotStored = row?.kling_raw?.requested?.envSnapshot || row?.kling_raw?.envSnapshot || null;
+  const envSnapshotCurrent = buildKlingEnvSnapshot();
+  const envMismatch = envSnapshotsMismatch(envSnapshotStored, envSnapshotCurrent);
+
+  let issue = null;
+  if (statusDb === "ready") {
+    if (!storedRemoteId) issue = "missing_remote_id";
+    else if (isAdvanced && !taskId) issue = "missing_task_id";
+    else if (isAdvanced && storedRemoteId === taskId) issue = "remote_id_matches_task_id";
+    else if (isAdvanced && !verifiedInfo.elementId) issue = "missing_verified_evidence";
+    else if (isAdvanced && verifiedInfo.elementId !== storedRemoteId) issue = "verified_evidence_mismatch";
+  }
+
+  let statusForClient = statusDb;
+  if (issue && statusDb === "ready") statusForClient = "corrupted";
+
+  let detail = readExactString(row?.status_detail);
+  if (issue && statusDb === "ready") {
+    detail = buildKlingCorruptedDetail(issue, {
+      envMismatch,
+      createFingerprint: envSnapshotStored?.fingerprint,
+      currentFingerprint: envSnapshotCurrent?.fingerprint,
+    });
+  } else if (envMismatch) {
+    const mismatchDetail = `env_mismatch:create=${envSnapshotStored?.fingerprint || "?"}, current=${envSnapshotCurrent?.fingerprint || "?"}`;
+    detail = detail ? `${detail} | ${mismatchDetail}` : mismatchDetail;
+  }
+
+  return {
+    statusDb,
+    statusForClient,
+    storedRemoteId,
+    taskId,
+    isAdvanced,
+    verifiedElementId: verifiedInfo.elementId,
+    verificationSource: verifiedInfo.source,
+    issue,
+    isVerified: !issue && statusDb === "ready" && Boolean(storedRemoteId),
+    detail,
+    repairable: isAdvanced && Boolean(taskId),
+    envMismatch,
+    envSnapshotStored,
+    envSnapshotCurrent,
+  };
 }
 
 function extractTaskStatusFromAny(obj) {
@@ -246,7 +428,7 @@ async function klingFindElementIdInAdvancedList({ createPath, taskId }) {
         if (!tid) continue;
 
         if (String(tid) === targetTaskId) {
-          const elementId = extractElementIdFromAny(entry);
+          const elementId = extractExplicitElementIdFromAny(entry);
           if (elementId) return { elementId: String(elementId), raw: entry, pathUsed: path };
           return null;
         }
@@ -270,7 +452,7 @@ async function pollOnce({ createPath, taskId }) {
       const raw = await klingGetWithRetry(p, { timeoutMs: 20_000, retries: 2 });
       const status = extractTaskStatusFromAny(raw);
       const msg = extractTaskMsgFromAny(raw);
-      const elementId = extractElementIdFromAny(raw);
+      const elementId = extractExplicitElementIdFromAny(raw);
 
       const out = { ok: true, pathUsed: p, raw, status, msg, elementId };
       if (!firstOk) firstOk = out;
@@ -335,31 +517,16 @@ function computeBackoffMs(failures) {
   return Math.min(ms, 5 * 60 * 1000); // cap 5 min
 }
 
-async function markFailedAndCleanup(row, reason) {
-  const imagePaths = Array.isArray(row.image_paths) ? row.image_paths : [];
-  const previewPath = row.preview_path ? [row.preview_path] : [];
-  const allPaths = [...imagePaths, ...previewPath];
-
+async function markFailedAndCleanup(row, reason, extra = {}) {
   await supabaseAdmin
     .from("kling_elements")
     .update({
       status: "failed",
       status_detail: String(reason || "failed"),
+      kling_raw: extra.klingRaw !== undefined ? extra.klingRaw : row?.kling_raw || null,
       next_check_at: null,
       locked_at: null,
       locked_by: null,
-    })
-    .eq("id", row.id);
-
-  // Cleanup best-effort
-  await deleteStoragePaths(allPaths);
-
-  // Limpia paths para no acumular basura en Storage
-  await supabaseAdmin
-    .from("kling_elements")
-    .update({
-      image_paths: [],
-      preview_path: null,
     })
     .eq("id", row.id);
 }
@@ -375,23 +542,69 @@ async function processRow(row) {
     return;
   }
 
-  const taskId = row.kling_task_id;
-  if (!taskId) {
-    await markFailedAndCleanup(row, "missing_kling_task_id");
+  const assessment = assessKlingElementRecord(row);
+  const nowIso = new Date().toISOString();
+
+  if (!assessment.taskId) {
+    const failedRaw = buildKlingRawEnvelope({
+      existing: row.kling_raw,
+      diagnostics: {
+        workerMarkedFailedAt: nowIso,
+        workerId: WORKER_ID,
+        envMismatch: assessment.envMismatch,
+        envSnapshotCurrent: assessment.envSnapshotCurrent,
+      },
+    });
+    await markFailedAndCleanup(
+      row,
+      buildKlingCorruptedDetail("missing_task_id", {
+        envMismatch: assessment.envMismatch,
+        createFingerprint: assessment.envSnapshotStored?.fingerprint,
+        currentFingerprint: assessment.envSnapshotCurrent?.fingerprint,
+      }),
+      { klingRaw: failedRaw }
+    );
     return;
   }
 
+  if (assessment.envMismatch) {
+    console.warn(
+      "[kling-elements:env-mismatch]",
+      JSON.stringify({
+        scope: "worker",
+        localId: row.id,
+        taskId: assessment.taskId,
+        createFingerprint: assessment.envSnapshotStored?.fingerprint || null,
+        currentFingerprint: assessment.envSnapshotCurrent?.fingerprint || null,
+        createPathStored: row?.kling_raw?.create_path || null,
+        createPathCurrent: assessment.envSnapshotCurrent?.createPath || null,
+      })
+    );
+  }
+
   const createPath = resolveKlingCreateElementPath();
-  const polled = await pollOnce({ createPath, taskId });
+  const polled = await pollOnce({ createPath, taskId: assessment.taskId });
 
   if (!polled.ok) {
     const failures = Number(row.poll_failures || 0) + 1;
     const backoffMs = computeBackoffMs(failures);
+    const pendingRaw = buildKlingRawEnvelope({
+      existing: row.kling_raw,
+      diagnostics: {
+        lastPollErrorAt: nowIso,
+        lastPollError: polled.error || "unknown",
+        lastPollPathsTried: Array.isArray(polled.pathsTried) ? polled.pathsTried : undefined,
+        workerId: WORKER_ID,
+        envMismatch: assessment.envMismatch,
+        envSnapshotCurrent: assessment.envSnapshotCurrent,
+      },
+    });
 
     await supabaseAdmin
       .from("kling_elements")
       .update({
         status_detail: `poll_error: ${polled.error || "unknown"}`,
+        kling_raw: pendingRaw,
         poll_failures: failures,
         next_check_at: new Date(Date.now() + backoffMs).toISOString(),
         locked_at: null,
@@ -403,24 +616,57 @@ async function processRow(row) {
   }
 
   const statusNorm = normalizeStatus(polled.status);
-
-  // Reset failures cuando Kling responde OK
   const baseUpdate = {
     poll_failures: 0,
     locked_at: null,
     locked_by: null,
   };
+  const diagnostics = {
+    lastPolledAt: nowIso,
+    lastPollStatus: statusNorm || null,
+    workerId: WORKER_ID,
+    envMismatch: assessment.envMismatch,
+    envSnapshotCurrent: assessment.envSnapshotCurrent,
+  };
 
-  // Success
+  console.info(
+    "[kling-elements:poll]",
+    JSON.stringify({
+      scope: "worker",
+      localId: row.id,
+      taskId: assessment.taskId,
+      pathUsed: polled.pathUsed || null,
+      status: statusNorm || null,
+      elementId: polled.elementId ? String(polled.elementId) : null,
+    })
+  );
+
   if (isSuccess(statusNorm) && polled.elementId) {
+    const readyDetail = assessment.envMismatch
+      ? `verified_remote_id | env_mismatch:create=${assessment.envSnapshotStored?.fingerprint || "?"}, current=${assessment.envSnapshotCurrent?.fingerprint || "?"}`
+      : null;
+    const readyRaw = buildKlingRawEnvelope({
+      existing: row.kling_raw,
+      lastPollResponse: polled.raw || null,
+      lastPollPath: polled.pathUsed || null,
+      verification: {
+        elementId: String(polled.elementId),
+        source: polled.pathUsed && String(polled.pathUsed).includes("pageNum=") ? "list_response" : "task_status",
+        verifiedAt: nowIso,
+        taskId: assessment.taskId,
+        envSnapshot: assessment.envSnapshotCurrent,
+      },
+      diagnostics,
+    });
+
     await supabaseAdmin
       .from("kling_elements")
       .update({
         ...baseUpdate,
         status: "ready",
-        status_detail: null,
+        status_detail: readyDetail,
         kling_element_id: String(polled.elementId),
-        kling_raw: polled.raw || null,
+        kling_raw: readyRaw,
         next_check_at: null,
       })
       .eq("id", row.id);
@@ -428,20 +674,40 @@ async function processRow(row) {
     return;
   }
 
-  // Failure
   if (isFailure(statusNorm)) {
-    await markFailedAndCleanup(row, polled.msg || `task_failed:${statusNorm}`);
+    const failedRaw = buildKlingRawEnvelope({
+      existing: row.kling_raw,
+      lastPollResponse: polled.raw || null,
+      lastPollPath: polled.pathUsed || null,
+      diagnostics,
+    });
+    await markFailedAndCleanup(row, polled.msg || `task_failed:${statusNorm}`, { klingRaw: failedRaw });
     return;
   }
 
-  // Still running
   const nextMs = computeNextCheckMsFromStatus(statusNorm);
+  const detailBase =
+    polled.msg ||
+    (isSuccess(statusNorm) && !polled.elementId
+      ? "awaiting verified element_id"
+      : (statusNorm || "running"));
+  const detail = assessment.envMismatch
+    ? `${detailBase} | env_mismatch:create=${assessment.envSnapshotStored?.fingerprint || "?"}, current=${assessment.envSnapshotCurrent?.fingerprint || "?"}`
+    : detailBase;
+  const pendingRaw = buildKlingRawEnvelope({
+    existing: row.kling_raw,
+    lastPollResponse: polled.raw || null,
+    lastPollPath: polled.pathUsed || null,
+    diagnostics,
+  });
+
   await supabaseAdmin
     .from("kling_elements")
     .update({
       ...baseUpdate,
-      status_detail: polled.msg || statusNorm || "running",
-      kling_raw: polled.raw || null,
+      status: "creating",
+      status_detail: detail,
+      kling_raw: pendingRaw,
       next_check_at: new Date(Date.now() + nextMs).toISOString(),
     })
     .eq("id", row.id);
@@ -462,7 +728,8 @@ async function claimBatch() {
 }
 
 async function loop() {
-  console.log(`[kling-elements] worker started id=${WORKER_ID} limit=${CLAIM_LIMIT} loop=${LOOP_MS}ms`);
+  const envSnapshot = buildKlingEnvSnapshot();
+  console.log(`[kling-elements] worker started id=${WORKER_ID} limit=${CLAIM_LIMIT} loop=${LOOP_MS}ms createPath=${envSnapshot.createPath} env=${envSnapshot.fingerprint}`);
 
   // eslint-disable-next-line no-constant-condition
   while (true) {

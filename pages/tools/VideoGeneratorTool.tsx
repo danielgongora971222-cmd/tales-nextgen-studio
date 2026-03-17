@@ -9,6 +9,7 @@ import {
   listKlingElements,
   listKlingPresetElements,
   refreshKlingElementsStatus,
+  isKlingElementReadyForVideoGenerator,
   type KlingElement,
 } from "../../services/klingElementsService";
 import { formatErr } from "../../services/videoGenApi";
@@ -721,9 +722,14 @@ const VideoGeneratorTool: React.FC = () => {
     return out;
   }, [klingElements, presetKlingElements]);
 
+  const selectableKlingElements = useMemo(
+    () => allKlingElements.filter((el) => isKlingElementReadyForVideoGenerator(el)),
+    [allKlingElements]
+  );
+
   const elementTokenById = useMemo(
-    () => (isKlingV3ElementsUI ? buildElementTokenMap(allKlingElements) : new Map<string, string>()),
-    [isKlingV3ElementsUI, allKlingElements]
+    () => (isKlingV3ElementsUI ? buildElementTokenMap(selectableKlingElements) : new Map<string, string>()),
+    [isKlingV3ElementsUI, selectableKlingElements]
   );
 
   const elementTokenToId = useMemo(() => {
@@ -737,8 +743,7 @@ const VideoGeneratorTool: React.FC = () => {
 const elementMentionItems = useMemo<MentionItem[]>(() => {
   if (!isKlingV3ElementsUI) return [];
 
-  return allKlingElements
-    .filter((el) => (el.status ?? "ready") === "ready" && Boolean(el.klingElementId || el.remoteElementId))
+  return selectableKlingElements
     .map((el) => {
       const token = elementTokenById.get(el.id) || `@element${Math.floor(Math.random() * 1000)}`;
 
@@ -749,7 +754,7 @@ const elementMentionItems = useMemo<MentionItem[]>(() => {
         kind: "element",
       };
     });
-}, [isKlingV3ElementsUI, allKlingElements, elementTokenById]);
+}, [isKlingV3ElementsUI, selectableKlingElements, elementTokenById]);
 
   // Sync Elements con el prompt:
   // - Si borras un token de Element del prompt -> se deselecciona.
@@ -1211,6 +1216,7 @@ useEffect(() => {
 
       const validIds = new Set(
         [...customItems, ...presetItems]
+          .filter((e: any) => isKlingElementReadyForVideoGenerator(e))
           .map((e: any) => String(e?.id ?? "").trim())
           .filter(Boolean)
       );
@@ -1585,7 +1591,7 @@ const durationLabel = useMemo(() => {
 
     const notReady = selected
       .map((id) => byId.get(id))
-      .filter((e) => e && ((e.status ?? "ready") !== "ready" || !e.klingElementId));
+      .filter((e) => e && !isKlingElementReadyForVideoGenerator(e));
 
     if (missingIds.length || notReady.length) {
       const missingLabel = missingIds.length ? `missingIds: ${missingIds.join(", ")}` : "";

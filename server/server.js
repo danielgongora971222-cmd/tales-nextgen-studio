@@ -1233,7 +1233,7 @@ function extractKlingElementStatus(raw) {
 
 function mapKlingRemoteElementRecord(row, source = "preset") {
   if (!row) return null;
-  const remoteElementId = row?.element_id || row?.elementId || row?.id;
+  const remoteElementId = extractExplicitElementIdFromAny(row);
   if (!remoteElementId) return null;
 
   const imageList = row?.element_image_list || row?.elementImageList || {};
@@ -1999,55 +1999,254 @@ function resolveKlingElementTaskStatusPaths({ createPath, taskId }) {
   ];
 }
 
-function extractElementIdFromAny(obj) {
-  if (!obj) return null;
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function readExactString(value) {
+  if (value == null) return null;
+  const out = String(value).trim();
+  return out ? out : null;
+}
+
+function collectExplicitNamedValues(value, keyNames, out = [], depth = 0) {
+  if (value == null || depth > 8) return out;
+
+  if (Array.isArray(value)) {
+    for (const item of value) collectExplicitNamedValues(item, keyNames, out, depth + 1);
+    return out;
+  }
+
+  if (!isPlainObject(value)) return out;
+
+  for (const key of keyNames) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) {
+      const candidate = readExactString(value[key]);
+      if (candidate && !out.includes(candidate)) out.push(candidate);
+    }
+  }
+
+  for (const nested of Object.values(value)) {
+    if (Array.isArray(nested) || isPlainObject(nested)) {
+      collectExplicitNamedValues(nested, keyNames, out, depth + 1);
+    }
+  }
+
+  return out;
+}
+
+function extractExplicitElementIdFromAny(obj) {
   const d = obj?.data || obj;
+  const values = collectExplicitNamedValues(d, ["element_id", "elementId"]);
+  return values.length ? values[0] : null;
+}
 
-  // 1) Directo
-  const direct =
-    d?.element_id ||
-    d?.elementId ||
-    d?.element?.element_id ||
-    d?.element?.elementId ||
-    d?.element?.id;
+function extractExplicitTaskIdFromAny(obj) {
+  const d = obj?.data || obj;
+  const values = collectExplicitNamedValues(d, ["task_id", "taskId"]);
+  return values.length ? values[0] : null;
+}
 
-  if (direct) return String(direct);
+function isKlingRawEnvelope(raw) {
+  return (
+    isPlainObject(raw) &&
+    ["create_response", "last_poll_response", "list_response", "requested", "verification", "legacy_response", "diagnostics"].some(
+      (key) => Object.prototype.hasOwnProperty.call(raw, key)
+    )
+  );
+}
 
-  // 2) Task result (advanced)
-  const tr = d?.task_result || d?.taskResult || d?.result || null;
+function getKlingRawEnvelope(raw) {
+  if (isKlingRawEnvelope(raw)) return raw;
+  if (raw == null) return {};
+  return { legacy_response: raw };
+}
 
-  const fromTaskResult =
-    tr?.element_id ||
-    tr?.elementId ||
-    tr?.id ||
-    tr?.element?.element_id ||
-    tr?.element?.elementId ||
-    tr?.element?.id ||
-    tr?.element_info?.element_id ||
-    tr?.element_info?.elementId ||
-    tr?.element_info?.id;
+function rawResponseCandidates(raw) {
+  if (!raw) return [];
+  const env = getKlingRawEnvelope(raw);
+  const verified = readExactString(env?.verification?.elementId ?? env?.verification?.element_id);
+  return [
+    verified ? { element_id: verified } : null,
+    env?.last_poll_response,
+    env?.list_response,
+    env?.create_response,
+    env?.legacy_response,
+    env?.raw,
+  ].filter(Boolean);
+}
 
-  if (fromTaskResult) return String(fromTaskResult);
+function extractVerifiedElementInfoFromRaw(raw) {
+  const env = getKlingRawEnvelope(raw);
+  const candidates = [
+    ["verification", env?.verification],
+    ["last_poll_response", env?.last_poll_response],
+    ["list_response", env?.list_response],
+    ["create_response", env?.create_response],
+    ["legacy_response", env?.legacy_response],
+    ["raw", env?.raw],
+  ];
 
-  // 3) Variantes con listas dentro del task_result
-  const arr =
-    (Array.isArray(tr?.elements) && tr.elements) ||
-    (Array.isArray(tr?.element_list) && tr.element_list) ||
-    (Array.isArray(tr?.items) && tr.items) ||
-    null;
+  for (const [source, candidate] of candidates) {
+    if (!candidate) continue;
+    const elementId = extractExplicitElementIdFromAny(candidate);
+    if (elementId) return { elementId: String(elementId), source };
+  }
 
-  const first = arr?.[0];
-  const fromArray =
-    first?.element_id ||
-    first?.elementId ||
-    first?.id ||
-    first?.element?.element_id ||
-    first?.element?.elementId ||
-    first?.element?.id;
+  return { elementId: null, source: null };
+}
 
-  if (fromArray) return String(fromArray);
+function buildKlingEnvSnapshot() {
+  const accessKey = String(process.env.KLING_ACCESS_KEY || "").trim();
+  const secretKey = String(process.env.KLING_SECRET_KEY || "").trim();
+  const baseUrl = String(process.env.KLING_BASE_URL || "https://api.klingai.com").trim().replace(/\/+$/g, "");
+  const createPath = resolveKlingCreateElementPath();
+  const taskStatusPath = String(process.env.KLING_ELEMENT_TASK_STATUS_PATH || "").trim() || null;
+  const fingerprint = createHmac("sha256", "kling-elements-env")
+    .update([accessKey, secretKey, baseUrl, createPath, taskStatusPath || ""].join("|"))
+    .digest("hex")
+    .slice(0, 12);
 
+  return {
+    fingerprint,
+    accessKeyHint: accessKey ? `${accessKey.slice(0, 4)}…${accessKey.slice(-4)}` : null,
+    baseUrl,
+    createPath,
+    taskStatusPath,
+  };
+}
+
+function envSnapshotsMismatch(a, b) {
+  const fa = readExactString(a?.fingerprint);
+  const fb = readExactString(b?.fingerprint);
+  return Boolean(fa && fb && fa !== fb);
+}
+
+function buildKlingRawEnvelope({
+  existing,
+  requested,
+  createResponse,
+  createPath,
+  createMode,
+  createTaskId,
+  createElementId,
+  lastPollResponse,
+  lastPollPath,
+  listResponse,
+  verification,
+  diagnostics,
+}) {
+  const env = { ...getKlingRawEnvelope(existing) };
+
+  if (requested !== undefined) env.requested = requested;
+  if (createResponse !== undefined) env.create_response = createResponse;
+  if (createPath !== undefined) env.create_path = createPath;
+  if (createMode !== undefined) env.create_mode = createMode;
+  if (createTaskId !== undefined) env.create_task_id = createTaskId;
+  if (createElementId !== undefined) env.create_element_id = createElementId;
+  if (lastPollResponse !== undefined) env.last_poll_response = lastPollResponse;
+  if (lastPollPath !== undefined) env.last_poll_path = lastPollPath;
+  if (listResponse !== undefined) env.list_response = listResponse;
+  if (verification !== undefined) env.verification = verification;
+  if (diagnostics !== undefined) {
+    env.diagnostics = {
+      ...(isPlainObject(env.diagnostics) ? env.diagnostics : {}),
+      ...(isPlainObject(diagnostics) ? diagnostics : {}),
+    };
+  }
+
+  return env;
+}
+
+function buildKlingCorruptedDetail(issue, details = {}) {
+  const baseByIssue = {
+    missing_task_id: "corrupted: missing kling_task_id for advanced element.",
+    missing_remote_id: "corrupted: missing kling_element_id.",
+    remote_id_matches_task_id: "corrupted: kling_element_id matches kling_task_id.",
+    missing_verified_evidence: "corrupted: no explicit element_id evidence found in kling_raw.",
+    verified_evidence_mismatch: "corrupted: stored kling_element_id does not match verified element_id from Kling.",
+  };
+
+  let detail = baseByIssue[issue] || `corrupted: ${issue || "invalid_remote_id"}`;
+  if (details.envMismatch) {
+    detail += ` env_mismatch:create=${details.createFingerprint || "?"}, current=${details.currentFingerprint || "?"}`;
+  }
+  return detail;
+}
+
+function getRequestedTagIdsFromKlingRaw(raw) {
+  const env = getKlingRawEnvelope(raw);
+  return env?.requested?.tagIds || env?.requested?.tag_ids || null;
+}
+
+function getVoiceInfoFromKlingRaw(raw) {
+  for (const candidate of rawResponseCandidates(raw)) {
+    const d = candidate?.data || candidate;
+    const voice =
+      d?.task_result?.elements?.[0]?.element_voice_info ||
+      d?.element_voice_info ||
+      d?.voice_info ||
+      candidate?.task_result?.elements?.[0]?.element_voice_info ||
+      candidate?.element_voice_info ||
+      candidate?.voice_info ||
+      null;
+    if (voice) return voice;
+  }
   return null;
+}
+
+function assessKlingElementRecord(row) {
+  const statusDb = String(row?.status || "ready").trim().toLowerCase() || "ready";
+  const storedRemoteId = readExactString(row?.kling_element_id);
+  const taskId = readExactString(row?.kling_task_id);
+  const apiVersion = String(row?.api_version || "").trim().toLowerCase();
+  const referenceType = String(row?.reference_type || "").trim().toLowerCase();
+  const isAdvanced = /advanced/.test(apiVersion) || referenceType === "video_refer" || Boolean(taskId);
+  const verifiedInfo = extractVerifiedElementInfoFromRaw(row?.kling_raw);
+  const envSnapshotStored = row?.kling_raw?.requested?.envSnapshot || row?.kling_raw?.envSnapshot || null;
+  const envSnapshotCurrent = buildKlingEnvSnapshot();
+  const envMismatch = envSnapshotsMismatch(envSnapshotStored, envSnapshotCurrent);
+
+  let issue = null;
+  if (statusDb === "ready") {
+    if (!storedRemoteId) issue = "missing_remote_id";
+    else if (isAdvanced && !taskId) issue = "missing_task_id";
+    else if (isAdvanced && storedRemoteId === taskId) issue = "remote_id_matches_task_id";
+    else if (isAdvanced && !verifiedInfo.elementId) issue = "missing_verified_evidence";
+    else if (isAdvanced && verifiedInfo.elementId !== storedRemoteId) issue = "verified_evidence_mismatch";
+  }
+
+  let statusForClient = statusDb;
+  if (issue && statusDb === "ready") statusForClient = "corrupted";
+
+  let detail = readExactString(row?.status_detail);
+  if (issue && statusDb === "ready") {
+    detail = buildKlingCorruptedDetail(issue, {
+      envMismatch,
+      createFingerprint: envSnapshotStored?.fingerprint,
+      currentFingerprint: envSnapshotCurrent?.fingerprint,
+    });
+  } else if (envMismatch) {
+    const mismatchDetail = `env_mismatch:create=${envSnapshotStored?.fingerprint || "?"}, current=${envSnapshotCurrent?.fingerprint || "?"}`;
+    detail = detail ? `${detail} | ${mismatchDetail}` : mismatchDetail;
+  }
+
+  return {
+    statusDb,
+    statusForClient,
+    storedRemoteId,
+    taskId,
+    isAdvanced,
+    verifiedElementId: verifiedInfo.elementId,
+    verificationSource: verifiedInfo.source,
+    issue,
+    isVerified: !issue && statusDb === "ready" && Boolean(storedRemoteId),
+    detail,
+    repairable: isAdvanced && Boolean(taskId),
+    envMismatch,
+    envSnapshotStored,
+    envSnapshotCurrent,
+  };
 }
 function extractTaskStatusFromAny(obj) {
   const d = obj?.data || obj;
@@ -2120,7 +2319,7 @@ async function klingFindElementIdInAdvancedList({ createPath, taskId }) {
         if (!tid) continue;
 
         if (String(tid) === targetTaskId) {
-          const elementId = extractElementIdFromAny(entry);
+          const elementId = extractExplicitElementIdFromAny(entry);
           if (elementId) return { elementId: String(elementId), raw: entry, pathUsed: path };
           return null;
         }
@@ -2144,7 +2343,7 @@ async function klingGetElementTaskStatusOnce({ createPath, taskId }) {
       const raw = await klingGetWithRetry(p, { timeoutMs: 20_000, retries: 2 });
       const status = extractTaskStatusFromAny(raw);
       const msg = extractTaskStatusMsgFromAny(raw);
-      const elementId = extractElementIdFromAny(raw);
+      const elementId = extractExplicitElementIdFromAny(raw);
 
       const out = { ok: true, pathUsed: p, raw, status, msg, elementId };
       if (!firstOk) firstOk = out;
@@ -2209,7 +2408,6 @@ async function klingCreateElement({ name, tag, tagIds, description, referenceTyp
     );
   }
 
-  const t = String(tag || "").trim().toLowerCase();
   const normalizedTagIds = normalizeKlingElementTagIds(
     Array.isArray(tagIds) && tagIds.length ? tagIds : tag
   );
@@ -2232,7 +2430,7 @@ async function klingCreateElement({ name, tag, tagIds, description, referenceTyp
 
   let createPath = resolveKlingCreateElementPath();
 
-  // ✅ Hardening: video_refer SIEMPRE requiere advanced-custom-elements
+  // Hardening: video_refer SIEMPRE requiere advanced-custom-elements.
   if (ref === "video_refer" && !/advanced-custom-elements/i.test(createPath)) {
     console.warn(
       `[WARN] video_refer requiere advanced-custom-elements. Path actual="${createPath}". Forzando "/general/advanced-custom-elements".`
@@ -2241,11 +2439,11 @@ async function klingCreateElement({ name, tag, tagIds, description, referenceTyp
   }
 
   const isAdvanced = /advanced-custom-elements/i.test(createPath);
+  const envSnapshot = { ...buildKlingEnvSnapshot(), createPath };
 
   let payload;
 
   if (isAdvanced) {
-    // ✅ Kling advanced (image_refer / video_refer)
     if (ref === "video_refer") {
       if (!videoUrl) {
         throw httpError(400, "KLING_ELEMENT_NO_VIDEO", "referenceType=video_refer requiere un video_url.");
@@ -2265,7 +2463,6 @@ async function klingCreateElement({ name, tag, tagIds, description, referenceTyp
       const frontal = imageUrls?.[0];
       const refer = (imageUrls || []).slice(1, 4);
 
-      // docs: frontal + 1..3 refer_images :contentReference[oaicite:7]{index=7}
       if (!frontal || refer.length < 1) {
         throw httpError(
           400,
@@ -2287,7 +2484,6 @@ async function klingCreateElement({ name, tag, tagIds, description, referenceTyp
       };
     }
   } else {
-    // ✅ Legacy (solo imágenes)
     if (ref === "video_refer") {
       throw httpError(
         400,
@@ -2312,6 +2508,7 @@ async function klingCreateElement({ name, tag, tagIds, description, referenceTyp
       ...(tagListPayload.length ? { tag_list: tagListPayload } : {}),
     };
   }
+
   const apiVersion = /advanced-custom-elements/i.test(createPath) ? "advanced" : "legacy";
 
   let json;
@@ -2325,39 +2522,58 @@ async function klingCreateElement({ name, tag, tagIds, description, referenceTyp
     );
   }
 
-  const data = json?.data || json;
+  const explicitElementId = extractExplicitElementIdFromAny(json);
+  const explicitTaskId = extractExplicitTaskIdFromAny(json);
+  const responseRoot = isPlainObject(json?.data) ? json.data : isPlainObject(json) ? json : {};
 
-  const elementId =
-    data?.element_id ||
-    data?.elementId ||
-    data?.id ||
-    data?.element?.id ||
-    data?.element?.element_id;
+  console.info(
+    "[kling-elements:create-response]",
+    JSON.stringify({
+      referenceType: ref,
+      createPath,
+      apiVersion,
+      envFingerprint: envSnapshot?.fingerprint || null,
+      taskId: explicitTaskId || null,
+      elementId: explicitElementId || null,
+      responseKeys: Object.keys(responseRoot || {}),
+    })
+  );
 
-  if (elementId) {
-    return { mode: "ready", apiVersion, elementId: String(elementId), taskId: null, raw: json };
+  if (explicitElementId) {
+    return {
+      mode: "ready",
+      apiVersion,
+      elementId: String(explicitElementId),
+      taskId: explicitTaskId ? String(explicitTaskId) : null,
+      raw: json,
+      createPath,
+      envSnapshot,
+    };
   }
 
-  const taskId =
-    data?.task_id ||
-    data?.taskId ||
-    data?.data?.task_id ||
-    json?.task_id ||
-    json?.taskId;
-
-  if (taskId) {
-    return { mode: "creating", apiVersion: `${apiVersion}-task`, elementId: null, taskId: String(taskId), raw: json };
+  if (explicitTaskId) {
+    return {
+      mode: "creating",
+      apiVersion,
+      elementId: null,
+      taskId: String(explicitTaskId),
+      raw: json,
+      createPath,
+      envSnapshot,
+    };
   }
 
   throw httpError(
     502,
     "KLING_BAD_RESPONSE",
-    "Kling no devolvió element_id ni task_id al crear el Element.",
+    "Kling no devolvió un task_id o element_id explícito al crear el Element.",
     { response: json }
   );
 }
 
 async function buildKlingCustomElementResponse(row, ownerId) {
+  const assessment = assessKlingElementRecord(row);
+
   const previewUrl = row?.preview_path
     ? await signStoragePath(row.preview_path, 60 * 60)
     : row?.video_asset_id
@@ -2368,18 +2584,11 @@ async function buildKlingCustomElementResponse(row, ownerId) {
     ? await Promise.all(row.image_paths.map((p) => signStoragePath(p, 60 * 60)))
     : [];
 
-  const requestedTagIds =
-    row?.kling_raw?.requested?.tagIds ||
-    row?.kling_raw?.tag_list ||
-    row?.tag;
+  const requestedTagIds = getRequestedTagIdsFromKlingRaw(row?.kling_raw) || row?.tag;
   const tagIds = normalizeKlingElementTagIds(requestedTagIds);
   const tagLabels = klingElementTagLabelsFromIds(tagIds);
 
-  const voiceInfoRaw =
-    row?.kling_raw?.task_result?.elements?.[0]?.element_voice_info ||
-    row?.kling_raw?.element_voice_info ||
-    row?.kling_raw?.voice_info ||
-    null;
+  const voiceInfoRaw = getVoiceInfoFromKlingRaw(row?.kling_raw);
 
   const voiceInfo = voiceInfoRaw
     ? {
@@ -2402,10 +2611,10 @@ async function buildKlingCustomElementResponse(row, ownerId) {
     source: "custom",
     isPreset: false,
     localId: row.id,
-    remoteElementId: row.kling_element_id ? String(row.kling_element_id) : null,
+    remoteElementId: assessment.storedRemoteId || null,
     ownedBy: row.owner_id ? String(row.owner_id) : "user",
     name: row.name,
-    klingElementId: row.kling_element_id || null,
+    klingElementId: assessment.storedRemoteId || null,
     tag: tagLabels.length ? tagLabels.join(", ") : row.tag || null,
     tagIds,
     tagLabels,
@@ -2414,10 +2623,15 @@ async function buildKlingCustomElementResponse(row, ownerId) {
     voiceId: row.voice_id || voiceInfo?.voiceId || null,
     voiceInfo,
     previewType: row.video_asset_id ? "video" : "image",
-    status: row.status || "ready",
-    statusDetail: row.status_detail || null,
+    status: assessment.statusForClient || row.status || "ready",
+    rawStatus: assessment.statusDb || row.status || null,
+    statusDetail: assessment.detail || null,
     apiVersion: row.api_version || null,
     taskId: row.kling_task_id || null,
+    verifiedRemoteId: Boolean(assessment.isVerified),
+    canUseInVideoGenerator: Boolean(assessment.isVerified),
+    needsRefresh: Boolean(!assessment.isVerified && (assessment.repairable || assessment.statusDb === "creating" || assessment.statusForClient === "corrupted")),
+    isCorrupted: assessment.statusForClient === "corrupted",
     updatedAt: row.updated_at || null,
     createdAt: row.created_at,
     previewUrl,
@@ -2602,13 +2816,56 @@ app.post("/api/kling/elements", async (req, res, next) => {
       previewPath = imagePaths[0] || null;
     }
 
+    const requestedTagIds = normalizeKlingElementTagIds(Array.isArray(tagIds) && tagIds.length ? tagIds : tag);
+    const requestedReferenceType = referenceType || (videoAssetId ? "video_refer" : "image_refer");
+    const createPathUsed = created.createPath || resolveKlingCreateElementPath();
+    const envSnapshot = created.envSnapshot || buildKlingEnvSnapshot();
+    const verification = created.elementId
+      ? {
+          elementId: String(created.elementId),
+          source: "create_response",
+          verifiedAt: new Date().toISOString(),
+          taskId: created.taskId ? String(created.taskId) : null,
+          envSnapshot,
+        }
+      : null;
+    const klingRaw = buildKlingRawEnvelope({
+      requested: {
+        localElementId: elementUuid,
+        referenceType: requestedReferenceType,
+        tagIds: requestedTagIds,
+        voiceId: voiceId ? String(voiceId) : null,
+        envSnapshot,
+        createdAt: new Date().toISOString(),
+      },
+      createResponse: created.raw || null,
+      createPath: createPathUsed,
+      createMode: created.mode,
+      createTaskId: created.taskId ? String(created.taskId) : null,
+      createElementId: created.elementId ? String(created.elementId) : null,
+      verification,
+    });
+
+    console.info(
+      "[kling-elements:create]",
+      JSON.stringify({
+        localId: elementUuid,
+        referenceType: requestedReferenceType,
+        createPath: createPathUsed,
+        taskId: created.taskId ? String(created.taskId) : null,
+        elementId: created.elementId ? String(created.elementId) : null,
+        mode: created.mode,
+        envFingerprint: envSnapshot?.fingerprint || null,
+      })
+    );
+
     // 4) Guardar en DB (paths, no URLs firmadas)
     const insertPayload = {
       owner_id: user.id,
       name,
 
       // metadata (nuevo)
-      reference_type: referenceType || (videoAssetId ? "video_refer" : "image_refer"),
+      reference_type: requestedReferenceType,
       description: description ? String(description).slice(0, 100) : null,
       tag: (() => {
         const labels = klingElementTagLabelsFromIds(Array.isArray(tagIds) && tagIds.length ? tagIds : tag);
@@ -2620,11 +2877,11 @@ app.post("/api/kling/elements", async (req, res, next) => {
 
       kling_element_id: created.elementId ? String(created.elementId) : null,
 
-      status: created.mode === "creating" ? "creating" : "ready",
-      status_detail: null,
+      status: created.elementId ? "ready" : "creating",
+      status_detail: created.elementId ? null : "awaiting verified element_id",
       api_version: created.apiVersion || "legacy",
       kling_task_id: created.taskId ? String(created.taskId) : null,
-      kling_raw: created.raw || null,
+      kling_raw: klingRaw,
 
       image_paths: imagePaths,
       preview_path: previewPath,
@@ -2676,86 +2933,166 @@ app.get("/api/kling/elements/:id", async (req, res) => {
     return res.status(403).json({ ok: false, error: { code: "FORBIDDEN", message: "No tienes permiso." } });
   }
 
-  // Si está creando, hacemos 1 poll por request
-  if (row.status === "creating" && row.kling_task_id) {
-    const createPath = resolveKlingCreateElementPath();
+  const assessmentBefore = assessKlingElementRecord(row);
+  const shouldAttemptRepair = Boolean(row.kling_task_id) && (
+    row.status === "creating" ||
+    assessmentBefore.statusForClient === "corrupted"
+  );
 
+  if (assessmentBefore.statusForClient === "corrupted" && !assessmentBefore.repairable) {
+    console.warn(
+      "[kling-elements:repair-skip]",
+      JSON.stringify({
+        localId: row.id,
+        taskId: row.kling_task_id || null,
+        issue: assessmentBefore.issue || "unknown",
+        detail: assessmentBefore.detail || null,
+      })
+    );
+  }
+
+  if (shouldAttemptRepair) {
+    const createPath = resolveKlingCreateElementPath();
     const polled = await klingGetElementTaskStatusOnce({
       createPath,
       taskId: row.kling_task_id,
     });
+    const nowIso = new Date().toISOString();
+
+    if (assessmentBefore.envMismatch) {
+      console.warn(
+        "[kling-elements:env-mismatch]",
+        JSON.stringify({
+          scope: "api",
+          localId: row.id,
+          taskId: row.kling_task_id || null,
+          createFingerprint: assessmentBefore.envSnapshotStored?.fingerprint || null,
+          currentFingerprint: assessmentBefore.envSnapshotCurrent?.fingerprint || null,
+          createPathStored: row?.kling_raw?.create_path || null,
+          createPathCurrent: assessmentBefore.envSnapshotCurrent?.createPath || null,
+        })
+      );
+    }
 
     if (polled.ok) {
       const statusNorm = normalizeKlingTaskStatus(polled.status);
+      const diagnostics = {
+        lastPolledAt: nowIso,
+        lastPollStatus: statusNorm || null,
+        envMismatch: assessmentBefore.envMismatch,
+        envSnapshotCurrent: assessmentBefore.envSnapshotCurrent,
+      };
 
-      // Success (si ya hay element_id)
+      console.info(
+        "[kling-elements:poll]",
+        JSON.stringify({
+          scope: "api",
+          localId: row.id,
+          taskId: row.kling_task_id || null,
+          pathUsed: polled.pathUsed || null,
+          status: statusNorm || null,
+          elementId: polled.elementId ? String(polled.elementId) : null,
+        })
+      );
+
       if (isKlingSuccessStatus(statusNorm) && polled.elementId) {
+        const readyDetail = assessmentBefore.envMismatch
+          ? `verified_remote_id | env_mismatch:create=${assessmentBefore.envSnapshotStored?.fingerprint || "?"}, current=${assessmentBefore.envSnapshotCurrent?.fingerprint || "?"}`
+          : null;
+        const mergedRaw = buildKlingRawEnvelope({
+          existing: row.kling_raw,
+          lastPollResponse: polled.raw || null,
+          lastPollPath: polled.pathUsed || null,
+          verification: {
+            elementId: String(polled.elementId),
+            source: polled.pathUsed && String(polled.pathUsed).includes("pageNum=") ? "list_response" : "task_status",
+            verifiedAt: nowIso,
+            taskId: row.kling_task_id ? String(row.kling_task_id) : null,
+            envSnapshot: assessmentBefore.envSnapshotCurrent,
+          },
+          diagnostics,
+        });
+
         const upd = await supabaseAdmin
           .from("kling_elements")
           .update({
             status: "ready",
-            status_detail: null,
+            status_detail: readyDetail,
             kling_element_id: String(polled.elementId),
-            kling_raw: polled.raw || null,
-            updated_at: new Date().toISOString(),
+            kling_raw: mergedRaw,
+            updated_at: nowIso,
           })
           .eq("id", row.id)
-          .select("id, owner_id, name, kling_element_id, status, status_detail, api_version, kling_task_id, kling_raw, preview_path, image_paths, created_at, updated_at")
+          .select("id, owner_id, name, tag, description, reference_type, voice_id, video_asset_id, kling_element_id, status, status_detail, api_version, kling_task_id, kling_raw, preview_path, image_paths, created_at, updated_at")
           .single();
 
         if (!upd.error && upd.data) {
-          row.status = upd.data.status;
-          row.status_detail = upd.data.status_detail;
-          row.kling_element_id = upd.data.kling_element_id;
-          row.kling_raw = upd.data.kling_raw || polled.raw || row.kling_raw || null;
-          row.updated_at = upd.data.updated_at;
+          Object.assign(row, upd.data);
         }
       } else if (isKlingFailureStatus(statusNorm)) {
+        const failedRaw = buildKlingRawEnvelope({
+          existing: row.kling_raw,
+          lastPollResponse: polled.raw || null,
+          lastPollPath: polled.pathUsed || null,
+          diagnostics,
+        });
+
         await supabaseAdmin
           .from("kling_elements")
           .update({
             status: "failed",
             status_detail: polled.msg || `Task failed (${statusNorm})`,
-            kling_raw: polled.raw || null,
-            updated_at: new Date().toISOString(),
+            kling_raw: failedRaw,
+            updated_at: nowIso,
           })
           .eq("id", row.id);
 
         row.status = "failed";
         row.status_detail = polled.msg || `Task failed (${statusNorm})`;
-        row.kling_raw = polled.raw || row.kling_raw || null;
-    } else {
-      // Sigue corriendo (o succeed sin element_id)
-      const detail =
-        polled.msg ||
-        (isKlingSuccessStatus(statusNorm) && !polled.elementId
-          ? "succeed (pending element_id)"
-          : (statusNorm || "running"));
+        row.kling_raw = failedRaw;
+        row.updated_at = nowIso;
+      } else {
+        const detailBase =
+          polled.msg ||
+          (isKlingSuccessStatus(statusNorm) && !polled.elementId
+            ? "awaiting verified element_id"
+            : (statusNorm || "running"));
+        const detail = assessmentBefore.envMismatch
+          ? `${detailBase} | env_mismatch:create=${assessmentBefore.envSnapshotStored?.fingerprint || "?"}, current=${assessmentBefore.envSnapshotCurrent?.fingerprint || "?"}`
+          : detailBase;
+        const pendingRaw = buildKlingRawEnvelope({
+          existing: row.kling_raw,
+          lastPollResponse: polled.raw || null,
+          lastPollPath: polled.pathUsed || null,
+          diagnostics,
+        });
 
-      await supabaseAdmin
-        .from("kling_elements")
-        .update({
-          status_detail: detail,
-          kling_raw: polled.raw || null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", row.id);
+        await supabaseAdmin
+          .from("kling_elements")
+          .update({
+            status: "creating",
+            status_detail: detail,
+            kling_raw: pendingRaw,
+            updated_at: nowIso,
+          })
+          .eq("id", row.id);
 
-      row.status_detail = detail;
-      row.kling_raw = polled.raw || row.kling_raw || null;
-    }
+        row.status = "creating";
+        row.status_detail = detail;
+        row.kling_raw = pendingRaw;
+        row.updated_at = nowIso;
+      }
     } else {
-      // Poll falló (no matamos el row), solo dejamos detalle
       await supabaseAdmin
         .from("kling_elements")
         .update({
           status_detail: `poll_error: ${polled.error || "unknown"}`,
-          updated_at: new Date().toISOString(),
+          updated_at: nowIso,
         })
         .eq("id", row.id);
 
       row.status_detail = `poll_error: ${polled.error || "unknown"}`;
-      row.kling_raw = row.kling_raw || null;
+      row.updated_at = nowIso;
     }
   }
 
@@ -2777,7 +3114,7 @@ app.delete("/api/kling/elements/:id", async (req, res) => {
   // 1) Buscar fila (para conocer paths) y validar ownership
   const { data: row, error: getErr } = await supabaseAdmin
     .from("kling_elements")
-    .select("id, owner_id, kling_element_id, preview_path, image_paths")
+    .select("id, owner_id, kling_element_id, kling_task_id, status, status_detail, api_version, reference_type, kling_raw, preview_path, image_paths")
     .eq("id", id)
     .single();
 
@@ -2788,9 +3125,26 @@ app.delete("/api/kling/elements/:id", async (req, res) => {
     return res.status(403).json({ ok: false, error: { code: "FORBIDDEN", message: "No tienes permiso." } });
   }
 
-  const remoteDelete = row.kling_element_id
-    ? await klingDeleteCustomElementRemote(row.kling_element_id)
-    : { ok: false, skipped: true, reason: "missing_remote_id" };
+  const assessment = assessKlingElementRecord(row);
+  if (assessment.envMismatch) {
+    console.warn(
+      "[kling-elements:delete-env-mismatch]",
+      JSON.stringify({
+        localId: row.id,
+        taskId: row.kling_task_id || null,
+        createFingerprint: assessment.envSnapshotStored?.fingerprint || null,
+        currentFingerprint: assessment.envSnapshotCurrent?.fingerprint || null,
+      })
+    );
+  }
+
+  const remoteDelete = assessment.isVerified && assessment.storedRemoteId
+    ? await klingDeleteCustomElementRemote(assessment.storedRemoteId)
+    : {
+        ok: false,
+        skipped: true,
+        reason: assessment.issue ? `unverified_remote_id:${assessment.issue}` : "missing_verified_remote_id",
+      };
 
   // 2) Borrar fila en DB
   const { error: delErr } = await supabaseAdmin

@@ -105,6 +105,103 @@ export function createAiVideoRouter(ctx) {
       String(value || "").trim()
     );
 
+  const isPlainObject = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+  const readExactString = (value) => {
+    if (value == null) return null;
+    const out = String(value).trim();
+    return out ? out : null;
+  };
+
+  const collectExplicitElementIds = (value, out = [], depth = 0) => {
+    if (value == null || depth > 8) return out;
+
+    if (Array.isArray(value)) {
+      for (const item of value) collectExplicitElementIds(item, out, depth + 1);
+      return out;
+    }
+
+    if (!isPlainObject(value)) return out;
+
+    for (const key of ["element_id", "elementId"]) {
+      if (Object.prototype.hasOwnProperty.call(value, key)) {
+        const candidate = readExactString(value[key]);
+        if (candidate && !out.includes(candidate)) out.push(candidate);
+      }
+    }
+
+    for (const nested of Object.values(value)) {
+      if (Array.isArray(nested) || isPlainObject(nested)) {
+        collectExplicitElementIds(nested, out, depth + 1);
+      }
+    }
+
+    return out;
+  };
+
+  const isKlingRawEnvelope = (raw) =>
+    isPlainObject(raw) &&
+    ["create_response", "last_poll_response", "list_response", "requested", "verification", "legacy_response", "diagnostics"].some(
+      (key) => Object.prototype.hasOwnProperty.call(raw, key)
+    );
+
+  const rawCandidates = (raw) => {
+    if (!raw) return [];
+    if (isKlingRawEnvelope(raw)) {
+      const verified = readExactString(raw?.verification?.elementId ?? raw?.verification?.element_id);
+      return [verified ? { element_id: verified } : null, raw?.last_poll_response, raw?.list_response, raw?.create_response, raw?.legacy_response, raw?.raw].filter(Boolean);
+    }
+    return [raw];
+  };
+
+  const extractVerifiedElementIdFromRaw = (raw) => {
+    for (const candidate of rawCandidates(raw)) {
+      const ids = collectExplicitElementIds(candidate);
+      if (ids.length) return ids[0];
+    }
+    return null;
+  };
+
+  const buildCorruptedElementMessage = (issue) => {
+    switch (issue) {
+      case "missing_task_id":
+      case "missing_remote_id":
+      case "remote_id_matches_task_id":
+      case "missing_verified_evidence":
+      case "verified_evidence_mismatch":
+        return "Este Element parece corrupto o no está verificado todavía. Refresca su estado o recréalo.";
+      default:
+        return "Este Element todavía no está listo. Espera o usa Refresh status.";
+    }
+  };
+
+  const assessCustomKlingElementRow = (row) => {
+    const statusDb = String(row?.status || "ready").trim().toLowerCase() || "ready";
+    const storedRemoteId = readExactString(row?.kling_element_id);
+    const taskId = readExactString(row?.kling_task_id);
+    const apiVersion = String(row?.api_version || "").trim().toLowerCase();
+    const referenceType = String(row?.reference_type || "").trim().toLowerCase();
+    const isAdvanced = /advanced/.test(apiVersion) || referenceType === "video_refer" || Boolean(taskId);
+    const verifiedFromRaw = extractVerifiedElementIdFromRaw(row?.kling_raw);
+
+    let issue = null;
+    if (statusDb !== "ready") issue = statusDb === "failed" ? "failed" : "not_ready";
+    else if (!storedRemoteId) issue = "missing_remote_id";
+    else if (isAdvanced && !taskId) issue = "missing_task_id";
+    else if (isAdvanced && storedRemoteId === taskId) issue = "remote_id_matches_task_id";
+    else if (isAdvanced && !verifiedFromRaw) issue = "missing_verified_evidence";
+    else if (isAdvanced && verifiedFromRaw !== storedRemoteId) issue = "verified_evidence_mismatch";
+
+    return {
+      statusDb,
+      storedRemoteId,
+      taskId,
+      verifiedFromRaw,
+      issue,
+      isVerified: !issue && Boolean(storedRemoteId),
+    };
+  };
+
   async function resolveKlingElementList({
     elementRefs,
     ownerId,
@@ -146,7 +243,7 @@ export function createAiVideoRouter(ctx) {
     if (localRefs.length) {
       const { data: rows, error: rowsErr } = await supabaseAdmin
         .from("kling_elements")
-        .select("id, owner_id, kling_element_id, status, status_detail")
+        .select("id, owner_id, kling_element_id, kling_task_id, status, status_detail, api_version, reference_type, kling_raw")
         .in("id", localRefs)
         .eq("owner_id", ownerId);
 
@@ -183,8 +280,20 @@ export function createAiVideoRouter(ctx) {
       }
 
       const row = byId.get(ref);
-      const st = String(row?.status || "ready");
-      if (st !== "ready") {
+      const assessment = assessCustomKlingElementRow(row);
+
+      console.info("[kling-video:resolve-element]", {
+        codePrefix,
+        ownerId,
+        elementUuid: ref,
+        status: row?.status || null,
+        taskId: assessment.taskId,
+        storedRemoteId: assessment.storedRemoteId,
+        verifiedRemoteId: assessment.verifiedFromRaw,
+        issue: assessment.issue,
+      });
+
+      if (assessment.statusDb !== "ready") {
         throw httpError(
           400,
           `${codePrefix}_ELEMENT_NOT_READY`,
@@ -193,17 +302,28 @@ export function createAiVideoRouter(ctx) {
         );
       }
 
-      const rawRemoteId = row?.kling_element_id;
-      if (!rawRemoteId) {
+      if (!assessment.isVerified) {
         throw httpError(
           400,
-          `${codePrefix}_ELEMENT_MISSING_KLING_ID`,
-          "Un Element no tiene kling_element_id guardado (no se puede mandar a Kling).",
-          { elementUuid: ref }
+          `${codePrefix}_ELEMENT_CORRUPTED`,
+          buildCorruptedElementMessage(assessment.issue),
+          {
+            elementUuid: ref,
+            status: row?.status || null,
+            statusDetail: row?.status_detail || null,
+            issue: assessment.issue,
+            klingTaskId: assessment.taskId,
+            storedRemoteId: assessment.storedRemoteId,
+            verifiedRemoteId: assessment.verifiedFromRaw || null,
+          }
         );
       }
 
-      out.push({ element_id: String(rawRemoteId).trim() });
+      out.push({ element_id: String(assessment.storedRemoteId).trim() });
+    }
+
+    if (out.length) {
+      console.info("[kling-video:element-list]", { codePrefix, ownerId, elementList: out });
     }
 
     return out.length ? out : undefined;

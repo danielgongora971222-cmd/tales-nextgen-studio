@@ -36,6 +36,8 @@ const KLING_TAG_LABEL_BY_ID = new Map<KlingElementTagId, string>(
   KLING_ELEMENT_TAG_OPTIONS.map((item) => [item.id, item.label])
 );
 
+export type KlingElementStatus = "creating" | "ready" | "failed" | "deleted" | "corrupted";
+
 export type KlingElement = {
   id: string;
   name: string;
@@ -61,8 +63,13 @@ export type KlingElement = {
 
   klingElementId?: string | null;
 
-  status?: "creating" | "ready" | "failed" | "deleted";
+  status?: KlingElementStatus;
+  rawStatus?: string | null;
   statusDetail?: string | null;
+  verifiedRemoteId?: boolean;
+  canUseInVideoGenerator?: boolean;
+  needsRefresh?: boolean;
+  isCorrupted?: boolean;
   apiVersion?: string | null;
   taskId?: string | null;
   updatedAt?: number | null;
@@ -150,6 +157,91 @@ function mapVoiceInfo(row: any) {
   };
 }
 
+function isPlainObject(value: any): value is Record<string, any> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function readExactString(value: any): string | null {
+  if (value == null) return null;
+  const out = String(value).trim();
+  return out ? out : null;
+}
+
+function collectExplicitElementIds(value: any, out: string[] = [], depth = 0): string[] {
+  if (value == null || depth > 8) return out;
+
+  if (Array.isArray(value)) {
+    for (const item of value) collectExplicitElementIds(item, out, depth + 1);
+    return out;
+  }
+
+  if (!isPlainObject(value)) return out;
+
+  for (const key of ["element_id", "elementId"]) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) {
+      const candidate = readExactString((value as any)[key]);
+      if (candidate && !out.includes(candidate)) out.push(candidate);
+    }
+  }
+
+  for (const nested of Object.values(value)) {
+    if (Array.isArray(nested) || isPlainObject(nested)) {
+      collectExplicitElementIds(nested, out, depth + 1);
+    }
+  }
+
+  return out;
+}
+
+function isKlingRawEnvelope(raw: any) {
+  return (
+    isPlainObject(raw) &&
+    ["create_response", "last_poll_response", "list_response", "requested", "verification", "legacy_response", "diagnostics"].some(
+      (key) => Object.prototype.hasOwnProperty.call(raw, key)
+    )
+  );
+}
+
+function rawCandidates(raw: any): any[] {
+  if (!raw) return [];
+  const out: any[] = [];
+
+  if (isKlingRawEnvelope(raw)) {
+    const verified = readExactString(raw?.verification?.elementId ?? raw?.verification?.element_id);
+    if (verified) out.push({ element_id: verified });
+    out.push(raw?.last_poll_response, raw?.list_response, raw?.create_response, raw?.legacy_response, raw?.raw);
+  } else {
+    out.push(raw);
+  }
+
+  return out.filter(Boolean);
+}
+
+function extractVerifiedElementIdFromRaw(raw: any): string | null {
+  for (const candidate of rawCandidates(raw)) {
+    const found = collectExplicitElementIds(candidate);
+    if (found.length) return found[0];
+  }
+  return null;
+}
+
+export function isKlingElementReadyForVideoGenerator(el: KlingElement | null | undefined): boolean {
+  if (!el) return false;
+  if (el.isPreset || el.source === "preset") {
+    return Boolean(readExactString(el.klingElementId ?? el.remoteElementId));
+  }
+
+  if (typeof el.canUseInVideoGenerator === "boolean") {
+    return el.canUseInVideoGenerator;
+  }
+
+  const remoteId = readExactString(el.klingElementId ?? el.remoteElementId);
+  const taskId = readExactString(el.taskId);
+  const verified = typeof el.verifiedRemoteId === "boolean" ? el.verifiedRemoteId : Boolean(remoteId && taskId && remoteId !== taskId);
+
+  return String(el.status || "").toLowerCase() === "ready" && Boolean(remoteId) && verified;
+}
+
 function mapRowToKlingElement(row: any): KlingElement {
   const createdAt = toTimestamp(row.created_at ?? row.createdAt);
   const updatedAt = toOptionalTimestamp(row.updated_at ?? row.updatedAt);
@@ -159,16 +251,56 @@ function mapRowToKlingElement(row: any): KlingElement {
   const imageUrls = Array.isArray(row.imageUrls ?? row.image_urls)
     ? (row.imageUrls ?? row.image_urls).map(String).filter(Boolean)
     : [];
-  const remoteElementId = row.remoteElementId ?? row.remote_element_id ?? row.klingElementId ?? row.kling_element_id ?? null;
+  const remoteElementId = readExactString(
+    row.remoteElementId ?? row.remote_element_id ?? row.klingElementId ?? row.kling_element_id ?? null
+  );
+  const taskId = readExactString(row.taskId ?? row.kling_task_id ?? null);
+  const source = (row.source ?? "custom") as any;
+  const isPreset = Boolean(row.isPreset ?? row.is_preset ?? (row.source === "preset"));
+  const rawStatus = readExactString(row.rawStatus ?? row.raw_status ?? row.status ?? null);
+  const explicitFromRaw = extractVerifiedElementIdFromRaw(row.klingRaw ?? row.kling_raw ?? row.raw ?? null);
+  const backendVerified = row.verifiedRemoteId ?? row.verified_remote_id ?? row.is_verified ?? null;
+  const backendUsable = row.canUseInVideoGenerator ?? row.can_use_in_video_generator ?? null;
+  const backendCorrupted = row.isCorrupted ?? row.is_corrupted ?? null;
+
+  const verifiedRemoteId = typeof backendVerified === "boolean"
+    ? backendVerified
+    : isPreset
+      ? Boolean(remoteElementId)
+      : Boolean(
+          remoteElementId &&
+            rawStatus === "ready" &&
+            taskId &&
+            remoteElementId !== taskId &&
+            explicitFromRaw &&
+            String(explicitFromRaw) === String(remoteElementId)
+        );
+
+  const isCorrupted = typeof backendCorrupted === "boolean"
+    ? backendCorrupted
+    : String(rawStatus || "").toLowerCase() === "corrupted" ||
+      Boolean(!isPreset && rawStatus === "ready" && remoteElementId && !verifiedRemoteId);
+
+  const status = (isCorrupted ? "corrupted" : (rawStatus ?? "ready")) as KlingElementStatus;
+  const canUseInVideoGenerator = typeof backendUsable === "boolean"
+    ? backendUsable
+    : isPreset
+      ? Boolean(remoteElementId)
+      : status === "ready" && verifiedRemoteId;
+  const needsRefresh = Boolean(
+    row.needsRefresh ??
+      row.needs_refresh ??
+      (!isPreset && (status === "creating" || status === "corrupted" || !canUseInVideoGenerator))
+  );
 
   return {
     id: String(row.id),
     name: String(row.name ?? ""),
 
-    source: (row.source ?? "custom") as any,
-    isPreset: Boolean(row.isPreset ?? row.is_preset ?? (row.source === "preset")),
+    source,
+    isPreset,
     localId: row.localId ?? row.local_id ?? row.id ?? null,
-    remoteElementId: remoteElementId ? String(remoteElementId) : null,
+    remoteElementId,
     ownedBy: row.ownedBy ?? row.owned_by ?? null,
 
     tag,
@@ -179,12 +311,17 @@ function mapRowToKlingElement(row: any): KlingElement {
     voiceId: row.voiceId ?? row.voice_id ?? voiceInfo?.voiceId ?? null,
     voiceInfo,
 
-    klingElementId: remoteElementId ? String(remoteElementId) : null,
+    klingElementId: remoteElementId,
 
-    status: (row.status ?? "ready") as any,
+    status,
+    rawStatus,
     statusDetail: row.statusDetail ?? row.status_detail ?? null,
+    verifiedRemoteId,
+    canUseInVideoGenerator,
+    needsRefresh,
+    isCorrupted,
     apiVersion: row.apiVersion ?? row.api_version ?? null,
-    taskId: row.taskId ?? row.kling_task_id ?? null,
+    taskId,
     updatedAt,
 
     previewType,
@@ -196,7 +333,9 @@ function mapRowToKlingElement(row: any): KlingElement {
 }
 
 function mapRemoteElementToKlingElement(row: any): KlingElement | null {
-  const remoteElementId = row?.remoteElementId ?? row?.remote_element_id ?? row?.element_id ?? row?.elementId ?? row?.id;
+  const remoteElementId = readExactString(
+    row?.remoteElementId ?? row?.remote_element_id ?? row?.element_id ?? row?.elementId ?? null
+  );
   if (!remoteElementId) return null;
 
   const imageList = row?.element_image_list ?? row?.elementImageList ?? {};
@@ -235,8 +374,13 @@ function mapRemoteElementToKlingElement(row: any): KlingElement | null {
     voiceId: voiceInfo?.voiceId ?? null,
     voiceInfo,
     klingElementId: String(remoteElementId),
-    status: (row?.status ?? "ready") as any,
+    status: (row?.status ?? "ready") as KlingElementStatus,
+    rawStatus: row?.rawStatus ?? row?.raw_status ?? row?.status ?? "ready",
     statusDetail: row?.statusDetail ?? row?.status_detail ?? null,
+    verifiedRemoteId: true,
+    canUseInVideoGenerator: true,
+    needsRefresh: false,
+    isCorrupted: false,
     apiVersion: row?.apiVersion ?? row?.api_version ?? "advanced",
     taskId: row?.task_id ?? row?.taskId ?? null,
     updatedAt,
@@ -379,10 +523,16 @@ export async function refreshKlingElementsStatus(opts?: { maxPoll?: number }) {
   invalidateKlingElementsCache();
 
   const first = await listKlingElements();
-  const creating = (first || []).filter((e) => e.status === "creating").slice(0, maxPoll);
+  const pending = (first || [])
+    .filter(
+      (e) =>
+        !e.isPreset &&
+        (e.status === "creating" || e.status === "corrupted" || Boolean(e.needsRefresh) || !isKlingElementReadyForVideoGenerator(e))
+    )
+    .slice(0, maxPoll);
 
-  if (creating.length) {
-    await Promise.allSettled(creating.map((e) => getKlingElementById(e.id)));
+  if (pending.length) {
+    await Promise.allSettled(pending.map((e) => getKlingElementById(e.id)));
   }
 
   invalidateKlingElementsCache();
@@ -417,9 +567,9 @@ async function waitKlingElementReady(id: string, opts?: { timeoutMs?: number; in
   while (Date.now() < deadline) {
     const el = await getKlingElementById(id);
 
-    if (el.status === "ready") return el;
-    if (el.status === "failed") {
-      throw new Error(el.statusDetail || "Kling: falló la creación del Element.");
+    if (el.status === "ready" && isKlingElementReadyForVideoGenerator(el)) return el;
+    if (el.status === "failed" || el.status === "corrupted") {
+      throw new Error(el.statusDetail || "Kling: el Element falló o quedó corrupto y no se puede usar.");
     }
 
     if (typeof el.statusDetail === "string" && el.statusDetail.toLowerCase().startsWith("poll_error:")) {
