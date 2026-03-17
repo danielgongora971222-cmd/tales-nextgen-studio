@@ -9,13 +9,9 @@ import { refreshKlingElementsStatus, type KlingElement } from "../../services/kl
 import { formatErr } from "../../services/videoGenApi";
 import { useGenerationQueue } from "../../contexts/GenerationQueueContext";
 import { FramePickerModal } from "./video/FramePickerModal";
-import { MultishotModal } from "./video/multishotmodal";
-import { MultishotModeModal } from "./video/MultishotModeModal";
 import { LimitedTextarea, KLING_V3_SHOT_PROMPT_LIMIT } from "./video/LimitedTextarea";
 import { KlingElementsModal } from "./video/KlingElementsModal";
 import { HistorySection } from "./video/HistorySection";
-import { FrameStrip } from "./video/FrameStrip";
-import { ControlsRow } from "./video/ControlsRow";
 import { ControlsPopover } from "./video/ControlsPopover";
 import type { KlingShotType } from "../../services/videoModels/types";
 import { estimateVideoCostCredits } from "../../config/pricing.js";
@@ -27,7 +23,6 @@ import {
   DEFAULT_VIDEO_MODEL,
   getVideoModelHandler,
   normalizeModelId,
-  prettyVideoModelLabel,
   coerceAspectRatioForModel,
   coerceModelForLastFrame,
   coerceResolutionForModel,
@@ -262,13 +257,26 @@ function coerceShotType(v: any): KlingShotType {
   return s === "intelligence" || s === "intelligent" ? "intelligence" : "customize";
 }
 
-function coerceShots(v: any) {
+function getVideoModelDisplayLabel(modelId: string) {
+  const m = normalizeModelId(modelId);
+  if (m === VEO_3) return "Veo 3 Quality";
+  if (m === VEO_3_FAST) return "Veo 3 Fast";
+  if (m === VEO_3_1) return "Veo 3.1 Quality";
+  if (m === VEO_3_1_FAST) return "Veo 3.1 Fast";
+  if (m === KLING_2_5_TURBO) return "Kling 2.5 Turbo";
+  if (m === KLING_2_6) return "Kling 2.6";
+  if (m === KLING_V3) return "Kling 3.0";
+  if (m === KLING_O3_PRO) return "Kling O3 Pro";
+  return m || "—";
+}
+
+function coerceShots(v: any, maxShots = 10) {
   const arr = Array.isArray(v) ? v : [];
 
   const cleaned = arr
     .map((x) => {
       const prompt = typeof x?.prompt === "string" ? x.prompt : "";
-      const durationSeconds = Math.max(1, Math.min(15, Math.trunc(Number(x?.durationSeconds) || 1)));
+      const durationSeconds = Math.max(3, Math.min(15, Math.trunc(Number(x?.durationSeconds) || 3)));
 
       const elementIdsRaw = Array.isArray(x?.elementIds) ? x.elementIds : [];
       const elementIds = elementIdsRaw
@@ -277,10 +285,9 @@ function coerceShots(v: any) {
 
       return { prompt, durationSeconds, elementIds };
     })
-    .slice(0, 6);
+    .slice(0, maxShots);
 
-  // mínimo 1 shot para no romper UI
-  if (cleaned.length === 0) return [{ prompt: "", durationSeconds: 1, elementIds: [] }];
+  if (cleaned.length === 0) return [{ prompt: "", durationSeconds: 3, elementIds: [] }];
   return cleaned;
 }
 
@@ -371,13 +378,10 @@ const VideoGeneratorTool: React.FC = () => {
   }, []);
 
   const [multishotEnabled, setMultishotEnabled] = useState(false);
-  const [multishotOpen, setMultishotOpen] = useState(false);
-  const [multishotModeOpen, setMultishotModeOpen] = useState(false);
   const [klingShots, setKlingShots] = useState<KlingV3Shot[]>([
-    { prompt: "", durationSeconds: 4, elementIds: [] },
-    { prompt: "", durationSeconds: 4, elementIds: [] },
+    { prompt: "", durationSeconds: 3, elementIds: [] },
   ]);
-  const [klingShotType, setKlingShotType] = useState<KlingShotType>("customize");
+  const [klingShotType, setKlingShotType] = useState<KlingShotType>("intelligence");
 
   // V3 extra params
   const [negativePrompt, setNegativePrompt] = useState("");
@@ -676,11 +680,16 @@ const VideoGeneratorTool: React.FC = () => {
 
   const isKling = modelNorm.startsWith("kling-");
   const isKlingV2 = modelNorm === KLING_2_5_TURBO || modelNorm === KLING_2_6;
+  const isKlingV3Core = modelNorm === KLING_V3;
 
   // ✅ Kling O3 se comporta como “V3 family” en UI (Elements + Multishot)
   const isKlingO3 = modelNorm === KLING_O3_PRO;
-  const isKlingV3 = modelNorm === KLING_V3 || isKlingO3;
-  const lastFrameBlockedByMultishot = isKlingV3 && multishotEnabled;
+  const isKlingV3 = isKlingV3Core || isKlingO3;
+  const supportsMultishotUi = isKlingV3;
+  const supportsMultishotIntelligence = isKlingV3Core;
+  const supportsElementsPlaceholder = isKlingV3;
+  const maxMultishotShots = isKlingO3 ? 10 : isKlingV3Core ? 6 : 0;
+  const lastFrameBlockedByMultishot = supportsMultishotUi && multishotEnabled;
 
   const maxKlingElements = isKlingV3 ? (hasFirst ? 3 : 5) : 0;
 
@@ -691,7 +700,7 @@ const VideoGeneratorTool: React.FC = () => {
   // - El usuario escribe tags tipo @mi_elemento (slug del nombre).
   // - Antes de enviar al modelo, los convertimos a @Element1, @Element2...
   // ===============================
-  const isKlingV3ElementsUI = (isKlingV3 || isKlingO3) && VIDEO_ELEMENTS_UI_ENABLED;
+  const isKlingV3ElementsUI = isKlingV3 && VIDEO_ELEMENTS_UI_ENABLED;
 
   const elementTokenById = useMemo(
     () => (isKlingV3ElementsUI ? buildElementTokenMap(klingElements) : new Map<string, string>()),
@@ -849,6 +858,57 @@ const elementMentionItems = useMemo<MentionItem[]>(() => {
     () => handler.getSupportedResolutions({ modelNorm }),
     [handler, modelNorm]
   );
+
+  useEffect(() => {
+    if (count === 1) return;
+    setCount(1);
+  }, [count]);
+
+  useEffect(() => {
+    if (capability.supportsSound) return;
+    if (!klingSound && !klingSoundTouched) return;
+    setKlingSound(false);
+    setKlingSoundTouched(false);
+  }, [capability.supportsSound, klingSound, klingSoundTouched]);
+
+  useEffect(() => {
+    if (supportsMultishotUi) return;
+    if (!multishotEnabled && klingShotType === "intelligence") return;
+    setMultishotEnabled(false);
+    setKlingShotType("intelligence");
+  }, [supportsMultishotUi, multishotEnabled, klingShotType]);
+
+  useEffect(() => {
+    if (!multishotEnabled) return;
+    if (!isKlingO3) return;
+    if (klingShotType === "customize") return;
+    setKlingShotType("customize");
+  }, [isKlingO3, multishotEnabled, klingShotType]);
+
+  useEffect(() => {
+    if (panel !== "duration") return;
+    if (!multishotEnabled || klingShotType !== "customize") return;
+    setPanel(null);
+  }, [panel, multishotEnabled, klingShotType]);
+
+  useEffect(() => {
+    if (!supportsMultishotUi || maxMultishotShots <= 0) return;
+    setKlingShots((prev) => {
+      const next = coerceShots(prev, maxMultishotShots).map((shot) => ({
+        ...shot,
+        durationSeconds: clampInt(shot.durationSeconds, 3, 15, 3),
+      }));
+      const same =
+        next.length === prev.length &&
+        next.every(
+          (shot, idx) =>
+            shot.prompt === prev[idx]?.prompt &&
+            shot.durationSeconds === prev[idx]?.durationSeconds &&
+            JSON.stringify(shot.elementIds || []) === JSON.stringify(prev[idx]?.elementIds || [])
+        );
+      return same ? prev : next;
+    });
+  }, [supportsMultishotUi, maxMultishotShots]);
 
   useEffect(() => {
     const next = coerceResolutionForModel(modelNorm, capability, resolution);
@@ -1163,25 +1223,28 @@ useEffect(() => {
     reloadVideosForElements();
   }, [isKlingV3, elementsOpen]);
 
-  const modelLabel = useMemo(() => prettyVideoModelLabel(modelNorm), [modelNorm]);
+  const modelLabel = useMemo(() => getVideoModelDisplayLabel(modelNorm), [modelNorm]);
 
-  const paramsLabel = useMemo(() => {
-    const ar = capability.supportsAspectRatio ? aspectRatio : "Auto";
-    const resLabel = capability.supportsResolution ? resolution : "Auto";
-    return `${ar} • ${resLabel} • x${count}`;
-  }, [aspectRatio, capability.supportsAspectRatio, capability.supportsResolution, count, resolution]);
+  const aspectSelectorLabel = useMemo(() => {
+    if (!capability.supportsAspectRatio) return "Auto";
+    return aspectRatio;
+  }, [capability.supportsAspectRatio, aspectRatio]);
 
-  
+  const resolutionSelectorLabel = useMemo(() => {
+    if (isKlingApi) return klingMode === "pro" ? "1080p" : "720p";
+    if (!capability.supportsResolution) return "Auto";
+    return resolution;
+  }, [isKlingApi, klingMode, capability.supportsResolution, resolution]);
 
-const isMultishotCustomize = isKlingV3 && multishotEnabled && klingShotType === "customize";
-const isMultishotIntelligence = isKlingV3 && multishotEnabled && klingShotType === "intelligence";
+const isMultishotCustomize = supportsMultishotUi && multishotEnabled && klingShotType === "customize";
+const isMultishotIntelligence = supportsMultishotUi && multishotEnabled && klingShotType === "intelligence";
 
 const multishotValidShots = useMemo(() => {
   if (!isMultishotCustomize) return [];
   return klingShots
     .map((s) => ({
       prompt: (s.prompt || "").trim(),
-      durationSeconds: clampInt(s.durationSeconds, 1, 15, 1),
+      durationSeconds: clampInt(s.durationSeconds, 3, 15, 3),
     }))
     .filter((s) => s.prompt.length > 0);
 }, [isMultishotCustomize, klingShots]);
@@ -1200,17 +1263,14 @@ const estimatedCostCredits = useMemo(() => {
     generateAudio: klingSound,
     klingMode,
     voiceControl: klingVoiceIdsText.trim().length > 0,
-    count,
+    count: 1,
   });
-}, [modelNorm, durationSeconds, isMultishotCustomize, multishotTotalSeconds, resolution, klingSound, klingMode, klingVoiceIdsText, count]);
+}, [modelNorm, durationSeconds, isMultishotCustomize, multishotTotalSeconds, resolution, klingSound, klingMode, klingVoiceIdsText]);
 
 useEffect(() => {
   if (!isMultishotCustomize) return;
 
-  // En customize, la duración final debe seguir la suma de shots
-  // (esto también evita que el botón GENERATE quede bloqueado por mismatch)
   if (Number.isFinite(multishotTotalSeconds) && multishotTotalSeconds > 0) {
-    // Kling V3 normalmente trabaja 3–15s de duración total
     const synced = clampInt(multishotTotalSeconds, 3, 15, 8);
     if (synced !== durationSeconds) setDurationSeconds(synced);
   }
@@ -1222,44 +1282,29 @@ const multishotHasOverLimitPrompt = useMemo(() => {
 }, [isMultishotCustomize, klingShots]);
 
 const multishotIsReady = useMemo(() => {
-  if (!isKlingV3 || !multishotEnabled) return true;
+  if (!supportsMultishotUi || !multishotEnabled) return true;
 
-  // ✅ Intelligence: prompt único (NO storyboard)
   if (isMultishotIntelligence) {
     return prompt.trim().length > 0;
   }
 
-  // ✅ Customize: storyboard + hardening
-  if (multishotValidShots.length < 2) return false;
+  if (multishotValidShots.length < 1) return false;
   if (multishotHasOverLimitPrompt) return false;
   if (multishotTotalSeconds < 3 || multishotTotalSeconds > 15) return false;
   return true;
 }, [
-  isKlingV3,
+  supportsMultishotUi,
   multishotEnabled,
   isMultishotIntelligence,
   prompt,
   multishotValidShots.length,
   multishotHasOverLimitPrompt,
   multishotTotalSeconds,
-  durationSeconds,
 ]);
-
-const multishotBadgeLabel = useMemo(() => {
-  if (!isKlingV3 || !multishotEnabled) return "";
-  if (isMultishotIntelligence) return "Multishot: intelligence";
-  return `Multishot: ${multishotTotalSeconds || 0}s`;
-}, [isKlingV3, multishotEnabled, isMultishotIntelligence, multishotTotalSeconds]);
-
-const multishotMetaLabel = useMemo(() => {
-  if (!multishotEnabled) return "Off";
-  if (isMultishotIntelligence) return "Intelligence";
-  return `${multishotTotalSeconds || 0}s`;
-}, [multishotEnabled, isMultishotIntelligence, multishotTotalSeconds]);
 
 const durationLabel = useMemo(() => {
   if (isMultishotCustomize) {
-    return `${multishotTotalSeconds || 0}s (multishot)`;
+    return `${multishotTotalSeconds || 0}s`;
   }
   return `${durationSeconds}s`;
 }, [durationSeconds, isMultishotCustomize, multishotTotalSeconds]);
@@ -1548,7 +1593,7 @@ const durationLabel = useMemo(() => {
         tool: TOOL_ID,
         nameHint: "video",
 
-        count,
+        count: 1,
         durationSeconds,
         aspectRatio,
         resolution,
@@ -1743,6 +1788,67 @@ const clearModalSelectedIds = () => {
     }
   };
 
+  const canShowComposerActions = !isMultishotCustomize && (capability.supportsSound || supportsElementsPlaceholder);
+
+  const toggleMultishot = () => {
+    if (!supportsMultishotUi) return;
+    setPanel(null);
+    if (multishotEnabled) {
+      setMultishotEnabled(false);
+      return;
+    }
+    setMultishotEnabled(true);
+    setKlingShotType(supportsMultishotIntelligence ? "intelligence" : "customize");
+  };
+
+  const selectMultishotMode = (mode: KlingShotType) => {
+    if (!supportsMultishotUi) return;
+    if (mode === "intelligence" && !supportsMultishotIntelligence) return;
+    setPanel(null);
+    setMultishotEnabled(true);
+    setKlingShotType(mode);
+  };
+
+  const handleShotPromptChange = (index: number, nextPrompt: string) => {
+    setKlingShots((prev) =>
+      prev.map((shot, shotIndex) => (shotIndex === index ? { ...shot, prompt: nextPrompt } : shot))
+    );
+  };
+
+  const handleShotDurationChange = (index: number, value: number) => {
+    const nextDuration = clampInt(value, 3, 15, 3);
+    setKlingShots((prev) =>
+      prev.map((shot, shotIndex) =>
+        shotIndex === index ? { ...shot, durationSeconds: nextDuration } : shot
+      )
+    );
+  };
+
+  const handleAddShot = () => {
+    if (!supportsMultishotUi || maxMultishotShots <= 0) return;
+    setKlingShots((prev) => {
+      if (prev.length >= maxMultishotShots) return prev;
+      return [...prev, { prompt: "", durationSeconds: 3, elementIds: [] }];
+    });
+  };
+
+  const handleRemoveShot = (index: number) => {
+    setKlingShots((prev) => {
+      if (prev.length <= 1) return prev;
+      return prev.filter((_, shotIndex) => shotIndex !== index);
+    });
+  };
+
+  const modelSelectorLabel = modelLabel;
+  const durationSelectorLabel = durationLabel;
+  const showDurationSelector = !isMultishotCustomize;
+  const firstFramePreviewUrl = firstFrame ? getAssetUrl(firstFrame) : null;
+  const lastFramePreviewUrl = lastFrame ? getAssetUrl(lastFrame) : null;
+  const generateDisabled =
+    isGenerating ||
+    queueActiveCount >= queueMaxActive ||
+    (supportsMultishotUi && multishotEnabled ? !multishotIsReady : !prompt.trim());
+
   return (
     <div
       ref={rootRef}
@@ -1814,7 +1920,6 @@ const clearModalSelectedIds = () => {
                   popoverRef={popoverRef}
                   model={model}
                   setModel={setModel}
-                  veoIsFast={veoIsFast}
                   capability={capability}
                   hasFirst={hasFirst}
                   aspectRatio={aspectRatio}
@@ -1822,26 +1927,9 @@ const clearModalSelectedIds = () => {
                   supportedResolutions={supportedResolutions}
                   resolution={resolution}
                   setResolution={setResolution}
-                  count={count}
-                  setCount={setCount}
                   isKling={isKling}
-                  isKlingV3={isKlingV3}
                   klingMode={klingMode}
                   setKlingMode={setKlingMode}
-                  klingSound={klingSound}
-                  setKlingSound={setKlingSound}
-                  setKlingSoundTouched={setKlingSoundTouched}
-                  klingShotType={klingShotType}
-                  setKlingShotType={setKlingShotType}
-                  negativePrompt={negativePrompt}
-                  setNegativePrompt={setNegativePrompt}
-                  klingCfgScale={klingCfgScale}
-                  setKlingCfgScale={setKlingCfgScale}
-                  klingVoiceIdsText={klingVoiceIdsText}
-                  setKlingVoiceIdsText={setKlingVoiceIdsText}
-                  multishotEnabled={multishotEnabled}
-                  multishotTotalSeconds={multishotTotalSeconds}
-                  setMultishotOpen={setMultishotOpen}
                   allowedDurations={allowedDurations}
                   durationSeconds={durationSeconds}
                   setDurationSeconds={setDurationSeconds}
@@ -1854,203 +1942,309 @@ const clearModalSelectedIds = () => {
             <div className={styles.cookSidebarShell}>
               <div className={styles.cookSidebar}>
                 <div className={`${styles.dock} ${styles.cookSectionCard} ${styles.cookPromptCard}`}>
-          <FrameStrip
-            firstFrame={firstFrame}
-            lastFrame={lastFrame}
-            hasFirst={hasFirst}
-            lastDisabled={lastFrameBlockedByMultishot}
-            lastDisabledReason="LAST frame bloqueado mientras Multishot está activo"
-            openPicker={openPicker}
-            clearFrame={clearFrame}
-            swapFrames={swapFrames}
-          />
+                  <div className={styles.videoCreateFrameRow}>
+                    <button
+                      type="button"
+                      className={`${styles.videoCreateFrameCard} ${hasFirst ? styles.videoCreateFrameCardFilled : ""}`}
+                      onClick={() => openPicker("first")}
+                    >
+                      <span className={styles.videoCreateFrameBadge}>Optional</span>
+                      {firstFramePreviewUrl && (
+                        <img
+                          src={firstFramePreviewUrl}
+                          alt={firstFrame?.name || "Start frame"}
+                          className={styles.videoCreateFramePreview}
+                        />
+                      )}
+                      <span className={styles.videoCreateFrameShade} aria-hidden="true" />
+                      <span className={styles.videoCreateFrameIconOrb} aria-hidden="true">
+                        <Icon name="image" />
+                      </span>
+                      <span className={styles.videoCreateFrameLabel}>Start frame</span>
+                    </button>
 
-          <div className={`${styles.promptRow} ${styles.cookPromptRow}`}>
-            <div className={`${styles.promptInputWrap} ${styles.cookPromptInputWrap}`}>
-              <div className={`${styles.promptEditor} ${styles.cookPromptEditor}`}>
-                {((VIDEO_ELEMENTS_UI_ENABLED && selectedKlingElementIds.length > 0) || (isKlingV3 && multishotEnabled)) && (
-                  <div className={styles.promptTags}>
-                    {VIDEO_ELEMENTS_UI_ENABLED && selectedKlingElementIds.length > 0 && (
-                      <button
-                        type="button"
-                        className={styles.promptTag}
-                        onClick={() => setSelectedKlingElementIds([])}
-                        title="Click para limpiar selección"
-                      >
-                        Selección: {selectedKlingElementIds.length}
-                        <span className={styles.promptTagRemove}>×</span>
-                      </button>
-                    )}
-
-                    {isKlingV3 && multishotEnabled && (
-                      <button
-                        type="button"
-                        className={styles.promptTag}
-                        onClick={() => {
-                          if (klingShotType === "customize") {
-                            setMultishotOpen(true);
-                            return;
-                          }
-                        }}
-                        title={klingShotType === "customize" ? "Abrir Multishot" : "Multishot activo"}
-                      >
-                        {multishotBadgeLabel}
-                        <span
-                          className={styles.promptTagRemove}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setMultishotEnabled(false);
-                            setMultishotOpen(false);
-                            setMultishotModeOpen(false);
-                          }}
-                        >
-                          ×
-                        </span>
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      className={`${styles.videoCreateFrameCard} ${hasLast ? styles.videoCreateFrameCardFilled : ""} ${
+                        !hasFirst || lastFrameBlockedByMultishot ? styles.videoCreateFrameCardDisabled : ""
+                      }`}
+                      onClick={() => openPicker("last")}
+                      disabled={!hasFirst || lastFrameBlockedByMultishot}
+                      title={
+                        !hasFirst
+                          ? "End frame disponible después de seleccionar Start frame"
+                          : lastFrameBlockedByMultishot
+                            ? "End frame bloqueado mientras Multi-shot está activo"
+                            : "Seleccionar End frame"
+                      }
+                    >
+                      <span className={styles.videoCreateFrameBadge}>Optional</span>
+                      {lastFramePreviewUrl && (
+                        <img
+                          src={lastFramePreviewUrl}
+                          alt={lastFrame?.name || "End frame"}
+                          className={styles.videoCreateFramePreview}
+                        />
+                      )}
+                      <span className={styles.videoCreateFrameShade} aria-hidden="true" />
+                      <span className={styles.videoCreateFrameIconOrb} aria-hidden="true">
+                        <Icon name="image" />
+                      </span>
+                      <span className={styles.videoCreateFrameLabel}>End frame</span>
+                    </button>
                   </div>
-                )}
 
-                    {isMultishotCustomize ? (
-                      <div className={styles.multishotInline}>
-                        <div className={styles.multishotTop}>
-                          <div>
-                            <div className={styles.multishotTitle}>
-                              <Icon name="multishot" />
-                              <span>Multishot • customize</span>
-                            </div>
-                            <div className={styles.multishotMeta}>
-                              {klingShots.length} shots · {multishotTotalSeconds || 0}s
-                            </div>
+                  <div className={styles.videoComposerCard}>
+                    {supportsMultishotUi && (
+                      <>
+                        <div className={styles.videoComposerHeader}>
+                          <div className={styles.videoComposerTitleWrap}>
+                            <span className={styles.videoComposerTitle}>Multi-shot</span>
+                            <span className={styles.videoComposerInfo} aria-hidden="true">
+                              i
+                            </span>
                           </div>
 
-                          <div className={styles.multishotTopActions}>
-                            <button
-                              type="button"
-                              className={styles.multishotAddBtn}
-                              onClick={() => setMultishotOpen(true)}
-                            >
-                              Edit
-                            </button>
-
-                            <button
-                              type="button"
-                              className={styles.multishotExpandBtn}
-                              onClick={() => {
-                                setMultishotEnabled(false);
-                                setMultishotOpen(false);
-                                setMultishotModeOpen(false);
-                              }}
-                              title="Desactivar Multishot"
-                            >
-                              <Icon name="close" />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                  ) : (
-                    <>
-                      <MentionTextarea
-                        value={prompt}
-                        onChange={setPrompt}
-                        placeholder="Describe el video… (ej: cinematic neon city, rain, slow dolly in, high detail)"
-                        rows={2}
-                        textareaClassName={styles.prompt}
-                        items={isKlingV3ElementsUI ? elementMentionItems : []}
-                        onSelectItem={(it) => {
-                          if (!isKlingV3ElementsUI) return true;
-                          if (it.kind !== "element") return true;
-
-                          let allowed = true;
-                          setSelectedKlingElementIds((prev) => {
-                            if (prev.includes(it.id)) return prev;
-                            if (prev.length >= 5) {
-                              allowed = false;
-                              return prev;
-                            }
-                            return [...prev, it.id];
-                          });
-
-                          if (!allowed) {
-                            setError("No puedes usar más de 5 Elements a la vez. Elimina alguno del prompt.");
-                          }
-                          return allowed;
-                        }}
-                      />
-
-                    </>
-                  )}
-              </div>
-            </div>
-
-            <div className={`${styles.generateCol} ${styles.cookGenerateCol}`}>
                           <button
                             type="button"
-                            className={`${styles.generateBtn} ${styles.cookGenerateBtn}`}
-                            disabled={(queueActiveCount >= queueMaxActive) || (isKlingV3 && multishotEnabled ? !multishotIsReady : !prompt.trim())}
-                            onClick={handleGenerate}
-                            data-loading={isGenerating ? "true" : "false"}
+                            className={`${styles.videoSwitch} ${multishotEnabled ? styles.videoSwitchActive : ""}`}
+                            onClick={toggleMultishot}
+                            aria-pressed={multishotEnabled}
+                            aria-label={multishotEnabled ? "Desactivar Multi-shot" : "Activar Multi-shot"}
                           >
-                            <span className={styles.generateLabel}>{isGenerating ? "GENERATING" : "GENERATE"}</span>
-                            {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
+                            <span className={styles.videoSwitchThumb} />
                           </button>
-
-                          <div style={{ marginTop: 8, fontSize: 12, color: "rgba(255,255,255,0.65)", textAlign: "center" }}>
-                            Coste estimado: <b>{estimatedCostCredits}</b> créditos
-                          </div>
-
-                          {isGenerating && (
-                            <button type="button" className={styles.cancelBtn} onClick={handleCancel}>
-                              CANCEL
-                            </button>
-                          )}
-
-                          {isGenerating && progressText && (
-                            <div className={styles.progressText}>{progressText}</div>
-                          )}
                         </div>
-          </div>
 
+                        {multishotEnabled && (
+                          <div className={styles.videoModeTabs}>
+                            {supportsMultishotIntelligence && (
+                              <button
+                                type="button"
+                                className={`${styles.videoModeTab} ${
+                                  isMultishotIntelligence ? styles.videoModeTabActive : ""
+                                }`}
+                                onClick={() => selectMultishotMode("intelligence")}
+                              >
+                                Intelligence
+                              </button>
+                            )}
 
-        {/* Controls */}
-        <div className={styles.controlsArea}>
-          <ControlsRow
-            panel={panel}
-            setPanel={setPanel}
-            modelLabel={modelLabel}
-            paramsLabel={paramsLabel}
-            durationLabel={durationLabel}
-            isVeoFamily={isVeoFamily}
-            veoSpeedLabel={veoSpeedLabel}
-            toggleVeoSpeed={toggleVeoSpeed}
-            isKlingApi={isKlingApi}
-            klingMode={klingMode}
-            toggleKlingMode={toggleKlingMode}
-            supportsSound={capability.supportsSound}
-            klingSound={klingSound}
-            toggleSound={toggleSound}
-            isKlingV3={isKlingV3}
-            elementsEnabled={VIDEO_ELEMENTS_UI_ENABLED}
-            selectedKlingElementCount={VIDEO_ELEMENTS_UI_ENABLED ? selectedKlingElementIds.length : 0}
-            openElements={() => {
-              if (!VIDEO_ELEMENTS_UI_ENABLED) return;
-              openElementsForShot(multishotEnabled && klingShotType === "customize" ? 0 : null);
-            }}
-            multishotEnabled={multishotEnabled}
-            onMultishotClick={() => {
-              if (multishotEnabled) {
-                setMultishotEnabled(false);
-                setMultishotOpen(false);
-                setMultishotModeOpen(false);
-                return;
-              }
-              setMultishotModeOpen(true);
-            }}
-            multishotMetaLabel={multishotMetaLabel}
-          />
+                            <button
+                              type="button"
+                              className={`${styles.videoModeTab} ${isMultishotCustomize ? styles.videoModeTabActive : ""} ${
+                                !supportsMultishotIntelligence ? styles.videoModeTabSingle : ""
+                              }`}
+                              onClick={() => selectMultishotMode("customize")}
+                            >
+                              Customize
+                            </button>
+                          </div>
+                        )}
 
+                        <div className={styles.videoComposerDivider} />
+                      </>
+                    )}
 
-                </div>
+                    {isMultishotCustomize ? (
+                      <>
+                        <div className={styles.videoShotList}>
+                          {klingShots.map((shot, shotIndex) => (
+                            <div key={`shot-${shotIndex}`} className={styles.videoShotCard}>
+                              <div className={styles.videoShotHeader}>
+                                <div className={styles.videoShotTitle}>Shot {shotIndex + 1}</div>
+                                {klingShots.length > 1 && (
+                                  <button
+                                    type="button"
+                                    className={styles.videoShotRemove}
+                                    onClick={() => handleRemoveShot(shotIndex)}
+                                    aria-label={`Eliminar Shot ${shotIndex + 1}`}
+                                  >
+                                    <Icon name="close" />
+                                  </button>
+                                )}
+                              </div>
+
+                              <LimitedTextarea
+                                value={shot.prompt}
+                                onChange={(nextPrompt) => handleShotPromptChange(shotIndex, nextPrompt)}
+                                placeholder="Describe the first scene you imagine, with details."
+                                rows={4}
+                                surfaceClassName={styles.videoShotPromptSurface}
+                              />
+
+                              <div className={styles.videoShotFooter}>
+                                <div className={styles.videoShotDurationChip}>
+                                  <Icon name="clock" />
+                                  <input
+                                    type="number"
+                                    min={3}
+                                    max={15}
+                                    step={1}
+                                    value={shot.durationSeconds}
+                                    onChange={(e) => handleShotDurationChange(shotIndex, Number(e.target.value))}
+                                    className={styles.videoShotDurationInput}
+                                    aria-label={`Duración del Shot ${shotIndex + 1}`}
+                                  />
+                                  <span className={styles.videoShotDurationSuffix}>s</span>
+                                </div>
+
+                                {supportsElementsPlaceholder && (
+                                  <button
+                                    type="button"
+                                    className={`${styles.videoActionBtn} ${styles.videoActionBtnMuted}`}
+                                    disabled
+                                    title="Reactivación pendiente próximamente"
+                                  >
+                                    <Icon name="elements" />
+                                    <span>Reactivación pendiente próximamente</span>
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        {klingShots.length < maxMultishotShots && (
+                          <div className={styles.videoAddShotWrap}>
+                            <button type="button" className={styles.videoAddShotButton} onClick={handleAddShot}>
+                              + Add shot
+                            </button>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <div className={styles.videoPromptSurface}>
+                          <MentionTextarea
+                            value={prompt}
+                            onChange={setPrompt}
+                            placeholder='Describe your video, like "A woman walking through a neon-lit city". Add elements using @'
+                            rows={4}
+                            textareaClassName={styles.videoPromptTextarea}
+                            items={isKlingV3ElementsUI ? elementMentionItems : []}
+                            onSelectItem={(it) => {
+                              if (!isKlingV3ElementsUI) return true;
+                              if (it.kind !== "element") return true;
+
+                              let allowed = true;
+                              setSelectedKlingElementIds((prev) => {
+                                if (prev.includes(it.id)) return prev;
+                                if (prev.length >= 5) {
+                                  allowed = false;
+                                  return prev;
+                                }
+                                return [...prev, it.id];
+                              });
+
+                              if (!allowed) {
+                                setError("No puedes usar más de 5 Elements a la vez. Elimina alguno del prompt.");
+                              }
+                              return allowed;
+                            }}
+                          />
+                        </div>
+
+                        {canShowComposerActions && (
+                          <div className={styles.videoPromptFooter}>
+                            {capability.supportsSound && (
+                              <button
+                                type="button"
+                                className={`${styles.videoActionBtn} ${klingSound ? styles.videoActionBtnActive : ""}`}
+                                onClick={toggleSound}
+                                aria-pressed={klingSound}
+                              >
+                                <Icon name="sound" />
+                                <span>{klingSound ? "On" : "Off"}</span>
+                              </button>
+                            )}
+
+                            {supportsElementsPlaceholder && (
+                              <button
+                                type="button"
+                                className={`${styles.videoActionBtn} ${styles.videoActionBtnMuted}`}
+                                disabled
+                                title="Reactivación pendiente próximamente"
+                              >
+                                <Icon name="elements" />
+                                <span>Reactivación pendiente próximamente</span>
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+
+                  <div className={styles.videoSelectorsStack}>
+                    <button
+                      type="button"
+                      className={`${styles.videoSelectorButton} ${panel === "model" ? styles.videoSelectorButtonActive : ""}`}
+                      onClick={() => setPanel("model")}
+                    >
+                      <span className={styles.videoSelectorTopLabel}>Model</span>
+                      <span className={styles.videoSelectorValueRow}>
+                        <span>{modelSelectorLabel}</span>
+                        <span className={styles.videoSelectorChevron} aria-hidden="true">
+                          ›
+                        </span>
+                      </span>
+                    </button>
+
+                    <div className={`${styles.videoQuickGrid} ${!showDurationSelector ? styles.videoQuickGridCompact : ""}`}>
+                      {showDurationSelector && (
+                        <button
+                          type="button"
+                          className={`${styles.videoQuickButton} ${panel === "duration" ? styles.videoSelectorButtonActive : ""}`}
+                          onClick={() => setPanel("duration")}
+                        >
+                          <Icon name="clock" />
+                          <span>{durationSelectorLabel}</span>
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        className={`${styles.videoQuickButton} ${panel === "parameters" ? styles.videoSelectorButtonActive : ""}`}
+                        onClick={() => setPanel("parameters")}
+                      >
+                        <Icon name="image" />
+                        <span>{aspectSelectorLabel}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        className={`${styles.videoQuickButton} ${panel === "parameters" ? styles.videoSelectorButtonActive : ""}`}
+                        onClick={() => setPanel("parameters")}
+                      >
+                        <Icon name="mode" />
+                        <span>{resolutionSelectorLabel}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className={styles.videoGenerateWrap}>
+                    <button
+                      type="button"
+                      className={styles.videoGenerateButton}
+                      disabled={generateDisabled}
+                      onClick={handleGenerate}
+                      data-loading={isGenerating ? "true" : "false"}
+                    >
+                      <span className={styles.videoGenerateLabelRow}>
+                        <span>{isGenerating ? "Generating" : `Generate ✦ ${estimatedCostCredits}`}</span>
+                        {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
+                      </span>
+                    </button>
+
+                    {isGenerating && (
+                      <button type="button" className={styles.cancelBtn} onClick={handleCancel}>
+                        Cancel
+                      </button>
+                    )}
+
+                    {isGenerating && progressText && <div className={styles.progressText}>{progressText}</div>}
+                  </div>
                 </div>
               </div>
             </div>
@@ -2084,41 +2278,6 @@ const clearModalSelectedIds = () => {
         onUpload={(file) => handleUploadForSlot(pickerSlot, file)}
         hasFirst={hasFirst}
         getAssetUrl={getAssetUrl}
-      />
-
-      <MultishotModeModal
-        open={multishotModeOpen}
-        title="Multishot"
-        intelligenceText="Usa un único prompt y Kling divide los planos automáticamente."
-        customizeText="Abre el editor shot-by-shot para controlar cada plano."
-        customizeHint="Ajusta parámetros antes de entrar si lo necesitas."
-        onClose={() => setMultishotModeOpen(false)}
-        onChooseIntelligence={() => {
-          setKlingShotType("intelligence");
-          setMultishotEnabled(true);
-          setMultishotModeOpen(false);
-          setMultishotOpen(false);
-        }}
-        onChooseCustomize={() => {
-          setKlingShotType("customize");
-          setMultishotEnabled(true);
-          setMultishotModeOpen(false);
-          setMultishotOpen(true);
-        }}
-      />
-
-      <MultishotModal
-        open={multishotOpen && klingShotType === "customize"}
-        onClose={() => setMultishotOpen(false)}
-        shots={klingShots}
-        setShots={setKlingShots}
-        totalSeconds={multishotTotalSeconds}
-        durationSeconds={durationSeconds}
-        generateDisabled={isGenerating || !multishotIsReady || (queueActiveCount >= queueMaxActive)}
-        onGenerate={() => {
-          setMultishotOpen(false);
-          handleGenerate();
-        }}
       />
 
       {VIDEO_ELEMENTS_UI_ENABLED && (
