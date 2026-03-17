@@ -2424,7 +2424,7 @@ const isKling = selectedModelNorm.startsWith("kling-");
 
   // --- PASTE END ---
   // ===============================
-  // KLING Motion Control (2.6 + V3)
+  // KLING Motion Control (2.6 + V3 direct)
   // ===============================
   router.post("/ai/video/motion-control", async (req, res, next) => {
     try {
@@ -2479,7 +2479,7 @@ const isKling = selectedModelNorm.startsWith("kling-");
         }
       }
 
-      if (requestedModel !== "kling-v3-motion-control" && asyncMode) {
+      if (asyncMode) {
         const blocked = await enforceKlingParallelLimit(res, user.id);
         if (blocked) return;
       }
@@ -2529,7 +2529,7 @@ const isKling = selectedModelNorm.startsWith("kling-");
 
       const meta = {
         tool: toolName,
-        provider: requestedModel === "kling-v3-motion-control" ? "fal" : "kling",
+        provider: "kling",
         model: pricingModelNorm,
         motionControl: {
           imageAssetId: body.imageAssetId,
@@ -2541,58 +2541,8 @@ const isKling = selectedModelNorm.startsWith("kling-");
         },
       };
 
-      if (requestedModel === "kling-v3-motion-control") {
-        const endpointId =
-          mode === "pro"
-            ? "fal-ai/kling-video/v3/pro/motion-control"
-            : "fal-ai/kling-video/v3/standard/motion-control";
-
-        const falInput = {
-          ...(prompt ? { prompt } : {}),
-          image_url: imageUrl,
-          video_url: videoUrl,
-          keep_original_sound: keepOriginalSound,
-          character_orientation: characterOrientation,
-        };
-
-        const submit = await falQueueSubmit(endpointId, falInput);
-        const jobToken = signJobToken({
-          uid: user.id,
-          requestId: submit.requestId,
-          statusUrl: submit.statusUrl,
-          responseUrl: submit.responseUrl,
-          endpointId,
-          falEndpointId: endpointId,
-          toolName,
-          hint,
-          model: pricingModelNorm,
-          motionControl: meta.motionControl,
-        });
-
-        const jobId = await upsertFalJobRow({
-          ownerId: user.id,
-          kind: "video",
-          requestId: submit.requestId,
-          jobToken,
-          statusUrl: submit.statusUrl,
-          responseUrl: submit.responseUrl,
-          endpointId,
-          toolName,
-          hint,
-          model: pricingModelNorm,
-          prompt,
-          extra: {
-            meta,
-            motionControl: meta.motionControl,
-            clientJobId: clientJobIdNorm || null,
-          },
-        });
-
-        return res.json({ ok: true, mode: "async", jobId, taskId: String(submit.requestId) });
-      }
-
       const taskCreate = await createMotionControlTask({
-        model: pricingModelNorm,
+        model: requestedModel,
         prompt: prompt || undefined,
         imageUrl,
         videoUrl,

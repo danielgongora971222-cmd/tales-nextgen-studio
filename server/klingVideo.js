@@ -20,6 +20,32 @@ function normalizeKlingSound(sound) {
   return undefined;
 }
 
+function coerceMotionControlModelName(raw) {
+  const v = String(raw || "").trim().toLowerCase();
+  if (!v) return null;
+
+  if (
+    v === "kling-v3" ||
+    v === "kling-v3-0" ||
+    v === "kling-v3.0" ||
+    v === "kling-v3-motion-control" ||
+    v === "kling-v3-motion-control-pro"
+  ) {
+    return "kling-v3";
+  }
+
+  if (
+    v === "kling-v2-6" ||
+    v === "kling-v2.6" ||
+    v === "kling-2.6-motion-control" ||
+    v === "kling-2.6-motion-control-pro"
+  ) {
+    return "kling-v2-6";
+  }
+
+  return null;
+}
+
 function normalizeKlingTaskStatus(raw) {
   const s = String(raw || "").trim();
   if (!s) return "";
@@ -335,17 +361,22 @@ export async function createImage2VideoTask({
 }
 
 export async function createMotionControlTask({
-  model, // lo mantenemos para compatibilidad (logging/DB), pero NO se envía a Kling en motion-control
+  model,
   prompt,
   imageUrl,
   videoUrl,
   mode,
   keepOriginalSound,
   characterOrientation,
+  externalTaskId,
+  callbackUrl,
+  watermarkInfo,
   ...rest
 }) {
+  const modelName = coerceMotionControlModelName(model);
+
   const payload = {
-    // ⚠️ Motion Control NO acepta model_name (evita error 1201).
+    ...(modelName ? { model_name: modelName } : {}),
     image_url: imageUrl,
     video_url: videoUrl,
 
@@ -357,6 +388,9 @@ export async function createMotionControlTask({
     mode, // "std" | "pro"
 
     ...(prompt ? { prompt } : {}),
+    ...(externalTaskId ? { external_task_id: externalTaskId } : {}),
+    ...(callbackUrl ? { callback_url: callbackUrl } : {}),
+    ...(watermarkInfo ? { watermark_info: watermarkInfo } : {}),
     ...rest,
   };
 

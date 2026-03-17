@@ -134,7 +134,7 @@ export const VideoRequestSchema = z.object({
 
 
 export const MotionControlRequestSchema = z.object({
-  prompt: z.string().max(14000).optional(),
+  prompt: z.string().max(2500).optional(),
   imageAssetId: z.string().uuid(),
   videoAssetId: z.string().uuid(),
   keepOriginalSound: z.boolean().optional(),
