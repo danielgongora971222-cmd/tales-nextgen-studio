@@ -22,6 +22,10 @@ import {
   prepareVideoPreview,
   primeVideoStill,
 } from "./video/videoPreview";
+import {
+  formatDurationLabel,
+  resolveReferenceVideoDurationSeconds,
+} from "./video/referenceVideoPricing";
 
 type Orientation = "image" | "video";
 type MotionControlModel = "kling-2.6-motion-control" | "kling-v3-motion-control";
@@ -39,6 +43,7 @@ type PendingMotionControlJob = {
   characterOrientation: Orientation;
   mode: "std" | "pro";
   model: MotionControlModel;
+  referenceVideoDurationSeconds?: number | null;
   state: "submitting" | "running";
   createdAt: number;
 };
@@ -138,6 +143,10 @@ function loadPending(): PendingMotionControlJob | null {
       characterOrientation: parsed?.characterOrientation === "image" ? "image" : "video",
       mode: parsed?.mode === "pro" ? "pro" : "std",
       model: normalizeMotionControlModel(parsed?.model),
+      referenceVideoDurationSeconds:
+        typeof parsed?.referenceVideoDurationSeconds === "number"
+          ? Number(parsed.referenceVideoDurationSeconds)
+          : null,
       state: parsed?.state === "submitting" || !jobId ? "submitting" : "running",
       createdAt: Number(parsed?.createdAt) || Date.now(),
     };
@@ -283,6 +292,7 @@ export default function MotionControlTool() {
 
   const [refImage, setRefImage] = useState<Asset | null>(null);
   const [refVideo, setRefVideo] = useState<Asset | null>(null);
+  const [referenceVideoDurationSeconds, setReferenceVideoDurationSeconds] = useState<number | null>(null);
   const [prompt, setPrompt] = useState("");
   const [characterOrientation, setCharacterOrientation] = useState<Orientation>("video");
   const [mode, setMode] = useState<"std" | "pro">("std");
@@ -330,18 +340,49 @@ export default function MotionControlTool() {
   const selectedAdvancedLabel = `${prompt.trim() ? "Prompt added" : "Prompt optional"} · ${selectedCreateFromLabel}`;
   const isPendingSubmission = Boolean(isGenerating && pendingJob && pendingJob.state === "submitting" && !pendingJob.jobId);
   const generateButtonLabel = isGenerating ? (isPendingSubmission ? "Starting" : "Generating") : "Generate";
+  const referenceDurationLabel = useMemo(
+    () => formatDurationLabel(referenceVideoDurationSeconds),
+    [referenceVideoDurationSeconds]
+  );
   const estimatedCostCredits = useMemo(() => {
     const pricingModelNorm = resolveMotionControlPricingModel(model, mode);
     return estimateVideoCostCredits({
       modelNorm: pricingModelNorm,
-      durationSeconds: 5,
+      durationSeconds: referenceVideoDurationSeconds || 5,
       resolution: mode === "pro" ? "1080p" : "720p",
       klingMode: mode,
     });
-  }, [model, mode]);
+  }, [model, mode, referenceVideoDurationSeconds]);
 
   const isCookSidebarVisible = isCookOpen && !panel;
   const isCookLayerVisible = isCookOpen || !!panel;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!refVideo) {
+      setReferenceVideoDurationSeconds(null);
+      return;
+    }
+
+    const storedDuration = (refVideo as any)?.meta?.durationSeconds;
+    if (typeof storedDuration === "number" && Number.isFinite(storedDuration) && storedDuration > 0) {
+      setReferenceVideoDurationSeconds(storedDuration);
+    } else {
+      setReferenceVideoDurationSeconds(null);
+    }
+
+    void (async () => {
+      const resolved = await resolveReferenceVideoDurationSeconds(refVideo);
+      if (!cancelled) {
+        setReferenceVideoDurationSeconds(resolved);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [refVideo]);
 
   const setRootGlow = useCallback((xPct: number, yPct: number) => {
     const element = rootRef.current;
@@ -565,6 +606,7 @@ export default function MotionControlTool() {
         mode: job.mode,
         model: job.model,
         clientJobId: job.clientJobId,
+        referenceVideoDurationSeconds: job.referenceVideoDurationSeconds || undefined,
         async: true,
       },
       {
@@ -657,6 +699,12 @@ export default function MotionControlTool() {
 
     const rawPrompt = String(prompt || "").trim();
     const keepOriginalSound = true;
+    const resolvedReferenceVideoDurationSeconds =
+      referenceVideoDurationSeconds || (await resolveReferenceVideoDurationSeconds(refVideo));
+    if (resolvedReferenceVideoDurationSeconds) {
+      setReferenceVideoDurationSeconds(resolvedReferenceVideoDurationSeconds);
+    }
+
     const draftJob: PendingMotionControlJob = {
       clientJobId: makeMotionClientJobId(),
       prompt: rawPrompt,
@@ -666,6 +714,7 @@ export default function MotionControlTool() {
       characterOrientation,
       mode,
       model,
+      referenceVideoDurationSeconds: resolvedReferenceVideoDurationSeconds,
       state: "submitting",
       createdAt: Date.now(),
     };
@@ -1101,6 +1150,20 @@ export default function MotionControlTool() {
                       {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
                       <span className={styles.motionGenerateCost}>✦ {estimatedCostCredits}</span>
                     </button>
+
+                    {refVideo && (
+                      <div
+                        style={{
+                          marginTop: 8,
+                          fontSize: 12,
+                          color: "rgba(255,255,255,0.65)",
+                          textAlign: "center",
+                        }}
+                      >
+                        Precio según la duración del video de referencia
+                        {referenceDurationLabel ? ` · ${referenceDurationLabel}` : " · calculando duración..."}
+                      </div>
+                    )}
 
                     {isGenerating && progressMsg && (
                       <div className={styles.motionGeneratingStatus}>

@@ -58,49 +58,56 @@ const getIconForVideoTool = (id: string) => {
 
 const VideoGenHub: React.FC<VideoGenHubProps> = ({ onNavigate }) => {
   return (
-    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
-      <div className="text-center space-y-4 mb-12">
-        <h1 className="text-4xl md:text-5xl font-bold tracking-tighter">AI VIDEO STUDIO</h1>
-        <p className="text-gray-400 max-w-2xl mx-auto">
+    <div className="animate-in fade-in slide-in-from-bottom-4 space-y-8 duration-700">
+      <div className="mb-10 space-y-4 text-center">
+        <h1 className="text-4xl font-bold tracking-tighter md:text-5xl">AI VIDEO STUDIO</h1>
+        <p className="mx-auto max-w-2xl text-gray-400">
           Choose a video tool to start generating or editing. General generation, motion-directed control, and future editing workflows.
         </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+      <div className="grid grid-cols-2 gap-4 md:gap-5">
         {VIDEO_TOOLS_REGISTRY.map((tool) => (
           <button
             key={tool.id}
             onClick={() => onNavigate(tool.route)}
-            className="group relative overflow-hidden rounded-3xl border border-white/10 bg-white/5 p-6 text-left transition-all hover:border-white/40 hover:bg-white/10 hover:shadow-[0_0_30px_rgba(255,255,255,0.1)] hover:-translate-y-1"
+            className={`group relative overflow-hidden rounded-[28px] border border-white/12 bg-[linear-gradient(180deg,rgba(255,255,255,0.12),rgba(255,255,255,0.04))] p-4 text-left shadow-[0_22px_60px_rgba(0,0,0,0.32)] transition-all hover:-translate-y-1 hover:border-white/30 hover:bg-[linear-gradient(180deg,rgba(255,255,255,0.16),rgba(255,255,255,0.06))] ${
+              VIDEO_TOOLS_REGISTRY.length % 2 === 1 && VIDEO_TOOLS_REGISTRY[VIDEO_TOOLS_REGISTRY.length - 1]?.id === tool.id
+                ? "col-span-2"
+                : ""
+            }`}
           >
-            <div className="absolute -right-12 -top-12 h-40 w-40 rounded-full bg-white/5 blur-3xl transition-all group-hover:bg-white/10" />
+            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(113,197,255,0.18),transparent_38%),radial-gradient(circle_at_bottom_right,rgba(165,129,255,0.14),transparent_34%)]" />
+            <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/35 to-transparent" />
 
-            <div className="relative z-10 flex flex-col h-full">
-              <div className="mb-6 inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-white/10 text-white shadow-inner ring-1 ring-white/20 transition-transform group-hover:scale-110">
-                {getIconForVideoTool(tool.id)}
+            <div className="relative z-10 flex h-full min-h-[220px] flex-col">
+              <div className="mb-5 flex items-start justify-between gap-3">
+                <div className="inline-flex h-14 w-14 items-center justify-center rounded-[20px] border border-white/12 bg-black/30 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.18)] transition-transform group-hover:scale-105">
+                  {getIconForVideoTool(tool.id)}
+                </div>
+
+                <div className="flex flex-wrap justify-end gap-2">
+                  {tool.status === 'beta' ? (
+                    <span className="rounded-full border border-white/12 bg-white/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-white/80">
+                      Beta
+                    </span>
+                  ) : null}
+                  {tool.status === 'coming_soon' ? (
+                    <span className="rounded-full border border-white/12 bg-white/5 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-white/62">
+                      Soon
+                    </span>
+                  ) : null}
+                </div>
               </div>
 
               <div className="flex-1">
-                <div className="flex items-center gap-2 mb-2">
-                  <h3 className="text-xl font-bold tracking-tight">{tool.label}</h3>
-                  {tool.status === 'beta' && (
-                    <span className="text-[9px] bg-white/20 px-2 py-0.5 rounded-full font-bold">BETA</span>
-                  )}
-                  {tool.status === 'coming_soon' && (
-                    <span className="text-[9px] bg-white/10 px-2 py-0.5 rounded-full font-bold text-white/70">
-                      COMING SOON
-                    </span>
-                  )}
-                </div>
-                <p className="text-sm text-gray-400 leading-relaxed">{tool.description}</p>
+                <h3 className="text-base font-semibold tracking-tight text-white md:text-xl">{tool.label}</h3>
+                <p className="mt-2 text-xs leading-5 text-white/62 md:text-sm">{tool.description}</p>
               </div>
 
-              <div className="mt-6 flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-white/60 group-hover:text-white transition-colors">
-                Launch Tool
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="transition-transform group-hover:translate-x-1">
-                  <line x1="5" y1="12" x2="19" y2="12"></line>
-                  <polyline points="12 5 19 12 12 19"></polyline>
-                </svg>
+              <div className="mt-6 flex items-center justify-between text-[11px] font-semibold uppercase tracking-[0.24em] text-white/58">
+                <span>{tool.status === 'coming_soon' ? 'Preview' : 'Launch tool'}</span>
+                <span className="transition-transform group-hover:translate-x-1 group-hover:text-white">↗</span>
               </div>
             </div>
           </button>

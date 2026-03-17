@@ -64,6 +64,61 @@ function ActionButton({
   );
 }
 
+function CreateHeroCard({
+  title,
+  description,
+  badge,
+  icon,
+  onClick,
+  disabled = false,
+  glowClassName,
+}: {
+  title: string;
+  description: string;
+  badge?: string;
+  icon: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  glowClassName?: string;
+}) {
+  const Tag = disabled ? "div" : "button";
+
+  return (
+    <Tag
+      {...(disabled ? {} : { type: "button", onClick })}
+      className={`group relative min-h-[164px] overflow-hidden rounded-[28px] border border-white/12 bg-[linear-gradient(180deg,rgba(255,255,255,0.11),rgba(255,255,255,0.04))] p-4 text-left shadow-[0_18px_48px_rgba(0,0,0,0.3)] transition ${
+        disabled
+          ? "cursor-default opacity-80"
+          : "hover:-translate-y-0.5 hover:border-white/28 hover:bg-[linear-gradient(180deg,rgba(255,255,255,0.14),rgba(255,255,255,0.06))]"
+      }`}
+    >
+      <div className={`pointer-events-none absolute inset-0 opacity-90 blur-2xl ${glowClassName || "bg-white/10"}`} />
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/35 to-transparent" />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.18),transparent_42%)]" />
+      <div className="relative z-10 flex h-full flex-col">
+        <div className="flex items-start justify-between gap-3">
+          <div className="inline-flex h-12 w-12 items-center justify-center rounded-[18px] border border-white/14 bg-black/30 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.18)]">
+            {icon}
+          </div>
+          <span className="rounded-full border border-white/12 bg-black/25 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.24em] text-white/70">
+            {badge || (disabled ? "Soon" : "Launch")}
+          </span>
+        </div>
+
+        <div className="mt-5 space-y-2">
+          <div className="text-[15px] font-semibold leading-tight text-white">{title}</div>
+          <div className="text-xs leading-5 text-white/62">{description}</div>
+        </div>
+
+        <div className="mt-auto flex items-center justify-between pt-5 text-[11px] font-semibold uppercase tracking-[0.22em] text-white/58">
+          <span>{disabled ? "Coming soon" : "Open toolset"}</span>
+          <span className={`transition ${disabled ? "" : "group-hover:translate-x-1 group-hover:text-white"}`}>↗</span>
+        </div>
+      </div>
+    </Tag>
+  );
+}
+
 function SidebarRow({
   label,
   value,
@@ -412,67 +467,49 @@ export default function Layout({
       {user && !isReel && !isToolRoute ? <GenerationQueueWidget /> : null}
 
       <BottomSheet open={createSheetOpen} title="Create" onClose={() => setCreateSheetOpen(false)}>
-        <div className="space-y-3 pb-2">
-          <button
-            type="button"
-            className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-4 text-left transition hover:bg-white/10"
-            onClick={() => {
-              setCreateSheetOpen(false);
-              onNavigate(AppRoute.IMAGE_GEN_ROOT);
-            }}
-          >
-            <div className="flex items-center gap-3">
-              <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-black/30">
-                <ImageIcon className="h-5 w-5" />
-              </div>
-              <div>
-                <div className="text-sm font-semibold text-white">Crear o Editar imagen</div>
-                <div className="mt-1 text-xs text-white/55">Abre las herramientas de imagen</div>
-              </div>
-            </div>
-          </button>
+        <div className="pb-2">
+          <div className="grid grid-cols-2 gap-3">
+            <CreateHeroCard
+              title="Crear o editar imagen"
+              description="Generación, edición avanzada, restyling, relighting y más."
+              badge="Image"
+              icon={<ImageIcon className="h-5 w-5" />}
+              glowClassName="bg-[radial-gradient(circle_at_top_left,rgba(241,225,148,0.26),transparent_62%)]"
+              onClick={() => {
+                setCreateSheetOpen(false);
+                onNavigate(AppRoute.IMAGE_GEN_ROOT);
+              }}
+            />
 
-          <button
-            type="button"
-            className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-4 text-left transition hover:bg-white/10"
-            onClick={() => {
-              setCreateSheetOpen(false);
-              onNavigate(AppRoute.VIDEO_GEN);
-            }}
-          >
-            <div className="flex items-center gap-3">
-              <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-black/30">
-                <Video className="h-5 w-5" />
-              </div>
-              <div>
-                <div className="text-sm font-semibold text-white">Crear o Editar video</div>
-                <div className="mt-1 text-xs text-white/55">Abre las herramientas de video</div>
-              </div>
-            </div>
-          </button>
+            <CreateHeroCard
+              title="Crear o editar video"
+              description="Generación, edición, motion control y flujos guiados por referencia."
+              badge="Video"
+              icon={<Video className="h-5 w-5" />}
+              glowClassName="bg-[radial-gradient(circle_at_top_left,rgba(113,197,255,0.24),transparent_62%)]"
+              onClick={() => {
+                setCreateSheetOpen(false);
+                onNavigate(AppRoute.VIDEO_GEN);
+              }}
+            />
 
-          <div className="w-full rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4 text-left opacity-70">
-            <div className="flex items-center gap-3">
-              <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-black/30">
-                <Sparkles className="h-5 w-5" />
-              </div>
-              <div className="flex-1">
-                <div className="text-sm font-semibold text-white">Smart assistant</div>
-                <div className="mt-1 text-xs text-white/55">Coming soon</div>
-              </div>
-            </div>
-          </div>
+            <CreateHeroCard
+              title="Smart assistant"
+              description="Asistencia creativa y automatización contextual dentro del estudio."
+              badge="Soon"
+              icon={<Sparkles className="h-5 w-5" />}
+              glowClassName="bg-[radial-gradient(circle_at_top_left,rgba(196,144,255,0.24),transparent_62%)]"
+              disabled
+            />
 
-          <div className="w-full rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4 text-left opacity-70">
-            <div className="flex items-center gap-3">
-              <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-black/30">
-                <Music2 className="h-5 w-5" />
-              </div>
-              <div className="flex-1">
-                <div className="text-sm font-semibold text-white">Crear o Editar audio</div>
-                <div className="mt-1 text-xs text-white/55">Coming soon</div>
-              </div>
-            </div>
+            <CreateHeroCard
+              title="Crear o editar audio"
+              description="Flujos premium para voz, música y postproducción dentro de la app."
+              badge="Soon"
+              icon={<Music2 className="h-5 w-5" />}
+              glowClassName="bg-[radial-gradient(circle_at_top_left,rgba(116,255,184,0.22),transparent_62%)]"
+              disabled
+            />
           </div>
         </div>
       </BottomSheet>

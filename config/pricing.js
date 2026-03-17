@@ -18,6 +18,14 @@ function clampInt(n, min, max, fallback = min) {
   return x;
 }
 
+function clampNumber(n, min, max, fallback = min) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return fallback;
+  if (x < min) return min;
+  if (x > max) return max;
+  return x;
+}
+
 function roundCreditsFromUsd(usd) {
   const value = Number(usd || 0);
   if (!Number.isFinite(value) || value <= 0) return 1;
@@ -283,6 +291,56 @@ function klingModeOrDefault(modelNorm, klingMode) {
   return "std";
 }
 
+const MOTION_CONTROL_STD_CREDITS_PER_SECOND = 650 / 15;
+const MOTION_CONTROL_26_STD_CREDITS_PER_SECOND = 35;
+const MOTION_CONTROL_PRO_CREDITS_PER_SECOND = 55;
+
+function fixedVideoTotalCredits({
+  modelNorm,
+  durationSeconds,
+  resolution,
+  klingMode,
+} = {}) {
+  const model = normalizeVideoModelId(modelNorm);
+  const seconds = clampNumber(durationSeconds != null ? durationSeconds : 0, 0.01, 3600, 0);
+  if (!seconds) return null;
+
+  const reso = normalizeVideoResolution(resolution);
+  const mode = klingModeOrDefault(model, klingMode);
+  const prefersStdLikePricing = mode === "std" || reso === "720p";
+  const prefersProLikePricing = mode === "pro" || reso === "1080p";
+
+  let perSecondCredits = null;
+
+  switch (model) {
+    case "kling-v3-motion-control":
+      perSecondCredits = MOTION_CONTROL_STD_CREDITS_PER_SECOND;
+      break;
+    case "kling-v3-motion-control-pro":
+      perSecondCredits = MOTION_CONTROL_PRO_CREDITS_PER_SECOND;
+      break;
+    case "kling-2.6-motion-control":
+      perSecondCredits = MOTION_CONTROL_26_STD_CREDITS_PER_SECOND;
+      break;
+    case "kling-2.6-motion-control-pro":
+      perSecondCredits = MOTION_CONTROL_STD_CREDITS_PER_SECOND;
+      break;
+    case "kling-o3-edit-video-pro":
+    case "kling-o3-ref-video-to-video-pro":
+      if (prefersStdLikePricing && !prefersProLikePricing) {
+        perSecondCredits = MOTION_CONTROL_STD_CREDITS_PER_SECOND;
+      } else {
+        perSecondCredits = MOTION_CONTROL_PRO_CREDITS_PER_SECOND;
+      }
+      break;
+    default:
+      return null;
+  }
+
+  if (!Number.isFinite(perSecondCredits) || perSecondCredits <= 0) return null;
+  return Math.max(1, Math.ceil(seconds * perSecondCredits));
+}
+
 function videoUnitUsd({
   modelNorm,
   durationSeconds,
@@ -376,6 +434,17 @@ export function estimateVideoCostCredits({
   isKling = undefined, // compat legacy (ya no hace falta, pero lo aceptamos)
 } = {}) {
   const n = clampInt(count || 1, 1, 8, 1);
+
+  const fixedCredits = fixedVideoTotalCredits({
+    modelNorm,
+    durationSeconds,
+    resolution,
+    klingMode,
+  });
+  if (fixedCredits != null) {
+    return Math.max(1, Math.ceil(fixedCredits * n));
+  }
+
   const usd = videoUnitUsd({
     modelNorm,
     durationSeconds,

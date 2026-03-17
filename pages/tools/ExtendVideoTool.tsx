@@ -29,6 +29,10 @@ import { estimateVideoCostCredits } from "../../config/pricing.js";
 import { toggleLike } from "../../services/socialApi";
 import { syncFavoriteAssetState } from "../../services/favoriteAssets";
 import { clearCommunityRecipePrefill, getCommunityPrefillTarget, readCommunityRecipePrefill } from "../../services/communityRecipePrefill";
+import {
+  formatDurationLabel,
+  resolveReferenceVideoDurationSeconds,
+} from "./video/referenceVideoPricing";
 
 type EditModelId =
   | "kling-o3-ref-to-video-pro"
@@ -214,6 +218,7 @@ export default function ExtendVideoTool() {
   const [startImage, setStartImage] = useState<Asset | null>(null);
   const [endImage, setEndImage] = useState<Asset | null>(null);
   const [inputVideo, setInputVideo] = useState<Asset | null>(null);
+  const [referenceVideoDurationSeconds, setReferenceVideoDurationSeconds] = useState<number | null>(null);
 
   const [referenceImageIds, setReferenceImageIds] = useState<string[]>([]);
   const [sessionUploadedImageIds, setSessionUploadedImageIds] = useState<string[]>([]);
@@ -270,19 +275,57 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     [shotsWithPrompt]
   );
 
+  const referenceDurationLabel = useMemo(
+    () => formatDurationLabel(referenceVideoDurationSeconds),
+    [referenceVideoDurationSeconds]
+  );
+
   const estimatedCostCredits = useMemo(() => {
-    const dur = isStoryboardMode ? multishotTotalSeconds : durationSeconds;
+    const generationDurationSeconds = isStoryboardMode ? multishotTotalSeconds : durationSeconds;
+    const pricingDurationSeconds =
+      model === "kling-o3-ref-to-video-pro"
+        ? generationDurationSeconds
+        : referenceVideoDurationSeconds || 5;
+
     return estimateVideoCostCredits({
       modelNorm: model,
-      durationSeconds: dur,
+      durationSeconds: pricingDurationSeconds,
       resolution: "1080p",
       generateAudio: model === "kling-o3-ref-to-video-pro" ? generateAudio : false,
       klingMode: "pro",
     });
-  }, [model, durationSeconds, isStoryboardMode, multishotTotalSeconds, generateAudio]);
+  }, [model, durationSeconds, isStoryboardMode, multishotTotalSeconds, generateAudio, referenceVideoDurationSeconds]);
 
   const combinedRefsCount = referenceImageIds.length + klingElementIds.length;
   const maxCombinedRefs = model === "kling-o3-ref-to-video-pro" ? 7 : 4;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!inputVideo) {
+      setReferenceVideoDurationSeconds(null);
+      return;
+    }
+
+    const storedDuration = (inputVideo as any)?.meta?.durationSeconds;
+    if (typeof storedDuration === "number" && Number.isFinite(storedDuration) && storedDuration > 0) {
+      setReferenceVideoDurationSeconds(storedDuration);
+    } else {
+      setReferenceVideoDurationSeconds(null);
+    }
+
+    void (async () => {
+      const resolved = await resolveReferenceVideoDurationSeconds(inputVideo);
+      if (!cancelled) {
+        setReferenceVideoDurationSeconds(resolved);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [inputVideo]);
+
   const maxRefImages = Math.max(0, maxCombinedRefs - klingElementIds.length);
   const maxElements = Math.max(0, maxCombinedRefs - referenceImageIds.length);
 
@@ -1490,6 +1533,16 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     }
 
     const { body, finalPrompt } = built;
+
+    if (model !== "kling-o3-ref-to-video-pro" && inputVideo) {
+      const resolvedReferenceVideoDurationSeconds =
+        referenceVideoDurationSeconds || (await resolveReferenceVideoDurationSeconds(inputVideo));
+      if (resolvedReferenceVideoDurationSeconds) {
+        body.referenceVideoDurationSeconds = resolvedReferenceVideoDurationSeconds;
+        setReferenceVideoDurationSeconds(resolvedReferenceVideoDurationSeconds);
+      }
+    }
+
     setIsGenerating(true);
     setProgressText("Enviando a Kling O3…");
 
@@ -1530,7 +1583,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
       setIsGenerating(false);
       abortRef.current = null;
     }
-  }, [isGenerating, validateAndBuildRequest, model, savePending]);
+  }, [isGenerating, validateAndBuildRequest, model, savePending, inputVideo, referenceVideoDurationSeconds]);
 
   const onResumePending = useCallback(async () => {
     const pj = loadPending();
@@ -2074,6 +2127,13 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
               <div style={{ marginTop: 8, fontSize: 12, color: "rgba(255,255,255,0.65)", textAlign: "center" }}>
                 Coste estimado: <b>{estimatedCostCredits}</b> créditos
               </div>
+
+              {model !== "kling-o3-ref-to-video-pro" && inputVideo && (
+                <div style={{ marginTop: 6, fontSize: 11, color: "rgba(255,255,255,0.5)", textAlign: "center" }}>
+                  Precio según la duración del video cargado
+                  {referenceDurationLabel ? ` · ${referenceDurationLabel}` : " · calculando duración..."}
+                </div>
+              )}
 
               {isGenerating && (
                 <button type="button" className={styles.cancelBtn} onClick={onCancel}>

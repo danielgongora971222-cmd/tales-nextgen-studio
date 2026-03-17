@@ -18,6 +18,18 @@ function clampInt(n, min, max) {
   return x;
 }
 
+function clampNumber(n, min, max, fallback = min) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return fallback;
+  if (x < min) return min;
+  if (x > max) return max;
+  return x;
+}
+
+function coerceReferenceVideoDurationSeconds(value) {
+  const seconds = clampNumber(value, 0.01, 3600, 0);
+  return seconds > 0 ? seconds : null;
+}
 
 const DEFAULT_KLING_OMNI_MODEL_NAME = "kling-v3-omni";
 
@@ -2004,6 +2016,7 @@ const isKling = selectedModelNorm.startsWith("kling-");
         }
 
         const body = VideoEditRequestSchema.parse(req.body);
+        const referenceVideoDurationSeconds = coerceReferenceVideoDurationSeconds(body.referenceVideoDurationSeconds);
 
         const toolName = body.toolName || "video-edit";
         const hint = body.hint || "video-edit";
@@ -2311,9 +2324,14 @@ const isKling = selectedModelNorm.startsWith("kling-");
         if (blocked) return;
 
         // ✅ Spend de créditos ANTES de crear la tarea (idempotente vía x-idempotency-key)
+        const pricingDurationSeconds =
+          kind === "reference-to-video"
+            ? totalDur
+            : referenceVideoDurationSeconds || dur;
+
         const costCredits = estimateVideoCostCredits({
           modelNorm: model,
-          durationSeconds: kind === "reference-to-video" ? totalDur : dur,
+          durationSeconds: pricingDurationSeconds,
           resolution: "1080p",
           generateAudio: kind === "reference-to-video" ? body.generateAudio === true : false,
           klingMode: "pro",
@@ -2399,6 +2417,8 @@ const isKling = selectedModelNorm.startsWith("kling-");
             generateAudio:
               kind === "reference-to-video" ? body.generateAudio === true : null,
             durationSeconds: kind === "video-to-video/edit" ? null : (kind === "reference-to-video" ? totalDur : dur),
+            referenceVideoDurationSeconds: kind.startsWith("video-to-video") ? referenceVideoDurationSeconds : null,
+            pricingDurationSeconds,
             aspectRatio: kind === "video-to-video/edit" ? null : (kind === "reference-to-video" ? ar : omniPayload.aspect_ratio),
           },
         };
@@ -2451,6 +2471,7 @@ const isKling = selectedModelNorm.startsWith("kling-");
       }
 
       const body = MotionControlRequestSchema.parse(req.body);
+      const referenceVideoDurationSeconds = coerceReferenceVideoDurationSeconds(body.referenceVideoDurationSeconds);
 
       // ✅ Requiere plan activo
       const active = await ctx.billing.requireActiveSubscription(user.id);
@@ -2485,7 +2506,7 @@ const isKling = selectedModelNorm.startsWith("kling-");
       }
 
       // ✅ Spend de créditos ANTES de encolar motion-control
-      // Esta ruta NO recibe duración explícita; usamos un costo estable basado en 5s.
+      // El pricing ahora sigue la duración real del video de referencia cargado.
       const mode = body.mode === "pro" ? "pro" : "std";
       const pricingModelNorm =
         requestedModel === "kling-v3-motion-control"
@@ -2495,9 +2516,10 @@ const isKling = selectedModelNorm.startsWith("kling-");
           : mode === "pro"
             ? "kling-2.6-motion-control-pro"
             : "kling-2.6-motion-control";
+      const pricingDurationSeconds = referenceVideoDurationSeconds || 5;
       const costCredits = estimateVideoCostCredits({
         modelNorm: pricingModelNorm,
-        durationSeconds: 5,
+        durationSeconds: pricingDurationSeconds,
         resolution: mode === "pro" ? "1080p" : "720p",
         klingMode: mode,
       });
@@ -2538,6 +2560,8 @@ const isKling = selectedModelNorm.startsWith("kling-");
           characterOrientation,
           mode,
           modelFamily: requestedModel,
+          referenceVideoDurationSeconds,
+          pricingDurationSeconds,
         },
       };
 

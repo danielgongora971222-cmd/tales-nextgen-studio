@@ -143,6 +143,7 @@ export const MotionControlRequestSchema = z.object({
   // std = 720p, pro = 1080p (lo mapeamos así en el handler)
   mode: z.enum(["std", "pro"]).optional(),
   model: z.enum(["kling-2.6-motion-control", "kling-v3-motion-control"]).optional(),
+  referenceVideoDurationSeconds: z.coerce.number().optional(),
 
   async: z.boolean().optional(),
   tool: z.string().optional(),
@@ -192,6 +193,7 @@ export const VideoEditRequestSchema = z.object({
   generateAudio: z.boolean().optional(), // reference-to-video
   keepAudio: z.boolean().optional(), // video-to-video
   durationSeconds: z.coerce.number().optional(),
+  referenceVideoDurationSeconds: z.coerce.number().optional(),
   aspectRatio: z.enum(["auto", "16:9", "9:16", "1:1"]).optional(),
 
   // Identidad en assets

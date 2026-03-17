@@ -14,6 +14,7 @@ import { estimateImageCostCredits } from "../../config/pricing.js";
 import { GOOGLE_IMAGE_MODELS } from "../../config/imageGenerationShared.js";
 import { usePendingImageToolJobs } from "../../hooks/usePendingImageToolJobs";
 import { useAuth } from "../../contexts/AuthContext";
+import { fetchPresetReferenceGridDataUrl } from "../../config/presets/styleRuntime";
 
 type Quality = "1K" | "2K" | "4K";
 type PanelKey = "reference" | "lighting" | "model" | "parameters" | null;
@@ -632,6 +633,14 @@ const LightroomTool: React.FC = () => {
       const basePrompt = "Relight reference image.";
       const finalPrompt = applyLightingPresetToPrompt(basePrompt, selectedLighting.prompt);
 
+      if (model.startsWith("fal-ai/flux-2-")) {
+        throw new Error(
+          "Flux Max en este flujo solo admite 1 imagen de referencia. " +
+            "Para usar imagen base + grid visual del preset, usa Nano Banana 2, Nano Banana Pro o GPT 1.5 High."
+        );
+      }
+
+      const styleReferenceDataUrl = await fetchPresetReferenceGridDataUrl(selectedLighting);
       const effectiveQuality = normalizeQuality(model, quality);
 
       await generateImageBatch(finalPrompt, model, {
@@ -641,6 +650,9 @@ const LightroomTool: React.FC = () => {
         tool: TOOL_ID,
         nameHint: `lightroom_${slugName(selectedLighting.name)}`,
         characterAssetIds: [baseRef.id],
+        stylePresetId: selectedLighting.id,
+        stylePresetName: selectedLighting.name,
+        styleReferenceDataUrl: styleReferenceDataUrl || undefined,
         asyncHooks: makeAsyncHooks(finalPrompt, 1),
       });
 
@@ -678,13 +690,22 @@ const LightroomTool: React.FC = () => {
       setBaseRef(found);
     }
 
-    // lighting from embedded lighting block
-    const inside = extractLightingBlock(asset.prompt || "") || "";
-    if (inside) {
-      const match = LIGHTING_PRESETS.find((p) => (p.prompt || "").trim() === inside.trim());
-      setSelectedLightingId(match ? match.id : null);
+    // lighting from generic preset meta first, then embedded lighting block
+    const metaStyleId = typeof meta.stylePresetId === "string" ? meta.stylePresetId : null;
+    const fromMeta = metaStyleId
+      ? LIGHTING_PRESETS.find((p) => p.id === metaStyleId) || null
+      : null;
+
+    if (fromMeta) {
+      setSelectedLightingId(fromMeta.id);
     } else {
-      setSelectedLightingId(null);
+      const inside = extractLightingBlock(asset.prompt || "") || "";
+      if (inside) {
+        const match = LIGHTING_PRESETS.find((p) => (p.prompt || "").trim() === inside.trim());
+        setSelectedLightingId(match ? match.id : null);
+      } else {
+        setSelectedLightingId(null);
+      }
     }
   }
 
@@ -695,16 +716,28 @@ const LightroomTool: React.FC = () => {
     const q = typeof meta.quality === "string" ? meta.quality : null;
 
     const charIds: string[] = Array.isArray(meta.characterAssetIds) ? meta.characterAssetIds : [];
+    const resolvedLightingPreset =
+      (typeof meta.stylePresetId === "string"
+        ? LIGHTING_PRESETS.find((p) => p.id === meta.stylePresetId) || null
+        : null) ||
+      (() => {
+        const inside = extractLightingBlock(viewer.prompt || "") || "";
+        return inside ? LIGHTING_PRESETS.find((p) => (p.prompt || "").trim() === inside.trim()) || null : null;
+      })();
+
     const refs = {
       chars: charIds
         .map((id) => myAssets.find((a) => a.id === id) || null)
         .filter(Boolean) as Asset[],
+      style: resolvedLightingPreset?.referenceGridUrl
+        ? ({ id: `preset:${resolvedLightingPreset.id}`, url: resolvedLightingPreset.referenceGridUrl } as any)
+        : null,
     };
 
     return {
       modelId,
       quality: q,
-      lightingName: getLightingNameFromPrompt(viewer.prompt || ""),
+      lightingName: resolvedLightingPreset?.name || getLightingNameFromPrompt(viewer.prompt || ""),
       refs,
     };
   }, [viewer, myAssets]);
@@ -1090,6 +1123,13 @@ const LightroomTool: React.FC = () => {
                 <div className={styles.recipeRefs}>
                   <div className={styles.recipeLabel}>Reference</div>
                   <div className={styles.recipeRefStrip}>
+                    {viewerRecipeInfo?.refs?.style ? (
+                      <div className={styles.recipeRefThumb} title="Preset reference grid">
+                        <img src={(viewerRecipeInfo.refs.style as any).url} alt="Preset reference grid" />
+                        <span className={styles.recipeRefTag}>GRID</span>
+                      </div>
+                    ) : null}
+
                     {(viewerRecipeInfo?.refs?.chars?.length || 0) > 0 ? (
                       viewerRecipeInfo!.refs.chars.map((a, i) => (
                         <div key={a.id} className={styles.recipeRefThumb} title={`Reference ${i + 1}`}>
@@ -1097,9 +1137,9 @@ const LightroomTool: React.FC = () => {
                           <span className={styles.recipeRefTag}>R{i + 1}</span>
                         </div>
                       ))
-                    ) : (
+                    ) : !viewerRecipeInfo?.refs?.style ? (
                       <div className={(styles as any).recipeEmpty}>No saved refs (legacy)</div>
-                    )}
+                    ) : null}
                   </div>
                 </div>
 
