@@ -1945,9 +1945,16 @@ const clearModalSelectedIds = () => {
           )}
 
           {isCookSidebarVisible && (
-            <div className={`${styles.cookSidebarShell} ${styles.videoGeneratorCookSidebarShell}`}>
-              <div className={`${styles.cookSidebar} ${styles.videoGeneratorCookSidebar}`}>
-                <div className={`${styles.dock} ${styles.cookSectionCard} ${styles.cookPromptCard} ${styles.videoGeneratorCookPromptCard}`}>
+            <div
+              className={styles.cookSidebarShell}
+              onClick={(event) => {
+                if (event.target !== event.currentTarget) return;
+                if (panel) restoreCookFromPanel();
+                else closeCook();
+              }}
+            >
+              <div className={styles.cookSidebar}>
+                <div className={`${styles.dock} ${styles.cookSectionCard} ${styles.cookPromptCard}`}>
                   <div className={styles.videoCreateFrameRow}>
                     <div className={styles.videoCreateFrameSlot}>
                       <button
