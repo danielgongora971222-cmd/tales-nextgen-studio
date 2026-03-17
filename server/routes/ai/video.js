@@ -100,6 +100,115 @@ export function createAiVideoRouter(ctx) {
   // Uploads: SIEMPRE usamos uploadBufferToStorage / uploadBase64ToStorage / createClientUploadTarget,
   // que soportan Cloudflare R2 (principal) y Supabase Storage (solo legacy, si aún existiera).
 
+  const isUuidLike = (value) =>
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      String(value || "").trim()
+    );
+
+  async function resolveKlingElementList({
+    elementRefs,
+    ownerId,
+    maxCount,
+    codePrefix,
+    label,
+  }) {
+    const orderedRefs = [];
+    for (const raw of Array.isArray(elementRefs) ? elementRefs : []) {
+      const ref = String(raw || "").trim();
+      if (!ref) continue;
+      if (!orderedRefs.includes(ref)) orderedRefs.push(ref);
+    }
+
+    if (!orderedRefs.length) return undefined;
+
+    if (orderedRefs.length > maxCount) {
+      throw httpError(
+        400,
+        `${codePrefix}_TOO_MANY_ELEMENTS`,
+        `${label}: máximo ${maxCount} Elements en este modo.`
+      );
+    }
+
+    const presetRefs = orderedRefs.filter((ref) => ref.startsWith("preset:"));
+    const localRefs = orderedRefs.filter((ref) => isUuidLike(ref));
+    const invalidRefs = orderedRefs.filter((ref) => !ref.startsWith("preset:") && !isUuidLike(ref));
+
+    if (invalidRefs.length) {
+      throw httpError(
+        400,
+        `${codePrefix}_BAD_ELEMENT_REF`,
+        "Uno o más Elements tienen un formato inválido.",
+        { invalidRefs }
+      );
+    }
+
+    let byId = new Map();
+    if (localRefs.length) {
+      const { data: rows, error: rowsErr } = await supabaseAdmin
+        .from("kling_elements")
+        .select("id, owner_id, kling_element_id, status, status_detail")
+        .in("id", localRefs)
+        .eq("owner_id", ownerId);
+
+      if (rowsErr) {
+        throw httpError(500, "DB_ERROR", "No pude leer tus Elements.", { rowsErr });
+      }
+
+      byId = new Map((rows || []).map((row) => [String(row.id), row]));
+      const missing = localRefs.filter((id) => !byId.has(id));
+      if (missing.length) {
+        throw httpError(
+          400,
+          `${codePrefix}_ELEMENT_NOT_FOUND`,
+          "Uno o más Elements no existen o no te pertenecen.",
+          { missing }
+        );
+      }
+    }
+
+    const out = [];
+    for (const ref of orderedRefs) {
+      if (ref.startsWith("preset:")) {
+        const remoteId = String(ref.slice("preset:".length) || "").trim();
+        if (!remoteId) {
+          throw httpError(
+            400,
+            `${codePrefix}_BAD_ELEMENT_REF`,
+            "Uno o más preset Elements tienen un ID inválido.",
+            { ref }
+          );
+        }
+        out.push({ element_id: remoteId });
+        continue;
+      }
+
+      const row = byId.get(ref);
+      const st = String(row?.status || "ready");
+      if (st !== "ready") {
+        throw httpError(
+          400,
+          `${codePrefix}_ELEMENT_NOT_READY`,
+          "Uno o más Elements todavía se están creando o fallaron. Espera o usa Refresh status.",
+          { elementUuid: ref, status: row?.status || null, statusDetail: row?.status_detail || null }
+        );
+      }
+
+      const rawRemoteId = row?.kling_element_id;
+      if (!rawRemoteId) {
+        throw httpError(
+          400,
+          `${codePrefix}_ELEMENT_MISSING_KLING_ID`,
+          "Un Element no tiene kling_element_id guardado (no se puede mandar a Kling).",
+          { elementUuid: ref }
+        );
+      }
+
+      out.push({ element_id: String(rawRemoteId).trim() });
+    }
+
+    return out.length ? out : undefined;
+  }
+
   async function spendVideoCreditsOrReject({
     userId,
     req,
@@ -629,74 +738,17 @@ const isKling = selectedModelNorm.startsWith("kling-");
 
         const multiShotEnabled = Boolean(multiPrompt && multiPrompt.length);
 
-        // Elements (kling_elements en tu DB) → element_list (IDs reales de Kling)
+        // Elements (custom + presets) → element_list (IDs reales de Kling)
         let elementList = undefined;
         if (hasElements) {
           const maxElems = hasFirst ? 3 : 5;
-          if (klingElementIds.length > maxElems) {
-            throw httpError(
-              400,
-              "KLING_O3_TOO_MANY_ELEMENTS",
-              `Kling O3: máximo ${maxElems} Elements en este modo.`
-            );
-          }
-
-          const { data: rows, error: rowsErr } = await supabaseAdmin
-            .from("kling_elements")
-            .select("id, owner_id, kling_element_id, status, status_detail")
-            .in("id", klingElementIds)
-            .eq("owner_id", user.id);
-
-          if (rowsErr) {
-            throw httpError(500, "DB_ERROR", "No pude leer tus Elements.", {
-              rowsErr,
-            });
-          }
-
-          const byId = new Map((rows || []).map((r) => [r.id, r]));
-          const missing = (klingElementIds || []).filter((id) => !byId.has(id));
-          if (missing.length) {
-            throw httpError(
-              400,
-              "KLING_O3_ELEMENT_NOT_FOUND",
-              "Uno o más Elements no existen o no te pertenecen.",
-              { missing }
-            );
-          }
-
-          const out = [];
-          for (const elementUuid of klingElementIds) {
-            const row = byId.get(elementUuid);
-
-            const st = String(row?.status || "ready");
-            if (st !== "ready") {
-              throw httpError(
-                400,
-                "KLING_O3_ELEMENT_NOT_READY",
-                "Uno o más Elements todavía se están creando o fallaron. Espera o usa Refresh status.",
-                { elementUuid, status: row?.status || null, statusDetail: row?.status_detail || null }
-              );
-            }
-
-            const raw = row?.kling_element_id;
-
-            if (!raw) {
-              throw httpError(
-                400,
-                "KLING_O3_ELEMENT_MISSING_KLING_ID",
-                "Un Element no tiene kling_element_id guardado (no se puede mandar a Kling).",
-                { elementUuid }
-              );
-            }
-
-          const rawStr = String(raw).trim();
-
-          // ⚠️ NO convertir a Number: element_id es "long" y puede exceder 2^53-1.
-          // Si lo conviertes a Number pierdes precisión y Kling responde "Element id not found".
-          out.push({ element_id: rawStr });
-          }
-
-          if (out.length) elementList = out;
+          elementList = await resolveKlingElementList({
+            elementRefs: klingElementIds,
+            ownerId: user.id,
+            maxCount: maxElems,
+            codePrefix: "KLING_O3",
+            label: "Kling O3",
+          });
         }
 
         // Image list (first/last frame) via URLs firmadas para no exceder el JSON limit (25mb)
@@ -1041,73 +1093,17 @@ const isKling = selectedModelNorm.startsWith("kling-");
 
         const multiShotEnabled = shotType === "intelligence" || (multiPrompt && multiPrompt.length);
 
-        // Elements (kling_elements en tu DB) → element_list real (IDs de Kling)
+        // Elements (custom + presets) → element_list real (IDs de Kling)
         let elementList = undefined;
         if (hasElements) {
           const maxElems = hasFirst ? 3 : 5;
-          if (klingElementIds.length > maxElems) {
-            throw httpError(
-              400,
-              "KLING_V3_TOO_MANY_ELEMENTS",
-              `Kling V3: máximo ${maxElems} Elements en este modo.`
-            );
-          }
-
-          const { data: rows, error: rowsErr } = await supabaseAdmin
-            .from("kling_elements")
-            .select("id, owner_id, kling_element_id, status, status_detail")
-            .in("id", klingElementIds)
-            .eq("owner_id", user.id);
-
-          if (rowsErr) {
-            throw httpError(500, "DB_ERROR", "No pude leer tus Elements.", {
-              rowsErr,
-            });
-          }
-
-          const byId = new Map((rows || []).map((r) => [r.id, r]));
-          const missing = (klingElementIds || []).filter((id) => !byId.has(id));
-          if (missing.length) {
-            throw httpError(
-              400,
-              "KLING_V3_ELEMENT_NOT_FOUND",
-              "Uno o más Elements no existen o no te pertenecen.",
-              { missing }
-            );
-          }
-
-          const out = [];
-          for (const elementUuid of klingElementIds) {
-          const row = byId.get(elementUuid);
-
-          const st = String(row?.status || "ready");
-          if (st !== "ready") {
-            throw httpError(
-              400,
-              "KLING_V3_ELEMENT_NOT_READY",
-              "Uno o más Elements todavía se están creando o fallaron. Espera o usa Refresh status.",
-              { elementUuid, status: row?.status || null, statusDetail: row?.status_detail || null }
-            );
-          }
-
-          const raw = row?.kling_element_id;
-
-          if (!raw) {
-            throw httpError(
-              400,
-              "KLING_V3_ELEMENT_MISSING_KLING_ID",
-              "Un Element no tiene kling_element_id guardado (no se puede mandar a Kling).",
-              { elementUuid }
-            );
-          }
-
-            const rawStr = String(raw).trim();
-
-            // ⚠️ No convertir a Number (precisión)
-            out.push({ element_id: rawStr });
-          }
-
-          if (out.length) elementList = out;
+          elementList = await resolveKlingElementList({
+            elementRefs: klingElementIds,
+            ownerId: user.id,
+            maxCount: maxElems,
+            codePrefix: "KLING_V3",
+            label: "Kling V3",
+          });
         }
 
         const klingModeValue = klingMode || "std";
@@ -2128,60 +2124,13 @@ const isKling = selectedModelNorm.startsWith("kling-");
 
         let elementList = undefined;
         if (klingElementIds.length) {
-          const { data: rows, error: rowsErr } = await supabaseAdmin
-            .from("kling_elements")
-            .select("id, owner_id, kling_element_id, status, status_detail")
-            .in("id", klingElementIds)
-            .eq("owner_id", user.id);
-
-          if (rowsErr) {
-            throw httpError(500, "DB_ERROR", "No pude leer tus Elements.", {
-              rowsErr,
-            });
-          }
-
-          const byId = new Map((rows || []).map((r) => [r.id, r]));
-          const missing = klingElementIds.filter((id) => !byId.has(id));
-          if (missing.length) {
-            throw httpError(
-              400,
-              "VIDEO_EDIT_ELEMENT_NOT_FOUND",
-              "Uno o más Elements no existen o no te pertenecen.",
-              { missing }
-            );
-          }
-
-          const out = [];
-          for (const elementUuid of klingElementIds) {
-            const row = byId.get(elementUuid);
-
-            const st = String(row?.status || "ready");
-            if (st !== "ready") {
-              throw httpError(
-                400,
-                "VIDEO_EDIT_ELEMENT_NOT_READY",
-                "Uno o más Elements todavía se están creando o fallaron. Espera o usa Refresh status.",
-                { elementUuid, status: row?.status || null, statusDetail: row?.status_detail || null }
-              );
-            }
-
-            const raw = row?.kling_element_id;
-            if (!raw) {
-              throw httpError(
-                400,
-                "VIDEO_EDIT_ELEMENT_MISSING_KLING_ID",
-                "Un Element no tiene kling_element_id guardado (no se puede mandar a Kling).",
-                { elementUuid }
-              );
-            }
-
-            const rawStr = String(raw).trim();
-
-            // ⚠️ No convertir a Number (precisión)
-            out.push({ element_id: rawStr });
-          }
-
-          if (out.length) elementList = out;
+          elementList = await resolveKlingElementList({
+            elementRefs: klingElementIds,
+            ownerId: user.id,
+            maxCount: MAX_COMBINED_REFS,
+            codePrefix: "VIDEO_EDIT",
+            label: "Kling",
+          });
         }
 
         // Kling: máximo MAX_COMBINED_REFS referencias combinadas (element_list + image_list)

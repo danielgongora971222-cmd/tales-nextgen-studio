@@ -126,8 +126,10 @@ export const VideoRequestSchema = z.object({
   mode: z.enum(["std", "pro"]).optional(),
 
 
-  // ✅ Kling-only (Element Library): UUIDs de tu tabla public.kling_elements
-  klingElementIds: z.array(z.string().uuid()).max(5).optional(),
+  // ✅ Kling Elements para video:
+  // - custom: UUID de public.kling_elements
+  // - preset: ref tipo "preset:<element_id>"
+  klingElementIds: z.array(z.string().min(1).max(128)).max(5).optional(),
 });
 
 
@@ -184,7 +186,7 @@ export const VideoEditRequestSchema = z.object({
   // - reference-to-video: 1..7 combinadas (imágenes + Elements)
   // - video-to-video:     0..4 combinadas (imágenes + Elements)
   referenceImageAssetIds: z.array(z.string().uuid()).max(7).optional(),
-  klingElementIds: z.array(z.string().uuid()).max(7).optional(),
+  klingElementIds: z.array(z.string().min(1).max(128)).max(7).optional(),
 
   // Opciones
   generateAudio: z.boolean().optional(), // reference-to-video
@@ -418,6 +420,7 @@ export const CreateKlingElementRequestSchema = z
     name: z.string().min(1).max(20),
     description: z.string().max(100).optional(),
     tag: z.string().optional(),
+    tagIds: z.array(z.string().regex(/^o_\d+$/)).max(8).optional(),
 
     // Kling Advanced: image_refer | video_refer
     referenceType: z.enum(["image_refer", "video_refer"]).optional(),

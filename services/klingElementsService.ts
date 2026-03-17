@@ -2,24 +2,66 @@ import { supabase } from "./supabaseClient";
 import { apiUrl } from "./apiBase";
 
 /**
- * Shapes y endpoints reales según server/server.js:
+ * Endpoints reales según server/server.js:
  *  - GET    /api/kling/elements
  *  - POST   /api/kling/elements
+ *  - GET    /api/kling/elements/:id
  *  - DELETE /api/kling/elements/:id
+ *  - GET    /api/kling/elements/presets
+ *  - GET    /api/kling/voices
  */
+
+export type KlingElementTagId =
+  | "o_101"
+  | "o_102"
+  | "o_103"
+  | "o_104"
+  | "o_105"
+  | "o_106"
+  | "o_107"
+  | "o_108";
+
+export const KLING_ELEMENT_TAG_OPTIONS: Array<{ id: KlingElementTagId; label: string }> = [
+  { id: "o_101", label: "Hottest" },
+  { id: "o_102", label: "Character" },
+  { id: "o_103", label: "Animal" },
+  { id: "o_104", label: "Item" },
+  { id: "o_105", label: "Costume" },
+  { id: "o_106", label: "Scene" },
+  { id: "o_107", label: "Effect" },
+  { id: "o_108", label: "Others" },
+];
+
+const KLING_TAG_LABEL_BY_ID = new Map<KlingElementTagId, string>(
+  KLING_ELEMENT_TAG_OPTIONS.map((item) => [item.id, item.label])
+);
 
 export type KlingElement = {
   id: string;
   name: string;
 
+  source?: "custom" | "preset";
+  isPreset?: boolean;
+  localId?: string | null;
+  remoteElementId?: string | null;
+  ownedBy?: string | null;
+
   tag?: string | null;
+  tagIds?: KlingElementTagId[];
+  tagLabels?: string[];
   description?: string | null;
   referenceType?: "image_refer" | "video_refer";
   voiceId?: string | null;
+  voiceInfo?: {
+    voiceId?: string | null;
+    voiceName?: string | null;
+    trialUrl?: string | null;
+    ownedBy?: string | null;
+  } | null;
 
   klingElementId?: string | null;
 
-  status?: "creating" | "ready" | "failed";
+  status?: "creating" | "ready" | "failed" | "deleted";
   statusDetail?: string | null;
   apiVersion?: string | null;
   taskId?: string | null;
@@ -27,10 +69,184 @@ export type KlingElement = {
 
   previewType?: "image" | "video";
   previewUrl?: string | null;
-
   imageUrls: string[];
+  videoUrl?: string | null;
   createdAt: number;
 };
+
+function clampPageNum(v: any) {
+  const n = Math.trunc(Number(v) || 1);
+  return Math.max(1, Math.min(1000, n));
+}
+
+function clampPageSize(v: any, fallback = 90) {
+  const n = Math.trunc(Number(v) || fallback);
+  return Math.max(1, Math.min(500, n));
+}
+
+function toTimestamp(raw: any) {
+  if (typeof raw === "string") {
+    const ts = new Date(raw).getTime();
+    return Number.isFinite(ts) ? ts : Date.now();
+  }
+  if (typeof raw === "number") return raw;
+  return Date.now();
+}
+
+function toOptionalTimestamp(raw: any) {
+  if (typeof raw === "string") {
+    const ts = new Date(raw).getTime();
+    return Number.isFinite(ts) ? ts : null;
+  }
+  if (typeof raw === "number") return raw;
+  return null;
+}
+
+function normalizeTagIds(raw: any): KlingElementTagId[] {
+  const direct = Array.isArray(raw)
+    ? raw
+    : typeof raw === "string"
+      ? raw
+          .split(",")
+          .map((part) => part.trim())
+          .filter(Boolean)
+      : [];
+
+  const out: KlingElementTagId[] = [];
+  for (const item of direct) {
+    const id = String(item?.tag_id ?? item?.id ?? item ?? "").trim() as KlingElementTagId;
+    if (!id) continue;
+    if (!KLING_TAG_LABEL_BY_ID.has(id)) continue;
+    if (!out.includes(id)) out.push(id);
+  }
+  return out;
+}
+
+function buildTagMeta(rawTagIds: any, fallbackTag?: any) {
+  const tagIds = normalizeTagIds(rawTagIds?.length ? rawTagIds : fallbackTag);
+  const tagLabels = tagIds.map((id) => KLING_TAG_LABEL_BY_ID.get(id) || id);
+  return {
+    tagIds,
+    tagLabels,
+    tag: tagLabels.length ? tagLabels.join(", ") : null,
+  };
+}
+
+function mapVoiceInfo(row: any) {
+  const voice = row?.voiceInfo ?? row?.voice_info ?? row?.element_voice_info ?? null;
+  if (!voice) return null;
+
+  const voiceId = voice?.voiceId ?? voice?.voice_id ?? row?.voiceId ?? row?.voice_id ?? null;
+  const voiceName = voice?.voiceName ?? voice?.voice_name ?? null;
+  const trialUrl = voice?.trialUrl ?? voice?.trial_url ?? null;
+  const ownedBy = voice?.ownedBy ?? voice?.owned_by ?? null;
+
+  if (!voiceId && !voiceName && !trialUrl && !ownedBy) return null;
+  return {
+    voiceId: voiceId ? String(voiceId) : null,
+    voiceName: voiceName ? String(voiceName) : null,
+    trialUrl: trialUrl ? String(trialUrl) : null,
+    ownedBy: ownedBy ? String(ownedBy) : null,
+  };
+}
+
+function mapRowToKlingElement(row: any): KlingElement {
+  const createdAt = toTimestamp(row.created_at ?? row.createdAt);
+  const updatedAt = toOptionalTimestamp(row.updated_at ?? row.updatedAt);
+  const { tagIds, tagLabels, tag } = buildTagMeta(row.tagIds ?? row.tag_ids, row.tag);
+  const voiceInfo = mapVoiceInfo(row);
+  const previewType = (row.previewType ?? row.preview_type ?? (row.videoAssetId || row.video_asset_id ? "video" : "image")) as any;
+  const imageUrls = Array.isArray(row.imageUrls ?? row.image_urls)
+    ? (row.imageUrls ?? row.image_urls).map(String).filter(Boolean)
+    : [];
+  const remoteElementId = row.remoteElementId ?? row.remote_element_id ?? row.klingElementId ?? row.kling_element_id ?? null;
+
+  return {
+    id: String(row.id),
+    name: String(row.name ?? ""),
+
+    source: (row.source ?? "custom") as any,
+    isPreset: Boolean(row.isPreset ?? row.is_preset ?? (row.source === "preset")),
+    localId: row.localId ?? row.local_id ?? row.id ?? null,
+    remoteElementId: remoteElementId ? String(remoteElementId) : null,
+    ownedBy: row.ownedBy ?? row.owned_by ?? null,
+
+    tag,
+    tagIds,
+    tagLabels,
+    description: row.description != null ? String(row.description) : null,
+    referenceType: (row.referenceType ?? row.reference_type ?? "image_refer") as any,
+    voiceId: row.voiceId ?? row.voice_id ?? voiceInfo?.voiceId ?? null,
+    voiceInfo,
+
+    klingElementId: remoteElementId ? String(remoteElementId) : null,
+
+    status: (row.status ?? "ready") as any,
+    statusDetail: row.statusDetail ?? row.status_detail ?? null,
+    apiVersion: row.apiVersion ?? row.api_version ?? null,
+    taskId: row.taskId ?? row.kling_task_id ?? null,
+    updatedAt,
+
+    previewType,
+    previewUrl: row.previewUrl ?? row.preview_url ?? null,
+    imageUrls,
+    videoUrl: row.videoUrl ?? row.video_url ?? null,
+    createdAt,
+  };
+}
+
+function mapRemoteElementToKlingElement(row: any): KlingElement | null {
+  const remoteElementId = row?.remoteElementId ?? row?.remote_element_id ?? row?.element_id ?? row?.elementId ?? row?.id;
+  if (!remoteElementId) return null;
+
+  const imageList = row?.element_image_list ?? row?.elementImageList ?? {};
+  const frontal = imageList?.frontal_image ? String(imageList.frontal_image) : "";
+  const referImages = Array.isArray(imageList?.refer_images)
+    ? imageList.refer_images.map((item: any) => String(item?.image_url ?? item ?? "").trim()).filter(Boolean)
+    : [];
+
+  const imageUrls = [frontal, ...referImages].filter(Boolean);
+
+  const videoList = row?.element_video_list ?? row?.elementVideoList ?? {};
+  const referVideos = Array.isArray(videoList?.refer_videos)
+    ? videoList.refer_videos.map((item: any) => String(item?.video_url ?? item ?? "").trim()).filter(Boolean)
+    : [];
+  const videoUrl = referVideos[0] || null;
+
+  const createdAt = toTimestamp(row.created_at ?? row.createdAt ?? Date.now());
+  const updatedAt = toOptionalTimestamp(row.updated_at ?? row.updatedAt);
+  const { tagIds, tagLabels, tag } = buildTagMeta(row.tag_list ?? row.tagList, row.tag);
+  const voiceInfo = mapVoiceInfo(row);
+  const source = row?.source === "custom" ? "custom" : "preset";
+
+  return {
+    id: source === "preset" ? `preset:${String(remoteElementId)}` : String(row?.id ?? remoteElementId),
+    name: String(row?.element_name ?? row?.elementName ?? row?.name ?? `Element ${remoteElementId}`),
+    source,
+    isPreset: source === "preset",
+    localId: source === "custom" ? String(row?.id ?? row?.localId ?? "") || null : null,
+    remoteElementId: String(remoteElementId),
+    ownedBy: row?.owned_by ? String(row.owned_by) : source === "preset" ? "kling" : null,
+    tag,
+    tagIds,
+    tagLabels,
+    description: row?.element_description != null ? String(row.element_description) : row?.description != null ? String(row.description) : null,
+    referenceType: (row?.reference_type ?? row?.referenceType ?? (videoUrl ? "video_refer" : "image_refer")) as any,
+    voiceId: voiceInfo?.voiceId ?? null,
+    voiceInfo,
+    klingElementId: String(remoteElementId),
+    status: (row?.status ?? "ready") as any,
+    statusDetail: row?.statusDetail ?? row?.status_detail ?? null,
+    apiVersion: row?.apiVersion ?? row?.api_version ?? "advanced",
+    taskId: row?.task_id ?? row?.taskId ?? null,
+    updatedAt,
+    previewType: videoUrl ? "video" : "image",
+    previewUrl: videoUrl || imageUrls[0] || null,
+    imageUrls,
+    videoUrl,
+    createdAt,
+  };
+}
 
 // ===============================
 // Cache en memoria (session) para evitar recargar Elements en cada tool/picker
@@ -42,16 +258,32 @@ type ElementsCacheEntry = {
   inFlight?: Promise<KlingElement[]>;
 };
 
-const ELEMENTS_CACHE_TTL_MS = 2 * 60 * 1000; // 2 min
+type PresetElementsCacheEntry = {
+  ts: number;
+  items: KlingElement[];
+  inFlight?: Promise<KlingElement[]>;
+};
+
+const ELEMENTS_CACHE_TTL_MS = 2 * 60 * 1000;
+const PRESET_ELEMENTS_CACHE_TTL_MS = 10 * 60 * 1000;
 
 let elementsCache: ElementsCacheEntry | null = null;
+const presetElementsCache = new Map<string, PresetElementsCacheEntry>();
 
 export function invalidateKlingElementsCache() {
   elementsCache = null;
 }
 
+export function invalidateKlingPresetElementsCache() {
+  presetElementsCache.clear();
+}
+
 function elementsCacheFresh() {
   return elementsCache && Date.now() - elementsCache.ts < ELEMENTS_CACHE_TTL_MS;
+}
+
+function presetCacheKey(pageNum: number, pageSize: number) {
+  return `${pageNum}:${pageSize}`;
 }
 
 async function authHeadersJson() {
@@ -61,46 +293,6 @@ async function authHeadersJson() {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (token) headers["Authorization"] = `Bearer ${token}`;
   return headers;
-}
-
-function mapRowToKlingElement(row: any): KlingElement {
-  const createdRaw = row.created_at ?? row.createdAt;
-  const createdAt =
-    typeof createdRaw === "string"
-      ? new Date(createdRaw).getTime()
-      : typeof createdRaw === "number"
-        ? createdRaw
-        : Date.now();
-
-  const updatedRaw = row.updated_at ?? row.updatedAt;
-  const updatedAt =
-    typeof updatedRaw === "string"
-      ? new Date(updatedRaw).getTime()
-      : typeof updatedRaw === "number"
-        ? updatedRaw
-        : null;
-
-  return {
-    id: String(row.id),
-    name: String(row.name ?? ""),
-    tag: row.tag != null ? String(row.tag) : null,
-    description: row.description != null ? String(row.description) : null,
-    referenceType: (row.referenceType ?? row.reference_type ?? "image_refer") as any,
-    voiceId: row.voiceId ?? row.voice_id ?? null,
-
-    klingElementId: row.klingElementId ?? row.kling_element_id ?? null,
-
-    status: (row.status ?? "ready") as any,
-    statusDetail: row.statusDetail ?? row.status_detail ?? null,
-    apiVersion: row.apiVersion ?? row.api_version ?? null,
-    taskId: row.taskId ?? row.kling_task_id ?? null,
-    updatedAt,
-
-    previewType: (row.previewType ?? row.preview_type ?? (row.videoAssetId || row.video_asset_id ? "video" : "image")) as any,
-    previewUrl: row.previewUrl ?? row.preview_url ?? null,
-    imageUrls: Array.isArray(row.imageUrls ?? row.image_urls) ? (row.imageUrls ?? row.image_urls).map(String) : [],
-    createdAt,
-  };
 }
 
 export async function listKlingElements(): Promise<KlingElement[]> {
@@ -127,6 +319,57 @@ export async function listKlingElements(): Promise<KlingElement[]> {
     return await inFlight;
   } finally {
     if (elementsCache?.inFlight === inFlight) delete elementsCache.inFlight;
+  }
+}
+
+export async function listKlingPresetElements(opts?: {
+  force?: boolean;
+  pageNum?: number;
+  pageSize?: number;
+}): Promise<KlingElement[]> {
+  const pageNum = clampPageNum(opts?.pageNum ?? 1);
+  const pageSize = clampPageSize(opts?.pageSize ?? 90);
+  const cacheKey = presetCacheKey(pageNum, pageSize);
+
+  if (opts?.force) presetElementsCache.delete(cacheKey);
+
+  const cache = presetElementsCache.get(cacheKey);
+  if (cache && Date.now() - cache.ts < PRESET_ELEMENTS_CACHE_TTL_MS) return cache.items;
+  if (cache?.inFlight) return cache.inFlight;
+
+  const headers = await authHeadersJson();
+
+  const inFlight = (async () => {
+    const forceParam = opts?.force ? "&force=1" : "";
+    const resp = await fetch(
+      apiUrl(`/api/kling/elements/presets?pageNum=${pageNum}&pageSize=${pageSize}${forceParam}`),
+      { method: "GET", headers }
+    );
+    const data = await resp.json();
+
+    if (!resp.ok || data?.ok === false) {
+      throw new Error(data?.error?.message || "Error listando presets de Elements.");
+    }
+
+    const items = (Array.isArray(data.items) ? data.items : [])
+      .map(mapRemoteElementToKlingElement)
+      .filter(Boolean) as KlingElement[];
+
+    presetElementsCache.set(cacheKey, { ts: Date.now(), items });
+    return items;
+  })();
+
+  presetElementsCache.set(cacheKey, {
+    ts: Date.now(),
+    items: cache?.items ?? [],
+    inFlight,
+  });
+
+  try {
+    return await inFlight;
+  } finally {
+    const entry = presetElementsCache.get(cacheKey);
+    if (entry?.inFlight === inFlight) delete entry.inFlight;
   }
 }
 
@@ -179,7 +422,6 @@ async function waitKlingElementReady(id: string, opts?: { timeoutMs?: number; in
       throw new Error(el.statusDetail || "Kling: falló la creación del Element.");
     }
 
-    // ✅ Si el backend no pudo consultar el task (auth / endpoint / red), no tiene sentido esperar 3 min.
     if (typeof el.statusDetail === "string" && el.statusDetail.toLowerCase().startsWith("poll_error:")) {
       throw new Error(`Kling: error consultando el estado del Element. ${el.statusDetail}`);
     }
@@ -194,6 +436,7 @@ export type CreateKlingElementPayload =
   | {
       name: string;
       tag?: string;
+      tagIds?: KlingElementTagId[];
       description?: string;
       voiceId?: string;
       referenceType?: "image_refer";
@@ -202,6 +445,7 @@ export type CreateKlingElementPayload =
   | {
       name: string;
       tag?: string;
+      tagIds?: KlingElementTagId[];
       description?: string;
       voiceId?: string;
       referenceType: "video_refer";
@@ -209,10 +453,7 @@ export type CreateKlingElementPayload =
     };
 
 export type CreateKlingElementOptions = {
-  // Si es false, devolvemos rápido aunque Kling siga procesando (status="creating").
   waitForReady?: boolean;
-
-  // Solo aplica cuando waitForReady=true
   timeoutMs?: number;
   intervalMs?: number;
 };
@@ -236,10 +477,8 @@ export async function createKlingElement(
   invalidateKlingElementsCache();
 
   const created = mapRowToKlingElement(data.item);
-
   const waitForReady = opts?.waitForReady ?? true;
 
-  // ✅ Si viene creating y el caller quiere esperar, hacemos polling.
   if (created.status === "creating" && waitForReady) {
     const finalEl = await waitKlingElementReady(created.id, {
       timeoutMs: opts?.timeoutMs ?? 180_000,
@@ -249,7 +488,6 @@ export async function createKlingElement(
     return finalEl;
   }
 
-  // ✅ Modo recomendado para UI: devolver rápido y dejar que worker/Refresh status actualice.
   return created;
 }
 
@@ -269,8 +507,6 @@ export async function deleteKlingElement(id: string): Promise<void> {
 
 // ===============================
 // Kling Voices (para element_voice_id)
-// La lista se obtiene del backend (/api/kling/voices), que consulta la librería de voces de Kling
-// (o un catálogo manual vía variables de entorno).
 // ===============================
 
 export type KlingVoice = {
@@ -285,7 +521,7 @@ type VoicesCacheEntry = {
   inFlight?: Promise<KlingVoice[]>;
 };
 
-const VOICES_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 horas
+const VOICES_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 let voicesCache: VoicesCacheEntry | null = null;
 
 export function invalidateKlingVoicesCache() {

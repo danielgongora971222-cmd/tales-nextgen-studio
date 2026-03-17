@@ -5,7 +5,12 @@ import { MentionTextarea, type MentionItem } from "../../components/MentionTexta
 import { deleteAsset, listMyAssets, uploadUserAsset, downloadAssetToDisk } from "../../services/assetsApi";
 import { useAuth } from "../../contexts/AuthContext";
 import type { Asset } from "../../types";
-import { refreshKlingElementsStatus, type KlingElement } from "../../services/klingElementsService";
+import {
+  listKlingElements,
+  listKlingPresetElements,
+  refreshKlingElementsStatus,
+  type KlingElement,
+} from "../../services/klingElementsService";
 import { formatErr } from "../../services/videoGenApi";
 import { useGenerationQueue } from "../../contexts/GenerationQueueContext";
 import { FramePickerModal } from "./video/FramePickerModal";
@@ -39,8 +44,8 @@ import {
 import { Icon } from "./video/icon";
 import { ViewerModal } from "./video/viewermodal";
 
-// 🔒 VIDEO: ocultar/deshabilitar Elements en toda la herramienta de video
-const VIDEO_ELEMENTS_UI_ENABLED = false;
+// Kling Elements habilitados para Kling 3.0 y Kling O3
+const VIDEO_ELEMENTS_UI_ENABLED = true;
 
 type PanelKey = "frames" | "model" | "parameters" | "duration" | null;
 
@@ -358,6 +363,7 @@ const VideoGeneratorTool: React.FC = () => {
   // Kling V3 (Fal) — Elements + Multishot + Params
   // ===============================
   const [klingElements, setKlingElements] = useState<KlingElement[]>([]);
+  const [presetKlingElements, setPresetKlingElements] = useState<KlingElement[]>([]);
   const [elementsOpen, setElementsOpen] = useState(false);
   // ✅ NUEVO: en multishot, el modal edita los elements de un shot específico
   const [elementsShotIndex, setElementsShotIndex] = useState<number | null>(null);
@@ -687,7 +693,6 @@ const VideoGeneratorTool: React.FC = () => {
   const isKlingV3 = isKlingV3Core || isKlingO3;
   const supportsMultishotUi = isKlingV3;
   const supportsMultishotIntelligence = isKlingV3Core;
-  const supportsElementsPlaceholder = isKlingV3;
   const maxMultishotShots = isKlingO3 ? 10 : isKlingV3Core ? 6 : 0;
   const lastFrameBlockedByMultishot = supportsMultishotUi && multishotEnabled;
 
@@ -702,9 +707,23 @@ const VideoGeneratorTool: React.FC = () => {
   // ===============================
   const isKlingV3ElementsUI = isKlingV3 && VIDEO_ELEMENTS_UI_ENABLED;
 
+  const allKlingElements = useMemo(() => {
+    const out: KlingElement[] = [];
+    const seen = new Set<string>();
+
+    for (const el of [...klingElements, ...presetKlingElements]) {
+      const id = String(el?.id ?? "").trim();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      out.push({ ...el, id });
+    }
+
+    return out;
+  }, [klingElements, presetKlingElements]);
+
   const elementTokenById = useMemo(
-    () => (isKlingV3ElementsUI ? buildElementTokenMap(klingElements) : new Map<string, string>()),
-    [isKlingV3ElementsUI, klingElements]
+    () => (isKlingV3ElementsUI ? buildElementTokenMap(allKlingElements) : new Map<string, string>()),
+    [isKlingV3ElementsUI, allKlingElements]
   );
 
   const elementTokenToId = useMemo(() => {
@@ -718,19 +737,19 @@ const VideoGeneratorTool: React.FC = () => {
 const elementMentionItems = useMemo<MentionItem[]>(() => {
   if (!isKlingV3ElementsUI) return [];
 
-  return klingElements
-    .filter((el) => (el.status ?? "ready") === "ready" && Boolean(el.klingElementId))
+  return allKlingElements
+    .filter((el) => (el.status ?? "ready") === "ready" && Boolean(el.klingElementId || el.remoteElementId))
     .map((el) => {
       const token = elementTokenById.get(el.id) || `@element${Math.floor(Math.random() * 1000)}`;
 
       return {
         id: el.id,
-        token, // ✅ requerido por MentionItem
+        token,
         label: el.name || el.description || "Element",
         kind: "element",
       };
     });
-}, [isKlingV3ElementsUI, klingElements, elementTokenById]);
+}, [isKlingV3ElementsUI, allKlingElements, elementTokenById]);
 
   // Sync Elements con el prompt:
   // - Si borras un token de Element del prompt -> se deselecciona.
@@ -769,13 +788,13 @@ const elementMentionItems = useMemo<MentionItem[]>(() => {
             const id = elementTokenToId.get(t);
             if (!id) continue;
             if (temp.includes(id)) continue;
-            if (temp.length >= 5) break;
+            if (temp.length >= maxKlingElements) break;
             temp.push(id);
           }
           nextIds = temp;
         }
 
-        if (nextIds.length > 5) nextIds = nextIds.slice(0, 5);
+        if (nextIds.length > maxKlingElements) nextIds = nextIds.slice(0, maxKlingElements);
 
         const same = nextIds.length === beforeIds.length && nextIds.every((id, i) => id === beforeIds[i]);
         return same ? beforeIds : nextIds;
@@ -784,10 +803,10 @@ const elementMentionItems = useMemo<MentionItem[]>(() => {
 
     prevPromptElementTokensRef.current = current;
 
-    if (current.size > 5) {
-      setError("No puedes usar más de 5 Elements a la vez. Elimina alguno del prompt.");
+    if (current.size > maxKlingElements) {
+      setError(`No puedes usar más de ${maxKlingElements} Elements a la vez. Elimina alguno del prompt.`);
     }
-  }, [prompt, elementTokenToId, isKlingV3, multishotEnabled, klingShotType]);
+  }, [prompt, elementTokenToId, isKlingV3ElementsUI, multishotEnabled, klingShotType, maxKlingElements]);
 
 
   // Sync global Elements en multishot customize:
@@ -820,7 +839,7 @@ const elementMentionItems = useMemo<MentionItem[]>(() => {
       const same = next.length === prev.length && next.every((id, i) => id === prev[i]);
       return same ? prev : next;
     });
-  }, [isKlingV3, multishotEnabled, klingShotType, klingShots, maxKlingElements]);
+  }, [isKlingV3ElementsUI, multishotEnabled, klingShotType, klingShots, maxKlingElements]);
 
 
   const isVeoFamily = modelNorm.startsWith("veo-");
@@ -1173,27 +1192,34 @@ useEffect(() => {
     klingShots,
   ]);
 
-  const refreshKlingElements = useCallback(async () => {
+  const loadKlingElementLibrary = useCallback(async (opts?: {
+    pollCustom?: boolean;
+    forcePresets?: boolean;
+    silent?: boolean;
+  }) => {
     try {
-      const raw = await refreshKlingElementsStatus({ maxPoll: 10 });
+      const [customRaw, presetRaw] = await Promise.all([
+        opts?.pollCustom ? refreshKlingElementsStatus({ maxPoll: 10 }) : listKlingElements(),
+        listKlingPresetElements({ force: Boolean(opts?.forcePresets) }),
+      ]);
 
-      // Normaliza IDs a string (evita mismatch string/number)
-      const items = (raw || []).map((e: any) => ({
-        ...e,
-        id: String(e?.id ?? ""),
-      }));
+      const customItems = (customRaw || []).map((e: any) => ({ ...e, id: String(e?.id ?? "") }));
+      const presetItems = (presetRaw || []).map((e: any) => ({ ...e, id: String(e?.id ?? "") }));
 
-      setKlingElements(items);
+      setKlingElements(customItems);
+      setPresetKlingElements(presetItems);
 
-      // Limpia IDs fantasma (causan "(unknown)" en el Quality Gate)
-      const validIds = new Set(items.map((e: any) => String(e?.id ?? "")).filter(Boolean));
+      const validIds = new Set(
+        [...customItems, ...presetItems]
+          .map((e: any) => String(e?.id ?? "").trim())
+          .filter(Boolean)
+      );
 
       setSelectedKlingElementIds((prev) => {
         const arr = Array.isArray(prev) ? prev : [];
         return arr.map(String).filter((id) => validIds.has(id));
       });
 
-      // También limpia selección por-shot (multishot customize)
       setKlingShots((prev: any) => {
         const arr = Array.isArray(prev) ? prev : [];
         return arr.map((s: any) => ({
@@ -1204,15 +1230,22 @@ useEffect(() => {
         }));
       });
     } catch (e: any) {
-      setError(e?.message || "No pude cargar tus Elements.");
+      if (!opts?.silent) {
+        setError(e?.message || "No pude cargar tus Elements.");
+      }
     }
   }, []);
 
   useEffect(() => {
     if (!isKlingV3ElementsUI) return;
+    loadKlingElementLibrary({ silent: true });
+  }, [isKlingV3ElementsUI, loadKlingElementLibrary]);
+
+  useEffect(() => {
+    if (!isKlingV3ElementsUI) return;
     if (!elementsOpen) return;
-    refreshKlingElements();
-  }, [isKlingV3, elementsOpen, refreshKlingElements]);
+    loadKlingElementLibrary({ pollCustom: true, forcePresets: true });
+  }, [isKlingV3ElementsUI, elementsOpen, loadKlingElementLibrary]);
 
   useEffect(() => {
     if (!isKlingV3ElementsUI) return;
@@ -1221,7 +1254,7 @@ useEffect(() => {
     // Refresca imágenes y videos para el creador de Elements
     reloadImages();
     reloadVideosForElements();
-  }, [isKlingV3, elementsOpen]);
+  }, [isKlingV3ElementsUI, elementsOpen]);
 
   const modelLabel = useMemo(() => getVideoModelDisplayLabel(modelNorm), [modelNorm]);
 
@@ -1544,7 +1577,7 @@ const durationLabel = useMemo(() => {
 
   // ✅ Quality Gate: no permitir Elements no listos (creating/failed o sin klingElementId)
   if (isKlingV3) {
-    const byId = new Map(klingElements.map((e) => [String(e.id), e]));
+    const byId = new Map(allKlingElements.map((e) => [String(e.id), e]));
 
     const selected = (selectedKlingElementIdsForModel || []).map((x) => String(x)).filter(Boolean);
 
@@ -1794,7 +1827,7 @@ const clearModalSelectedIds = () => {
     }
   };
 
-  const canShowComposerActions = !isMultishotCustomize && (capability.supportsSound || supportsElementsPlaceholder);
+  const canShowComposerActions = !isMultishotCustomize && (capability.supportsSound || isKlingV3ElementsUI);
 
   const toggleMultishot = () => {
     if (!supportsMultishotUi) return;
@@ -2152,16 +2185,17 @@ const clearModalSelectedIds = () => {
                                   </select>
                                 </div>
 
-                                {supportsElementsPlaceholder && (
+                                {isKlingV3ElementsUI && (
                                   <button
                                     type="button"
-                                    className={`${styles.videoActionBtn} ${styles.videoActionBtnMuted}`}
-                                    disabled
-                                    title="Reactivación pendiente próximamente"
-                                    aria-label="Elements · Reactivación pendiente próximamente"
+                                    className={`${styles.videoActionBtn} ${styles.videoActionBtnMuted} ${Array.isArray(shot.elementIds) && shot.elementIds.length ? styles.videoActionBtnActive : ""}`}
+                                    onClick={() => openElementsForShot(shotIndex)}
+                                    title={`Manage Elements for Shot ${shotIndex + 1}`}
+                                    aria-label={`Open Elements for Shot ${shotIndex + 1}`}
                                   >
                                     <Icon name="elements" />
                                     <span>Elements</span>
+                                    <span className={styles.videoActionBtnMeta}>{Array.isArray(shot.elementIds) ? shot.elementIds.length : 0}/{maxKlingElements}</span>
                                   </button>
                                 )}
                               </div>
@@ -2194,7 +2228,7 @@ const clearModalSelectedIds = () => {
                               let allowed = true;
                               setSelectedKlingElementIds((prev) => {
                                 if (prev.includes(it.id)) return prev;
-                                if (prev.length >= 5) {
+                                if (prev.length >= maxKlingElements) {
                                   allowed = false;
                                   return prev;
                                 }
@@ -2202,7 +2236,7 @@ const clearModalSelectedIds = () => {
                               });
 
                               if (!allowed) {
-                                setError("No puedes usar más de 5 Elements a la vez. Elimina alguno del prompt.");
+                                setError(`No puedes usar más de ${maxKlingElements} Elements a la vez. Elimina alguno del prompt.`);
                               }
                               return allowed;
                             }}
@@ -2223,16 +2257,17 @@ const clearModalSelectedIds = () => {
                               </button>
                             )}
 
-                            {supportsElementsPlaceholder && (
+                            {isKlingV3ElementsUI && (
                               <button
                                 type="button"
-                                className={`${styles.videoActionBtn} ${styles.videoActionBtnMuted}`}
-                                disabled
-                                title="Reactivación pendiente próximamente"
-                                aria-label="Elements · Reactivación pendiente próximamente"
+                                className={`${styles.videoActionBtn} ${styles.videoActionBtnMuted} ${selectedKlingElementIds.length ? styles.videoActionBtnActive : ""}`}
+                                onClick={() => openElementsForShot(null)}
+                                title="Open Elements library"
+                                aria-label="Open Elements library"
                               >
                                 <Icon name="elements" />
                                 <span>Elements</span>
+                                <span className={styles.videoActionBtnMeta}>{selectedKlingElementIds.length}/{maxKlingElements}</span>
                               </button>
                             )}
                           </div>
@@ -2371,6 +2406,7 @@ const clearModalSelectedIds = () => {
             setElementsShotIndex(null);
           }}
           elements={klingElements}
+          presetElements={presetKlingElements}
           query={elementsQuery}
           setQuery={setElementsQuery}
           selectedIds={modalSelectedIds}
@@ -2379,7 +2415,7 @@ const clearModalSelectedIds = () => {
           imageAssets={imageAssets}
           videoAssets={videoLibraryAssets}
           getAssetUrl={getAssetUrl}
-          onRefresh={refreshKlingElements}
+          onRefresh={() => loadKlingElementLibrary({ pollCustom: true, forcePresets: true })}
           onAssetUploaded={(asset) => {
             if (asset.type === "video") {
               setVideoLibraryAssets((prev) => [asset, ...prev.filter((x) => x.id !== asset.id)]);
@@ -2387,7 +2423,7 @@ const clearModalSelectedIds = () => {
               setImageAssets((prev) => [asset, ...prev.filter((x) => x.id !== asset.id)]);
             }
           }}
-          maxSelected={modelNorm === KLING_V3 ? 3 : 5}
+          maxSelected={maxKlingElements || 5}
           uploadToolName="video-elements"
         />
       )}
