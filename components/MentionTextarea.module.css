@@ -1,6 +1,9 @@
 .wrap {
   position: relative;
   width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+  border-radius: inherit;
 }
 
 .highlighter {
@@ -18,7 +21,7 @@
   line-height: inherit;
   white-space: pre-wrap;
   word-break: break-word;
-  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
 
   overflow: auto;
   pointer-events: none;
@@ -43,7 +46,7 @@
   line-height: inherit;
   white-space: pre-wrap;
   word-break: break-word;
-  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
   color: transparent;
   caret-color: var(--text-main, rgba(255, 255, 255, 0.92));
   overflow: auto;

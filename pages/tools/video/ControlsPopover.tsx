@@ -123,141 +123,143 @@ export function ControlsPopover({
           </button>
         </div>
 
-        {panel === "model" && (
-          <div className={styles.modelGrid}>
-            {MODEL_OPTIONS.map((option) => (
-              <button
-                key={option.id}
-                type="button"
-                className={`${styles.modelOption} ${model === option.id ? styles.modelOptionActive : ""}`}
-                onClick={() => {
-                  setModel(option.id);
-                  close();
-                }}
-              >
-                <div className={styles.modelName}>{option.name}</div>
-                <div className={styles.modelDesc}>{option.desc}</div>
-              </button>
-            ))}
-          </div>
-        )}
-
-        {panel === "parameters" && (
-          <>
-            <div className={styles.formRow}>
-              <label className={styles.formLabel}>Aspect ratio</label>
-              {capability.supportsAspectRatio ? (
-                <div className={styles.segment}>
-                  <button
-                    type="button"
-                    className={`${styles.segmentBtn} ${aspectRatio === "16:9" ? styles.segmentBtnActive : ""}`}
-                    onClick={() => selectAspect("16:9")}
-                  >
-                    16:9
-                  </button>
-                  <button
-                    type="button"
-                    className={`${styles.segmentBtn} ${aspectRatio === "9:16" ? styles.segmentBtnActive : ""}`}
-                    onClick={() => selectAspect("9:16")}
-                  >
-                    9:16
-                  </button>
-                  <button
-                    type="button"
-                    className={`${styles.segmentBtn} ${aspectRatio === "1:1" ? styles.segmentBtnActive : ""} ${
-                      capability.supportsAspectRatio1x1 ? "" : styles.segmentBtnDisabled
-                    }`}
-                    onClick={() => capability.supportsAspectRatio1x1 && selectAspect("1:1")}
-                    disabled={!capability.supportsAspectRatio1x1}
-                    title={!capability.supportsAspectRatio1x1 ? "No disponible" : "1:1"}
-                  >
-                    1:1
-                  </button>
-                </div>
-              ) : (
-                <div className={styles.noteSmall}>{hasFirst ? "Auto por Start frame" : "Auto"}</div>
-              )}
-            </div>
-
-            <div className={styles.formRow}>
-              <label className={styles.formLabel}>Quality / Resolution</label>
-              {isKling ? (
-                <div className={styles.segment}>
-                  <button
-                    type="button"
-                    className={`${styles.segmentBtn} ${klingMode === "std" ? styles.segmentBtnActive : ""} ${
-                      supports720 ? "" : styles.segmentBtnDisabled
-                    }`}
-                    onClick={() => supports720 && selectKlingMode("std")}
-                    disabled={!supports720}
-                  >
-                    720p
-                  </button>
-                  <button
-                    type="button"
-                    className={`${styles.segmentBtn} ${klingMode === "pro" ? styles.segmentBtnActive : ""} ${
-                      supports1080 ? "" : styles.segmentBtnDisabled
-                    }`}
-                    onClick={() => supports1080 && selectKlingMode("pro")}
-                    disabled={!supports1080}
-                  >
-                    1080p
-                  </button>
-                </div>
-              ) : capability.supportsResolution ? (
-                <div className={styles.segment}>
-                  {supports720 && (
-                    <button
-                      type="button"
-                      className={`${styles.segmentBtn} ${resolution === "720p" ? styles.segmentBtnActive : ""}`}
-                      onClick={() => selectResolution("720p")}
-                    >
-                      720p
-                    </button>
-                  )}
-                  {supports1080 && (
-                    <button
-                      type="button"
-                      className={`${styles.segmentBtn} ${resolution === "1080p" ? styles.segmentBtnActive : ""}`}
-                      onClick={() => selectResolution("1080p")}
-                    >
-                      1080p
-                    </button>
-                  )}
-                  {supports4k && (
-                    <button
-                      type="button"
-                      className={`${styles.segmentBtn} ${resolution === "4k" ? styles.segmentBtnActive : ""}`}
-                      onClick={() => selectResolution("4k")}
-                    >
-                      4K
-                    </button>
-                  )}
-                </div>
-              ) : (
-                <div className={styles.noteSmall}>Auto</div>
-              )}
-            </div>
-          </>
-        )}
-
-        {panel === "duration" && (
-          <>
-            <div className={styles.durationGrid}>
-              {allowedDurations.map((duration) => (
+        <div className={styles.popoverBody}>
+          {panel === "model" && (
+            <div className={styles.modelGrid}>
+              {MODEL_OPTIONS.map((option) => (
                 <button
-                  key={duration}
+                  key={option.id}
                   type="button"
-                  className={`${styles.durationOption} ${durationSeconds === duration ? styles.durationOptionActive : ""}`}
-                  onClick={() => selectDuration(duration)}
+                  className={`${styles.modelOption} ${model === option.id ? styles.modelOptionActive : ""}`}
+                  onClick={() => {
+                    setModel(option.id);
+                    close();
+                  }}
                 >
-                  {duration}s
+                  <div className={styles.modelName}>{option.name}</div>
+                  <div className={styles.modelDesc}>{option.desc}</div>
                 </button>
               ))}
             </div>
-            <div className={styles.noteSmall}>Las opciones cambian según el modelo seleccionado.</div>
-          </>
-        )}
+          )}
+
+          {panel === "parameters" && (
+            <>
+              <div className={styles.formRow}>
+                <label className={styles.formLabel}>Aspect ratio</label>
+                {capability.supportsAspectRatio ? (
+                  <div className={styles.segment}>
+                    <button
+                      type="button"
+                      className={`${styles.segmentBtn} ${aspectRatio === "16:9" ? styles.segmentBtnActive : ""}`}
+                      onClick={() => selectAspect("16:9")}
+                    >
+                      16:9
+                    </button>
+                    <button
+                      type="button"
+                      className={`${styles.segmentBtn} ${aspectRatio === "9:16" ? styles.segmentBtnActive : ""}`}
+                      onClick={() => selectAspect("9:16")}
+                    >
+                      9:16
+                    </button>
+                    <button
+                      type="button"
+                      className={`${styles.segmentBtn} ${aspectRatio === "1:1" ? styles.segmentBtnActive : ""} ${
+                        capability.supportsAspectRatio1x1 ? "" : styles.segmentBtnDisabled
+                      }`}
+                      onClick={() => capability.supportsAspectRatio1x1 && selectAspect("1:1")}
+                      disabled={!capability.supportsAspectRatio1x1}
+                      title={!capability.supportsAspectRatio1x1 ? "No disponible" : "1:1"}
+                    >
+                      1:1
+                    </button>
+                  </div>
+                ) : (
+                  <div className={styles.noteSmall}>{hasFirst ? "Auto por Start frame" : "Auto"}</div>
+                )}
+              </div>
+
+              <div className={styles.formRow}>
+                <label className={styles.formLabel}>Quality / Resolution</label>
+                {isKling ? (
+                  <div className={styles.segment}>
+                    <button
+                      type="button"
+                      className={`${styles.segmentBtn} ${klingMode === "std" ? styles.segmentBtnActive : ""} ${
+                        supports720 ? "" : styles.segmentBtnDisabled
+                      }`}
+                      onClick={() => supports720 && selectKlingMode("std")}
+                      disabled={!supports720}
+                    >
+                      720p
+                    </button>
+                    <button
+                      type="button"
+                      className={`${styles.segmentBtn} ${klingMode === "pro" ? styles.segmentBtnActive : ""} ${
+                        supports1080 ? "" : styles.segmentBtnDisabled
+                      }`}
+                      onClick={() => supports1080 && selectKlingMode("pro")}
+                      disabled={!supports1080}
+                    >
+                      1080p
+                    </button>
+                  </div>
+                ) : capability.supportsResolution ? (
+                  <div className={styles.segment}>
+                    {supports720 && (
+                      <button
+                        type="button"
+                        className={`${styles.segmentBtn} ${resolution === "720p" ? styles.segmentBtnActive : ""}`}
+                        onClick={() => selectResolution("720p")}
+                      >
+                        720p
+                      </button>
+                    )}
+                    {supports1080 && (
+                      <button
+                        type="button"
+                        className={`${styles.segmentBtn} ${resolution === "1080p" ? styles.segmentBtnActive : ""}`}
+                        onClick={() => selectResolution("1080p")}
+                      >
+                        1080p
+                      </button>
+                    )}
+                    {supports4k && (
+                      <button
+                        type="button"
+                        className={`${styles.segmentBtn} ${resolution === "4k" ? styles.segmentBtnActive : ""}`}
+                        onClick={() => selectResolution("4k")}
+                      >
+                        4K
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div className={styles.noteSmall}>Auto</div>
+                )}
+              </div>
+            </>
+          )}
+
+          {panel === "duration" && (
+            <>
+              <div className={styles.durationGrid}>
+                {allowedDurations.map((duration) => (
+                  <button
+                    key={duration}
+                    type="button"
+                    className={`${styles.durationOption} ${durationSeconds === duration ? styles.durationOptionActive : ""}`}
+                    onClick={() => selectDuration(duration)}
+                  >
+                    {duration}s
+                  </button>
+                ))}
+              </div>
+              <div className={styles.noteSmall}>Las opciones cambian según el modelo seleccionado.</div>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );

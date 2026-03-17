@@ -1311,6 +1311,7 @@ const durationLabel = useMemo(() => {
 
   const isCookSidebarVisible = isCookOpen && !panel;
   const isCookLayerVisible = isCookOpen || !!panel;
+  const showCookActionDock = isCookSidebarVisible;
 
   function openCook() {
     setPanel(null);
@@ -1879,7 +1880,7 @@ const clearModalSelectedIds = () => {
         hoverVideoEls={hoverVideoEls}
       />
 
-      {panel === null && (
+      {panel === null && !isCookSidebarVisible && (
         <button
           type="button"
           className={`${styles.cookToggle} ${isCookSidebarVisible ? styles.cookToggleOpen : styles.cookTogglePulse}`}
@@ -2269,29 +2270,47 @@ const clearModalSelectedIds = () => {
                     </div>
                   </div>
 
-                  <div className={styles.videoGenerateWrap}>
-                    <button
-                      type="button"
-                      className={styles.videoGenerateButton}
-                      disabled={generateDisabled}
-                      onClick={handleGenerate}
-                      data-loading={isGenerating ? "true" : "false"}
-                    >
-                      <span className={styles.videoGenerateLabelRow}>
-                        <span>{isGenerating ? "Generating" : `Generate ✦ ${estimatedCostCredits}`}</span>
-                        {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
-                      </span>
-                    </button>
-
-                    {isGenerating && (
-                      <button type="button" className={styles.cancelBtn} onClick={handleCancel}>
-                        Cancel
-                      </button>
-                    )}
-
-                    {isGenerating && progressText && <div className={styles.progressText}>{progressText}</div>}
-                  </div>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {showCookActionDock && (
+            <div className={styles.cookActionDockShell}>
+              <div className={styles.cookActionDock}>
+                <div className={styles.cookActionButtons}>
+                  <button
+                    type="button"
+                    className={`${styles.cookDockButton} ${styles.cookDockStartButton}`}
+                    onClick={closeCook}
+                    aria-label="Close Start Create"
+                  >
+                    <span className={styles.cookDockText}>Start Create</span>
+                    <span className={styles.cookDockGlyph} aria-hidden="true">×</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    className={`${styles.cookDockButton} ${styles.cookDockGenerateButton}`}
+                    disabled={generateDisabled}
+                    onClick={handleGenerate}
+                    data-loading={isGenerating ? "true" : "false"}
+                  >
+                    <span className={styles.videoGenerateLabelRow}>
+                      <span>{isGenerating ? "Generating" : `Generate ✦ ${estimatedCostCredits}`}</span>
+                      {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
+                    </span>
+                  </button>
+                </div>
+
+                {isGenerating && (
+                  <div className={styles.cookDockMetaRow}>
+                    <button type="button" className={styles.cookDockCancel} onClick={handleCancel}>
+                      Cancel
+                    </button>
+                    {progressText && <div className={styles.cookDockProgress}>{progressText}</div>}
+                  </div>
+                )}
               </div>
             </div>
           )}
