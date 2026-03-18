@@ -1118,13 +1118,6 @@ useEffect(() => {
   const [isCookOpen, setIsCookOpen] = useState(false);
   const isCookSidebarVisible = isCookOpen && !panel;
   const isCookLayerVisible = isCookOpen || !!panel;
-  const showCookActionDock = isCookSidebarVisible;
-  const dockGenerateDisabled = isSubmitting || !prompt.trim() || toolLimitReached || totalLimitReached;
-  const generateLimitHint = toolLimitReached
-    ? "Máximo 2 generaciones activas en esta herramienta."
-    : totalLimitReached
-      ? "Máximo 4 generaciones de imagen activas en total."
-      : null;
 
   const goHome = useCallback(() => {
     window.dispatchEvent(new CustomEvent("tales:navigate", { detail: { route: AppRoute.HOME } }));
@@ -1267,7 +1260,7 @@ useEffect(() => {
     setIsLoadingHistory(true);
     try {
       const [ownedRes, purchasedRes] = await Promise.allSettled([
-        listMyAssets({ type: "image", limit: 300, fresh: true }),
+        listMyAssets({ type: "image", limit: 300 }),
         listPurchasedAssets({ type: "image", limit: 300, fresh: true }),
       ]);
 
@@ -2379,8 +2372,8 @@ const promptReferences: PromptReference[] = useMemo(() => {
   }, [viewer, panel, isCookOpen, closeCook, restoreCookFromPanel]);
 
   const refLibraryAssets = useMemo(() => {
-    return refLibraryTab === "purchased" ? purchasedAssets : myAssets;
-  }, [refLibraryTab, purchasedAssets, myAssets]);
+    return refLibraryTab === "purchased" ? purchasedAssets : history;
+  }, [refLibraryTab, purchasedAssets, history]);
 
   const filteredPickerAssets = useMemo(() => {
     const q = pickerQuery.trim().toLowerCase();
@@ -3156,7 +3149,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
                                     className={`${styles.smallBtnGhost} ${refLibraryTab === "history" ? styles.smallBtnGhostActive : ""}`}
                                     onClick={() => setRefLibraryTab("history")}
                                   >
-                                    My library
+                                    My history
                                   </button>
                                   <button
                                     type="button"
@@ -3169,7 +3162,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
 
                                 <input
                                   className={styles.search}
-                                  placeholder={refLibraryTab === "purchased" ? "Search in purchased assets..." : "Search in your library..."}
+                                  placeholder={refLibraryTab === "purchased" ? "Search in purchased assets..." : "Search in history..."}
                                   value={pickerQuery}
                                   onChange={(e) => setPickerQuery(e.target.value)}
                                 />
@@ -3201,7 +3194,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
                                     <div className={styles.pickerEmpty}>
                                       {refLibraryTab === "purchased"
                                         ? "Aún no tienes assets comprados en Community Store."
-                                        : "No images found in your library."}
+                                        : "No images found in your history."}
                                     </div>
                                   ) : null}
                                 </div>
@@ -3480,27 +3473,37 @@ const promptReferences: PromptReference[] = useMemo(() => {
                   </div>
                 </div>
 
-                {!showCookActionDock && (
-                  <div className={`${styles.generateCol} ${styles.cookGenerateCol}`}>
-                    <button
-                      type="button"
-                      className={`${styles.generateBtn} ${styles.cookGenerateBtn}`}
-                      disabled={dockGenerateDisabled}
-                      onClick={() => {
-                        void handleGenerate();
-                      }}
-                      data-loading={isSubmitting ? "true" : "false"}
-                      title={generateLimitHint || undefined}
-                    >
-                      <span className={styles.generateLabel}>{isSubmitting ? "GENERATING" : "GENERATE"}</span>
-                      {isSubmitting && <span className={styles.generateSpinner} aria-hidden="true" />}
-                    </button>
-                    <div className={styles.cookEstimate}>
-                      Coste estimado: <b>{estimatedCostCredits}</b> créditos
-                    </div>
-                    {generateLimitHint && <div className={styles.cookLimitHint}>{generateLimitHint}</div>}
+                <div className={`${styles.generateCol} ${styles.cookGenerateCol}`}>
+                  <button
+                    type="button"
+                    className={`${styles.generateBtn} ${styles.cookGenerateBtn}`}
+                    disabled={isSubmitting || !prompt.trim() || toolLimitReached || totalLimitReached}
+                    onClick={() => {
+                      void handleGenerate();
+                    }}
+                    data-loading={isSubmitting ? "true" : "false"}
+                    title={
+                      toolLimitReached
+                        ? "Límite por herramienta: 2 generaciones activas."
+                        : totalLimitReached
+                          ? "Límite global: 4 generaciones de imagen activas."
+                          : undefined
+                    }
+                  >
+                    <span className={styles.generateLabel}>{isSubmitting ? "GENERATING" : "GENERATE"}</span>
+                    {isSubmitting && <span className={styles.generateSpinner} aria-hidden="true" />}
+                  </button>
+                  <div className={styles.cookEstimate}>
+                    Coste estimado: <b>{estimatedCostCredits}</b> créditos
                   </div>
-                )}
+                  {(toolLimitReached || totalLimitReached) && (
+                    <div className={styles.cookLimitHint}>
+                      {toolLimitReached
+                        ? "Máximo 2 generaciones activas en esta herramienta."
+                        : "Máximo 4 generaciones de imagen activas en total."}
+                    </div>
+                  )}
+                </div>
 
                 <div className={styles.cookControlsRow}>
                   <button
@@ -3561,46 +3564,6 @@ const promptReferences: PromptReference[] = useMemo(() => {
                 </div>
               </div>
             </div>
-            </div>
-          </div>
-        )}
-        {showCookActionDock && (
-          <div className={styles.cookActionDockShell}>
-            <div className={styles.cookActionDock}>
-              <div className={styles.cookActionButtons}>
-                <button
-                  type="button"
-                  className={`${styles.cookDockButton} ${styles.cookDockStartButton}`}
-                  onClick={closeCook}
-                  aria-label="Close Start Create"
-                >
-                  <span className={styles.cookDockText}>Start Create</span>
-                  <span className={styles.cookDockGlyph} aria-hidden="true">×</span>
-                </button>
-
-                <button
-                  type="button"
-                  className={`${styles.cookDockButton} ${styles.cookDockGenerateButton}`}
-                  disabled={dockGenerateDisabled}
-                  onClick={() => {
-                    void handleGenerate();
-                  }}
-                  data-loading={isSubmitting ? "true" : "false"}
-                  title={generateLimitHint || undefined}
-                >
-                  <span className={styles.cookDockLabelRow}>
-                    <span>{isSubmitting ? "Generating" : "Generate"}</span>
-                    {!isSubmitting && <span className={styles.cookDockCost}>✦ {estimatedCostCredits}</span>}
-                    {isSubmitting && <span className={styles.generateSpinner} aria-hidden="true" />}
-                  </span>
-                </button>
-              </div>
-
-              {generateLimitHint && (
-                <div className={styles.cookDockMetaRow}>
-                  <div className={styles.cookDockProgress}>{generateLimitHint}</div>
-                </div>
-              )}
             </div>
           </div>
         )}

@@ -261,8 +261,6 @@ const UpscalerTool: React.FC<{ prefillAsset?: Asset | null }> = ({ prefillAsset 
   const parametersLabel = qualityLabel;
   const isCookSidebarVisible = isCookOpen && !panel;
   const isCookLayerVisible = isCookOpen || !!panel;
-  const showCookActionDock = isCookSidebarVisible;
-  const dockGenerateDisabled = isGenerating || !baseRef;
 
   function goHome() {
     window.dispatchEvent(new CustomEvent("tales:navigate", { detail: { route: AppRoute.HOME } }));
@@ -635,84 +633,7 @@ const UpscalerTool: React.FC<{ prefillAsset?: Asset | null }> = ({ prefillAsset 
             </div>
           )}
           {isCookSidebarVisible && (
-            <>
-              <div className={styles.cookSidebarShell}>
-                <div className={styles.cookSidebar}>
-                  <div className={`${styles.cookSectionCard} ${styles.cookPromptCard}`}>
-                    <div className={`${styles.promptRow} ${styles.cookPromptRow}`}>
-                      <div className={`${styles.promptInputWrap} ${styles.cookPromptInputWrap}`}>
-                        <div className={`${styles.promptEditor} ${styles.cookPromptEditor}`}>
-                          <div className={`${styles.prompt} ${styles.cookPrompt}`} style={{ minHeight: 88, padding: 14, fontSize: 12 }}>
-                            {!baseRef ? "Add a reference image." : `Ready → ${modelLabel} · ${qualityLabel}`}
-                          </div>
-                        </div>
-                      </div>
-
-                      {!showCookActionDock && (
-                        <div className={`${styles.generateCol} ${styles.cookGenerateCol}`}>
-                          <button
-                            type="button"
-                            className={`${styles.generateBtn} ${styles.cookGenerateBtn}`}
-                            disabled={dockGenerateDisabled}
-                            onClick={handleGenerate}
-                            data-loading={isGenerating ? "true" : "false"}
-                          >
-                            <span className={styles.generateLabel}>{isGenerating ? "GENERATING" : "UPSCALE"}</span>
-                            {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
-                          </button>
-                          <div className={styles.cookEstimate}>Coste estimado: <b>{estimatedCostCredits}</b> créditos</div>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className={styles.cookControlsRow}>
-                      <button type="button" className={`${styles.controlBtn} ${styles.cookControlBtn}`} onClick={() => openPanel("reference")}>
-                        <span className={styles.controlBtnLabel}>Reference</span>
-                        <span className={styles.controlBtnMeta}>{referenceLabel}</span>
-                      </button>
-                      <button type="button" className={`${styles.controlBtn} ${styles.cookControlBtn}`} onClick={() => openPanel("model")}>
-                        <span className={styles.controlBtnLabel}>Model</span>
-                        <span className={styles.controlBtnMeta}>{modelLabel}</span>
-                      </button>
-                      <button type="button" className={`${styles.controlBtn} ${styles.cookControlBtn}`} onClick={() => openPanel("parameters")}>
-                        <span className={styles.controlBtnLabel}>Parameters</span>
-                        <span className={styles.controlBtnMeta}>{parametersLabel}</span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className={styles.cookActionDockShell}>
-                <div className={styles.cookActionDock}>
-                  <div className={styles.cookActionButtons}>
-                    <button
-                      type="button"
-                      className={`${styles.cookDockButton} ${styles.cookDockStartButton}`}
-                      onClick={closeCook}
-                      aria-label="Close Start Create"
-                    >
-                      <span className={styles.cookDockText}>Start Create</span>
-                      <span className={styles.cookDockGlyph} aria-hidden="true">×</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      className={`${styles.cookDockButton} ${styles.cookDockGenerateButton}`}
-                      disabled={dockGenerateDisabled}
-                      onClick={handleGenerate}
-                      data-loading={isGenerating ? "true" : "false"}
-                    >
-                      <span className={styles.cookDockLabelRow}>
-                        <span>{isGenerating ? "Generating" : "Generate"}</span>
-                        {!isGenerating && <span className={styles.cookDockCost}>✦ {estimatedCostCredits}</span>}
-                        {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
-                      </span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </>
+            <div className={styles.cookSidebarShell}><div className={styles.cookSidebar}><div className={`${styles.cookSectionCard} ${styles.cookPromptCard}`}><div className={`${styles.promptRow} ${styles.cookPromptRow}`}><div className={`${styles.promptInputWrap} ${styles.cookPromptInputWrap}`}><div className={`${styles.promptEditor} ${styles.cookPromptEditor}`}><div className={`${styles.prompt} ${styles.cookPrompt}`} style={{ minHeight: 88, padding: 14, fontSize: 12 }}>{!baseRef ? "Add a reference image." : `Ready → ${modelLabel} · ${qualityLabel}`}</div></div></div><div className={`${styles.generateCol} ${styles.cookGenerateCol}`}><button type="button" className={`${styles.generateBtn} ${styles.cookGenerateBtn}`} disabled={isGenerating || !baseRef} onClick={handleGenerate} data-loading={isGenerating ? "true" : "false"}><span className={styles.generateLabel}>{isGenerating ? "GENERATING" : "UPSCALE"}</span>{isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}</button><div className={styles.cookEstimate}>Coste estimado: <b>{estimatedCostCredits}</b> créditos</div></div></div><div className={styles.cookControlsRow}><button type="button" className={`${styles.controlBtn} ${styles.cookControlBtn}`} onClick={() => openPanel("reference")}><span className={styles.controlBtnLabel}>Reference</span><span className={styles.controlBtnMeta}>{referenceLabel}</span></button><button type="button" className={`${styles.controlBtn} ${styles.cookControlBtn}`} onClick={() => openPanel("model")}><span className={styles.controlBtnLabel}>Model</span><span className={styles.controlBtnMeta}>{modelLabel}</span></button><button type="button" className={`${styles.controlBtn} ${styles.cookControlBtn}`} onClick={() => openPanel("parameters")}><span className={styles.controlBtnLabel}>Parameters</span><span className={styles.controlBtnMeta}>{parametersLabel}</span></button></div></div></div></div>
           )}
         </div>
       )}

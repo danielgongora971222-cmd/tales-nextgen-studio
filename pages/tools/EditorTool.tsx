@@ -1047,8 +1047,6 @@ useEffect(() => {
   const [isCookOpen, setIsCookOpen] = useState(false);
   const isCookSidebarVisible = isCookOpen && !panel;
   const isCookLayerVisible = isCookOpen || !!panel;
-  const showCookActionDock = isCookSidebarVisible;
-  const dockGenerateDisabled = isGenerating || !prompt.trim();
 
   const goHome = useCallback(() => {
     window.dispatchEvent(new CustomEvent("tales:navigate", { detail: { route: AppRoute.HOME } }));
@@ -2968,23 +2966,20 @@ const promptReferences: PromptReference[] = useMemo(() => {
                       </div>
                     </div>
 
-                    {!showCookActionDock && (
-                      <div className={`${styles.generateCol} ${styles.cookGenerateCol}`}>
-                        <button
-                          type="button"
-                          className={`${styles.generateBtn} ${styles.cookGenerateBtn}`}
-                          disabled={dockGenerateDisabled}
-                          onClick={() => {
-                            void handleGenerate();
-                          }}
-                          data-loading={isGenerating ? "true" : "false"}
-                        >
-                          <span className={styles.generateLabel}>{isGenerating ? "GENERATING" : "GENERATE"}</span>
-                          {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
-                        </button>
-                        <div className={styles.cookEstimate}>Coste estimado: <b>{estimatedCostCredits}</b> créditos</div>
-                      </div>
-                    )}
+                    <div className={`${styles.generateCol} ${styles.cookGenerateCol}`}>
+                      <button
+                        type="button"
+                        className={`${styles.generateBtn} ${styles.cookGenerateBtn}`}
+                        disabled={isGenerating || !prompt.trim()}
+                        onClick={() => {
+                          void handleGenerate();
+                        }}
+                        data-loading={isGenerating ? "true" : "false"}
+                      >
+                        <span className={styles.generateLabel}>{isGenerating ? "GENERATING" : "GENERATE"}</span>
+                        {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
+                      </button>
+                    </div>
 
                     <div className={styles.cookControlsRow}>
                       <button
@@ -3047,40 +3042,6 @@ const promptReferences: PromptReference[] = useMemo(() => {
                       </button>
                     </div>
                   </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {showCookActionDock && (
-            <div className={styles.cookActionDockShell}>
-              <div className={styles.cookActionDock}>
-                <div className={styles.cookActionButtons}>
-                  <button
-                    type="button"
-                    className={`${styles.cookDockButton} ${styles.cookDockStartButton}`}
-                    onClick={closeCook}
-                    aria-label="Close Start Create"
-                  >
-                    <span className={styles.cookDockText}>Start Create</span>
-                    <span className={styles.cookDockGlyph} aria-hidden="true">×</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    className={`${styles.cookDockButton} ${styles.cookDockGenerateButton}`}
-                    disabled={dockGenerateDisabled}
-                    onClick={() => {
-                      void handleGenerate();
-                    }}
-                    data-loading={isGenerating ? "true" : "false"}
-                  >
-                    <span className={styles.cookDockLabelRow}>
-                      <span>{isGenerating ? "Generating" : "Generate"}</span>
-                      {!isGenerating && <span className={styles.cookDockCost}>✦ {estimatedCostCredits}</span>}
-                      {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
-                    </span>
-                  </button>
                 </div>
               </div>
             </div>

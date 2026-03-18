@@ -356,7 +356,6 @@ export default function MotionControlTool() {
 
   const isCookSidebarVisible = isCookOpen && !panel;
   const isCookLayerVisible = isCookOpen || !!panel;
-  const showCookActionDock = isCookSidebarVisible;
 
   useEffect(() => {
     let cancelled = false;
@@ -1137,22 +1136,20 @@ export default function MotionControlTool() {
                   </div>
 
                   <div className={styles.motionCookFooter}>
-                    {!showCookActionDock && (
-                      <button
-                        type="button"
-                        className={styles.motionGenerateBtn}
-                        onClick={() => {
-                          if (isGenerating) return;
-                          void handleGenerate();
-                        }}
-                        disabled={!canGenerate}
-                        data-loading={isGenerating ? "true" : "false"}
-                      >
-                        <span className={styles.motionGenerateLabel}>{generateButtonLabel}</span>
-                        {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
-                        <span className={styles.motionGenerateCost}>✦ {estimatedCostCredits}</span>
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      className={styles.motionGenerateBtn}
+                      onClick={() => {
+                        if (isGenerating) return;
+                        void handleGenerate();
+                      }}
+                      disabled={!canGenerate}
+                      data-loading={isGenerating ? "true" : "false"}
+                    >
+                      <span className={styles.motionGenerateLabel}>{generateButtonLabel}</span>
+                      {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
+                      <span className={styles.motionGenerateCost}>✦ {estimatedCostCredits}</span>
+                    </button>
 
                     {refVideo && (
                       <div
@@ -1168,70 +1165,22 @@ export default function MotionControlTool() {
                       </div>
                     )}
 
-                    {!showCookActionDock && isGenerating && progressMsg && (
+                    {isGenerating && progressMsg && (
                       <div className={styles.motionGeneratingStatus}>
                         <span className={styles.generateSpinner} aria-hidden="true" />
                         <span>{progressMsg}</span>
                       </div>
                     )}
 
-                    {!showCookActionDock ? (
-                      isGenerating ? (
-                        <button type="button" className={styles.cancelBtn} onClick={cancelWaitOnly}>
-                          Cancel wait
-                        </button>
-                      ) : progressMsg ? (
-                        <div className={styles.progressText}>{progressMsg}</div>
-                      ) : null
-                    ) : null}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {showCookActionDock && (
-            <div className={styles.cookActionDockShell}>
-              <div className={styles.cookActionDock}>
-                <div className={styles.cookActionButtons}>
-                  <button
-                    type="button"
-                    className={`${styles.cookDockButton} ${styles.cookDockStartButton}`}
-                    onClick={closeCook}
-                    aria-label="Close Start Create"
-                  >
-                    <span className={styles.cookDockText}>Start Create</span>
-                    <span className={styles.cookDockGlyph} aria-hidden="true">×</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    className={`${styles.cookDockButton} ${styles.cookDockGenerateButton}`}
-                    onClick={() => {
-                      if (isGenerating) return;
-                      void handleGenerate();
-                    }}
-                    disabled={!canGenerate}
-                    data-loading={isGenerating ? "true" : "false"}
-                  >
-                    <span className={styles.videoGenerateLabelRow}>
-                      <span>{generateButtonLabel}</span>
-                      {!isGenerating && <span>✦ {estimatedCostCredits}</span>}
-                      {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
-                    </span>
-                  </button>
-                </div>
-
-                {(isGenerating || progressMsg) && (
-                  <div className={styles.cookDockMetaRow}>
                     {isGenerating ? (
-                      <button type="button" className={styles.cookDockCancel} onClick={cancelWaitOnly}>
+                      <button type="button" className={styles.cancelBtn} onClick={cancelWaitOnly}>
                         Cancel wait
                       </button>
+                    ) : progressMsg ? (
+                      <div className={styles.progressText}>{progressMsg}</div>
                     ) : null}
-                    {progressMsg && <div className={styles.cookDockProgress}>{progressMsg}</div>}
                   </div>
-                )}
+                </div>
               </div>
             </div>
           )}

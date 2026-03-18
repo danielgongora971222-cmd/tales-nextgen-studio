@@ -1644,14 +1644,6 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
   const paramsLabel = paramsLabelParts.join(" · ");
   const isCookSidebarVisible = isCookOpen && !panel;
   const isCookLayerVisible = isCookOpen || !!panel;
-  const showCookActionDock = isCookSidebarVisible;
-  const dockGenerateDisabled =
-    isGenerating ||
-    !user ||
-    combinedRefsCount > maxCombinedRefs ||
-    (model === "kling-o3-ref-to-video-pro"
-      ? ((ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode) ? !multishotReady : (prompt || "").trim().length === 0)
-      : !inputVideo || (prompt || "").trim().length === 0);
 
   function openCook() {
     setPanel(null);
@@ -2114,24 +2106,27 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
 
             {/* Generate */}
             <div className={`${styles.generateCol} ${styles.cookGenerateCol}`}>
-              {!showCookActionDock && (
-                <>
-                  <button
-                    type="button"
-                    className={`${styles.generateBtn} ${styles.cookGenerateBtn}`}
-                    disabled={dockGenerateDisabled}
-                    onClick={onGenerate}
-                    data-loading={isGenerating ? "true" : "false"}
-                  >
-                    <span className={styles.generateLabel}>{isGenerating ? "PROCESSING" : "GENERATE"}</span>
-                    {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
-                  </button>
+              <button
+                type="button"
+                className={`${styles.generateBtn} ${styles.cookGenerateBtn}`}
+                disabled={
+                  isGenerating ||
+                  !user ||
+                  combinedRefsCount > maxCombinedRefs ||
+                  (model === "kling-o3-ref-to-video-pro"
+                    ? ((ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode) ? !multishotReady : (prompt || "").trim().length === 0)
+                    : !inputVideo || (prompt || "").trim().length === 0)
+                }
+                onClick={onGenerate}
+                data-loading={isGenerating ? "true" : "false"}
+              >
+                <span className={styles.generateLabel}>{isGenerating ? "PROCESSING" : "GENERATE"}</span>
+                {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
+              </button>
 
-                  <div style={{ marginTop: 8, fontSize: 12, color: "rgba(255,255,255,0.65)", textAlign: "center" }}>
-                    Coste estimado: <b>{estimatedCostCredits}</b> créditos
-                  </div>
-                </>
-              )}
+              <div style={{ marginTop: 8, fontSize: 12, color: "rgba(255,255,255,0.65)", textAlign: "center" }}>
+                Coste estimado: <b>{estimatedCostCredits}</b> créditos
+              </div>
 
               {model !== "kling-o3-ref-to-video-pro" && inputVideo && (
                 <div style={{ marginTop: 6, fontSize: 11, color: "rgba(255,255,255,0.5)", textAlign: "center" }}>
@@ -2140,13 +2135,13 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
                 </div>
               )}
 
-              {!showCookActionDock && isGenerating && (
+              {isGenerating && (
                 <button type="button" className={styles.cancelBtn} onClick={onCancel}>
                   CANCEL
                 </button>
               )}
 
-              {!showCookActionDock && isGenerating && progressText && <div className={styles.progressText}>{progressText}</div>}
+              {isGenerating && progressText && <div className={styles.progressText}>{progressText}</div>}
             </div>
           </div>
 
@@ -2272,49 +2267,6 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
             </div>
           </div>
                 </div>
-              </div>
-            </div>
-          )}
-
-          {showCookActionDock && (
-            <div className={styles.cookActionDockShell}>
-              <div className={styles.cookActionDock}>
-                <div className={styles.cookActionButtons}>
-                  <button
-                    type="button"
-                    className={`${styles.cookDockButton} ${styles.cookDockStartButton}`}
-                    onClick={closeCook}
-                    aria-label="Close Start Create"
-                  >
-                    <span className={styles.cookDockText}>Start Create</span>
-                    <span className={styles.cookDockGlyph} aria-hidden="true">×</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    className={`${styles.cookDockButton} ${styles.cookDockGenerateButton}`}
-                    disabled={dockGenerateDisabled}
-                    onClick={onGenerate}
-                    data-loading={isGenerating ? "true" : "false"}
-                  >
-                    <span className={styles.videoGenerateLabelRow}>
-                      <span>{isGenerating ? "Processing" : "Generate"}</span>
-                      {!isGenerating && <span>✦ {estimatedCostCredits}</span>}
-                      {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
-                    </span>
-                  </button>
-                </div>
-
-                {(isGenerating || progressText) && (
-                  <div className={styles.cookDockMetaRow}>
-                    {isGenerating ? (
-                      <button type="button" className={styles.cookDockCancel} onClick={onCancel}>
-                        Cancel
-                      </button>
-                    ) : null}
-                    {progressText && <div className={styles.cookDockProgress}>{progressText}</div>}
-                  </div>
-                )}
               </div>
             </div>
           )}
