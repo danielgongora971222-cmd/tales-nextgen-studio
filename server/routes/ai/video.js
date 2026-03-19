@@ -849,6 +849,7 @@ function respondKlingBusy(res, { retryAfterSeconds, message, details }) {
       clientJobId,
       firstFrameAssetId,
       lastFrameAssetId,
+      referenceImageAssetIds,
       klingMode,
       klingSound,
       negativePrompt,
@@ -985,8 +986,8 @@ const isSeedance = isSeedanceModelId(selectedModelNorm);
       const dur = coerceSeedanceDuration(durationSeconds);
       const ar = coerceSeedanceAspectRatio(aspectRatio, "16:9");
 
-      const extraReferenceImageAssetIds = Array.isArray(body.referenceImageAssetIds)
-        ? body.referenceImageAssetIds.filter(Boolean)
+      const extraReferenceImageAssetIds = Array.isArray(referenceImageAssetIds)
+        ? referenceImageAssetIds.filter(Boolean)
         : [];
 
       const imageAssetIds = [];
