@@ -33,43 +33,6 @@ const SUPABASE_BUCKET = process.env.SUPABASE_BUCKET;
 const FAL_KEY = process.env.FAL_KEY;
 const PIAPI_API_KEY = process.env.PIAPI_API_KEY || process.env.PIAPI_KEY;
 const PIAPI_BASE_URL = String(process.env.PIAPI_BASE_URL || "https://api.piapi.ai/api/v1").replace(/\/+$|\/$/g, "");
-const PIAPI_GET_TIMEOUT_MS = Math.max(
-  30_000,
-  Number(process.env.PIAPI_GET_TIMEOUT_MS || process.env.PIAPI_TIMEOUT_MS || 90_000)
-);
-
-function getPiapiRetryAfterMs(value) {
-  if (value == null) return null;
-
-  const raw = String(value || "").trim();
-  if (!raw) return null;
-
-  const secs = Number(raw);
-  if (Number.isFinite(secs) && secs >= 0) return secs * 1000;
-
-  const at = Date.parse(raw);
-  if (!Number.isNaN(at)) {
-    return Math.max(0, at - Date.now());
-  }
-
-  return null;
-}
-
-function isRetryablePiapiStatus(status) {
-  return !status || [408, 409, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524].includes(status);
-}
-
-function extractPiapiErrorMessage(data, fallback = "PiAPI request failed.") {
-  const message =
-    data?.message ||
-    data?.error?.message ||
-    data?.error?.raw_message ||
-    data?.detail ||
-    data?.raw ||
-    fallback;
-
-  return String(message || fallback).trim() || fallback;
-}
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   throw new Error("Faltan SUPABASE_URL o SUPABASE_SERVICE_ROLE_KEY");
@@ -84,7 +47,6 @@ function piapiHeaders() {
   }
   return {
     "X-API-Key": PIAPI_API_KEY,
-    Accept: "application/json",
     "Content-Type": "application/json",
   };
 }
@@ -150,54 +112,24 @@ async function falQueueResult(responseUrl) {
   return data;
 }
 
-async function piapiGetTask(taskId, { timeoutMs = PIAPI_GET_TIMEOUT_MS, retries = 4 } = {}) {
-  let lastErr = null;
+async function piapiGetTask(taskId) {
+  const r = await fetch(`${PIAPI_BASE_URL}/task/${encodeURIComponent(taskId)}`, {
+    method: "GET",
+    headers: piapiHeaders(),
+  });
 
-  for (let attempt = 0; attempt <= retries; attempt += 1) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const text = await r.text();
+  let data;
+  try { data = JSON.parse(text); } catch { data = { raw: text }; }
 
-    try {
-      const r = await fetch(`${PIAPI_BASE_URL}/task/${encodeURIComponent(taskId)}`, {
-        method: "GET",
-        headers: piapiHeaders(),
-        signal: controller.signal,
-      });
-
-      const text = await r.text();
-      let data;
-      try { data = JSON.parse(text); } catch { data = { raw: text }; }
-
-      if (!r.ok) {
-        const err = new Error(extractPiapiErrorMessage(data, `PiAPI get task error (${r.status})`));
-        err.status = r.status;
-        err.data = data;
-        err.retryAfterMs = getPiapiRetryAfterMs(r.headers?.get?.("retry-after"));
-        throw err;
-      }
-
-      return data;
-    } catch (err) {
-      lastErr = err;
-      const status = Number(err?.status || 0);
-      const retryAfterMs = Number(err?.retryAfterMs || 0) || null;
-      const retryable =
-        err?.name === "AbortError" ||
-        err instanceof TypeError ||
-        isRetryablePiapiStatus(status);
-
-      if (attempt >= retries || !retryable) throw err;
-
-      const backoff =
-        (retryAfterMs ?? (1500 * (attempt + 1) + Math.floor(Math.random() * 500)));
-
-      await sleep(backoff);
-    } finally {
-      clearTimeout(timer);
-    }
+  if (!r.ok) {
+    const msg = data?.message || data?.error?.message || `PiAPI get task error (${r.status})`;
+    const err = new Error(msg);
+    err.status = r.status;
+    err.data = data;
+    throw err;
   }
-
-  throw lastErr || new Error("PiAPI get task failed.");
+  return data;
 }
 
 function normalizePiapiTaskStatus(raw) {
@@ -228,25 +160,7 @@ function extractPiapiTaskData(rawJson) {
 function pickPiapiVideoUrl(rawJson) {
   const taskData = extractPiapiTaskData(rawJson);
   const output = taskData?.output || {};
-
-  const candidates = [
-    output?.video,
-    output?.video_url,
-    output?.videoUrl,
-    output?.url,
-    output?.video_urls?.[0],
-    output?.videoUrls?.[0],
-    output?.videos?.[0]?.url,
-    output?.videos?.[0]?.video_url,
-    output?.videos?.[0]?.videoUrl,
-    output?.videos?.[0],
-  ];
-
-  for (const candidate of candidates) {
-    if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
-  }
-
-  return null;
+  return output?.video || output?.video_url || output?.videoUrl || output?.videos?.[0]?.url || output?.videos?.[0] || null;
 }
 
 async function downloadToStream(url) {

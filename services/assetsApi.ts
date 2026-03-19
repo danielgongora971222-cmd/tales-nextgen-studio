@@ -885,18 +885,8 @@ export async function listMyAssetsPickerLibrary(opts?: { type?: "image" | "video
   const type = opts?.type;
   if (!type) return listMyAssets(opts);
 
-  try {
-    const typedItems = await listMyAssets({ type, limit: opts?.limit, fresh: opts?.fresh });
-    const normalized = sliceByLimit(sortAssetsNewestFirst(filterAssetsByType(typedItems, type)), opts?.limit);
-    if (normalized.length > 0) {
-      return normalized;
-    }
-  } catch {
-    // Fallback below.
-  }
-
-  const fallbackItems = await listMyAssetsRobust({ type, limit: opts?.limit, fresh: opts?.fresh });
-  return sliceByLimit(sortAssetsNewestFirst(filterAssetsByType(fallbackItems, type)), opts?.limit);
+  const items = await listMyAssetsRobust({ type, limit: opts?.limit, fresh: opts?.fresh });
+  return sliceByLimit(sortAssetsNewestFirst(filterAssetsByType(items, type)), opts?.limit);
 }
 
 export async function listPurchasedAssetsRobust(opts?: { type?: "image" | "video"; limit?: number; fresh?: boolean }): Promise<Asset[]> {

@@ -119,10 +119,6 @@ export function createAiVideoRouter(ctx) {
     );
 
   const PIAPI_BASE_URL = String(process.env.PIAPI_BASE_URL || "https://api.piapi.ai/api/v1").replace(/\/+$/, "");
-  const PIAPI_CREATE_TIMEOUT_MS = Math.max(
-    60_000,
-    Number(process.env.PIAPI_CREATE_TIMEOUT_MS || process.env.PIAPI_TIMEOUT_MS || 180_000)
-  );
 
   function getPiapiRetryAfterMs(value) {
     if (value == null) return null;
@@ -180,10 +176,15 @@ export function createAiVideoRouter(ctx) {
     const upstreamCode = extractPiapiErrorCode(upstreamData, err?.code || null);
     const upstreamMessage = extractPiapiErrorMessage(upstreamData, err?.message || fallbackMessage);
     const retryAfterMs = Number(err?.retryAfterMs || 0) || null;
+    const msgLower = String(upstreamMessage || "").toLowerCase();
     const isTimeout =
       err?.name === "AbortError" ||
-      String(err?.message || "").toLowerCase().includes("timeout") ||
-      String(err?.message || "").toLowerCase().includes("aborted");
+      msgLower.includes("timeout") ||
+      msgLower.includes("timed out") ||
+      msgLower.includes("aborted");
+    const looksBusy =
+      upstreamStatus === 429 ||
+      /busy|overload|overloaded|high demand|rate limit|try again later|capacity|queue|queued|saturat|service unavailable/.test(msgLower);
 
     const baseDetails = {
       provider: "piapi",
@@ -191,6 +192,12 @@ export function createAiVideoRouter(ctx) {
       upstreamCode,
       upstreamMessage,
       retryAfterMs,
+      ...(looksBusy || isTimeout
+        ? {
+            retryAfterSeconds: Math.max(15, Math.round((retryAfterMs || 45_000) / 1000)),
+            retryable: true,
+          }
+        : {}),
       ...(upstreamData ? { upstream: upstreamData } : {}),
       ...(details || {}),
     };
@@ -208,11 +215,11 @@ export function createAiVideoRouter(ctx) {
       );
     }
 
-    if (upstreamStatus === 429) {
+    if (looksBusy) {
       return httpError(
-        429,
-        "PIAPI_RATE_LIMITED",
-        upstreamMessage || "PiAPI está saturado. Reintenta en unos instantes.",
+        upstreamStatus === 429 ? 429 : 503,
+        "PIAPI_BUSY",
+        "Seedance está con alta demanda en el proveedor. Inténtalo de nuevo en unos minutos.",
         baseDetails
       );
     }
@@ -341,18 +348,7 @@ export function createAiVideoRouter(ctx) {
   }
 
   function normalizeSeedancePrompt(prompt) {
-    let value = String(prompt || "").trim();
-    if (!value) return "";
-
-    // PiAPI documenta referencias de imagen como @imageN.
-    // Normalizamos variantes legacy (@Image1) para evitar rechazos por placeholder.
-    value = value.replace(/@image(\d+)/gi, (_, n) => `@image${String(n)}`);
-
-    // Seedance video edit usa video_urls; @Video1 es una ayuda UX interna de Tales,
-    // no un placeholder documentado del proveedor. Lo convertimos a una frase segura.
-    value = value.replace(/@video\d+/gi, "the input video");
-
-    return value.replace(/\s{2,}/g, " ").trim();
+    return String(prompt || "").replace(/\s+/g, " ").trim();
   }
 
   function buildSeedanceFramePrompt({ prompt, hasFirst, hasLast }) {
@@ -369,8 +365,8 @@ export function createAiVideoRouter(ctx) {
     try {
       return await piapiRequest("/task", {
         method: "POST",
-        timeoutMs: PIAPI_CREATE_TIMEOUT_MS,
-        retries: 4,
+        timeoutMs: 60_000,
+        retries: 2,
         body: {
           model: "seedance",
           task_type: taskType,
