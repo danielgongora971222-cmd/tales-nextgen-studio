@@ -6,6 +6,7 @@ import { MentionTextarea, type MentionItem } from "../../components/MentionTexta
 import { useAuth } from "../../contexts/AuthContext";
 import {
   deleteAsset,
+  listMyAssetsPickerLibrary,
   listMyAssetsRobust,
   uploadUserAsset,
 } from "../../services/assetsApi";
@@ -90,6 +91,18 @@ const MODEL_OPTIONS: Array<{
       "Puedes mencionar @Video1 y @Image1..@Image9 según lo que cargues. Máximo 9 imágenes de referencia.",
   },
 ];
+
+const DEFAULT_MODEL_ID: EditModelId = "kling-o3-ref-to-video-pro";
+
+function coerceModelId(value: unknown): EditModelId {
+  const raw = String(value || "").trim() as EditModelId;
+  if (MODEL_OPTIONS.some((option) => option.id === raw)) return raw;
+
+  const normalized = raw.toLowerCase();
+  if (normalized.includes("seedance-2-fast")) return "seedance-2-fast-preview";
+  if (normalized.includes("seedance")) return "seedance-2-preview";
+  return DEFAULT_MODEL_ID;
+}
 
 function getMetaTool(a: Asset): string | null {
   const meta: any = (a as any)?.meta || {};
@@ -226,9 +239,8 @@ export default function IngredientsToVideoTool() {
   const [panel, setPanel] = useState<null | "model" | "params">(null);
   const [isCookOpen, setIsCookOpen] = useState(false);
   const popoverRef = useRef<HTMLDivElement | null>(null);
-  const controlsRef = useRef<HTMLDivElement | null>(null);
 
-  const [model, setModel] = useState<EditModelId>("kling-o3-ref-to-video-pro");
+  const [model, setModel] = useState<EditModelId>(DEFAULT_MODEL_ID);
   const [prompt, setPrompt] = useState("");
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>("16:9");
   const [durationSeconds, setDurationSeconds] = useState<number>(8);
@@ -283,7 +295,12 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
   // Pending resume
   const [pendingJob, setPendingJob] = useState<PendingVideoEditJob | null>(null);
 
-  const selectedModel = useMemo(() => MODEL_OPTIONS.find((m) => m.id === model)!, [model]);
+  const selectedModel = useMemo(() => MODEL_OPTIONS.find((m) => m.id === coerceModelId(model)) ?? MODEL_OPTIONS[0], [model]);
+
+  useEffect(() => {
+    const nextModel = coerceModelId(model);
+    if (nextModel !== model) setModel(nextModel);
+  }, [model]);
   const isSeedanceModel = useMemo(() => isSeedanceModelId(model), [model]);
 
   const shotsWithPrompt = useMemo(
@@ -671,7 +688,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     if (!user) return [] as Asset[];
     setIsLoadingImages(true);
     try {
-      const imgs = await listMyAssetsRobust({ type: "image", limit: 500, fresh: true });
+      const imgs = await listMyAssetsPickerLibrary({ type: "image", limit: 500, fresh: true });
       setImageAssets(Array.isArray(imgs) ? imgs : []);
       return Array.isArray(imgs) ? imgs : [];
     } catch (err: any) {
@@ -950,7 +967,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
       };
 
       setPrompt(promptValue);
-      if (typeof meta.model === "string") setModel(meta.model as any);
+      if (typeof meta.model === "string") setModel(coerceModelId(meta.model));
       if (typeof meta.aspectRatio === "string") setAspectRatio(meta.aspectRatio as any);
       if (typeof meta.durationSeconds === "number") setDurationSeconds(meta.durationSeconds);
 
@@ -1992,31 +2009,9 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
             {/* Prompt */}
             <div className={`${styles.promptInputWrap} ${styles.cookPromptInputWrap}`}>
               <div className={`${styles.promptEditor} ${styles.cookPromptEditor}`}>
-                <div className={styles.promptTags}>
-                  <button type="button" className={styles.promptTag} onClick={() => setPanel("model")}>
-                    Model: {selectedModel.uiName}
-                  </button>
-                  <button type="button" className={styles.promptTag} onClick={() => setPanel("params")}>
-                    Settings
-                  </button>
-                </div>
 
                 {(referenceImageIds.length > 0 || klingElementIds.length > 0 || (ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode)) && (
                   <div className={styles.promptTags}>
-                    {referenceImageIds.length > 0 && (
-                      <button type="button" className={styles.promptTag} onClick={() => setRefPickerOpen(true)}>
-                        Refs: {referenceImageIds.length}
-                        <span
-                          className={styles.promptTagRemove}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setReferenceImageIds([]);
-                          }}
-                        >
-                          ×
-                        </span>
-                      </button>
-                    )}
 
                     {VIDEO_ELEMENTS_UI_ENABLED && klingElementIds.length > 0 && (
                       <button type="button" className={styles.promptTag} onClick={() => setElementsOpen(true)}>
@@ -2159,6 +2154,26 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
                   <Icon name="image" />
                   <span>Refs {referenceImageIds.length ? `(${referenceImageIds.length})` : ""}</span>
                 </button>
+
+                {ENABLE_EDITVIDEO_MULTISHOT && model === "kling-o3-ref-to-video-pro" && (
+                  <button
+                    type="button"
+                    className={`${styles.videoQuickButton} ${multishotEnabled ? styles.videoSelectorButtonActive : ""}`}
+                    onClick={() => {
+                      if (multishotEnabled) {
+                        setMultishotEnabled(false);
+                        setMultishotMode("intelligence");
+                        setMultishotOpen(false);
+                        setMultishotModeOpen(false);
+                        return;
+                      }
+                      setMultishotModeOpen(true);
+                    }}
+                  >
+                    <Icon name="multishot" />
+                    <span>{multishotEnabled ? `Storyboard (${multishotMode === "customize" ? shots.length : multishotMode})` : "Storyboard"}</span>
+                  </button>
+                )}
               </div>
             </div>
 
@@ -2216,109 +2231,6 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
             </div>
           )}
 
-          {/* Controls */}
-          <div className={styles.controlsArea} ref={controlsRef}>
-            <div className={styles.controlsRow}>
-              <button
-                type="button"
-                className={`${styles.controlBtn} ${panel === "model" ? styles.controlBtnActive : ""}`}
-                onClick={() => setPanel((p) => (p === "model" ? null : "model"))}
-                title="Cambiar modelo"
-              >
-                <span className={styles.controlBtnLeft}>
-                  <Icon name="model" />
-                  Modelo
-                </span>
-                <span className={styles.controlBtnMeta}>{selectedModel.uiName}</span>
-              </button>
-
-              <button
-                type="button"
-                className={`${styles.controlBtn} ${panel === "params" ? styles.controlBtnActive : ""}`}
-                onClick={() => setPanel((p) => (p === "params" ? null : "params"))}
-                title="Ajustes"
-              >
-                <span className={styles.controlBtnLeft}>
-                  <Icon name="sliders" />
-                  Ajustes
-                </span>
-                <span className={styles.controlBtnMeta}>{paramsLabel}</span>
-              </button>
-
-              <button
-                type="button"
-                className={styles.controlBtn}
-                onClick={() => setRefPickerOpen(true)}
-                title={`Imágenes de referencia (máx ${maxCombinedRefs} combinado)`}
-              >
-                <span className={styles.controlBtnMain}>
-                  <span className={styles.controlBtnLeft}>
-                    <Icon name="image" />
-                    Refs
-                  </span>
-                  <span className={styles.controlBtnMeta}>({referenceImageIds.length})</span>
-                </span>
-                {visibleReferencePreviewAssets.length > 0 && (
-                  <span className={styles.controlBtnReferenceRail} aria-hidden="true">
-                    {visibleReferencePreviewAssets.map((asset, index) => (
-                      <span
-                        key={`reference-preview-${asset.id}`}
-                        className={styles.controlBtnReferenceThumb}
-                        style={{ zIndex: visibleReferencePreviewAssets.length - index }}
-                        title={asset.name || `Reference ${index + 1}`}
-                      >
-                        <img src={asset.url} alt="" loading="lazy" decoding="async" />
-                      </span>
-                    ))}
-                    {hiddenReferencePreviewCount > 0 && (
-                      <span className={styles.controlBtnReferenceMore}>+{hiddenReferencePreviewCount}</span>
-                    )}
-                  </span>
-                )}
-              </button>
-
-              {VIDEO_ELEMENTS_UI_ENABLED && (
-                <button
-                  type="button"
-                  className={styles.controlBtn}
-                  onClick={() => setElementsOpen(true)}
-                  title={`Kling Elements (máx ${maxCombinedRefs} combinado)`}
-                >
-                  <span className={styles.controlBtnLeft}>
-                    <Icon name="elements" />
-                    Elements
-                  </span>
-                  <span className={styles.controlBtnMeta}>({klingElementIds.length})</span>
-                </button>
-              )}
-
-                {ENABLE_EDITVIDEO_MULTISHOT && model === "kling-o3-ref-to-video-pro" && (
-                  <button
-                    type="button"
-                    className={`${styles.controlBtn} ${multishotEnabled ? styles.controlBtnActive : ""}`}
-                    onClick={() => {
-                      if (multishotEnabled) {
-                        setMultishotEnabled(false);
-                        setMultishotMode("intelligence");
-                        setMultishotOpen(false);
-                        setMultishotModeOpen(false);
-                        return;
-                      }
-                      setMultishotModeOpen(true);
-                    }}
-                    title="Multishot"
-                  >
-                    <span className={styles.controlBtnLeft}>
-                      <Icon name="multishot" />
-                      Multishot
-                    </span>
-                    <span className={styles.controlBtnMeta}>
-                      {multishotEnabled ? `(${multishotMode})` : ""}
-                    </span>
-                  </button>
-                )}
-            </div>
-          </div>
                 </div>
               </div>
             </div>

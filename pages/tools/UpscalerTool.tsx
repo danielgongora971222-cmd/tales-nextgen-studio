@@ -3,6 +3,7 @@ import styles from "./ImageGeneratorTool.module.css";
 import videoStyles from "./VideoGeneratorTool.module.css";
 
 import ErrorModal from "../../components/ErrorModal";
+import ToolExitMenu from "../../components/ToolExitMenu";
 import { AppRoute, Asset, GeminiModel } from "../../types";
 import { generateImageBatch } from "../../services/geminiService";
 import { deleteAsset, listMyAssets, uploadUserAsset, downloadAssetToDisk } from "../../services/assetsApi";
@@ -262,10 +263,6 @@ const UpscalerTool: React.FC<{ prefillAsset?: Asset | null }> = ({ prefillAsset 
   const isCookSidebarVisible = isCookOpen && !panel;
   const isCookLayerVisible = isCookOpen || !!panel;
 
-  function goHome() {
-    window.dispatchEvent(new CustomEvent("tales:navigate", { detail: { route: AppRoute.HOME } }));
-  }
-
   function openCook() {
     setPickerQuery("");
     setPanel(null);
@@ -496,9 +493,9 @@ const UpscalerTool: React.FC<{ prefillAsset?: Asset | null }> = ({ prefillAsset 
             <button className={styles.ghostBtn} onClick={reloadHistory} type="button" disabled={isLoadingHistory}>
               Refresh
             </button>
-            <button className={styles.closeHomeBtn} onClick={goHome} type="button" aria-label="Close tool and go home" title="Close">
+            <ToolExitMenu className={styles.closeHomeBtn} title="Close" ariaLabel="Open tool exit menu">
               ×
-            </button>
+            </ToolExitMenu>
           </div>
         </div>
 

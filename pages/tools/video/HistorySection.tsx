@@ -1,6 +1,7 @@
 import React from "react";
 import styles from "../VideoGeneratorTool.module.css";
 import { AppRoute, type Asset } from "../../../types";
+import ToolExitMenu from "../../../components/ToolExitMenu";
 import { Icon } from "./icon";
 import { shortText } from "./text";
 import {
@@ -31,6 +32,7 @@ type Props = {
   onDelete: (asset: Asset) => void;
   onShowError: (message: string) => void;
   hoverVideoEls: React.MutableRefObject<Record<string, HTMLVideoElement | null>>;
+  onBeforeNavigate?: (route: AppRoute) => void;
 };
 
 export function HistorySection({
@@ -52,9 +54,8 @@ export function HistorySection({
   onDelete,
   onShowError,
   hoverVideoEls,
+  onBeforeNavigate,
 }: Props) {
-  const goHome = () => window.dispatchEvent(new CustomEvent("tales:navigate", { detail: { route: AppRoute.HOME } }));
-
   return (
     <div className={`${styles.stage} ${isCookOpen ? styles.stageCookOpen : ""}`}>
       <div className={`${styles.historyHeader} ${isCookOpen ? styles.historyHeaderCookOpen : ""}`}>
@@ -76,9 +77,14 @@ export function HistorySection({
           <button className={styles.ghostBtn} onClick={onRefresh} type="button" disabled={isLoading}>
             Refresh
           </button>
-          <button className={styles.closeHomeBtn} onClick={goHome} type="button" aria-label="Close tool and go home" title="Close">
+          <ToolExitMenu
+            className={styles.closeHomeBtn}
+            title="Close"
+            ariaLabel="Open tool exit menu"
+            onBeforeNavigate={onBeforeNavigate}
+          >
             ×
-          </button>
+          </ToolExitMenu>
         </div>
       </div>
 

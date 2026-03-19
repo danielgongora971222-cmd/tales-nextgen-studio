@@ -133,6 +133,14 @@ function sliceByLimit(items: Asset[], limit?: number) {
   return items.slice(0, limit);
 }
 
+function sortAssetsNewestFirst(items: Asset[]) {
+  return [...dedupeAssetsById(items)].sort((a, b) => {
+    const ta = Number(a?.createdAt || 0);
+    const tb = Number(b?.createdAt || 0);
+    return tb - ta;
+  });
+}
+
 function dedupeAssetsById(items: Asset[]) {
   const map = new Map<string, Asset>();
   for (const asset of Array.isArray(items) ? items : []) {
@@ -871,6 +879,24 @@ export async function listMyAssetsRobust(opts?: { type?: "image" | "video"; limi
     return filterAssetsByType(allRes.value, type).slice(0, opts?.limit || undefined);
   }
   throw typedRes.reason || allRes.reason || new Error("No se pudieron cargar los assets.");
+}
+
+export async function listMyAssetsPickerLibrary(opts?: { type?: "image" | "video"; limit?: number; fresh?: boolean }): Promise<Asset[]> {
+  const type = opts?.type;
+  if (!type) return listMyAssets(opts);
+
+  try {
+    const typedItems = await listMyAssets({ type, limit: opts?.limit, fresh: opts?.fresh });
+    const normalized = sliceByLimit(sortAssetsNewestFirst(filterAssetsByType(typedItems, type)), opts?.limit);
+    if (normalized.length > 0) {
+      return normalized;
+    }
+  } catch {
+    // Fallback below.
+  }
+
+  const fallbackItems = await listMyAssetsRobust({ type, limit: opts?.limit, fresh: opts?.fresh });
+  return sliceByLimit(sortAssetsNewestFirst(filterAssetsByType(fallbackItems, type)), opts?.limit);
 }
 
 export async function listPurchasedAssetsRobust(opts?: { type?: "image" | "video"; limit?: number; fresh?: boolean }): Promise<Asset[]> {

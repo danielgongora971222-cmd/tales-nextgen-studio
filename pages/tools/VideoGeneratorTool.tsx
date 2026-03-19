@@ -2,7 +2,13 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import styles from "./VideoGeneratorTool.module.css";
 import ErrorModal from "../../components/ErrorModal";
 import { MentionTextarea, type MentionItem } from "../../components/MentionTextarea";
-import { deleteAsset, listMyAssetsRobust, uploadUserAsset, downloadAssetToDisk } from "../../services/assetsApi";
+import {
+  deleteAsset,
+  downloadAssetToDisk,
+  listMyAssetsPickerLibrary,
+  listMyAssetsRobust,
+  uploadUserAsset,
+} from "../../services/assetsApi";
 import { useAuth } from "../../contexts/AuthContext";
 import type { Asset } from "../../types";
 import {
@@ -561,7 +567,7 @@ const VideoGeneratorTool: React.FC = () => {
   async function reloadImages() {
     setIsLoadingImages(true);
     try {
-      const imgs = await listMyAssetsRobust({ type: "image", limit: 500, fresh: true });
+      const imgs = await listMyAssetsPickerLibrary({ type: "image", limit: 500, fresh: true });
       setImageAssets(Array.isArray(imgs) ? imgs : []);
       return Array.isArray(imgs) ? imgs : [];
     } catch (e: any) {
@@ -571,6 +577,35 @@ const VideoGeneratorTool: React.FC = () => {
       setIsLoadingImages(false);
     }
   }
+
+  const clearPersistedSeedanceRefs = useCallback(() => {
+    if (!user?.id) return;
+    try {
+      const raw = localStorage.getItem(settingsKey(user.id));
+      const parsed = safeParseJson(raw);
+      if (!parsed || parsed.v !== 2) return;
+      localStorage.setItem(
+        settingsKey(user.id),
+        JSON.stringify({
+          ...parsed,
+          seedanceReferenceImageIds: [],
+        })
+      );
+    } catch {
+      // noop
+    }
+  }, [user?.id]);
+
+  const clearSeedanceRefsSelection = useCallback(() => {
+    setSeedanceRefsPickerOpen(false);
+    setSeedanceReferenceImageIds([]);
+    clearPersistedSeedanceRefs();
+  }, [clearPersistedSeedanceRefs]);
+
+  const handleExitNavigate = useCallback((route: AppRoute) => {
+    void route;
+    clearSeedanceRefsSelection();
+  }, [clearSeedanceRefsSelection]);
 
   async function reloadHistory() {
     setIsLoadingHistory(true);
@@ -993,8 +1028,21 @@ const elementMentionItems = useMemo<MentionItem[]>(() => {
   }, [firstFrame?.id, lastFrame?.id, seedanceRefsMaxSelectable]);
 
   useEffect(() => {
-    if (!isSeedanceModel && seedanceRefsPickerOpen) setSeedanceRefsPickerOpen(false);
-  }, [isSeedanceModel, seedanceRefsPickerOpen]);
+    if (isSeedanceModel) return;
+    if (!seedanceRefsPickerOpen && seedanceReferenceImageIds.length === 0) return;
+    clearSeedanceRefsSelection();
+  }, [isSeedanceModel, seedanceRefsPickerOpen, seedanceReferenceImageIds.length, clearSeedanceRefsSelection]);
+
+  useEffect(() => {
+    if (seedanceReferenceImageIds.length === 0) return;
+    const availableIds = new Set((imageAssets || []).map((asset) => asset.id));
+    setSeedanceReferenceImageIds((prev) => {
+      const next = prev.filter((id) => availableIds.has(id));
+      const same = next.length === prev.length && next.every((id, index) => id === prev[index]);
+      if (!same) clearPersistedSeedanceRefs();
+      return same ? prev : next;
+    });
+  }, [imageAssets, seedanceReferenceImageIds.length, clearPersistedSeedanceRefs]);
 
   const isVeoFamily = modelNorm.startsWith("veo-");
   const veoIsFast = modelNorm === VEO_3_FAST || modelNorm === VEO_3_1_FAST;
@@ -2157,6 +2205,7 @@ const clearModalSelectedIds = () => {
         onDelete={handleDelete}
         onShowError={(msg) => setError(msg)}
         hoverVideoEls={hoverVideoEls}
+        onBeforeNavigate={handleExitNavigate}
       />
 
       {panel === null && !isCookSidebarVisible && (

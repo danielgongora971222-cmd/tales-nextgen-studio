@@ -13,6 +13,7 @@ import { useAuth } from "../../contexts/AuthContext";
 import { supabase } from "../../services/supabaseClient";
 import { AppRoute, Asset, GeminiModel } from "../../types";
 import ErrorModal from "../../components/ErrorModal";
+import ToolExitMenu from "../../components/ToolExitMenu";
 import { STYLE_PRESETS } from "../../config/presets/restyle";
 import {
   findPresetById as findStylePresetById,
@@ -1048,9 +1049,6 @@ useEffect(() => {
   const isCookSidebarVisible = isCookOpen && !panel;
   const isCookLayerVisible = isCookOpen || !!panel;
 
-  const goHome = useCallback(() => {
-    window.dispatchEvent(new CustomEvent("tales:navigate", { detail: { route: AppRoute.HOME } }));
-  }, []);
   const refFileInputsRef = useRef<Record<RefSlot, HTMLInputElement | null>>(
     Object.fromEntries(REF_SLOTS.map((slot) => [slot, null])) as Record<RefSlot, HTMLInputElement | null>
   );
@@ -1087,7 +1085,7 @@ useEffect(() => {
     setPanel((prev) => (prev === next ? null : next));
   }, [restoreCookFromPanel]);
 
-    // Cache de dimensiones por imagen (para layout del historial y viewer responsive)
+// Cache de dimensiones por imagen (para layout del historial y viewer responsive)
   const [imgDims, setImgDims] = useState<Record<string, { w: number; h: number }>>({});
 
   function appendPromptTag(tag: string) {
@@ -2393,9 +2391,9 @@ const promptReferences: PromptReference[] = useMemo(() => {
             <button className={styles.ghostBtn} onClick={reloadHistory} type="button" disabled={isLoadingHistory}>
               Refresh
             </button>
-            <button className={styles.closeHomeBtn} onClick={goHome} type="button" aria-label="Close tool and go home" title="Close">
+            <ToolExitMenu className={styles.closeHomeBtn} title="Close" ariaLabel="Open tool exit menu">
               ×
-            </button>
+            </ToolExitMenu>
           </div>
         </div>
 
