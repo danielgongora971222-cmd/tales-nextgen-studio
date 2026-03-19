@@ -143,6 +143,29 @@ function isSeedanceModel(modelNorm: string) {
   return modelNorm === SEEDANCE_2_PRO || modelNorm === SEEDANCE_2_STANDARD;
 }
 
+function isSeedanceRetryableError(err: any) {
+  const status = Number(err?.status || 0);
+  const msg = String(err?.message || "").toLowerCase();
+  const code = String(err?.response?.data?.code || err?.response?.data?.error?.code || "").toLowerCase();
+
+  if ([408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524].includes(status)) return true;
+  if (msg.startsWith("timeout:")) return true;
+  if (msg.includes("failed to fetch") || msg.includes("networkerror") || msg.includes("load failed")) return true;
+  if (code === "piapi_timeout" || code === "piapi_upstream_error" || code === "piapi_rate_limited") return true;
+
+  return false;
+}
+
+function getRetryAfterMsFromError(err: any) {
+  const retryAfterMsRaw = Number(err?.response?.data?.details?.retryAfterMs || 0);
+  if (Number.isFinite(retryAfterMsRaw) && retryAfterMsRaw > 0) return retryAfterMsRaw;
+
+  const retryAfterSecondsRaw = Number(err?.response?.data?.details?.retryAfterSeconds || 0);
+  if (Number.isFinite(retryAfterSecondsRaw) && retryAfterSecondsRaw > 0) return retryAfterSecondsRaw * 1000;
+
+  return null;
+}
+
 function asArray(v: any) {
   return Array.isArray(v) ? v : [];
 }
@@ -593,11 +616,36 @@ const row = await waitJobCompletion(supabaseJobId, { signal, onProgress, pollMs:
 
     onProgress("Enviando solicitud (Seedance)…");
     const body = payload?.planBody || {};
-    const submit = await apiPostJson<any>(
-      "/api/ai/video",
-      { ...body, async: true, clientJobId: job.id },
-      { signal, timeoutMs: SUBMIT_TIMEOUT_MS, retries: SUBMIT_RETRIES }
-    );
+    const clientJobId = job.id;
+    const retryStartedAt = Date.now();
+    const MAX_SUBMIT_RECOVERY_MS = 20 * 60 * 1000;
+    let submit: any;
+    let attempt = 0;
+
+    while (true) {
+      try {
+        submit = await apiPostJson<any>(
+          "/api/ai/video",
+          { ...body, async: true, clientJobId },
+          { signal, timeoutMs: SUBMIT_TIMEOUT_MS, retries: SUBMIT_RETRIES }
+        );
+        break;
+      } catch (e: any) {
+        if (!isSeedanceRetryableError(e)) throw e;
+
+        const elapsed = Date.now() - retryStartedAt;
+        if (elapsed > MAX_SUBMIT_RECOVERY_MS) throw e;
+
+        attempt += 1;
+        const retryAfterMs = getRetryAfterMsFromError(e);
+        const waitMs =
+          Math.max(5_000, Math.min(180_000, retryAfterMs ?? (10_000 * Math.min(attempt, 6)))) +
+          Math.floor(Math.random() * 350);
+
+        onProgress(`Seedance saturado… reintentando en ${Math.round(waitMs / 1000)}s…`);
+        await sleepAbortable(waitMs, signal);
+      }
+    }
 
     if (!(submit?.mode === "async" && submit?.jobId)) return submit;
 

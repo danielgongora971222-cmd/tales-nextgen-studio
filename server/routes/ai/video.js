@@ -119,6 +119,120 @@ export function createAiVideoRouter(ctx) {
     );
 
   const PIAPI_BASE_URL = String(process.env.PIAPI_BASE_URL || "https://api.piapi.ai/api/v1").replace(/\/+$/, "");
+  const PIAPI_CREATE_TIMEOUT_MS = Math.max(
+    60_000,
+    Number(process.env.PIAPI_CREATE_TIMEOUT_MS || process.env.PIAPI_TIMEOUT_MS || 180_000)
+  );
+
+  function getPiapiRetryAfterMs(value) {
+    if (value == null) return null;
+
+    const raw = String(value || "").trim();
+    if (!raw) return null;
+
+    const secs = Number(raw);
+    if (Number.isFinite(secs) && secs >= 0) return secs * 1000;
+
+    const at = Date.parse(raw);
+    if (!Number.isNaN(at)) {
+      return Math.max(0, at - Date.now());
+    }
+
+    return null;
+  }
+
+  function isRetryablePiapiStatus(status) {
+    return !status || [408, 409, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524].includes(status);
+  }
+
+  function extractPiapiErrorMessage(data, fallback = "PiAPI request failed.") {
+    const message =
+      data?.message ||
+      data?.error?.message ||
+      data?.error?.raw_message ||
+      data?.detail ||
+      data?.raw ||
+      fallback;
+
+    return String(message || fallback).trim() || fallback;
+  }
+
+  function extractPiapiErrorCode(data, fallback = null) {
+    const raw = data?.code ?? data?.error?.code ?? fallback;
+    if (raw == null) return null;
+    const value = String(raw).trim();
+    return value || null;
+  }
+
+  function summarizeSeedanceInput(input) {
+    return {
+      duration: input?.duration ?? null,
+      aspect_ratio: input?.aspect_ratio ?? null,
+      imageCount: Array.isArray(input?.image_urls) ? input.image_urls.length : 0,
+      hasVideoUrls: Array.isArray(input?.video_urls) && input.video_urls.length > 0,
+      hasParentTaskId: Boolean(input?.parent_task_id),
+    };
+  }
+
+  function toPiapiHttpError(err, fallbackMessage, details = {}) {
+    const upstreamStatus = Number(err?.status || 0);
+    const upstreamData = err?.data || null;
+    const upstreamCode = extractPiapiErrorCode(upstreamData, err?.code || null);
+    const upstreamMessage = extractPiapiErrorMessage(upstreamData, err?.message || fallbackMessage);
+    const retryAfterMs = Number(err?.retryAfterMs || 0) || null;
+    const isTimeout =
+      err?.name === "AbortError" ||
+      String(err?.message || "").toLowerCase().includes("timeout") ||
+      String(err?.message || "").toLowerCase().includes("aborted");
+
+    const baseDetails = {
+      provider: "piapi",
+      upstreamStatus: upstreamStatus || null,
+      upstreamCode,
+      upstreamMessage,
+      retryAfterMs,
+      ...(upstreamData ? { upstream: upstreamData } : {}),
+      ...(details || {}),
+    };
+
+    if (upstreamStatus === 400) {
+      return httpError(400, "PIAPI_BAD_REQUEST", upstreamMessage, baseDetails);
+    }
+
+    if (upstreamStatus === 401 || upstreamStatus === 403) {
+      return httpError(
+        502,
+        "PIAPI_AUTH_ERROR",
+        "PiAPI rechazó la autenticación o los permisos para Seedance.",
+        baseDetails
+      );
+    }
+
+    if (upstreamStatus === 429) {
+      return httpError(
+        429,
+        "PIAPI_RATE_LIMITED",
+        upstreamMessage || "PiAPI está saturado. Reintenta en unos instantes.",
+        baseDetails
+      );
+    }
+
+    if (isTimeout) {
+      return httpError(
+        503,
+        "PIAPI_TIMEOUT",
+        fallbackMessage || "PiAPI tardó demasiado en aceptar la tarea de Seedance.",
+        baseDetails
+      );
+    }
+
+    return httpError(
+      503,
+      "PIAPI_UPSTREAM_ERROR",
+      upstreamMessage || fallbackMessage || "PiAPI devolvió un error inesperado.",
+      baseDetails
+    );
+  }
 
   function isSeedanceModelId(value) {
     const v = String(value || "").trim();
@@ -136,6 +250,7 @@ export function createAiVideoRouter(ctx) {
   function piapiHeaders() {
     return {
       "X-API-Key": getPiapiApiKey(),
+      Accept: "application/json",
       "Content-Type": "application/json",
     };
   }
@@ -146,6 +261,7 @@ export function createAiVideoRouter(ctx) {
     for (let attempt = 0; attempt <= retries; attempt += 1) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
+
       try {
         const response = await fetch(`${PIAPI_BASE_URL}${path}`, {
           method,
@@ -163,24 +279,32 @@ export function createAiVideoRouter(ctx) {
         }
 
         if (!response.ok) {
-          const err = new Error(
-            data?.message ||
-            data?.error?.message ||
-            data?.error?.raw_message ||
-            `PiAPI error (${response.status})`
-          );
+          const err = new Error(extractPiapiErrorMessage(data, `PiAPI error (${response.status})`));
           err.status = response.status;
           err.data = data;
+          err.code = extractPiapiErrorCode(data, null);
+          err.retryAfterMs = getPiapiRetryAfterMs(response.headers?.get?.("retry-after"));
           throw err;
         }
 
         return data;
       } catch (err) {
         lastErr = err;
+
         const status = Number(err?.status || 0);
-        const retryable = !status || [408, 409, 425, 429, 500, 502, 503, 504].includes(status);
+        const retryAfterMs = Number(err?.retryAfterMs || 0) || null;
+        const isAbort = err?.name === "AbortError";
+        const retryable =
+          isAbort ||
+          err instanceof TypeError ||
+          isRetryablePiapiStatus(status);
+
         if (attempt >= retries || !retryable) throw err;
-        await sleep(1200 * (attempt + 1) + Math.floor(Math.random() * 400));
+
+        const backoff =
+          (retryAfterMs ?? (1500 * (attempt + 1) + Math.floor(Math.random() * 500)));
+
+        await sleep(backoff);
       } finally {
         clearTimeout(timer);
       }
@@ -242,16 +366,23 @@ export function createAiVideoRouter(ctx) {
   }
 
   async function createPiapiSeedanceTask({ taskType, input }) {
-    return piapiRequest("/task", {
-      method: "POST",
-      timeoutMs: 60_000,
-      retries: 2,
-      body: {
-        model: "seedance",
-        task_type: taskType,
-        input,
-      },
-    });
+    try {
+      return await piapiRequest("/task", {
+        method: "POST",
+        timeoutMs: PIAPI_CREATE_TIMEOUT_MS,
+        retries: 4,
+        body: {
+          model: "seedance",
+          task_type: taskType,
+          input,
+        },
+      });
+    } catch (err) {
+      throw toPiapiHttpError(err, "No pude crear la tarea de Seedance en PiAPI.", {
+        taskType: taskType || null,
+        input: summarizeSeedanceInput(input),
+      });
+    }
   }
 
   async function getOwnedAssetById(assetId, ownerId) {
