@@ -4,8 +4,8 @@ import { generateImageBatch, type PromptReference, type ImageGenQuality } from "
 import { MentionTextarea, type MentionItem } from "../../components/MentionTextarea";
 import {
   deleteAsset,
-  listMyAssets,
-  listPurchasedAssets,
+  listMyAssetsRobust,
+  listPurchasedAssetsRobust,
   uploadUserAsset,
   downloadAssetToDisk,
 } from "../../services/assetsApi";
@@ -1260,8 +1260,8 @@ useEffect(() => {
     setIsLoadingHistory(true);
     try {
       const [ownedRes, purchasedRes] = await Promise.allSettled([
-        listMyAssets({ type: "image", limit: 300, fresh: true }),
-        listPurchasedAssets({ type: "image", limit: 300, fresh: true }),
+        listMyAssetsRobust({ type: "image", limit: 300, fresh: true }),
+        listPurchasedAssetsRobust({ type: "image", limit: 300, fresh: true }),
       ]);
 
       if (ownedRes.status !== "fulfilled") {

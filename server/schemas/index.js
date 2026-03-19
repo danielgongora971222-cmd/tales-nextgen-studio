@@ -82,7 +82,7 @@ export const VideoRequestSchema = z.object({
   async: z.boolean().optional(),
 
   // Solo aplica cuando NO hay firstFrame
-  aspectRatio: z.enum(["16:9", "9:16", "1:1"]).optional(),
+  aspectRatio: z.enum(["16:9", "9:16", "1:1", "4:3", "3:4"]).optional(),
 
   // Params Veo
   resolution: z.enum(["720p", "1080p", "4k"]).optional(),
@@ -98,6 +98,7 @@ export const VideoRequestSchema = z.object({
   // Frame assets (opcionales)
   firstFrameAssetId: z.string().uuid().nullable().optional(),
   lastFrameAssetId: z.string().uuid().nullable().optional(),
+  referenceImageAssetIds: z.array(z.string().uuid()).max(9).optional(),
 
   // Kling extras (v2.* / v3)
   // ⚠️ Tu endpoint /api/ai/video usa estos nombres kling* (si no están aquí, Zod los elimina)

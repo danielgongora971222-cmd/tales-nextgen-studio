@@ -2,7 +2,7 @@ import { SEEDANCE_2_PRO, SEEDANCE_2_STANDARD } from "./ids";
 import { clampInt, normalizeModelId, coerceAllowedNumber, coerceAllowedString } from "./utils";
 import type { BuildPlanArgs, BuildPlanResult, VideoModelHandler } from "./types";
 
-const SEEDANCE_DURATIONS = [5, 10] as const;
+const SEEDANCE_DURATIONS = [5, 10, 15] as const;
 
 export const seedanceHandler: VideoModelHandler = {
   label: "Seedance 2.0",
@@ -11,7 +11,7 @@ export const seedanceHandler: VideoModelHandler = {
   getCapability: () => ({
     supportsResolution: false,
     supportsAspectRatio: true,
-    supportsAspectRatio1x1: true,
+    supportsAspectRatio1x1: false,
     durations: SEEDANCE_DURATIONS,
     supportsSound: false,
     supportsLastFrame: true,
@@ -35,11 +35,14 @@ export const seedanceHandler: VideoModelHandler = {
       nameHint: args.nameHint,
       count: clampInt(args.count, 1, 1, 1),
       durationSeconds: coerceAllowedNumber(args.durationSeconds, SEEDANCE_DURATIONS, 5),
-      aspectRatio: coerceAllowedString(args.aspectRatio, ["16:9", "9:16", "1:1"] as const, "16:9"),
+      aspectRatio: coerceAllowedString(args.aspectRatio, ["16:9", "9:16", "4:3", "3:4"] as const, "16:9"),
     };
 
     if (args.firstFrameAssetId) body.firstFrameAssetId = args.firstFrameAssetId;
     if (args.lastFrameAssetId) body.lastFrameAssetId = args.lastFrameAssetId;
+    if (Array.isArray(args.referenceImageAssetIds) && args.referenceImageAssetIds.length) {
+      body.referenceImageAssetIds = args.referenceImageAssetIds.filter(Boolean).slice(0, 9);
+    }
 
     return {
       modelNorm,

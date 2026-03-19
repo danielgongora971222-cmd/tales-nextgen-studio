@@ -6,7 +6,7 @@ import { MentionTextarea, type MentionItem } from "../../components/MentionTexta
 import { useAuth } from "../../contexts/AuthContext";
 import {
   deleteAsset,
-  listMyAssets,
+  listMyAssetsRobust,
   uploadUserAsset,
 } from "../../services/assetsApi";
 import { apiPostJson, formatErr } from "../../services/videoGenApi";
@@ -41,7 +41,7 @@ type EditModelId =
   | "seedance-2-preview"
   | "seedance-2-fast-preview";
 
-type AspectRatio = "auto" | "16:9" | "9:16" | "1:1";
+type AspectRatio = "auto" | "16:9" | "9:16" | "1:1" | "4:3" | "3:4";
 
 const TOOL_NAME = "extend-video";
 const PREFILL_TARGET = getCommunityPrefillTarget(TOOL_NAME);
@@ -61,6 +61,8 @@ type PendingVideoEditJob = {
 };
 
 const isSeedanceModelId = (value: string) => value === "seedance-2-preview" || value === "seedance-2-fast-preview";
+const coerceSeedanceDurationLocal = (value: number) => (Number(value) === 15 ? 15 : Number(value) === 10 ? 10 : 5);
+const isSeedanceAspectRatio = (value: string) => ["16:9", "9:16", "4:3", "3:4"].includes(String(value || ""));
 const MODEL_OPTIONS: Array<{
   id: EditModelId;
   uiName: string;
@@ -305,7 +307,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     const generationDurationSeconds = isStoryboardMode ? multishotTotalSeconds : durationSeconds;
     const pricingDurationSeconds =
       isSeedanceModel
-        ? (durationSeconds === 10 ? 10 : 5)
+        ? coerceSeedanceDurationLocal(durationSeconds)
         : (model === "kling-o3-ref-to-video-pro"
             ? generationDurationSeconds
             : referenceVideoDurationSeconds || 5);
@@ -321,6 +323,18 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
 
   const combinedRefsCount = referenceImageIds.length + klingElementIds.length;
   const maxCombinedRefs = isSeedanceModel ? 9 : (model === "kling-o3-ref-to-video-pro" ? 7 : 4);
+
+  useEffect(() => {
+    if (!isSeedanceModel) {
+      if (aspectRatio === "4:3") setAspectRatio("16:9");
+      if (aspectRatio === "3:4") setAspectRatio("9:16");
+      return;
+    }
+
+    const nextDuration = coerceSeedanceDurationLocal(durationSeconds);
+    if (nextDuration !== durationSeconds) setDurationSeconds(nextDuration);
+    if (aspectRatio === "auto" || !isSeedanceAspectRatio(aspectRatio)) setAspectRatio("16:9");
+  }, [isSeedanceModel, durationSeconds, aspectRatio]);
 
   useEffect(() => {
     let cancelled = false;
@@ -699,22 +713,9 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     if (!user) return [] as Asset[];
     setIsLoadingImages(true);
     try {
-      const imgs = await listMyAssets({ type: "image", limit: 500, fresh: true });
-
-      if (Array.isArray(imgs) && imgs.length > 0) {
-        setImageAssets(imgs);
-        return imgs;
-      }
-
-      const all = await listMyAssets({ limit: 500, fresh: true } as any);
-      const onlyImages = (all || []).filter((x: any) => {
-        if (x?.type === "image") return true;
-        const mime = String(x?.mime || x?.contentType || x?.mimeType || x?.meta?.mimeType || "");
-        return mime.startsWith("image/");
-      });
-
-      setImageAssets(onlyImages);
-      return onlyImages;
+      const imgs = await listMyAssetsRobust({ type: "image", limit: 500, fresh: true });
+      setImageAssets(Array.isArray(imgs) ? imgs : []);
+      return Array.isArray(imgs) ? imgs : [];
     } catch (err: any) {
       console.warn(err);
       return [] as Asset[];
@@ -727,22 +728,9 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     if (!user) return [] as Asset[];
     setIsLoadingVideos(true);
     try {
-      const vids = await listMyAssets({ type: "video", limit: 250, fresh: true });
-
-      if (Array.isArray(vids) && vids.length > 0) {
-        setVideoAssets(vids);
-        return vids;
-      }
-
-      const all = await listMyAssets({ limit: 250, fresh: true } as any);
-      const onlyVideos = (all || []).filter((x: any) => {
-        if (x?.type === "video") return true;
-        const mime = String(x?.mime || x?.contentType || x?.mimeType || x?.meta?.mimeType || "");
-        return mime.startsWith("video/");
-      });
-
-      setVideoAssets(onlyVideos);
-      return onlyVideos;
+      const vids = await listMyAssetsRobust({ type: "video", limit: 250, fresh: true });
+      setVideoAssets(Array.isArray(vids) ? vids : []);
+      return Array.isArray(vids) ? vids : [];
     } catch (err: any) {
       console.warn(err);
       return [] as Asset[];
@@ -755,7 +743,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     if (!user) return [] as Asset[];
     setIsLoadingHistory(true);
     try {
-      const vids = await listMyAssets({ type: "video", limit: 250, fresh: true });
+      const vids = await listMyAssetsRobust({ type: "video", limit: 250, fresh: true });
       const filtered = vids.filter((a) => getMetaTool(a) === TOOL_NAME);
       setHistory(filtered);
       setVisibleCount(18);
@@ -1206,6 +1194,13 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     const normalizeAspectRatio = (arIn: AspectRatio): AspectRatio => {
       // Kling O3 reference-to-video suele trabajar mejor con AR explícito
       if (model === "kling-o3-ref-to-video-pro" && arIn === "auto") return "16:9";
+      if (isSeedanceModelId(model)) {
+        if (arIn === "auto") return "16:9";
+        if (!isSeedanceAspectRatio(arIn)) return "16:9";
+        return arIn;
+      }
+      if (arIn === "4:3") return "16:9";
+      if (arIn === "3:4") return "9:16";
       return arIn;
     };
 
@@ -1480,7 +1475,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
           model,
           prompt: prepared.promptForModel,
           videoAssetId: inputVideo.id,
-          durationSeconds: durationSeconds === 10 ? 10 : 5,
+          durationSeconds: coerceSeedanceDurationLocal(durationSeconds),
           aspectRatio: ar === "auto" ? "16:9" : ar,
           toolName: TOOL_NAME,
           hint: nowHint(model),
@@ -1864,21 +1859,42 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
                               >
                                 9:16
                               </button>
-                              <button
-                                type="button"
-                                className={`${styles.segmentBtn} ${aspectRatio === "1:1" ? styles.segmentBtnActive : ""}`}
-                                onClick={() => setAspectRatio("1:1")}
-                                disabled={ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode}
-                              >
-                                1:1
-                              </button>
+                              {isSeedanceModel ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    className={`${styles.segmentBtn} ${aspectRatio === "4:3" ? styles.segmentBtnActive : ""}`}
+                                    onClick={() => setAspectRatio("4:3")}
+                                    disabled={ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode}
+                                  >
+                                    4:3
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className={`${styles.segmentBtn} ${aspectRatio === "3:4" ? styles.segmentBtnActive : ""}`}
+                                    onClick={() => setAspectRatio("3:4")}
+                                    disabled={ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode}
+                                  >
+                                    3:4
+                                  </button>
+                                </>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className={`${styles.segmentBtn} ${aspectRatio === "1:1" ? styles.segmentBtnActive : ""}`}
+                                  onClick={() => setAspectRatio("1:1")}
+                                  disabled={ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode}
+                                >
+                                  1:1
+                                </button>
+                              )}
                             </div>
                           </div>
 
                           <div className={styles.formRow}>
                             <label className={styles.formLabel}>Duration</label>
                             <div className={styles.segment}>
-                              {[3, 5, 8, 10, 12, 15].map((d) => (
+                              {(isSeedanceModel ? [5, 10, 15] : [3, 5, 8, 10, 12, 15]).map((d) => (
                                 <button
                                   key={d}
                                   type="button"
@@ -2177,6 +2193,40 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
                   />
                 )}
 
+              </div>
+            </div>
+
+            <div className={styles.videoSelectorsStack} style={{ marginTop: 14 }}>
+              <button
+                type="button"
+                className={`${styles.videoSelectorButton} ${panel === "model" ? styles.videoSelectorButtonActive : ""}`}
+                onClick={() => setPanel("model")}
+              >
+                <span className={styles.videoSelectorTopLabel}>Model</span>
+                <span className={styles.videoSelectorValueRow}>
+                  <span>{selectedModel.uiName}</span>
+                  <span className={styles.videoSelectorChevron} aria-hidden="true">›</span>
+                </span>
+              </button>
+
+              <div className={styles.videoQuickGrid}>
+                <button
+                  type="button"
+                  className={`${styles.videoQuickButton} ${panel === "params" ? styles.videoSelectorButtonActive : ""}`}
+                  onClick={() => setPanel("params")}
+                >
+                  <Icon name="sliders" />
+                  <span>{paramsLabel || "Settings"}</span>
+                </button>
+
+                <button
+                  type="button"
+                  className={styles.videoQuickButton}
+                  onClick={() => setRefPickerOpen(true)}
+                >
+                  <Icon name="image" />
+                  <span>Refs {referenceImageIds.length ? `(${referenceImageIds.length})` : ""}</span>
+                </button>
               </div>
             </div>
 

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Asset } from "../types";
-import { listMyAssets, uploadUserAsset } from "../services/assetsApi";
+import { listMyAssetsRobust, uploadUserAsset } from "../services/assetsApi";
 
 type Props = {
   open: boolean;
@@ -101,7 +101,7 @@ export default function ElementLibraryPickerModal({ open, onClose, onSelect, tit
       setLoading(true);
       setErr(null);
       try {
-        const assets = await listMyAssets({ type: "image", limit: 200 });
+        const assets = await listMyAssetsRobust({ type: "image", limit: 200 });
         if (!alive) return;
 
         const list = Array.isArray(assets) ? assets : [];
@@ -130,7 +130,7 @@ export default function ElementLibraryPickerModal({ open, onClose, onSelect, tit
       setLibraryLoading(true);
       setLibraryErr(null);
       try {
-        const assets = await listMyAssets({ type: "image", limit: 400 });
+        const assets = await listMyAssetsRobust({ type: "image", limit: 400 });
         if (!alive) return;
         const list = Array.isArray(assets) ? assets : [];
         const lib = list.filter((a) => !(a?.meta?.tool === "element-library" || a?.meta?.isElement === true));

@@ -69,11 +69,20 @@ export function coerceAspectRatioForModel(
   aspectRatio: AspectRatio
 ): AspectRatio {
   const m = normalizeModelId(modelRaw);
+  const isSeedance = m === SEEDANCE_2_PRO || m === SEEDANCE_2_STANDARD;
 
   if (m.startsWith("veo-3.0") && !hasFirst && resolution === "1080p" && aspectRatio === "9:16") {
     return "16:9";
   }
 
+  if (isSeedance) {
+    return (["16:9", "9:16", "4:3", "3:4"] as const).includes(aspectRatio as any)
+      ? aspectRatio
+      : "16:9";
+  }
+
+  if (aspectRatio === "4:3") return "16:9";
+  if (aspectRatio === "3:4") return "9:16";
   if (!capability.supportsAspectRatio1x1 && aspectRatio === "1:1") return "16:9";
 
   return aspectRatio;

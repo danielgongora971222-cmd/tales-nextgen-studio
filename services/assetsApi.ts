@@ -133,6 +133,55 @@ function sliceByLimit(items: Asset[], limit?: number) {
   return items.slice(0, limit);
 }
 
+function dedupeAssetsById(items: Asset[]) {
+  const map = new Map<string, Asset>();
+  for (const asset of Array.isArray(items) ? items : []) {
+    if (!asset?.id) continue;
+    map.set(asset.id, { ...(map.get(asset.id) || {}), ...asset });
+  }
+  return Array.from(map.values());
+}
+
+function detectAssetKind(asset: any): "image" | "video" | null {
+  if (!asset || typeof asset !== "object") return null;
+
+  const probe = (value: any) => String(value || "").trim().toLowerCase();
+  const candidates = [
+    asset.type,
+    asset.mime,
+    asset.mimeType,
+    asset.contentType,
+    asset.assetType,
+    asset.meta?.type,
+    asset.meta?.mime,
+    asset.meta?.mimeType,
+    asset.meta?.contentType,
+    asset.meta?.assetType,
+  ].map(probe).filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (candidate === "image" || candidate.startsWith("image/")) return "image";
+    if (candidate === "video" || candidate.startsWith("video/")) return "video";
+  }
+
+  const pathCandidates = [asset.url, asset.publicUrl, asset.signedUrl, asset.thumbUrl, asset.name, asset.filename]
+    .map(probe)
+    .filter(Boolean);
+
+  for (const value of pathCandidates) {
+    if (/\.(png|jpe?g|webp|gif|bmp|avif|svg)(\?|#|$)/i.test(value)) return "image";
+    if (/\.(mp4|mov|webm|m4v|avi|mkv)(\?|#|$)/i.test(value)) return "video";
+  }
+
+  return null;
+}
+
+export function filterAssetsByType(items: Asset[], type: "image" | "video") {
+  return dedupeAssetsById(
+    (Array.isArray(items) ? items : []).filter((asset) => detectAssetKind(asset) === type)
+  );
+}
+
 function shouldRefetch(entry: AssetsCacheEntry, nextLimit?: number) {
   // Si está expirado -> refetch
   if (!isFresh(entry)) return true;
@@ -801,3 +850,46 @@ export async function downloadAssetToDisk(assetId: string, filenameHint?: string
 }
 
 
+
+
+export async function listMyAssetsRobust(opts?: { type?: "image" | "video"; limit?: number; fresh?: boolean }): Promise<Asset[]> {
+  const type = opts?.type;
+  if (!type) return listMyAssets(opts);
+
+  const [typedRes, allRes] = await Promise.allSettled([
+    listMyAssets({ type, limit: opts?.limit, fresh: opts?.fresh }),
+    listMyAssets({ limit: opts?.limit, fresh: opts?.fresh }),
+  ]);
+
+  if (typedRes.status === "fulfilled" && allRes.status === "fulfilled") {
+    return filterAssetsByType([...typedRes.value, ...allRes.value], type).slice(0, opts?.limit || undefined);
+  }
+  if (typedRes.status === "fulfilled") {
+    return filterAssetsByType(typedRes.value, type).slice(0, opts?.limit || undefined);
+  }
+  if (allRes.status === "fulfilled") {
+    return filterAssetsByType(allRes.value, type).slice(0, opts?.limit || undefined);
+  }
+  throw typedRes.reason || allRes.reason || new Error("No se pudieron cargar los assets.");
+}
+
+export async function listPurchasedAssetsRobust(opts?: { type?: "image" | "video"; limit?: number; fresh?: boolean }): Promise<Asset[]> {
+  const type = opts?.type;
+  if (!type) return listPurchasedAssets(opts);
+
+  const [typedRes, allRes] = await Promise.allSettled([
+    listPurchasedAssets({ type, limit: opts?.limit, fresh: opts?.fresh }),
+    listPurchasedAssets({ limit: opts?.limit, fresh: opts?.fresh }),
+  ]);
+
+  if (typedRes.status === "fulfilled" && allRes.status === "fulfilled") {
+    return filterAssetsByType([...typedRes.value, ...allRes.value], type).slice(0, opts?.limit || undefined);
+  }
+  if (typedRes.status === "fulfilled") {
+    return filterAssetsByType(typedRes.value, type).slice(0, opts?.limit || undefined);
+  }
+  if (allRes.status === "fulfilled") {
+    return filterAssetsByType(allRes.value, type).slice(0, opts?.limit || undefined);
+  }
+  throw typedRes.reason || allRes.reason || new Error("No se pudieron cargar los assets comprados.");
+}

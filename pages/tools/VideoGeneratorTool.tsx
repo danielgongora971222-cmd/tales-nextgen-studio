@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import styles from "./VideoGeneratorTool.module.css";
 import ErrorModal from "../../components/ErrorModal";
 import { MentionTextarea, type MentionItem } from "../../components/MentionTextarea";
-import { deleteAsset, listMyAssets, uploadUserAsset, downloadAssetToDisk } from "../../services/assetsApi";
+import { deleteAsset, listMyAssetsRobust, uploadUserAsset, downloadAssetToDisk } from "../../services/assetsApi";
 import { useAuth } from "../../contexts/AuthContext";
 import type { Asset } from "../../types";
 import {
@@ -18,7 +18,8 @@ import { LimitedTextarea, KLING_V3_SHOT_PROMPT_LIMIT } from "./video/LimitedText
 import { KlingElementsModal } from "./video/KlingElementsModal";
 import { HistorySection } from "./video/HistorySection";
 import { ControlsPopover } from "./video/ControlsPopover";
-import type { KlingShotType } from "../../services/videoModels/types";
+import { SeedanceRefsPickerModal } from "./video/SeedanceRefsPickerModal";
+import type { AspectRatio, KlingShotType } from "../../services/videoModels/types";
 import { estimateVideoCostCredits } from "../../config/pricing.js";
 import { toggleLike } from "../../services/socialApi";
 import { syncFavoriteAssetState } from "../../services/favoriteAssets";
@@ -77,6 +78,20 @@ function makeElementTag(name: string) {
   return `@${slugifyName(name || "element")}`;
 }
 
+function makeImageTag(name: string) {
+  return `@img_${slugifyName(name || "image")}`;
+}
+
+function getMetaTool(a: Asset | null | undefined): string | null {
+  const meta: any = (a as any)?.meta || {};
+  return meta?.tool ?? null;
+}
+
+function isElementAsset(a: Asset | null | undefined) {
+  const meta: any = (a as any)?.meta || {};
+  return meta?.tool === "element-library" || meta?.isElement === true || meta?.category === "element";
+}
+
 function buildElementTokenMap(elements: KlingElement[]) {
   const reserved = new Set(["@element1", "@element2", "@element3", "@element4", "@element5"]);
   const used = new Set<string>(reserved);
@@ -95,6 +110,45 @@ function buildElementTokenMap(elements: KlingElement[]) {
     used.add(token);
     map.set(el.id, token);
   }
+  return map;
+}
+
+function buildImageTokenMap(images: Asset[]) {
+  const reserved = new Set<string>([
+    "@image1",
+    "@image2",
+    "@image3",
+    "@image4",
+    "@image5",
+    "@image6",
+    "@image7",
+    "@image8",
+    "@image9",
+    "@video1",
+  ]);
+  const used = new Set<string>(reserved);
+  const map = new Map<string, string>();
+
+  const alloc = (baseToken: string) => {
+    let token = String(baseToken || "").trim().toLowerCase();
+    if (!token) return null;
+    if (!token.startsWith("@")) token = `@${token}`;
+    const base = token;
+    if (used.has(token)) {
+      let n = 2;
+      while (used.has(`${base}_${n}`)) n++;
+      token = `${base}_${n}`;
+    }
+    used.add(token);
+    return token;
+  };
+
+  for (const asset of images || []) {
+    const base = makeImageTag(String((asset as any)?.name || (asset as any)?.prompt || "image"));
+    const token = alloc(base);
+    if (token) map.set(asset.id, token);
+  }
+
   return map;
 }
 
@@ -200,16 +254,18 @@ function makeResolvedAsset(item: any, type: Asset["type"]): Asset | null {
 const TOOL_ID = "video-generator";
 const PREFILL_TARGET = getCommunityPrefillTarget(TOOL_ID);
 const FRAME_UPLOAD_TOOL = "video-gen-frame";
+const SEEDANCE_REF_UPLOAD_TOOL = "video-gen-seedance-ref";
+const SEEDANCE_MAX_TOTAL_IMAGES = 9;
 
-const VIDEO_SETTINGS_VERSION = 1;
+const VIDEO_SETTINGS_VERSION = 2;
 
 type VideoToolSettingsV1 = {
-  v: 1;
+  v: 2;
 
   prompt: string;
   model: string;
 
-  aspectRatio: "16:9" | "9:16" | "1:1";
+  aspectRatio: AspectRatio;
   resolution: "720p" | "1080p" | "4k";
   durationSeconds: number;
   count: number;
@@ -217,6 +273,7 @@ type VideoToolSettingsV1 = {
   // Frames guardamos solo IDs
   firstFrameId: string | null;
   lastFrameId: string | null;
+  seedanceReferenceImageIds: string[];
 
   // Kling V2
   klingMode: "std" | "pro";
@@ -247,8 +304,8 @@ function safeParseJson(raw: string | null) {
   }
 }
 
-function coerceAr(v: any): "16:9" | "9:16" | "1:1" {
-  return v === "9:16" || v === "1:1" ? v : "16:9";
+function coerceAr(v: any): AspectRatio {
+  return v === "9:16" || v === "1:1" || v === "4:3" || v === "3:4" ? v : "16:9";
 }
 
 function coerceRes(v: any): "720p" | "1080p" | "4k" {
@@ -354,9 +411,11 @@ const VideoGeneratorTool: React.FC = () => {
   // Frames (First / Last)
   const [firstFrame, setFirstFrame] = useState<Asset | null>(null);
   const [lastFrame, setLastFrame] = useState<Asset | null>(null);
+  const [seedanceReferenceImageIds, setSeedanceReferenceImageIds] = useState<string[]>([]);
+  const [seedanceRefsPickerOpen, setSeedanceRefsPickerOpen] = useState(false);
 
   // Params
-  const [aspectRatio, setAspectRatio] = useState<"16:9" | "9:16" | "1:1">("16:9");
+  const [aspectRatio, setAspectRatio] = useState<AspectRatio>("16:9");
   const [resolution, setResolution] = useState<"720p" | "1080p" | "4k">("720p");
   const [count, setCount] = useState<number>(1);
   const [klingSound, setKlingSound] = useState<boolean>(false);
@@ -487,7 +546,7 @@ const VideoGeneratorTool: React.FC = () => {
   async function reloadVideosForElements() {
     setIsLoadingVideosForElements(true);
     try {
-      const vids = await listMyAssets({ type: "video", limit: 500, fresh: true });
+      const vids = await listMyAssetsRobust({ type: "video", limit: 500, fresh: true });
       setVideoLibraryAssets(Array.isArray(vids) ? vids : []);
       return vids;
     } catch (e: any) {
@@ -502,23 +561,9 @@ const VideoGeneratorTool: React.FC = () => {
   async function reloadImages() {
     setIsLoadingImages(true);
     try {
-      const imgs = await listMyAssets({ type: "image", limit: 500, fresh: true });
-
-      if (Array.isArray(imgs) && imgs.length > 0) {
-        setImageAssets(imgs);
-        return imgs;
-      }
-
-      // Fallback: algunos backends no usan type="image" para imágenes generadas
-      const all = await listMyAssets({ limit: 500, fresh: true } as any);
-      const onlyImages = (all || []).filter((x: any) => {
-        if (x?.type === "image") return true;
-        const mime = String(x?.mime || x?.contentType || x?.mimeType || "");
-        return mime.startsWith("image/");
-      });
-
-      setImageAssets(onlyImages);
-      return onlyImages;
+      const imgs = await listMyAssetsRobust({ type: "image", limit: 500, fresh: true });
+      setImageAssets(Array.isArray(imgs) ? imgs : []);
+      return Array.isArray(imgs) ? imgs : [];
     } catch (e: any) {
       console.warn(e);
       return [];
@@ -530,7 +575,7 @@ const VideoGeneratorTool: React.FC = () => {
   async function reloadHistory() {
     setIsLoadingHistory(true);
     try {
-      const vids = await listMyAssets({ type: "video", limit: 300, fresh: true });
+      const vids = await listMyAssetsRobust({ type: "video", limit: 300, fresh: true });
       const sorted = [...vids].sort((a: any, b: any) => {
         const ta = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
         const tb = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
@@ -757,6 +802,89 @@ const elementMentionItems = useMemo<MentionItem[]>(() => {
     });
 }, [isKlingV3ElementsUI, allKlingElements, elementTokenById]);
 
+  const isSeedanceModel = modelNorm === SEEDANCE_2_PRO || modelNorm === SEEDANCE_2_STANDARD;
+  const seedanceHistoryImages = useMemo(
+    () => (imageAssets || []).filter((asset) => !isElementAsset(asset)),
+    [imageAssets]
+  );
+  const seedanceElementImages = useMemo(
+    () => (imageAssets || []).filter((asset) => isElementAsset(asset)),
+    [imageAssets]
+  );
+  const seedanceSelectedRefAssets = useMemo(
+    () =>
+      seedanceReferenceImageIds
+        .map((id) => (imageAssets || []).find((asset) => asset.id === id) || null)
+        .filter((asset): asset is Asset => Boolean(asset)),
+    [seedanceReferenceImageIds, imageAssets]
+  );
+  const seedanceRefsMaxSelectable = Math.max(
+    0,
+    SEEDANCE_MAX_TOTAL_IMAGES - (firstFrame ? 1 : 0) - (lastFrame ? 1 : 0)
+  );
+  const seedanceRefTokenById = useMemo(
+    () => buildImageTokenMap(seedanceSelectedRefAssets),
+    [seedanceSelectedRefAssets]
+  );
+  const seedanceRefTokenToId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const [id, token] of seedanceRefTokenById.entries()) map.set(token.toLowerCase(), id);
+    return map;
+  }, [seedanceRefTokenById]);
+
+  const seedanceFinalOrderedImages = useMemo(() => {
+    const out: Asset[] = [];
+    const seen = new Set<string>();
+    const push = (asset: Asset | null) => {
+      if (!asset?.id || seen.has(asset.id)) return;
+      seen.add(asset.id);
+      out.push(asset);
+    };
+    push(firstFrame);
+    push(lastFrame);
+    for (const asset of seedanceSelectedRefAssets) push(asset);
+    return out;
+  }, [firstFrame, lastFrame, seedanceSelectedRefAssets]);
+
+  const seedanceMentionItems = useMemo<MentionItem[]>(() => {
+    if (!isSeedanceModel) return [];
+    const out: MentionItem[] = [];
+
+    seedanceFinalOrderedImages.forEach((asset, index) => {
+      const token = `@Image${index + 1}`;
+      const label = `Image${index + 1}${asset?.name ? ` · ${asset.name}` : ""}`;
+      out.push({
+        id: `${asset.id}:numeric`,
+        token,
+        label,
+        kind: "ref",
+        previewUrl: getAssetUrl(asset),
+        hidden: true,
+      });
+      out.push({
+        id: `${asset.id}:numeric-lower`,
+        token: token.toLowerCase(),
+        label,
+        kind: "ref",
+        previewUrl: getAssetUrl(asset),
+        hidden: true,
+      });
+    });
+
+    for (const asset of seedanceSelectedRefAssets) {
+      const token = seedanceRefTokenById.get(asset.id) || makeImageTag(asset.name || "image");
+      out.push({
+        id: asset.id,
+        token,
+        label: asset.name || "Reference image",
+        kind: "ref",
+        previewUrl: getAssetUrl(asset),
+      });
+    }
+
+    return out;
+  }, [isSeedanceModel, seedanceFinalOrderedImages, seedanceSelectedRefAssets, seedanceRefTokenById]);
+
   // Sync Elements con el prompt:
   // - Si borras un token de Element del prompt -> se deselecciona.
   // - Si agregas un token de Element al prompt -> se selecciona (hasta 5).
@@ -847,6 +975,26 @@ const elementMentionItems = useMemo<MentionItem[]>(() => {
     });
   }, [isKlingV3ElementsUI, multishotEnabled, klingShotType, klingShots, maxKlingElements]);
 
+
+  useEffect(() => {
+    setSeedanceReferenceImageIds((prev) => {
+      const seen = new Set<string>();
+      const blocked = new Set<string>([firstFrame?.id || "", lastFrame?.id || ""]);
+      const next: string[] = [];
+      for (const id of Array.isArray(prev) ? prev : []) {
+        if (!id || seen.has(id) || blocked.has(id)) continue;
+        seen.add(id);
+        next.push(id);
+      }
+      if (next.length > seedanceRefsMaxSelectable) next.length = seedanceRefsMaxSelectable;
+      const same = next.length === prev.length && next.every((id, index) => id === prev[index]);
+      return same ? prev : next;
+    });
+  }, [firstFrame?.id, lastFrame?.id, seedanceRefsMaxSelectable]);
+
+  useEffect(() => {
+    if (!isSeedanceModel && seedanceRefsPickerOpen) setSeedanceRefsPickerOpen(false);
+  }, [isSeedanceModel, seedanceRefsPickerOpen]);
 
   const isVeoFamily = modelNorm.startsWith("veo-");
   const veoIsFast = modelNorm === VEO_3_FAST || modelNorm === VEO_3_1_FAST;
@@ -1036,7 +1184,7 @@ useEffect(() => {
       const raw = localStorage.getItem(settingsKey(user.id));
       const parsed = safeParseJson(raw);
 
-      if (parsed?.v === 1) {
+      if (parsed?.v === 2) {
         const s = parsed as VideoToolSettingsV1;
 
         setPrompt(typeof s.prompt === "string" ? s.prompt : "");
@@ -1047,6 +1195,8 @@ useEffect(() => {
 
         setDurationSeconds(Number.isFinite(Number(s.durationSeconds)) ? Math.trunc(Number(s.durationSeconds)) : 8);
         setCount(clampInt(s.count, 1, 4, 1));
+
+        setSeedanceReferenceImageIds(Array.isArray(s.seedanceReferenceImageIds) ? s.seedanceReferenceImageIds.filter(Boolean) : []);
 
         setKlingMode(coerceStdPro(s.klingMode));
         setKlingSound(Boolean(s.klingSound));
@@ -1146,6 +1296,11 @@ useEffect(() => {
     reloadImages();
   }, [pickerOpen]);
 
+  useEffect(() => {
+    if (!seedanceRefsPickerOpen) return;
+    reloadImages();
+  }, [seedanceRefsPickerOpen]);
+
   // Cerrar popover al click afuera
   useEffect(() => {
     function onDown(e: MouseEvent) {
@@ -1164,7 +1319,7 @@ useEffect(() => {
     if (!settingsLoadedRef.current) return;
 
     const payload: VideoToolSettingsV1 = {
-      v: 1,
+      v: 2,
 
       prompt,
       model,
@@ -1176,6 +1331,7 @@ useEffect(() => {
 
       firstFrameId: firstFrame?.id ?? null,
       lastFrameId: lastFrame?.id ?? null,
+      seedanceReferenceImageIds,
 
       klingMode,
       klingSound,
@@ -1210,6 +1366,7 @@ useEffect(() => {
     count,
     firstFrame?.id,
     lastFrame?.id,
+    seedanceReferenceImageIds,
     klingMode,
     klingSound,
     klingSoundTouched,
@@ -1635,6 +1792,56 @@ const durationLabel = useMemo(() => {
   return { promptForModel, selectedKlingElementIdsForModel, klingShotsForModel };
   };
 
+  const prepareSeedancePromptAndRefs = (rawPrompt: string) => {
+    const lowerTokens = extractMentionTokens(rawPrompt).map((token) => token.toLowerCase());
+    const numericImageIndices = lowerTokens
+      .map((token) => {
+        const m = token.match(/^@image(\d+)$/);
+        const n = m ? Number(m[1]) : 0;
+        return n >= 1 && n <= SEEDANCE_MAX_TOTAL_IMAGES ? n : 0;
+      })
+      .filter((n) => n > 0);
+
+    const mentionedRefIds: string[] = [];
+    for (const token of lowerTokens) {
+      const refId = seedanceRefTokenToId.get(token);
+      if (refId && !mentionedRefIds.includes(refId)) mentionedRefIds.push(refId);
+    }
+
+    const baseFinalIds = seedanceFinalOrderedImages.map((asset) => asset.id);
+    const finalIds = [...baseFinalIds];
+    for (const id of mentionedRefIds) {
+      if (!finalIds.includes(id)) finalIds.push(id);
+    }
+
+    if (finalIds.length > SEEDANCE_MAX_TOTAL_IMAGES) {
+      throw new Error(`Seedance 2.0 admite un máximo total de ${SEEDANCE_MAX_TOTAL_IMAGES} imágenes entre first frame, last frame y refs extra.`);
+    }
+
+    const maxImageIndex = numericImageIndices.length ? Math.max(...numericImageIndices) : 0;
+    if (maxImageIndex > finalIds.length) {
+      throw new Error(`Tu prompt usa @Image${maxImageIndex}, pero solo hay ${finalIds.length} imágenes disponibles entre first frame, last frame y refs.`);
+    }
+
+    const indexById = new Map<string, number>();
+    finalIds.forEach((id, index) => indexById.set(id, index + 1));
+
+    const promptForModel = String(rawPrompt || "").replace(/@[a-z0-9_]+/gi, (token) => {
+      const refId = seedanceRefTokenToId.get(token.toLowerCase());
+      if (!refId) return token;
+      const n = indexById.get(refId);
+      return n ? `@Image${n}` : token;
+    });
+
+    const referenceImageAssetIds = finalIds.filter((id) => id !== firstFrame?.id && id !== lastFrame?.id);
+
+    return {
+      promptForModel,
+      referenceImageAssetIds,
+      finalImageCount: finalIds.length,
+    };
+  };
+
   const handleGenerate = async () => {
     setError(null);
 
@@ -1656,9 +1863,11 @@ const durationLabel = useMemo(() => {
         klingShotsForModel,
       } = computeFinalInputsForModel();
 
+      const seedancePrepared = isSeedanceModel ? prepareSeedancePromptAndRefs(promptForModel) : null;
+
       const plan = handler.buildPlan({
         model: modelNorm,
-        prompt: promptForModel,
+        prompt: seedancePrepared?.promptForModel || promptForModel,
         tool: TOOL_ID,
         nameHint: "video",
 
@@ -1669,6 +1878,7 @@ const durationLabel = useMemo(() => {
 
         firstFrameAssetId: firstFrame?.id || null,
         lastFrameAssetId: lastFrame?.id || null,
+        referenceImageAssetIds: seedancePrepared?.referenceImageAssetIds || [],
 
         klingMode,
         klingSound,
@@ -2251,8 +2461,25 @@ const clearModalSelectedIds = () => {
                             placeholder='Describe your video, like "A woman walking through a neon-lit city".'
                             rows={4}
                             textareaClassName={styles.videoPromptTextarea}
-                            items={isKlingV3ElementsUI ? elementMentionItems : []}
+                            items={isSeedanceModel ? seedanceMentionItems : isKlingV3ElementsUI ? elementMentionItems : []}
                             onSelectItem={(it) => {
+                              if (isSeedanceModel && it.kind === "ref") {
+                                let allowed = true;
+                                setSeedanceReferenceImageIds((prev) => {
+                                  if (prev.includes(it.id)) return prev;
+                                  if (prev.length >= seedanceRefsMaxSelectable) {
+                                    allowed = false;
+                                    return prev;
+                                  }
+                                  return [...prev, it.id];
+                                });
+
+                                if (!allowed) {
+                                  setError(`Seedance 2.0 admite un máximo total de ${SEEDANCE_MAX_TOTAL_IMAGES} imágenes entre first frame, last frame y refs extra.`);
+                                }
+                                return allowed;
+                              }
+
                               if (!isKlingV3ElementsUI) return true;
                               if (it.kind !== "element") return true;
 
@@ -2285,6 +2512,20 @@ const clearModalSelectedIds = () => {
                               >
                                 <Icon name="sound" />
                                 <span>{klingSound ? "On" : "Off"}</span>
+                              </button>
+                            )}
+
+                            {isSeedanceModel && (
+                              <button
+                                type="button"
+                                className={`${styles.videoActionBtn} ${styles.videoActionBtnMuted} ${seedanceReferenceImageIds.length ? styles.videoActionBtnActive : ""}`}
+                                onClick={() => setSeedanceRefsPickerOpen(true)}
+                                title="Open Seedance refs"
+                                aria-label="Open Seedance refs"
+                              >
+                                <Icon name="image" />
+                                <span>Refs</span>
+                                <span className={styles.videoActionBtnMeta}>{seedanceReferenceImageIds.length}/{seedanceRefsMaxSelectable}</span>
                               </button>
                             )}
 
@@ -2351,6 +2592,17 @@ const clearModalSelectedIds = () => {
                         <Icon name="mode" />
                         <span>{resolutionSelectorLabel}</span>
                       </button>
+
+                      {isSeedanceModel && (
+                        <button
+                          type="button"
+                          className={`${styles.videoQuickButton} ${seedanceRefsPickerOpen ? styles.videoSelectorButtonActive : ""}`}
+                          onClick={() => setSeedanceRefsPickerOpen(true)}
+                        >
+                          <Icon name="image" />
+                          <span>Refs {seedanceReferenceImageIds.length ? `(${seedanceReferenceImageIds.length})` : ""}</span>
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -2426,6 +2678,23 @@ const clearModalSelectedIds = () => {
         onPick={(a) => setFrameFromAsset(pickerSlot, a)}
         onUpload={(file) => handleUploadForSlot(pickerSlot, file)}
         hasFirst={hasFirst}
+        getAssetUrl={getAssetUrl}
+      />
+
+      <SeedanceRefsPickerModal
+        open={seedanceRefsPickerOpen}
+        onClose={() => setSeedanceRefsPickerOpen(false)}
+        selectedIds={seedanceReferenceImageIds}
+        setSelectedIds={setSeedanceReferenceImageIds}
+        historyAssets={seedanceHistoryImages}
+        elementAssets={seedanceElementImages}
+        max={seedanceRefsMaxSelectable}
+        isLoading={isLoadingImages}
+        onUpload={async (file) => {
+          const uploaded = await uploadUserAsset(file, SEEDANCE_REF_UPLOAD_TOOL);
+          setImageAssets((prev) => [uploaded, ...prev.filter((asset) => asset.id !== uploaded.id)]);
+          return uploaded;
+        }}
         getAssetUrl={getAssetUrl}
       />
 

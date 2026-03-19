@@ -1,6 +1,7 @@
 import React from "react";
 import styles from "../VideoGeneratorTool.module.css";
 import { Icon } from "./icon";
+import type { AspectRatio } from "../../../services/videoModels/types";
 import {
   KLING_2_5_TURBO,
   KLING_2_6,
@@ -32,7 +33,7 @@ type Props = {
   capability: Capability;
   hasFirst: boolean;
   aspectRatio: string;
-  setAspectRatio: (v: "16:9" | "9:16" | "1:1") => void;
+  setAspectRatio: (v: AspectRatio) => void;
   supportedResolutions: readonly string[];
   resolution: string;
   setResolution: (v: "720p" | "1080p" | "4k") => void;
@@ -61,8 +62,8 @@ const MODEL_OPTIONS: ModelOption[] = [
   { id: KLING_2_6, name: "Kling 2.6", desc: "5/10s" },
   { id: KLING_V3, name: "Kling 3.0", desc: "3–15s · multishot" },
   { id: KLING_O3_PRO, name: "Kling O3 Pro", desc: "3–15s · multishot" },
-  { id: SEEDANCE_2_PRO, name: "Seedance 2.0 Pro", desc: "5/10s · texto/imagen/video" },
-  { id: SEEDANCE_2_STANDARD, name: "Seedance 2.0 Standard", desc: "5/10s · rápido" },
+  { id: SEEDANCE_2_PRO, name: "Seedance 2.0 Pro", desc: "5/10/15s · texto/imagen/video" },
+  { id: SEEDANCE_2_STANDARD, name: "Seedance 2.0 Standard", desc: "5/10/15s · rápido" },
 ];
 
 export function ControlsPopover({
@@ -91,7 +92,9 @@ export function ControlsPopover({
 
   const close = onClose || (() => setPanel(null));
 
-  const selectAspect = (next: "16:9" | "9:16" | "1:1") => {
+  const isSeedance = model === SEEDANCE_2_PRO || model === SEEDANCE_2_STANDARD;
+
+  const selectAspect = (next: AspectRatio) => {
     setAspectRatio(next);
     close();
   };
@@ -167,17 +170,36 @@ export function ControlsPopover({
                     >
                       9:16
                     </button>
-                    <button
-                      type="button"
-                      className={`${styles.segmentBtn} ${aspectRatio === "1:1" ? styles.segmentBtnActive : ""} ${
-                        capability.supportsAspectRatio1x1 ? "" : styles.segmentBtnDisabled
-                      }`}
-                      onClick={() => capability.supportsAspectRatio1x1 && selectAspect("1:1")}
-                      disabled={!capability.supportsAspectRatio1x1}
-                      title={!capability.supportsAspectRatio1x1 ? "No disponible" : "1:1"}
-                    >
-                      1:1
-                    </button>
+                    {isSeedance ? (
+                      <>
+                        <button
+                          type="button"
+                          className={`${styles.segmentBtn} ${aspectRatio === "4:3" ? styles.segmentBtnActive : ""}`}
+                          onClick={() => selectAspect("4:3")}
+                        >
+                          4:3
+                        </button>
+                        <button
+                          type="button"
+                          className={`${styles.segmentBtn} ${aspectRatio === "3:4" ? styles.segmentBtnActive : ""}`}
+                          onClick={() => selectAspect("3:4")}
+                        >
+                          3:4
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        className={`${styles.segmentBtn} ${aspectRatio === "1:1" ? styles.segmentBtnActive : ""} ${
+                          capability.supportsAspectRatio1x1 ? "" : styles.segmentBtnDisabled
+                        }`}
+                        onClick={() => capability.supportsAspectRatio1x1 && selectAspect("1:1")}
+                        disabled={!capability.supportsAspectRatio1x1}
+                        title={!capability.supportsAspectRatio1x1 ? "No disponible" : "1:1"}
+                      >
+                        1:1
+                      </button>
+                    )}
                   </div>
                 ) : (
                   <div className={styles.noteSmall}>{hasFirst ? "Auto por Start frame" : "Auto"}</div>

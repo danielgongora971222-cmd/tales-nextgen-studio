@@ -205,12 +205,15 @@ export function createAiVideoRouter(ctx) {
   }
 
   function coerceSeedanceDuration(value) {
-    return Number(value) === 10 ? 10 : 5;
+    const n = Number(value);
+    if (n === 15) return 15;
+    if (n === 10) return 10;
+    return 5;
   }
 
   function coerceSeedanceAspectRatio(value, fallback = "16:9") {
     const v = String(value || "").trim();
-    return v === "9:16" || v === "1:1" || v === "16:9" ? v : fallback;
+    return v === "9:16" || v === "16:9" || v === "4:3" || v === "3:4" ? v : fallback;
   }
 
   function buildSeedanceFramePrompt({ prompt, hasFirst, hasLast }) {
@@ -899,9 +902,24 @@ const isSeedance = isSeedanceModelId(selectedModelNorm);
       const dur = coerceSeedanceDuration(durationSeconds);
       const ar = coerceSeedanceAspectRatio(aspectRatio, "16:9");
 
+      const extraReferenceImageAssetIds = Array.isArray(body.referenceImageAssetIds)
+        ? body.referenceImageAssetIds.filter(Boolean)
+        : [];
+
       const imageAssetIds = [];
-      if (firstFrameAssetId) imageAssetIds.push(firstFrameAssetId);
-      if (lastFrameAssetId) imageAssetIds.push(lastFrameAssetId);
+      const pushSeedanceImageId = (assetId) => {
+        const id = String(assetId || "").trim();
+        if (!id || imageAssetIds.includes(id)) return;
+        imageAssetIds.push(id);
+      };
+
+      if (firstFrameAssetId) pushSeedanceImageId(firstFrameAssetId);
+      if (lastFrameAssetId) pushSeedanceImageId(lastFrameAssetId);
+      for (const assetId of extraReferenceImageAssetIds) pushSeedanceImageId(assetId);
+
+      if (imageAssetIds.length > 9) {
+        throw httpError(400, "SEEDANCE_REFERENCE_LIMIT", "Seedance 2.0 admite un máximo total de 9 imágenes entre first frame, last frame y refs extra.");
+      }
 
       const imageUrls = [];
       for (const assetId of imageAssetIds) {
@@ -956,6 +974,7 @@ const isSeedance = isSeedanceModelId(selectedModelNorm);
         durationSeconds: dur,
         firstFrameAssetId: firstFrameAssetId || null,
         lastFrameAssetId: lastFrameAssetId || null,
+        referenceImageAssetIds: extraReferenceImageAssetIds,
         piapiTaskId: String(taskId),
         piapiTaskType: selectedModelNorm,
         seedance: {
@@ -2761,7 +2780,7 @@ const isSeedance = isSeedanceModelId(selectedModelNorm);
       referenceImageAssetIds: z.array(z.string().uuid()).max(9).optional(),
       durationSeconds: z.coerce.number().optional(),
       referenceVideoDurationSeconds: z.coerce.number().optional(),
-      aspectRatio: z.enum(["auto", "16:9", "9:16", "1:1"]).optional(),
+      aspectRatio: z.enum(["auto", "16:9", "9:16", "1:1", "4:3", "3:4"]).optional(),
       toolName: z.string().optional(),
       hint: z.string().optional(),
       async: z.boolean().optional(),
