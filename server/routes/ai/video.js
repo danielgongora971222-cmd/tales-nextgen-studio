@@ -216,8 +216,23 @@ export function createAiVideoRouter(ctx) {
     return v === "9:16" || v === "16:9" || v === "4:3" || v === "3:4" ? v : fallback;
   }
 
+  function normalizeSeedancePrompt(prompt) {
+    let value = String(prompt || "").trim();
+    if (!value) return "";
+
+    // PiAPI documenta referencias de imagen como @imageN.
+    // Normalizamos variantes legacy (@Image1) para evitar rechazos por placeholder.
+    value = value.replace(/@image(\d+)/gi, (_, n) => `@image${String(n)}`);
+
+    // Seedance video edit usa video_urls; @Video1 es una ayuda UX interna de Tales,
+    // no un placeholder documentado del proveedor. Lo convertimos a una frase segura.
+    value = value.replace(/@video\d+/gi, "the input video");
+
+    return value.replace(/\s{2,}/g, " ").trim();
+  }
+
   function buildSeedanceFramePrompt({ prompt, hasFirst, hasLast }) {
-    const visiblePrompt = String(prompt || "").trim();
+    const visiblePrompt = normalizeSeedancePrompt(prompt);
     const instructions = [];
 
     if (hasFirst) instructions.push("Use @image1 as initial frame.");
@@ -894,7 +909,7 @@ const isSeedance = isSeedanceModelId(selectedModelNorm);
 
     if (isSeedance) {
       const INPUT_URL_TTL_SECONDS = 60 * 60 * 6;
-      const visiblePrompt = String(prompt || "").trim();
+      const visiblePrompt = normalizeSeedancePrompt(prompt);
       if (!visiblePrompt) {
         throw httpError(400, "SEEDANCE_PROMPT_REQUIRED", "Seedance 2.0 requiere un prompt.");
       }
@@ -2797,7 +2812,7 @@ const isSeedance = isSeedanceModelId(selectedModelNorm);
         if (active.error) return res.status(403).json({ ok: false, error: active.error });
 
         const body = SeedanceVideoEditRequestSchema.parse(req.body || {});
-        const visiblePrompt = String(body.prompt || "").trim();
+        const visiblePrompt = normalizeSeedancePrompt(body.prompt);
         if (!visiblePrompt) {
           throw httpError(400, "SEEDANCE_PROMPT_REQUIRED", "Seedance 2.0 requiere un prompt.");
         }

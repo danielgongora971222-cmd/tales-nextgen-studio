@@ -305,6 +305,7 @@ export default function StoreNewUI({ onNavigate, onRequestUpscale, prefill }: St
   
   // Refs
   const imageWrapperRef = useRef<HTMLDivElement | null>(null);
+  const imageElementRef = useRef<HTMLImageElement | null>(null);
   const stepsScrollRef = useRef<HTMLDivElement | null>(null);
   const materialStepRef = useRef<HTMLDivElement | null>(null);
   const sizeStepRef = useRef<HTMLDivElement | null>(null);
@@ -570,16 +571,35 @@ useEffect(() => {
   if (selectorPanel === 'size' && activeStep !== 'SIZE') setSelectorPanel(null);
 }, [activeStep, selectorPanel]);
 
+  const getVisibleImageFrame = useCallback(() => {
+    const wrapper = imageWrapperRef.current;
+    const img = imageElementRef.current;
+    if (!wrapper || !img) return null;
+
+    const imageW = img.clientWidth;
+    const imageH = img.clientHeight;
+    if (!(imageW > 0 && imageH > 0)) return null;
+
+    const wrapperRect = wrapper.getBoundingClientRect();
+    const imgRect = img.getBoundingClientRect();
+
+    return {
+      x: imgRect.left - wrapperRect.left,
+      y: imgRect.top - wrapperRect.top,
+      w: imageW,
+      h: imageH,
+    };
+  }, []);
+
   // --- LÓGICA DE RECORTE ESTRICTA Y VINCULADA ---
   const updateCropSize = useCallback(() => {
     if (!selectedSize || !imageWrapperRef.current) return;
-    
-    const wrapper = imageWrapperRef.current;
-    const rect = wrapper.getBoundingClientRect();
-    const imgW = rect.width;
-    const imgH = rect.height;
-    
-    if (imgW === 0 || imgH === 0) return;
+
+    const frame = getVisibleImageFrame();
+    if (!frame) return;
+
+    const imgW = frame.w;
+    const imgH = frame.h;
 
     let targetW = selectedSize.w;
     let targetH = selectedSize.h;
@@ -595,7 +615,7 @@ useEffect(() => {
 
     const targetRatio = targetW / targetH;
     const imgRatio = imgW / imgH;
-    
+
     let cw, ch;
     if (targetRatio > imgRatio) {
         cw = imgW;
@@ -604,22 +624,23 @@ useEffect(() => {
         ch = imgH;
         cw = imgH * targetRatio;
     }
-    
+
     setCropRect(prev => {
-        let newX = (imgW - cw) / 2;
-        let newY = (imgH - ch) / 2;
-        
+        let newX = frame.x + (imgW - cw) / 2;
+        let newY = frame.y + (imgH - ch) / 2;
+
         if (prev.w !== 0 && activeStep === 'CROP') {
-            newX = Math.max(0, Math.min(prev.x, imgW - cw));
-            newY = Math.max(0, Math.min(prev.y, imgH - ch));
+            newX = Math.max(frame.x, Math.min(prev.x, frame.x + imgW - cw));
+            newY = Math.max(frame.y, Math.min(prev.y, frame.y + imgH - ch));
         }
 
         return { w: cw, h: ch, x: newX, y: newY };
     });
-  }, [selectedSize, imageOrientation, activeStep]);
+  }, [selectedSize, imageOrientation, activeStep, getVisibleImageFrame]);
 
   useEffect(() => {
     const wrapper = imageWrapperRef.current;
+    const img = imageElementRef.current;
     if (!wrapper) return;
 
     const resizeObserver = new ResizeObserver(() => {
@@ -627,8 +648,9 @@ useEffect(() => {
     });
 
     resizeObserver.observe(wrapper);
+    if (img) resizeObserver.observe(img);
     return () => resizeObserver.disconnect();
-  }, [updateCropSize]);
+  }, [updateCropSize, image]);
 
   useEffect(() => {
     updateCropSize();
@@ -650,16 +672,14 @@ useEffect(() => {
       if (activePointerId != null && e.pointerId !== activePointerId) return;
       if (e.cancelable) e.preventDefault();
 
-      const wrapper = imageWrapperRef.current;
-      const rect = wrapper.getBoundingClientRect();
-      const imgW = rect.width;
-      const imgH = rect.height;
+      const frame = getVisibleImageFrame();
+      if (!frame) return;
 
       let newX = e.clientX - dragStart.x;
       let newY = e.clientY - dragStart.y;
 
-      newX = Math.max(0, Math.min(newX, imgW - cropRect.w));
-      newY = Math.max(0, Math.min(newY, imgH - cropRect.h));
+      newX = Math.max(frame.x, Math.min(newX, frame.x + frame.w - cropRect.w));
+      newY = Math.max(frame.y, Math.min(newY, frame.y + frame.h - cropRect.h));
 
       setCropRect(prev => ({ ...prev, x: newX, y: newY }));
     };
@@ -679,7 +699,7 @@ useEffect(() => {
       window.removeEventListener('pointerup', handleGlobalPointerUp);
       window.removeEventListener('pointercancel', handleGlobalPointerUp);
     };
-  }, [isDragging, dragStart, cropRect, activeStep, activePointerId]);
+  }, [isDragging, dragStart, cropRect, activeStep, activePointerId, getVisibleImageFrame]);
 
 
   // Acciones de cambio de pasos (Acordeón Navigation)
@@ -795,16 +815,16 @@ const handleConfirmCrop = async () => {
   if (cropProcessing) return;
 
   const wrapper = imageWrapperRef.current;
+  const frame = getVisibleImageFrame();
 
-  if (!wrapper || !image || !selectedSize) {
+  if (!wrapper || !image || !selectedSize || !frame) {
     setCropGenError("No se pudo preparar el recorte. Reintenta.");
     setActiveStep("CROP");
     return;
   }
 
-  const rect = wrapper.getBoundingClientRect();
-  const imgW = rect.width;
-  const imgH = rect.height;
+  const imgW = frame.w;
+  const imgH = frame.h;
 
   if (!(imgW > 0 && imgH > 0) || !(cropRect.w > 0 && cropRect.h > 0)) {
     setCropGenError("Selecciona un área de recorte válida antes de confirmar.");
@@ -829,10 +849,10 @@ const handleConfirmCrop = async () => {
 
     const aspect = targetW / targetH;
     const normalized = {
-      x: cropRect.x / imgW,
-      y: cropRect.y / imgH,
-      w: cropRect.w / imgW,
-      h: cropRect.h / imgH,
+      x: Math.max(0, Math.min(1, (cropRect.x - frame.x) / imgW)),
+      y: Math.max(0, Math.min(1, (cropRect.y - frame.y) / imgH)),
+      w: Math.max(0, Math.min(1, cropRect.w / imgW)),
+      h: Math.max(0, Math.min(1, cropRect.h / imgH)),
     };
 
     setFinalCrop({ ...normalized, aspect });
@@ -1487,10 +1507,10 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
       <div className="w-full h-full min-h-0 flex items-center justify-center overflow-hidden overscroll-contain px-1 sm:px-3 pb-1 sm:pb-2">
         <div 
           ref={imageWrapperRef} 
-          className="relative inline-flex items-center justify-center max-w-full max-h-full shadow-[0_0_50px_rgba(0,0,0,0.5)] rounded-md overflow-hidden touch-none select-none"
-          style={{ maxHeight: '100%', maxWidth: '100%' }}
+          className="relative flex h-full w-full items-center justify-center overflow-hidden rounded-[24px] shadow-[0_0_50px_rgba(0,0,0,0.5)] touch-none select-none"
         >
         <img 
+          ref={imageElementRef}
           src={image} 
           alt="Upload" 
           onLoad={updateCropSize}
