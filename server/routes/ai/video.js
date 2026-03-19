@@ -1,3 +1,4 @@
+import { z } from "zod";
 import express from "express";
 import {
   VideoRequestSchema,
@@ -116,6 +117,146 @@ export function createAiVideoRouter(ctx) {
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
       String(value || "").trim()
     );
+
+  const PIAPI_BASE_URL = String(process.env.PIAPI_BASE_URL || "https://api.piapi.ai/api/v1").replace(/\/+$/, "");
+
+  function isSeedanceModelId(value) {
+    const v = String(value || "").trim();
+    return v === "seedance-2-preview" || v === "seedance-2-fast-preview";
+  }
+
+  function getPiapiApiKey() {
+    const key = String(process.env.PIAPI_API_KEY || process.env.PIAPI_KEY || "").trim();
+    if (!key) {
+      throw httpError(500, "PIAPI_NOT_CONFIGURED", "Falta PIAPI_API_KEY en el backend.");
+    }
+    return key;
+  }
+
+  function piapiHeaders() {
+    return {
+      "X-API-Key": getPiapiApiKey(),
+      "Content-Type": "application/json",
+    };
+  }
+
+  async function piapiRequest(path, { method = "GET", body = undefined, timeoutMs = 60_000, retries = 2 } = {}) {
+    let lastErr = null;
+
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const response = await fetch(`${PIAPI_BASE_URL}${path}`, {
+          method,
+          headers: piapiHeaders(),
+          ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+          signal: controller.signal,
+        });
+
+        const rawText = await response.text();
+        let data = null;
+        try {
+          data = rawText ? JSON.parse(rawText) : null;
+        } catch {
+          data = rawText ? { raw: rawText } : null;
+        }
+
+        if (!response.ok) {
+          const err = new Error(
+            data?.message ||
+            data?.error?.message ||
+            data?.error?.raw_message ||
+            `PiAPI error (${response.status})`
+          );
+          err.status = response.status;
+          err.data = data;
+          throw err;
+        }
+
+        return data;
+      } catch (err) {
+        lastErr = err;
+        const status = Number(err?.status || 0);
+        const retryable = !status || [408, 409, 425, 429, 500, 502, 503, 504].includes(status);
+        if (attempt >= retries || !retryable) throw err;
+        await sleep(1200 * (attempt + 1) + Math.floor(Math.random() * 400));
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    throw lastErr || new Error("PiAPI request failed.");
+  }
+
+  function extractPiapiTaskData(raw) {
+    return raw?.data || raw?.task || raw || null;
+  }
+
+  function extractPiapiTaskId(raw) {
+    const data = extractPiapiTaskData(raw);
+    return (
+      data?.task_id ||
+      data?.taskId ||
+      raw?.task_id ||
+      raw?.taskId ||
+      null
+    );
+  }
+
+  function coerceSeedanceDuration(value) {
+    return Number(value) === 10 ? 10 : 5;
+  }
+
+  function coerceSeedanceAspectRatio(value, fallback = "16:9") {
+    const v = String(value || "").trim();
+    return v === "9:16" || v === "1:1" || v === "16:9" ? v : fallback;
+  }
+
+  function buildSeedanceFramePrompt({ prompt, hasFirst, hasLast }) {
+    const visiblePrompt = String(prompt || "").trim();
+    const instructions = [];
+
+    if (hasFirst) instructions.push("Use @image1 as initial frame.");
+    if (hasLast) instructions.push(`Use @image${hasFirst ? 2 : 1} as last frame.`);
+
+    return [instructions.join(" "), visiblePrompt].filter(Boolean).join("\n").trim();
+  }
+
+  async function createPiapiSeedanceTask({ taskType, input }) {
+    return piapiRequest("/task", {
+      method: "POST",
+      timeoutMs: 60_000,
+      retries: 2,
+      body: {
+        model: "seedance",
+        task_type: taskType,
+        input,
+      },
+    });
+  }
+
+  async function getOwnedAssetById(assetId, ownerId) {
+    const { data, error } = await supabaseAdmin
+      .from("assets")
+      .select("id, owner_id, type, meta")
+      .eq("id", assetId)
+      .eq("owner_id", ownerId)
+      .maybeSingle();
+
+    if (error && error.code !== "PGRST116") {
+      throw httpError(500, "DB_ERROR", "No pude leer el asset solicitado.", {
+        supabase: {
+          message: error?.message,
+          code: error?.code,
+          details: error?.details,
+          hint: error?.hint,
+        },
+      });
+    }
+
+    return data || null;
+  }
 
   async function resolveKlingElementList({
     elementRefs,
@@ -542,6 +683,63 @@ function respondKlingBusy(res, { retryAfterSeconds, message, details }) {
   }
 
 
+  async function upsertPiapiJobRow({
+    ownerId,
+    kind = "video",
+    taskId,
+    taskType,
+    toolName,
+    hint,
+    model,
+    prompt,
+    extra,
+  }) {
+    if (!supabaseAdmin) {
+      throw httpError(
+        500,
+        "SUPABASE_NOT_CONFIGURED",
+        "Supabase admin no está configurado en el backend."
+      );
+    }
+
+    const params = {
+      provider: "piapi",
+      taskId: taskId || null,
+      taskType: taskType || null,
+      toolName: toolName || null,
+      hint: hint || null,
+      model: model || null,
+      prompt: prompt || null,
+      ...(extra || {}),
+    };
+
+    await assertJobLimits({ supabaseAdmin, httpError, ownerId, kind });
+
+    const ins = await supabaseAdmin
+      .from("jobs")
+      .insert({
+        owner_id: ownerId,
+        kind,
+        status: "running",
+        params,
+        next_check_at: new Date().toISOString(),
+      })
+      .select("id")
+      .single();
+
+    if (!ins.error && ins.data?.id) return ins.data.id;
+
+    throw httpError(500, "JOB_INSERT_FAILED", "No pude crear el job async de PiAPI en la tabla jobs.", {
+      supabase: {
+        message: ins.error?.message,
+        code: ins.error?.code,
+        details: ins.error?.details,
+        hint: ins.error?.hint,
+      },
+    });
+  }
+
+
   /**
    * 👇 PEGAREMOS AQUÍ tu handler /api/ai/video movido desde server.js
    * Cambiando solo: app.post("/api/ai/video"...) -> router.post("/ai/video"...)
@@ -619,6 +817,7 @@ if (/^kling-v2\.6$/i.test(selectedModelNorm)) {
 }
 
 const isKling = selectedModelNorm.startsWith("kling-");
+const isSeedance = isSeedanceModelId(selectedModelNorm);
 
     const clientJobIdNorm = clientJobId ? String(clientJobId || "").trim() : "";
 
@@ -634,6 +833,22 @@ const isKling = selectedModelNorm.startsWith("kling-");
     // devolvemos el job existente en vez de responder 429.
     if (isKling && asyncMode && clientJobIdNorm) {
       const existing = await findKlingJobByClientJobId({
+        ownerId: user.id,
+        clientJobId: clientJobIdNorm,
+      });
+
+      if (existing?.id) {
+        return res.json({
+          ok: true,
+          mode: "async",
+          jobId: existing.id,
+          deduped: true,
+        });
+      }
+    }
+
+    if (isSeedance && clientJobIdNorm) {
+      const existing = await findVideoJobByClientJobId({
         ownerId: user.id,
         clientJobId: clientJobIdNorm,
       });
@@ -672,6 +887,103 @@ const isKling = selectedModelNorm.startsWith("kling-");
           details: { scope: "ai_video_generate", retryAfterSeconds: ra },
         },
       });
+    }
+
+    if (isSeedance) {
+      const INPUT_URL_TTL_SECONDS = 60 * 60 * 6;
+      const visiblePrompt = String(prompt || "").trim();
+      if (!visiblePrompt) {
+        throw httpError(400, "SEEDANCE_PROMPT_REQUIRED", "Seedance 2.0 requiere un prompt.");
+      }
+
+      const dur = coerceSeedanceDuration(durationSeconds);
+      const ar = coerceSeedanceAspectRatio(aspectRatio, "16:9");
+
+      const imageAssetIds = [];
+      if (firstFrameAssetId) imageAssetIds.push(firstFrameAssetId);
+      if (lastFrameAssetId) imageAssetIds.push(lastFrameAssetId);
+
+      const imageUrls = [];
+      for (const assetId of imageAssetIds) {
+        imageUrls.push(await assetIdToSignedUrl(assetId, user.id, INPUT_URL_TTL_SECONDS));
+      }
+
+      const providerPrompt = buildSeedanceFramePrompt({
+        prompt: visiblePrompt,
+        hasFirst: Boolean(firstFrameAssetId),
+        hasLast: Boolean(lastFrameAssetId),
+      });
+
+      const input = {
+        prompt: providerPrompt,
+        duration: dur,
+        aspect_ratio: ar,
+        ...(imageUrls.length ? { image_urls: imageUrls } : {}),
+      };
+
+      const spend = await spendVideoCreditsOrReject({
+        userId: user.id,
+        req,
+        modelNorm: selectedModelNorm,
+        durationSeconds: dur,
+        resolution: "720p",
+        count: 1,
+        entryType: "ai_video_generate",
+        refType: "ai_video",
+        refId: null,
+      });
+
+      if (!spend.ok) {
+        return res.status(402).json({ ok: false, error: spend.error });
+      }
+
+      const taskResponse = await createPiapiSeedanceTask({
+        taskType: selectedModelNorm,
+        input,
+      });
+
+      const taskId = extractPiapiTaskId(taskResponse);
+      if (!taskId) {
+        throw httpError(502, "PIAPI_BAD_RESPONSE", "PiAPI no devolvió task_id.", { response: taskResponse });
+      }
+
+      const meta = {
+        tool: toolName,
+        category: toolName,
+        provider: "piapi",
+        model: selectedModelNorm,
+        aspectRatio: ar,
+        durationSeconds: dur,
+        firstFrameAssetId: firstFrameAssetId || null,
+        lastFrameAssetId: lastFrameAssetId || null,
+        piapiTaskId: String(taskId),
+        piapiTaskType: selectedModelNorm,
+        seedance: {
+          mode: imageUrls.length ? (lastFrameAssetId ? "first-last-guided" : "image-to-video") : "text-to-video",
+          imageReferenceAssetIds: imageAssetIds,
+        },
+      };
+
+      const jobId = await upsertPiapiJobRow({
+        ownerId: user.id,
+        kind: "video",
+        taskId: String(taskId),
+        taskType: selectedModelNorm,
+        toolName,
+        hint,
+        model: selectedModelNorm,
+        prompt: visiblePrompt,
+        extra: {
+          clientJobId: clientJobIdNorm || null,
+          meta,
+          aspectRatio: ar,
+          durationSeconds: dur,
+          firstFrameAssetId: firstFrameAssetId || null,
+          lastFrameAssetId: lastFrameAssetId || null,
+        },
+      });
+
+      return res.json({ ok: true, mode: "async", jobId, taskId: String(taskId) });
     }
 
     if (isKling) {
@@ -2433,6 +2745,174 @@ const isKling = selectedModelNorm.startsWith("kling-");
           model,
           prompt: savedPrompt,
           extra: { meta },
+        });
+
+        return res.json({ ok: true, mode: "async", jobId, taskId: String(taskId) });
+      } catch (err) {
+        next(err);
+      }
+    });
+
+
+    const SeedanceVideoEditRequestSchema = z.object({
+      model: z.enum(["seedance-2-preview", "seedance-2-fast-preview"]),
+      prompt: z.string().max(14000).optional(),
+      videoAssetId: z.string().uuid().optional(),
+      referenceImageAssetIds: z.array(z.string().uuid()).max(9).optional(),
+      durationSeconds: z.coerce.number().optional(),
+      referenceVideoDurationSeconds: z.coerce.number().optional(),
+      aspectRatio: z.enum(["auto", "16:9", "9:16", "1:1"]).optional(),
+      toolName: z.string().optional(),
+      hint: z.string().optional(),
+      async: z.boolean().optional(),
+    });
+
+    router.post("/ai/video/seedance-edit", async (req, res, next) => {
+      try {
+        ensureAI();
+
+        const { user, error } = await requireUser(req);
+        if (error) return res.status(401).json({ ok: false, error });
+
+        const active = await ctx.billing.requireActiveSubscription(user.id);
+        if (active.error) return res.status(403).json({ ok: false, error: active.error });
+
+        const body = SeedanceVideoEditRequestSchema.parse(req.body || {});
+        const visiblePrompt = String(body.prompt || "").trim();
+        if (!visiblePrompt) {
+          throw httpError(400, "SEEDANCE_PROMPT_REQUIRED", "Seedance 2.0 requiere un prompt.");
+        }
+
+        const toolName = body.toolName || "video-edit";
+        const hint = body.hint || `seedance_${Date.now()}`;
+        const INPUT_URL_TTL_SECONDS = 60 * 60 * 6;
+        const referenceImageAssetIds = Array.isArray(body.referenceImageAssetIds) ? body.referenceImageAssetIds : [];
+        const referenceImageUrls = [];
+        for (const assetId of referenceImageAssetIds) {
+          referenceImageUrls.push(await assetIdToSignedUrl(assetId, user.id, INPUT_URL_TTL_SECONDS));
+        }
+
+        let input = null;
+        let pricingDurationSeconds = coerceSeedanceDuration(body.durationSeconds);
+        let mode = "text-to-video";
+        let parentTaskId = null;
+
+        if (toolName === "extend-video") {
+          if (!body.videoAssetId) {
+            throw httpError(400, "SEEDANCE_EXTEND_VIDEO_REQUIRED", "Selecciona un video generado previamente con Seedance para extenderlo.");
+          }
+
+          const sourceAsset = await getOwnedAssetById(body.videoAssetId, user.id);
+          const sourceMeta = sourceAsset?.meta || {};
+          parentTaskId = sourceMeta?.piapiTaskId || sourceMeta?.seedance?.piapiTaskId || sourceMeta?.seedanceTaskId || null;
+
+          if (!parentTaskId) {
+            throw httpError(400, "SEEDANCE_EXTEND_PARENT_TASK_REQUIRED", "Seedance Extend necesita un video generado previamente con Seedance dentro de Tales para reutilizar el parent_task_id.");
+          }
+
+          pricingDurationSeconds = coerceSeedanceDuration(body.durationSeconds);
+          mode = "extend-video";
+          input = {
+            prompt: visiblePrompt,
+            parent_task_id: String(parentTaskId),
+            duration: pricingDurationSeconds,
+            aspect_ratio: coerceSeedanceAspectRatio(body.aspectRatio, "16:9"),
+          };
+        } else if (body.videoAssetId) {
+          const videoUrl = await assetIdToSignedUrl(body.videoAssetId, user.id, INPUT_URL_TTL_SECONDS);
+          pricingDurationSeconds = coerceReferenceVideoDurationSeconds(body.referenceVideoDurationSeconds) || 5;
+          mode = referenceImageUrls.length ? "video-edit-with-image" : "video-edit";
+          input = {
+            prompt: visiblePrompt,
+            video_urls: [videoUrl],
+            ...(referenceImageUrls.length ? { image_urls: referenceImageUrls } : {}),
+            aspect_ratio: coerceSeedanceAspectRatio(body.aspectRatio, "16:9"),
+          };
+        } else {
+          if (!referenceImageUrls.length) {
+            throw httpError(400, "SEEDANCE_REFERENCE_REQUIRED", "Agrega al menos una imagen de referencia o un video base para esta herramienta de Seedance.");
+          }
+
+          pricingDurationSeconds = coerceSeedanceDuration(body.durationSeconds);
+          mode = "image-to-video";
+          input = {
+            prompt: visiblePrompt,
+            image_urls: referenceImageUrls,
+            duration: pricingDurationSeconds,
+            aspect_ratio: coerceSeedanceAspectRatio(body.aspectRatio, "16:9"),
+          };
+        }
+
+        const spend = await ctx.billing.spendCredits({
+          userId: user.id,
+          amountCredits: estimateVideoCostCredits({
+            modelNorm: body.model,
+            durationSeconds: pricingDurationSeconds,
+            resolution: "720p",
+          }),
+          entryType: "ai_video_edit",
+          refType: "ai_video",
+          refId: null,
+          idempotencyKey: ctx.billing.getIdempotencyKey(req),
+        });
+
+        if (!spend.ok) {
+          return res.status(402).json({ ok: false, error: spend.error });
+        }
+
+        const taskResponse = await createPiapiSeedanceTask({
+          taskType: body.model,
+          input,
+        });
+
+        const taskId = extractPiapiTaskId(taskResponse);
+        if (!taskId) {
+          throw httpError(502, "PIAPI_BAD_RESPONSE", "PiAPI no devolvió task_id.", { response: taskResponse });
+        }
+
+        const meta = {
+          tool: toolName,
+          category: toolName,
+          provider: "piapi",
+          model: body.model,
+          piapiTaskId: String(taskId),
+          piapiTaskType: body.model,
+          seedance: {
+            mode,
+            parentTaskId: parentTaskId ? String(parentTaskId) : null,
+            videoAssetId: body.videoAssetId || null,
+            referenceImageAssetIds,
+            durationSeconds: pricingDurationSeconds,
+            aspectRatio: coerceSeedanceAspectRatio(body.aspectRatio, "16:9"),
+          },
+          editVideo: {
+            kind: mode,
+            model: body.model,
+            prompt: visiblePrompt,
+            videoAssetId: body.videoAssetId || null,
+            referenceImageAssetIds,
+            durationSeconds: pricingDurationSeconds,
+            aspectRatio: coerceSeedanceAspectRatio(body.aspectRatio, "16:9"),
+          },
+        };
+
+        const jobId = await upsertPiapiJobRow({
+          ownerId: user.id,
+          kind: "video",
+          taskId: String(taskId),
+          taskType: body.model,
+          toolName,
+          hint,
+          model: body.model,
+          prompt: visiblePrompt,
+          extra: {
+            meta,
+            durationSeconds: pricingDurationSeconds,
+            aspectRatio: coerceSeedanceAspectRatio(body.aspectRatio, "16:9"),
+            videoAssetId: body.videoAssetId || null,
+            referenceImageAssetIds,
+            parentTaskId: parentTaskId ? String(parentTaskId) : null,
+          },
         });
 
         return res.json({ ok: true, mode: "async", jobId, taskId: String(taskId) });

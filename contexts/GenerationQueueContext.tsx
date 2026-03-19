@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "./AuthContext";
-import { KLING_2_5_TURBO, KLING_2_6, KLING_O3_PRO, KLING_V3 } from "../services/videoModels";
+import { KLING_2_5_TURBO, KLING_2_6, KLING_O3_PRO, KLING_V3, SEEDANCE_2_PRO, SEEDANCE_2_STANDARD } from "../services/videoModels";
 import { apiPostJson, clearPendingFalJob, formatErr, loadPendingFalJobs, savePendingFalJob, waitFalJob } from "../services/videoGenApi";
 import { waitJobCompletion, findRecentRunningKlingJob } from "../services/jobsApi";
 import { invalidateMyAssetsCache } from "../services/assetsApi";
@@ -135,6 +135,14 @@ function isFalModel(modelNorm: string) {
   return false;
 }
 
+function isKlingBackgroundModel(modelNorm: string) {
+  return modelNorm === KLING_V3 || modelNorm === KLING_2_6 || modelNorm === KLING_2_5_TURBO || modelNorm === KLING_O3_PRO;
+}
+
+function isSeedanceModel(modelNorm: string) {
+  return modelNorm === SEEDANCE_2_PRO || modelNorm === SEEDANCE_2_STANDARD;
+}
+
 function asArray(v: any) {
   return Array.isArray(v) ? v : [];
 }
@@ -205,12 +213,12 @@ export const GenerationQueueProvider: React.FC<{ children: React.ReactNode }> = 
       }
 
       // ✅ Reanudable: Kling (Tasks) (supabaseJobId)
-      if ((modelNorm === KLING_V3 || modelNorm === KLING_2_6 || modelNorm === KLING_2_5_TURBO || modelNorm === KLING_O3_PRO) && supaId) {
+      if ((isKlingBackgroundModel(modelNorm) || isSeedanceModel(modelNorm)) && supaId) {
         return {
           ...j,
           status: "queued" as const,
           updatedAt: now(),
-          progressText: "Reanudando (Kling, background)…",
+          progressText: isSeedanceModel(modelNorm) ? "Reanudando (Seedance, background)…" : "Reanudando (Kling, background)…",
         };
       }
 
@@ -562,6 +570,53 @@ const row = await waitJobCompletion(supabaseJobId, { signal, onProgress, pollMs:
       return { ok: true, items: [{ assetId: row.result_asset_id, ...(url ? { url } : {}) }] };
     }
     throw new Error("Job Kling terminó pero no devolvió result_asset_id.");
+  }
+
+  if (isSeedanceModel(modelNorm)) {
+    const existingJobId = payload?.supabaseJobId ? String(payload.supabaseJobId) : "";
+
+    if (existingJobId) {
+      onProgress("Reanudando (Seedance, background)…");
+      const row = await waitJobCompletion(existingJobId, { signal, onProgress, pollMs: 15_000 });
+
+      if (row.status === "failed") {
+        throw new Error(row.error || "Falló el job de Seedance en background.");
+      }
+
+      if (row.status === "succeeded" && row.result_asset_id) {
+        const url = pickUrlFromJobRow(row);
+        invalidateMyAssetsCache("video");
+        return { ok: true, items: [{ assetId: row.result_asset_id, ...(url ? { url } : {}) }] };
+      }
+      throw new Error("Job Seedance terminó pero no devolvió result_asset_id.");
+    }
+
+    onProgress("Enviando solicitud (Seedance)…");
+    const body = payload?.planBody || {};
+    const submit = await apiPostJson<any>(
+      "/api/ai/video",
+      { ...body, async: true, clientJobId: job.id },
+      { signal, timeoutMs: SUBMIT_TIMEOUT_MS, retries: SUBMIT_RETRIES }
+    );
+
+    if (!(submit?.mode === "async" && submit?.jobId)) return submit;
+
+    const supabaseJobId = String(submit.jobId);
+    onPayloadPatch({ supabaseJobId });
+
+    onProgress("Procesando (Seedance, background)…");
+    const row = await waitJobCompletion(supabaseJobId, { signal, onProgress, pollMs: 15_000 });
+
+    if (row.status === "failed") {
+      throw new Error(row.error || "Falló el job de Seedance en background.");
+    }
+
+    if (row.status === "succeeded" && row.result_asset_id) {
+      const url = pickUrlFromJobRow(row);
+      invalidateMyAssetsCache("video");
+      return { ok: true, items: [{ assetId: row.result_asset_id, ...(url ? { url } : {}) }] };
+    }
+    throw new Error("Job Seedance terminó pero no devolvió result_asset_id.");
   }
 
   if (isFalModel(modelNorm)) {

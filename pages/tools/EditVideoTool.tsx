@@ -37,7 +37,9 @@ import {
 type EditModelId =
   | "kling-o3-ref-to-video-pro"
   | "kling-o3-edit-video-pro"
-  | "kling-o3-ref-video-to-video-pro";
+  | "kling-o3-ref-video-to-video-pro"
+  | "seedance-2-preview"
+  | "seedance-2-fast-preview";
 
 type AspectRatio = "auto" | "16:9" | "9:16" | "1:1";
 
@@ -57,6 +59,8 @@ type PendingVideoEditJob = {
   model: EditModelId;
   createdAt: number;
 };
+
+const isSeedanceModelId = (value: string) => value === "seedance-2-preview" || value === "seedance-2-fast-preview";
 const MODEL_OPTIONS: Array<{
   id: EditModelId;
   uiName: string;
@@ -70,6 +74,22 @@ const MODEL_OPTIONS: Array<{
       "Edita un video existente siguiendo tu prompt (cambios de estilo, objetos, ambiente, correcciones).",
     uiHint:
       "Ideal para retoques: cambia estilo/objetos/ambiente sin perder coherencia. En el prompt, el video base es @Video1. También puedes usar @Image1.. como referencias.",
+  },
+  {
+    id: "seedance-2-preview",
+    uiName: "Seedance 2.0 Pro",
+    uiDesc:
+      "Edita un video base con prompt y referencias de imagen opcionales mediante PiAPI.",
+    uiHint:
+      "El video base es @Video1 y puedes usar @Image1..@Image9 como referencias visuales.",
+  },
+  {
+    id: "seedance-2-fast-preview",
+    uiName: "Seedance 2.0 Standard",
+    uiDesc:
+      "Versión más rápida de Seedance 2.0 para edición de video guiada por texto + referencias.",
+    uiHint:
+      "El video base es @Video1 y puedes usar @Image1..@Image9 como referencias visuales.",
   },
 ];
 function getMetaTool(a: Asset): string | null {
@@ -263,6 +283,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
   const [pendingJob, setPendingJob] = useState<PendingVideoEditJob | null>(null);
 
   const selectedModel = useMemo(() => MODEL_OPTIONS.find((m) => m.id === model)!, [model]);
+  const isSeedanceModel = useMemo(() => isSeedanceModelId(model), [model]);
 
   const shotsWithPrompt = useMemo(
     () => shots.filter((s) => (s.prompt || "").trim().length > 0),
@@ -290,13 +311,13 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
       modelNorm: model,
       durationSeconds: pricingDurationSeconds,
       resolution: "1080p",
-      generateAudio: model === "kling-o3-ref-to-video-pro" ? generateAudio : false,
+      generateAudio: !isSeedanceModel && model === "kling-o3-ref-to-video-pro" ? generateAudio : false,
       klingMode: "pro",
     });
-  }, [model, durationSeconds, isStoryboardMode, multishotTotalSeconds, generateAudio, referenceVideoDurationSeconds]);
+  }, [model, durationSeconds, isStoryboardMode, multishotTotalSeconds, generateAudio, referenceVideoDurationSeconds, isSeedanceModel]);
 
   const combinedRefsCount = referenceImageIds.length + klingElementIds.length;
-  const maxCombinedRefs = model === "kling-o3-ref-to-video-pro" ? 7 : 4;
+  const maxCombinedRefs = isSeedanceModel ? 9 : (model === "kling-o3-ref-to-video-pro" ? 7 : 4);
 
   useEffect(() => {
     let cancelled = false;
@@ -375,6 +396,8 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
       "@image5",
       "@image6",
       "@image7",
+      "@image8",
+      "@image9",
       "@element1",
       "@element2",
       "@element3",
@@ -1160,14 +1183,14 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     prevPromptElementTokensRef.current = current;
 
     if (current.size > maxElements) {
-      setError(`No puedes usar más de ${maxElements} Elements a la vez (máx 4 combinado).`);
+      setError(`No puedes usar más de ${maxElements} Elements a la vez (máx ${maxCombinedRefs} combinado).`);
     }
   }, [prompt, elementTokenToId, maxElements, setKlingElementIdsLimited, multishotEnabled]);
 
     // ===== Generation =====
     type BuildRequestResult =
       | { ok: false; error: string }
-      | { ok: true; body: any; finalPrompt: string };
+      | { ok: true; body: any; finalPrompt: string; endpoint?: string };
 
     const validateAndBuildRequest = useCallback((): BuildRequestResult => {
     // Construye prompt + orden de refs/elements en función de los @tokens.
@@ -1282,7 +1305,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
       if (finalImageIds.length + finalElementIds.length > maxCombinedRefs) {
         return {
           ok: false as const,
-          error: `Kling permite máximo ${maxCombinedRefs} referencias combinadas (Elements + imágenes).`,
+          error: `Máximo ${maxCombinedRefs} referencias combinadas (Elements + imágenes).`,
         };
       }
 
@@ -1321,7 +1344,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     };
 
     if (combinedRefsCount > maxCombinedRefs) {
-      return { ok: false as const, error: `Kling permite máximo ${maxCombinedRefs} referencias combinadas (Elements + imágenes).` };
+      return { ok: false as const, error: `Máximo ${maxCombinedRefs} referencias combinadas (Elements + imágenes).` };
     }
 
     const ar: AspectRatio = normalizeAspectRatio(aspectRatio);
@@ -1426,6 +1449,37 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
       };
     }
 
+
+    if (isSeedanceModel) {
+      if (!inputVideo) {
+        return { ok: false as const, error: "Selecciona un VIDEO de entrada (obligatorio) para Seedance 2.0." };
+      }
+
+      const prepared = preparePromptAndRefs(prompt);
+      if (!prepared.ok) return { ok: false as const, error: prepared.error };
+
+      if (!prepared.promptForModel) {
+        return { ok: false as const, error: "Escribe un prompt (obligatorio) para editar el video." };
+      }
+
+      return {
+        ok: true as const,
+        finalPrompt: prepared.promptForModel,
+        endpoint: "/api/ai/video/seedance-edit",
+        body: {
+          model,
+          prompt: prepared.promptForModel,
+          videoAssetId: inputVideo.id,
+          referenceImageAssetIds: prepared.referenceImageAssetIds,
+          referenceVideoDurationSeconds,
+          aspectRatio: ar === "auto" ? "16:9" : ar,
+          toolName: TOOL_NAME,
+          hint: nowHint(model),
+          async: true,
+        },
+      };
+    }
+
     // ===== Video → Video =====
     if (!inputVideo) {
       return { ok: false as const, error: "Selecciona un VIDEO de entrada (obligatorio) para este modelo." };
@@ -1496,11 +1550,12 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     multishotEnabled,
     shots,
     combinedRefsCount,
+    isSeedanceModel,
   ]);
 
 
   async function runWaitFlow(supabaseJobId: string) {
-    setProgressText("Procesando (Kling, background)…");
+    setProgressText("Procesando (background)…");
 
     const row = await waitJobCompletion(supabaseJobId, {
       signal: abortRef.current?.signal,
@@ -1509,7 +1564,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     });
 
     if (row.status === "failed") {
-      throw new Error(row.error || "Falló el job de Kling en background.");
+      throw new Error(row.error || "Falló el job en background.");
     }
 
     clearPending();
@@ -1543,14 +1598,16 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     }
 
     setIsGenerating(true);
-    setProgressText("Enviando a Kling O3…");
+    setProgressText(isSeedanceModelId(model) ? "Enviando a Seedance 2.0…" : "Enviando a Kling O3…");
 
     const ctrl = new AbortController();
     abortRef.current = ctrl;
 
     try {
+      const endpoint = built.endpoint || "/api/ai/video/edit";
+
       const resp = await apiPostJson<any>(
-        "/api/ai/video/edit",
+        endpoint,
         body,
         { signal: ctrl.signal, timeoutMs: 120_000, retries: 0 }
       );
@@ -2014,7 +2071,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
                       </button>
                     )}
 
-                    <button type="button" className={styles.promptTag} title="Límite Kling">
+                    <button type="button" className={styles.promptTag} title="Límite de referencias">
                       Total refs: {combinedRefsCount}/{maxCombinedRefs}
                     </button>
 
@@ -2069,7 +2126,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
                         if (klingElementIds.includes(it.id)) return true;
                         if (klingElementIds.length >= maxElements) {
                           setError(
-                            `Máximo ${maxElements} Elements porque ya tienes ${referenceImageIds.length} imágenes de referencia (máx 4 combinado).`
+                            `Máximo ${maxElements} Elements porque ya tienes ${referenceImageIds.length} imágenes de referencia (máx ${maxCombinedRefs} combinado).`
                           );
                           return false;
                         }
@@ -2081,7 +2138,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
                         if (referenceImageIds.includes(it.id)) return true;
                         if (referenceImageIds.length >= maxRefImages) {
                           setError(
-                            `Máximo ${maxRefImages} imágenes de referencia porque ya tienes ${klingElementIds.length} Elements (máx 4 combinado).`
+                            `Máximo ${maxRefImages} imágenes de referencia porque ya tienes ${klingElementIds.length} Elements (máx ${maxCombinedRefs} combinado).`
                           );
                           return false;
                         }
@@ -2092,11 +2149,13 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
                       return true;
                     }}
                     placeholder={
-                      model === "kling-o3-ref-to-video-pro"
-                        ? "Describe la escena… (personaje, acción, cámara, estilo)."
-                        : model === "kling-o3-edit-video-pro"
-                          ? "Describe qué cambiar y qué conservar… (El video base es @Video1. Ej: “cambia el ambiente a nieve, conserva la identidad y el movimiento”)."
-                          : "Describe la nueva versión… (El video base es @Video1. Usa @Image1 para identidad/estilo)."
+                      isSeedanceModel
+                        ? "Describe qué cambiar y qué conservar… (El video base es @Video1. Usa @Image1..@Image9 como referencias opcionales)."
+                        : model === "kling-o3-ref-to-video-pro"
+                          ? "Describe la escena… (personaje, acción, cámara, estilo)."
+                          : model === "kling-o3-edit-video-pro"
+                            ? "Describe qué cambiar y qué conservar… (El video base es @Video1. Ej: “cambia el ambiente a nieve, conserva la identidad y el movimiento”)."
+                            : "Describe la nueva versión… (El video base es @Video1. Usa @Image1 para identidad/estilo)."
                     }
                     rows={3}
                   />
@@ -2114,9 +2173,11 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
                   isGenerating ||
                   !user ||
                   combinedRefsCount > maxCombinedRefs ||
-                  (model === "kling-o3-ref-to-video-pro"
-                    ? ((ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode) ? !multishotReady : (prompt || "").trim().length === 0)
-                    : !inputVideo || (prompt || "").trim().length === 0)
+                  (isSeedanceModel
+                    ? (!inputVideo || (prompt || "").trim().length === 0)
+                    : (model === "kling-o3-ref-to-video-pro"
+                        ? ((ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode) ? !multishotReady : (prompt || "").trim().length === 0)
+                        : !inputVideo || (prompt || "").trim().length === 0))
                 }
                 onClick={onGenerate}
                 data-loading={isGenerating ? "true" : "false"}

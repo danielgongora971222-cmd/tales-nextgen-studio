@@ -407,6 +407,12 @@ function videoUnitUsd({
     case "kling-v3-motion-control-pro":
       perSecondUsd = 0.168;
       break;
+    case "seedance-2-preview":
+      perSecondUsd = 0.15;
+      break;
+    case "seedance-2-fast-preview":
+      perSecondUsd = 0.08;
+      break;
     case "kling-2.6-motion-control":
       perSecondUsd = 0.07;
       break;

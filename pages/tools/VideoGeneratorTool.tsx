@@ -36,6 +36,8 @@ import {
   KLING_2_6,
   KLING_V3,
   KLING_O3_PRO,
+  SEEDANCE_2_PRO,
+  SEEDANCE_2_STANDARD,
   VEO_3,
   VEO_3_FAST,
   VEO_3_1,
@@ -272,6 +274,8 @@ function getVideoModelDisplayLabel(modelId: string) {
   if (m === KLING_2_6) return "Kling 2.6";
   if (m === KLING_V3) return "Kling 3.0";
   if (m === KLING_O3_PRO) return "Kling O3 Pro";
+  if (m === SEEDANCE_2_PRO) return "Seedance 2.0 Pro";
+  if (m === SEEDANCE_2_STANDARD) return "Seedance 2.0 Standard";
   return m || "—";
 }
 
@@ -956,6 +960,30 @@ useEffect(() => {
     const next = coerceAspectRatioForModel(modelNorm, capability, hasFirst, resolution, aspectRatio);
     if (next !== aspectRatio) setAspectRatio(next);
   }, [modelNorm, capability, hasFirst, resolution, aspectRatio]);
+
+  useEffect(() => {
+    const isSeedance = modelNorm === SEEDANCE_2_PRO || modelNorm === SEEDANCE_2_STANDARD;
+    if (!isSeedance || !firstFrame) return;
+
+    const url = getAssetUrl(firstFrame);
+    if (!url) return;
+
+    let cancelled = false;
+    const img = new Image();
+    img.onload = () => {
+      if (cancelled) return;
+      const w = Number(img.naturalWidth || 0);
+      const h = Number(img.naturalHeight || 0);
+      if (!w || !h) return;
+      const next = w >= h ? "16:9" : "9:16";
+      setAspectRatio((prev) => (prev === next ? prev : next));
+    };
+    img.src = url;
+
+    return () => {
+      cancelled = true;
+    };
+  }, [modelNorm, firstFrame?.id]);
 
   // 1) Regla Kling: si estás en STD y tenías sound ON, lo apagamos
   useEffect(() => {

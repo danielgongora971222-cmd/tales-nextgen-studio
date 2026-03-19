@@ -10,6 +10,8 @@ import {
   KLING_2_6,
   KLING_V3,
   KLING_O3_PRO,
+  SEEDANCE_2_PRO,
+  SEEDANCE_2_STANDARD,
   VEO_3,
   VEO_3_1,
   VEO_3_1_FAST,
@@ -22,8 +24,9 @@ import { kling25Handler } from "./kling25";
 import { kling26Handler } from "./kling26";
 import { klingV3Handler } from "./klingV3";
 import { klingO3ProHandler } from "./klingO3Pro";
+import { seedanceHandler } from "./seedance";
 
-const HANDLERS = [klingO3ProHandler, klingV3Handler, kling26Handler, kling25Handler, veo31Handler, veo3Handler];
+const HANDLERS = [seedanceHandler, klingO3ProHandler, klingV3Handler, kling26Handler, kling25Handler, veo31Handler, veo3Handler];
 
 export function getVideoModelHandler(modelRaw: string) {
   const modelNorm = normalizeModelId(modelRaw);
@@ -39,6 +42,8 @@ export function prettyVideoModelLabel(modelId: string | null) {
   if (m === KLING_2_6) return "Kling 2.6";
   if (m === KLING_V3) return "Kling V3";
   if (m === KLING_O3_PRO) return "Kling O3 Pro";
+  if (m === SEEDANCE_2_PRO) return "Seedance 2.0 Pro";
+  if (m === SEEDANCE_2_STANDARD) return "Seedance 2.0 Standard";
   if (m === "kling-o3-ref-to-video-pro") return "Kling O3 Pro — Reference to Video";
   if (m === "kling-o3-edit-video-pro") return "Kling O3 Pro — Edit Video";
   if (m === "kling-o3-ref-video-to-video-pro") return "Kling O3 Pro — Reference Video→Video";

@@ -6,6 +6,8 @@ import {
   KLING_2_6,
   KLING_O3_PRO,
   KLING_V3,
+  SEEDANCE_2_PRO,
+  SEEDANCE_2_STANDARD,
   VEO_3,
   VEO_3_1,
   VEO_3_1_FAST,
@@ -59,6 +61,8 @@ const MODEL_OPTIONS: ModelOption[] = [
   { id: KLING_2_6, name: "Kling 2.6", desc: "5/10s" },
   { id: KLING_V3, name: "Kling 3.0", desc: "3–15s · multishot" },
   { id: KLING_O3_PRO, name: "Kling O3 Pro", desc: "3–15s · multishot" },
+  { id: SEEDANCE_2_PRO, name: "Seedance 2.0 Pro", desc: "5/10s · texto/imagen/video" },
+  { id: SEEDANCE_2_STANDARD, name: "Seedance 2.0 Standard", desc: "5/10s · rápido" },
 ];
 
 export function ControlsPopover({

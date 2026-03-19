@@ -31,12 +31,24 @@ const SUPABASE_BUCKET = process.env.SUPABASE_BUCKET;
 
 // Providers (se validan por-job en processJob)
 const FAL_KEY = process.env.FAL_KEY;
+const PIAPI_API_KEY = process.env.PIAPI_API_KEY || process.env.PIAPI_KEY;
+const PIAPI_BASE_URL = String(process.env.PIAPI_BASE_URL || "https://api.piapi.ai/api/v1").replace(/\/+$|\/$/g, "");
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   throw new Error("Faltan SUPABASE_URL o SUPABASE_SERVICE_ROLE_KEY");
 }
 if (!SUPABASE_BUCKET) {
   throw new Error("Falta SUPABASE_BUCKET");
+}
+
+function piapiHeaders() {
+  if (!PIAPI_API_KEY) {
+    throw new Error("PIAPI_NOT_CONFIGURED: falta PIAPI_API_KEY en el worker.");
+  }
+  return {
+    "X-API-Key": PIAPI_API_KEY,
+    "Content-Type": "application/json",
+  };
 }
 
 function falHeaders() {
@@ -98,6 +110,57 @@ async function falQueueResult(responseUrl) {
     throw err;
   }
   return data;
+}
+
+async function piapiGetTask(taskId) {
+  const r = await fetch(`${PIAPI_BASE_URL}/task/${encodeURIComponent(taskId)}`, {
+    method: "GET",
+    headers: piapiHeaders(),
+  });
+
+  const text = await r.text();
+  let data;
+  try { data = JSON.parse(text); } catch { data = { raw: text }; }
+
+  if (!r.ok) {
+    const msg = data?.message || data?.error?.message || `PiAPI get task error (${r.status})`;
+    const err = new Error(msg);
+    err.status = r.status;
+    err.data = data;
+    throw err;
+  }
+  return data;
+}
+
+function normalizePiapiTaskStatus(raw) {
+  return String(raw || "").trim().toLowerCase();
+}
+
+function isPiapiSuccessStatus(status) {
+  const s = normalizePiapiTaskStatus(status);
+  return s === "completed" || s === "succeeded" || s === "success" || s === "done" || s === "finished";
+}
+
+function isPiapiFailureStatus(status) {
+  const s = normalizePiapiTaskStatus(status);
+  return s === "failed" || s === "fail" || s === "error" || s === "canceled" || s === "cancelled" || s === "timeout" || s === "rejected";
+}
+
+function computeNextCheckMsPiapi(status) {
+  const s = normalizePiapiTaskStatus(status);
+  if (s.includes("pending") || s.includes("queue")) return 15_000;
+  if (s.includes("process") || s.includes("run")) return 10_000;
+  return 12_000;
+}
+
+function extractPiapiTaskData(rawJson) {
+  return rawJson?.data || rawJson || null;
+}
+
+function pickPiapiVideoUrl(rawJson) {
+  const taskData = extractPiapiTaskData(rawJson);
+  const output = taskData?.output || {};
+  return output?.video || output?.video_url || output?.videoUrl || output?.videos?.[0]?.url || output?.videos?.[0] || null;
 }
 
 async function downloadToStream(url) {
@@ -552,6 +615,182 @@ const taskStatusRaw = extractKlingTaskStatus(taskData, rawJson);
         providerStatus: taskStatus || "PENDING",
         providerPollCount: pollCount,
         providerStatusMsg: taskData?.task_status_msg || null,
+      },
+    });
+
+    return;
+  }
+
+  // ===============================
+  // Provider: PiAPI (Seedance)
+  // ===============================
+  if (provider === "piapi") {
+    const taskId = String(params.taskId || params.piapiTaskId || "").trim();
+    const taskType = String(params.taskType || params.piapiTaskType || "seedance-2-preview").trim();
+    const modelName = params.model ? String(params.model) : null;
+    const pollCount = Math.max(0, Number(params.providerPollCount || 0)) + 1;
+
+    if (!taskId) {
+      await releaseAndReschedule(jobId, {
+        status: "failed",
+        error: "Job PiAPI inválido: falta taskId en params.",
+        finished_at: new Date().toISOString(),
+        next_check_at: null,
+        params: { ...params, providerStatus: "MISSING_TASK_ID", providerPollCount: pollCount },
+      });
+      return;
+    }
+
+    if (pollCount > 300) {
+      await releaseAndReschedule(jobId, {
+        status: "failed",
+        error: "PiAPI job aborted: demasiados polls (300).",
+        finished_at: new Date().toISOString(),
+        next_check_at: null,
+        params: { ...params, providerStatus: "TOO_MANY_POLLS", providerPollCount: pollCount },
+      });
+      return;
+    }
+
+    let rawJson = null;
+    let taskData = null;
+    try {
+      rawJson = await piapiGetTask(taskId);
+      taskData = extractPiapiTaskData(rawJson);
+    } catch (e) {
+      const next = new Date(Date.now() + 20_000).toISOString();
+      await releaseAndReschedule(jobId, {
+        status: "running",
+        next_check_at: next,
+        params: {
+          ...params,
+          providerStatus: "STATUS_ERROR",
+          providerStatusDetail: String(e?.message || e),
+          providerPollCount: pollCount,
+        },
+      });
+      return;
+    }
+
+    const taskStatusRaw = taskData?.status || rawJson?.status || null;
+    const taskStatus = normalizePiapiTaskStatus(taskStatusRaw);
+
+    if (isPiapiFailureStatus(taskStatus)) {
+      const errMsg = taskData?.error?.message || taskData?.error?.raw_message || taskData?.detail || "PiAPI task failed.";
+      await releaseAndReschedule(jobId, {
+        status: "failed",
+        error: String(errMsg),
+        finished_at: new Date().toISOString(),
+        next_check_at: null,
+        params: {
+          ...params,
+          providerStatus: taskStatusRaw || taskStatus || "FAILED",
+          providerStatusNormalized: taskStatus || null,
+          providerPollCount: pollCount,
+        },
+      });
+      return;
+    }
+
+    if (!isPiapiSuccessStatus(taskStatus)) {
+      const next = new Date(Date.now() + computeNextCheckMsPiapi(taskStatus)).toISOString();
+      await releaseAndReschedule(jobId, {
+        status: "running",
+        next_check_at: next,
+        params: {
+          ...params,
+          providerStatus: taskStatusRaw || taskStatus || "PENDING",
+          providerStatusNormalized: taskStatus || null,
+          providerPollCount: pollCount,
+        },
+      });
+      return;
+    }
+
+    const videoUrl = pickPiapiVideoUrl(rawJson);
+    if (!videoUrl) {
+      await releaseAndReschedule(jobId, {
+        status: "failed",
+        error: "PiAPI completó la tarea pero no devolvió URL de video.",
+        finished_at: new Date().toISOString(),
+        next_check_at: null,
+        params: { ...params, providerStatus: taskStatusRaw || "COMPLETED", providerPollCount: pollCount },
+      });
+      return;
+    }
+
+    const { stream, contentType, sizeBytes } = await downloadToStream(videoUrl);
+
+    const toolName = params.toolName || "video";
+    const nameHint = params.hint || "video";
+    const prompt = params.prompt || null;
+
+    let storagePath;
+
+    if (typeof uploadStreamToStorage === "function") {
+      const up = await uploadStreamToStorage({
+        userId: ownerId,
+        tool: toolName,
+        stream,
+        mimeType: contentType,
+        nameHint,
+        sizeBytes,
+      });
+      storagePath = up.storagePath;
+    } else {
+      const ab = await (await fetch(videoUrl, { method: "GET" })).arrayBuffer();
+      const buf = Buffer.from(ab);
+      const up = await uploadBufferToStorage({
+        userId: ownerId,
+        tool: toolName,
+        buffer: buf,
+        mimeType: contentType,
+        nameHint,
+      });
+      storagePath = up.storagePath;
+    }
+
+    const meta = {
+      ...(params.meta || {}),
+      tool: toolName,
+      category: toolName,
+      provider: "piapi",
+      model: modelName || null,
+      piapiTaskId: taskId,
+      piapiTaskType: taskType,
+      providerStatus: taskStatusRaw || "completed",
+      providerVideoUrl: videoUrl,
+    };
+
+    const assetId = await insertAssetRow({
+      ownerId,
+      type: "video",
+      tool: toolName,
+      name: nameHint,
+      prompt,
+      storagePath,
+      isPublic: false,
+      meta,
+    });
+
+    let signedUrl = null;
+    try {
+      signedUrl = await signStoragePath(storagePath, 60 * 30);
+    } catch {
+      signedUrl = null;
+    }
+
+    await releaseAndReschedule(jobId, {
+      status: "succeeded",
+      result_asset_id: assetId,
+      finished_at: new Date().toISOString(),
+      error: null,
+      next_check_at: null,
+      params: {
+        ...params,
+        providerStatus: taskStatusRaw || "completed",
+        providerPollCount: pollCount,
+        resultUrl: signedUrl,
       },
     });
 
