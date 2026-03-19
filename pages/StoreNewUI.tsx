@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Maximize, Layers, Check, ShoppingCart, CreditCard, ChevronRight, Image as ImageIcon, Sparkles, ShieldCheck, Truck, Edit2 } from 'lucide-react';
+import { Maximize, Layers, Check, ShoppingCart, CreditCard, Image as ImageIcon, Sparkles, ShieldCheck, Truck } from 'lucide-react';
 import { AppRoute, type Asset, type StoreArtDecoListing, type StoreArtDecoPayload, type StorePrefill } from "../types";
-import { listMyAssets } from "../services/assetsApi";
+import { listMyAssets, uploadUserAsset } from "../services/assetsApi";
 import { supabase } from "../services/supabaseClient";
 import { apiUrl } from "../services/apiBase";
 import { createArtDecoListing } from "../services/communityStoreApi";
 import { useWallet } from "../contexts/WalletContext";
 import OneNationUpIcon from "../components/brand/OneNationUpIcon";
 import ConfirmDollarPurchaseModal from "@/components/ConfirmDollarPurchaseModal";
+import ToolExitMenu from "../components/ToolExitMenu";
 
 // --- CONFIGURACIÓN DE PRODUCTOS ---
 const SIZES = [
@@ -33,6 +34,8 @@ const MATERIALS = [
   { id: 'metal', label: 'Metal HD', desc: 'Colores vibrantes, ultra duradero.', multiplier: 1.3, icon: <ShieldCheck className="w-5 h-5" /> },
   { id: 'paper', label: 'Papel Fine Art', desc: 'Acabado mate, calidad museo.', multiplier: 0.8, icon: <Sparkles className="w-5 h-5" /> },
 ];
+
+const DEFAULT_SIZE = SIZES.find((item) => item.id === '24x36') || SIZES[0];
 
 // --- COMPONENTE DE FONDO DE PARTÍCULAS ---
 const ParticleBackground = () => {
@@ -132,7 +135,7 @@ const ParticleBackground = () => {
 };
 
 // --- APLICACIÓN PRINCIPAL ---
-type Step = 'UPLOAD' | 'VERIFYING' | 'MATERIAL' | 'SIZE' | 'CROP' | 'MODE' | 'CHECKOUT' | 'PROCESSING' | 'SUCCESS';
+type Step = 'UPLOAD' | 'VERIFYING' | 'CONFIRM' | 'MATERIAL' | 'SIZE' | 'CROP' | 'MODE' | 'CHECKOUT' | 'PROCESSING' | 'SUCCESS';
 
 const SHIPPING_FEE = 15;
 
@@ -172,7 +175,32 @@ export default function StoreNewUI({ onNavigate, onRequestUpscale, prefill }: St
   const [croppedDataUrl, setCroppedDataUrl] = useState<string | null>(null);
   const [cropGenError, setCropGenError] = useState<string | null>(null);
   const [cropProcessing, setCropProcessing] = useState(false);
-  const [imageOrientation, setImageOrientation] = useState('portrait'); 
+  const [imageOrientation, setImageOrientation] = useState('portrait');
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const transientImageUrlRef = useRef<string | null>(null);
+  const checkoutFormRef = useRef<HTMLFormElement | null>(null);
+  const [selectorPanel, setSelectorPanel] = useState<'material' | 'size' | null>(null);
+  const [uploadingAsset, setUploadingAsset] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  const clearTransientImageUrl = useCallback((preserve: string | null = null) => {
+    const current = transientImageUrlRef.current;
+    if (current && current !== preserve) {
+      try {
+        URL.revokeObjectURL(current);
+      } catch {
+        // noop
+      }
+    }
+
+    transientImageUrlRef.current = preserve && preserve.startsWith('blob:') ? preserve : null;
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      clearTransientImageUrl();
+    };
+  }, [clearTransientImageUrl]);
 
   useEffect(() => {
   let alive = true;
@@ -371,6 +399,9 @@ useEffect(() => {
 }, [activeStep, image, scrollToActiveStep]);
 
 const resetFlowForNewImage = () => {
+  setSelectorPanel(null);
+  setUploadError(null);
+  setPickerOpen(false);
   setSelectedMaterial(null);
   setSelectedSize(null);
   setPreviewMaterial(null);
@@ -388,10 +419,14 @@ const resetFlowForNewImage = () => {
   setIsDragging(false);
   setCropGenError(null);
   setPrefillArtDeco(null);
+  setConfirmPayOpen(false);
+  setConfirmPayInfo(null);
+  setFormData({ name: '', email: '', phone: '', method: 'shipping', address: '', apt: '', city: '', state: '', zip: '', notes: '' });
   setListingForm({ name: '', description: '', priceUsd: '' });
 };
 
 const handleSelectFromHistory = async (a: Asset) => {
+  clearTransientImageUrl();
   resetFlowForNewImage();
 
   setAsset(a);
@@ -408,23 +443,15 @@ const handleSelectFromHistory = async (a: Asset) => {
 
     const ok = is4K(d);
     setIs4kOk(ok);
-
     setImageOrientation(d.w > d.h ? "landscape" : "portrait");
-
-    // Gate estricto: si no es 4K, NO avanza a MATERIAL
-    if (!ok) {
-      setActiveStep("UPLOAD");
-      return;
-    }
-
-    // Si es 4K, sí avanza
-    setTimeout(() => {
-      setActiveStep("MATERIAL");
-    }, 500);
+    setActiveStep("CONFIRM");
   } catch {
     setDims(null);
     setIs4kOk(false);
+    setImage(null);
+    setAsset(null);
     setActiveStep("UPLOAD");
+    setUploadError("No se pudo preparar esta imagen. Prueba con otra creación.");
   } finally {
     setDimsLoading(false);
   }
@@ -511,6 +538,80 @@ const handleGoToUpscale = () => {
   // fallback si no te están pasando onRequestUpscale desde arriba
   onNavigate(AppRoute.TOOL_UPSCALER);
 };
+
+const openFilePicker = () => {
+  if (uploadingAsset) return;
+  setUploadError(null);
+  fileInputRef.current?.click();
+};
+
+const resetToLanding = () => {
+  clearTransientImageUrl();
+  resetFlowForNewImage();
+  setImage(null);
+  setAsset(null);
+  setDims(null);
+  setIs4kOk(false);
+  setDimsLoading(false);
+  setActiveStep('UPLOAD');
+};
+
+const handleUploadFromDevice = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const file = event.currentTarget.files?.[0];
+  if (!file) return;
+
+  const previewUrl = URL.createObjectURL(file);
+  clearTransientImageUrl(previewUrl);
+  transientImageUrlRef.current = previewUrl;
+
+  resetFlowForNewImage();
+  setImage(previewUrl);
+  setAsset(null);
+  setDims(null);
+  setIs4kOk(false);
+  setDimsLoading(true);
+  setUploadingAsset(true);
+  setActiveStep('VERIFYING');
+
+  try {
+    const d = await loadImgDimsFromUrl(previewUrl);
+    const uploadedAsset = await uploadUserAsset(file, {
+      tool: '1nationup',
+      category: 'store',
+      name: file.name,
+    });
+
+    setAsset(uploadedAsset);
+    setDims(d);
+    setIs4kOk(is4K(d));
+    setImageOrientation(d.w > d.h ? 'landscape' : 'portrait');
+    setActiveStep('CONFIRM');
+  } catch (e: any) {
+    clearTransientImageUrl();
+    setImage(null);
+    setAsset(null);
+    setDims(null);
+    setIs4kOk(false);
+    setActiveStep('UPLOAD');
+    setUploadError(e?.message || 'No se pudo cargar la imagen.');
+  } finally {
+    setDimsLoading(false);
+    setUploadingAsset(false);
+    event.currentTarget.value = '';
+  }
+};
+
+useEffect(() => {
+  if (activeStep !== 'SIZE' || isLockedArtDecoPurchase) return;
+  const nextSize = selectedSize || previewSize || DEFAULT_SIZE;
+  if (!selectedSize) setSelectedSize(nextSize);
+  if (!previewSize) setPreviewSize(nextSize);
+}, [activeStep, isLockedArtDecoPurchase, selectedSize, previewSize]);
+
+useEffect(() => {
+  if (selectorPanel === 'material' && activeStep !== 'MATERIAL') setSelectorPanel(null);
+  if (selectorPanel === 'size' && activeStep !== 'SIZE') setSelectorPanel(null);
+}, [activeStep, selectorPanel]);
 
   // --- LÓGICA DE RECORTE ESTRICTA Y VINCULADA ---
   const updateCropSize = useCallback(() => {
@@ -795,7 +896,7 @@ const handleConfirmCrop = async () => {
 
     setIsCropped(true);
     setPurchaseMode('buy');
-    setActiveStep('CHECKOUT');
+    setActiveStep('CROP');
   } catch (e: any) {
     setCroppedDataUrl(null);
     setFinalCrop(null);
@@ -1497,11 +1598,38 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
     );
   };
 
+  const renderConfirmationPreview = () => {
+    if (!image) return null;
+
+    return (
+      <div className="w-full h-full min-h-0 flex items-center justify-center p-2 sm:p-4 lg:p-6">
+        <div className="relative w-full h-full rounded-[30px] overflow-hidden border border-white/12 bg-black/55 shadow-[0_30px_100px_rgba(0,0,0,0.55)]">
+          <img src={image} alt={asset?.name || 'Imagen cargada'} className="w-full h-full object-contain" />
+          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black via-black/55 to-transparent px-4 sm:px-6 py-5 sm:py-6">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <div className="text-[10px] sm:text-[11px] uppercase tracking-[0.34em] text-white/45">Paso 1 · Confirmar imagen</div>
+                <div className="mt-2 text-base sm:text-xl font-semibold text-white">{asset?.name || 'Tu creación está lista para avanzar'}</div>
+              </div>
+              {dims ? (
+                <div className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-xs sm:text-sm font-semibold ${is4kOk ? 'border-emerald-400/35 bg-emerald-500/10 text-emerald-200' : 'border-amber-400/35 bg-amber-500/10 text-amber-100'}`}>
+                  <span>{dims.w}×{dims.h}</span>
+                  <span className="h-1 w-1 rounded-full bg-current/80" />
+                  <span>{is4kOk ? '4K lista' : 'Requiere upscale'}</span>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderVisualEditor = () => {
     if (!image) return null;
 
     return (
-      <div className={`relative w-full h-full min-h-0 rounded-[28px] border border-white/8 bg-black/40 overflow-hidden backdrop-blur-sm shadow-2xl ${activeStep === 'CROP' ? 'p-2 sm:p-3 lg:p-4' : 'p-3 sm:p-4 lg:p-6'}`}>
+      <div className={`relative w-full h-full min-h-0 rounded-[30px] border border-white/8 bg-black/40 overflow-hidden backdrop-blur-sm shadow-2xl ${activeStep === 'CROP' && !isCropped ? 'p-2 sm:p-3 lg:p-4' : 'p-3 sm:p-4 lg:p-6'}`}>
         {activeStep === 'VERIFYING' && (
           <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
             <div className="w-16 h-16 border-4 border-purple-500 border-t-transparent rounded-full animate-spin mb-4"></div>
@@ -1530,13 +1658,7 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
 
                 <button
                   type="button"
-                  onClick={() => {
-                    setImage(null);
-                    setAsset(null);
-                    setDims(null);
-                    setIs4kOk(false);
-                    setActiveStep("UPLOAD");
-                  }}
+                  onClick={resetToLanding}
                   className="px-5 py-3 rounded-2xl bg-white/10 text-white font-bold hover:bg-white/20 transition"
                 >
                   Elegir otra imagen
@@ -1546,40 +1668,297 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
           </div>
         )}
 
-        <div className="absolute top-3 left-3 z-30 flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setPickerOpen(true)}
-            className="rounded-full border border-white/10 bg-black/60 px-3 py-2 text-[11px] font-semibold text-white/90 backdrop-blur hover:bg-black/75 transition"
-          >
-            {image ? 'Cambiar imagen' : 'Seleccionar imagen'}
-          </button>
-        </div>
-
-        {image ? (
-          <div className="absolute top-3 right-3 z-30 w-16 h-16 sm:w-20 sm:h-20 overflow-hidden rounded-2xl border border-white/15 bg-black/60 shadow-xl">
-            <img src={croppedDataUrl || image} alt={asset?.name || 'Preview actual'} className="w-full h-full object-cover" />
-          </div>
-        ) : null}
-
-        <div className="w-full h-full min-h-0 flex items-center justify-center pt-12 sm:pt-12 pb-1 sm:pb-2 overflow-hidden">
+        <div className="w-full h-full min-h-0 flex items-center justify-center overflow-hidden">
+          {activeStep === 'CONFIRM' && renderConfirmationPreview()}
           {activeStep === 'MATERIAL' && renderMaterialInfographic()}
           {activeStep === 'SIZE' && renderSizeMockup()}
-          {activeStep === 'CROP' && renderCropper()}
-          {(activeStep === 'MODE' || activeStep === 'CHECKOUT' || activeStep === 'SUCCESS' || activeStep === 'PROCESSING') && renderFinalCropPreview()}
+          {activeStep === 'CROP' && (isCropped ? renderFinalCropPreview() : renderCropper())}
+          {(activeStep === 'MODE' || activeStep === 'CHECKOUT' || activeStep === 'SUCCESS' || activeStep === 'PROCESSING') && (finalCrop ? renderFinalCropPreview() : renderConfirmationPreview())}
         </div>
       </div>
     );
   };
 
-  // --- RENDER DEL SIDEBAR (ACORDEÓN CONTINUO) ---
-  const renderSidebar = () => {
+  const renderCheckoutFormCard = () => {
+    return (
+      <div className="rounded-[28px] border border-white/10 bg-black/55 backdrop-blur-xl shadow-[0_22px_80px_rgba(0,0,0,0.42)] overflow-hidden">
+        <div className="px-5 sm:px-6 py-4 border-b border-white/10">
+          <div className="text-[10px] uppercase tracking-[0.34em] text-white/45">Paso final</div>
+          <div className="mt-2 text-xl font-semibold text-white">Checkout</div>
+        </div>
+
+        <div className="p-5 sm:p-6 space-y-5 max-h-[42dvh] overflow-y-auto custom-scrollbar">
+          <div className="bg-white/5 rounded-2xl p-4 border border-white/10">
+            <div className="flex justify-between items-center text-sm text-gray-300 mb-2 gap-3">
+              <span className="min-w-0 truncate">{isLockedArtDecoPurchase ? (prefillArtDeco?.name || 'Art Deco físico') : `${selectedMaterial?.label} (${selectedSize?.label})`}</span>
+            </div>
+            <div className="space-y-2 border-t border-white/10 pt-3 text-sm">
+              <div className="flex justify-between items-center text-gray-300"><span>{isLockedArtDecoPurchase ? 'Precio Art Deco' : 'Costo de producción'}</span><span>{formatUsd(checkoutUnitPrice)}</span></div>
+              <div className="flex justify-between items-center text-gray-300"><span>{formData.method === 'pickup' ? 'Retiro' : 'Envío'}</span><span>{formatUsd(shippingCost)}</span></div>
+              <div className="flex justify-between items-center text-lg font-bold text-white pt-2"><span>Total</span><span className="text-[#DFB142]">{formatUsd(checkoutTotal)}</span></div>
+            </div>
+          </div>
+
+          <form ref={checkoutFormRef} onSubmit={handleCheckoutSubmit} className="space-y-4">
+            {submitError && (
+              <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-white">
+                {submitError}
+              </div>
+            )}
+            <input required type="text" className="w-full bg-black/50 border border-white/10 rounded-2xl px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Nombre completo" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})}/>
+            <input required type="email" className="w-full bg-black/50 border border-white/10 rounded-2xl px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Correo electrónico" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})}/>
+            <input required type="tel" className="w-full bg-black/50 border border-white/10 rounded-2xl px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Número de teléfono" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})}/>
+
+            <div className="grid grid-cols-2 gap-2">
+              <button type="button" onClick={() => setFormData({...formData, method: 'shipping'})} className={`py-3 rounded-2xl border flex flex-col items-center justify-center space-y-1 transition-all ${formData.method === 'shipping' ? 'bg-green-500/20 border-green-500 text-green-400' : 'bg-white/5 border-white/10 text-gray-400'}`}>
+                <Truck className="w-5 h-5" />
+                <span className="text-xs font-medium">Envío</span>
+              </button>
+              <button type="button" onClick={() => setFormData({...formData, method: 'pickup'})} className={`py-3 rounded-2xl border flex flex-col items-center justify-center space-y-1 transition-all ${formData.method === 'pickup' ? 'bg-green-500/20 border-green-500 text-green-400' : 'bg-white/5 border-white/10 text-gray-400'}`}>
+                <ShoppingCart className="w-5 h-5" />
+                <span className="text-xs font-medium">Recoger</span>
+              </button>
+            </div>
+
+            {formData.method === 'shipping' && (
+              <div className="space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
+                <div className="grid grid-cols-3 gap-2">
+                  <input required type="text" className="col-span-2 w-full bg-black/50 border border-white/10 rounded-2xl px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Dirección" value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})}/>
+                  <input type="text" className="col-span-1 w-full bg-black/50 border border-white/10 rounded-2xl px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Apt/Suite" value={formData.apt} onChange={e => setFormData({...formData, apt: e.target.value})}/>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <input required type="text" className="w-full bg-black/50 border border-white/10 rounded-2xl px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Ciudad" value={formData.city} onChange={e => setFormData({...formData, city: e.target.value})}/>
+                  <input required type="text" className="w-full bg-black/50 border border-white/10 rounded-2xl px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Estado" value={formData.state} onChange={e => setFormData({...formData, state: e.target.value})}/>
+                  <input required type="text" className="w-full bg-black/50 border border-white/10 rounded-2xl px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Cód. postal" value={formData.zip} onChange={e => setFormData({...formData, zip: e.target.value})}/>
+                </div>
+              </div>
+            )}
+
+            <textarea className="w-full bg-black/50 border border-white/10 rounded-2xl px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm h-20 resize-none" placeholder="Notas (opcional)" value={formData.notes} onChange={e => setFormData({...formData, notes: e.target.value})}></textarea>
+            <button type="submit" className="hidden" aria-hidden="true" />
+          </form>
+        </div>
+      </div>
+    );
+  };
+
+  const renderSelectorSheet = () => {
+    if (!selectorPanel) return null;
+    const isMaterialPanel = selectorPanel === 'material';
+
+    return (
+      <div className="fixed inset-0 z-[120] flex items-end justify-center p-0 sm:p-4">
+        <button type="button" className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setSelectorPanel(null)} aria-label="Cerrar selector" />
+        <div className="relative w-full sm:max-w-4xl max-h-[78dvh] rounded-t-[30px] sm:rounded-[30px] border border-white/10 bg-[#060608]/95 shadow-[0_30px_120px_rgba(0,0,0,0.65)] overflow-hidden">
+          <div className="flex items-center justify-between gap-4 px-5 py-4 border-b border-white/10">
+            <div>
+              <div className="text-[10px] uppercase tracking-[0.34em] text-white/45">{isMaterialPanel ? 'Paso 2' : 'Paso 3'}</div>
+              <div className="mt-1 text-lg font-semibold text-white">{isMaterialPanel ? 'Selecciona el material' : 'Selecciona la medida'}</div>
+            </div>
+            <button type="button" onClick={() => setSelectorPanel(null)} className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-white hover:bg-white/10 transition">
+              Cerrar
+            </button>
+          </div>
+
+          <div className="max-h-[calc(78dvh-86px)] overflow-y-auto p-5 custom-scrollbar">
+            {isMaterialPanel ? (
+              <div className="grid gap-3 sm:grid-cols-2">
+                {MATERIALS.map((mat) => {
+                  const active = selectedMaterial?.id === mat.id;
+                  return (
+                    <button
+                      key={mat.id}
+                      type="button"
+                      onClick={() => {
+                        setPreviewMaterial(mat);
+                        setSelectedMaterial(mat);
+                        setSelectorPanel(null);
+                      }}
+                      className={`rounded-[24px] border p-4 sm:p-5 text-left transition-all ${active ? 'border-[#DE6C53] bg-[#DE6C53]/15 shadow-[0_0_30px_rgba(222,108,83,0.18)]' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}
+                    >
+                      <div className="flex items-start gap-4">
+                        <div className={`mt-1 flex h-11 w-11 items-center justify-center rounded-2xl ${active ? 'bg-[#DE6C53] text-black' : 'bg-black/40 text-white'}`}>{mat.icon}</div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="text-base font-semibold text-white">{mat.label}</div>
+                            {active ? <Check className="h-4 w-4 text-[#DE6C53]" /> : null}
+                          </div>
+                          <p className="mt-2 text-sm leading-6 text-white/60">{mat.desc}</p>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {SIZES.map((size) => {
+                  const active = selectedSize?.id === size.id;
+                  const price = size.basePrice * (selectedMaterial?.multiplier || previewMaterial?.multiplier || 1);
+                  return (
+                    <button
+                      key={size.id}
+                      type="button"
+                      onClick={() => {
+                        setPreviewSize(size);
+                        setSelectedSize(size);
+                        setIsCropped(false);
+                        setFinalCrop(null);
+                        setCroppedDataUrl(null);
+                        setSelectorPanel(null);
+                      }}
+                      className={`rounded-[24px] border p-4 sm:p-5 text-left transition-all ${active ? 'border-[#7EAAED] bg-[#7EAAED]/15 shadow-[0_0_30px_rgba(126,170,237,0.18)]' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-base font-semibold text-white">{size.label}</div>
+                          <div className="mt-2 text-sm text-white/55">{size.w}" × {size.h}"</div>
+                        </div>
+                        {active ? <Check className="mt-1 h-4 w-4 text-[#7EAAED]" /> : null}
+                      </div>
+                      <div className="mt-4 text-sm font-bold text-[#DFB142]">{formatUsd(price)}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderBottomDock = () => {
+    if (activeStep === 'VERIFYING' || activeStep === 'PROCESSING' || activeStep === 'SUCCESS' || !image) return null;
+
+    const secondaryBtn = 'h-14 rounded-[22px] border border-white/10 bg-white/5 px-4 text-sm font-semibold text-white transition hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed';
+    const primaryBtn = 'h-14 rounded-[22px] px-4 text-sm font-black transition disabled:opacity-40 disabled:cursor-not-allowed';
+
+    if (activeStep === 'CONFIRM') {
+      return (
+        <div className="grid grid-cols-2 gap-2 rounded-[28px] border border-white/10 bg-black/65 p-3 backdrop-blur-xl shadow-[0_18px_70px_rgba(0,0,0,0.35)]">
+          <button type="button" onClick={resetToLanding} className={secondaryBtn}>Atrás</button>
+          <button type="button" onClick={() => setActiveStep('MATERIAL')} disabled={!is4kOk || !asset} className={`${primaryBtn} bg-gradient-to-r from-[#7EAAED] to-[#DFB142] text-black`}>
+            Continuar
+          </button>
+        </div>
+      );
+    }
+
+    if (activeStep === 'MATERIAL') {
+      const materialLabel = selectedMaterial?.label || 'Seleccionar material';
+      return (
+        <div className="grid grid-cols-[0.8fr_1.35fr_0.9fr] gap-2 rounded-[28px] border border-white/10 bg-black/65 p-3 backdrop-blur-xl shadow-[0_18px_70px_rgba(0,0,0,0.35)]">
+          <button type="button" onClick={() => setActiveStep('CONFIRM')} className={secondaryBtn}>Regresar</button>
+          <button
+            type="button"
+            onClick={() => setSelectorPanel((value) => value === 'material' ? null : 'material')}
+            className={`min-w-0 h-14 rounded-[22px] border px-4 text-left transition ${selectedMaterial ? 'border-[#DE6C53]/45 bg-[#DE6C53]/12 text-white' : 'border-[#DE6C53]/65 bg-[#DE6C53]/14 text-white animate-[pulse_1.8s_ease-in-out_infinite] shadow-[0_0_30px_rgba(222,108,83,0.18)]'}`}
+          >
+            <div className="truncate text-[10px] uppercase tracking-[0.28em] text-white/45">Material</div>
+            <div className="truncate text-sm font-semibold">{materialLabel}</div>
+          </button>
+          <button type="button" onClick={() => setActiveStep('SIZE')} disabled={!selectedMaterial} className={`${primaryBtn} bg-gradient-to-r from-[#DE6C53] to-[#DFB142] text-black`}>
+            Continuar
+          </button>
+        </div>
+      );
+    }
+
+    if (activeStep === 'SIZE') {
+      const sizeLabel = previewSize?.label || selectedSize?.label || DEFAULT_SIZE.label;
+      return (
+        <div className="grid grid-cols-[0.8fr_1.35fr_0.95fr] gap-2 rounded-[28px] border border-white/10 bg-black/65 p-3 backdrop-blur-xl shadow-[0_18px_70px_rgba(0,0,0,0.35)]">
+          <button type="button" onClick={() => setActiveStep('MATERIAL')} className={secondaryBtn}>Regresar</button>
+          <button
+            type="button"
+            onClick={() => setSelectorPanel((value) => value === 'size' ? null : 'size')}
+            className="min-w-0 h-14 rounded-[22px] border border-[#7EAAED]/45 bg-[#7EAAED]/12 px-4 text-left text-white transition hover:bg-[#7EAAED]/16"
+          >
+            <div className="truncate text-[10px] uppercase tracking-[0.28em] text-white/45">Medidas</div>
+            <div className="truncate text-sm font-semibold">{sizeLabel}</div>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const nextSize = previewSize || selectedSize || DEFAULT_SIZE;
+              setPreviewSize(nextSize);
+              setSelectedSize(nextSize);
+              setIsCropped(false);
+              setCropGenError(null);
+              setActiveStep('CROP');
+            }}
+            className={`${primaryBtn} bg-gradient-to-r from-[#7EAAED] to-[#7D45A9] text-white`}
+          >
+            Seleccionar medida
+          </button>
+        </div>
+      );
+    }
+
+    if (activeStep === 'CROP') {
+      return (
+        <div className={`grid gap-2 rounded-[28px] border border-white/10 bg-black/65 p-3 backdrop-blur-xl shadow-[0_18px_70px_rgba(0,0,0,0.35)] ${isCropped ? 'grid-cols-[0.8fr_1fr_0.8fr]' : 'grid-cols-[0.95fr_1.2fr]'}`}>
+          <button
+            type="button"
+            onClick={() => {
+              setIsCropped(false);
+              setFinalCrop(null);
+              setCroppedDataUrl(null);
+              setActiveStep('SIZE');
+            }}
+            className={secondaryBtn}
+          >
+            Regresar
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (isCropped) {
+                setIsCropped(false);
+                setCropGenError(null);
+                return;
+              }
+              void handleConfirmCrop();
+            }}
+            disabled={cropProcessing}
+            className={`${primaryBtn} ${isCropped ? 'bg-white/10 text-white border border-white/10' : 'bg-gradient-to-r from-emerald-500 to-green-600 text-white'} `}
+          >
+            {cropProcessing ? 'Procesando...' : isCropped ? 'Reajustar recorte' : 'Confirmar recorte'}
+          </button>
+
+          {isCropped ? (
+            <button type="button" onClick={() => setActiveStep('CHECKOUT')} className={`${primaryBtn} bg-gradient-to-r from-[#DFB142] to-[#DE6C53] text-black`}>
+              Continuar
+            </button>
+          ) : null}
+        </div>
+      );
+    }
+
+    if (activeStep === 'CHECKOUT') {
+      return (
+        <div className="grid grid-cols-[0.85fr_1.15fr] gap-2 rounded-[28px] border border-white/10 bg-black/65 p-3 backdrop-blur-xl shadow-[0_18px_70px_rgba(0,0,0,0.35)]">
+          <button type="button" onClick={() => setActiveStep('CROP')} className={secondaryBtn}>Regresar</button>
+          <button type="button" onClick={() => checkoutFormRef.current?.requestSubmit()} className={`${primaryBtn} bg-gradient-to-r from-green-500 to-emerald-700 text-white flex items-center justify-center gap-2`}>
+            <CreditCard className="w-4 h-4" />
+            <span>{`Pay ${formatUsd(checkoutTotal)}`}</span>
+          </button>
+        </div>
+      );
+    }
+
+    return null;
+  };
+
+  const renderTerminalState = () => {
     if (activeStep === 'PROCESSING') {
       return (
-        <div className="flex flex-col items-center justify-center h-full space-y-6 text-center px-4">
+        <div className="flex-1 min-h-0 rounded-[32px] border border-white/10 bg-black/45 backdrop-blur-xl shadow-[0_30px_120px_rgba(0,0,0,0.45)] flex flex-col items-center justify-center text-center px-6 py-10">
           <div className="w-20 h-20 border-4 border-[#DFB142] border-t-transparent rounded-full animate-spin shadow-[0_0_30px_rgba(223,177,66,0.3)]"></div>
-          <h2 className="text-2xl font-bold text-white">Procesando orden...</h2>
-          <p className="text-gray-400 text-sm max-w-md">Estamos registrando tu pedido físico y preparando la confirmación.</p>
+          <h2 className="mt-8 text-3xl font-bold text-white">Procesando orden...</h2>
+          <p className="mt-3 max-w-xl text-sm sm:text-base text-white/65">Estamos registrando tu pedido físico y preparando la confirmación final.</p>
         </div>
       );
     }
@@ -1587,251 +1966,78 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
     if (activeStep === 'SUCCESS') {
       const isListingSuccess = successMode === 'listing';
       return (
-        <div className="flex flex-col items-center justify-center h-full space-y-6 text-center animate-in zoom-in duration-500 px-4">
-          <div className="w-24 h-24 bg-green-500/20 rounded-full flex items-center justify-center border-2 border-green-500 mb-4 shadow-[0_0_50px_rgba(34,197,94,0.4)]">
+        <div className="flex-1 min-h-0 rounded-[32px] border border-white/10 bg-black/45 backdrop-blur-xl shadow-[0_30px_120px_rgba(0,0,0,0.45)] flex flex-col items-center justify-center text-center px-6 py-10">
+          <div className="w-24 h-24 bg-green-500/20 rounded-full flex items-center justify-center border-2 border-green-500 shadow-[0_0_50px_rgba(34,197,94,0.4)]">
             <Check className="w-12 h-12 text-green-400" />
           </div>
-          <h2 className="text-3xl font-bold text-white">{isListingSuccess ? '¡Art Deco publicado!' : '¡Pedido confirmado!'}</h2>
-          <div className="bg-black/50 border border-white/10 p-6 rounded-xl w-full mt-2">
-            <span className="block text-xs text-gray-500 uppercase tracking-widest mb-2">{isListingSuccess ? 'Listing ID' : 'Código de Fábrica'}</span>
+          <h2 className="mt-8 text-3xl font-bold text-white">{isListingSuccess ? '¡Art Deco publicado!' : '¡Pedido confirmado!'}</h2>
+          <div className="mt-6 w-full max-w-xl rounded-3xl border border-white/10 bg-black/50 p-6">
+            <span className="block text-xs text-gray-500 uppercase tracking-widest mb-2">{isListingSuccess ? 'Listing ID' : 'Código de fábrica'}</span>
             <span className="block text-2xl font-mono text-[#7EAAED] tracking-widest font-bold">{orderCode || publishedListingId || '1NUP-UNKNOWN'}</span>
           </div>
-          <button onClick={() => window.location.reload()} className="text-sm text-[#DFB142] hover:text-white transition-colors">
+          <button type="button" onClick={resetToLanding} className="mt-6 text-sm text-[#DFB142] hover:text-white transition-colors">
             Comenzar una nueva creación
           </button>
         </div>
       );
     }
 
-    if (!image) {
-      return (
-        <div className="h-full overflow-y-auto pr-1 pb-6 custom-scrollbar">
-          <div className="rounded-2xl border border-[#7EAAED]/30 bg-black/55 p-5 shadow-[0_0_20px_rgba(126,170,237,0.15)]">
-            <div className="flex items-center gap-4">
-              <div className="w-8 h-8 rounded-full bg-[#7EAAED] text-black font-bold flex items-center justify-center">1</div>
-              <div>
-                <h3 className="text-xl font-bold text-white">Imagen</h3>
-                <p className="text-sm text-[#7EAAED]">Imagen 4K</p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setPickerOpen(true)}
-              className="mt-5 w-full rounded-2xl bg-[#7EAAED] px-5 py-4 text-base font-extrabold text-black transition hover:brightness-110"
-            >
-              Abrir historial
-            </button>
-            <div className="mt-3 text-xs text-white/55">Mínimo 3840 × 2160</div>
-            {historyLoading ? <div className="mt-3 text-sm text-white/65">Cargando historial...</div> : null}
-            {historyError ? <div className="mt-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{historyError}</div> : null}
-          </div>
-        </div>
-      );
-    }
+    return null;
+  };
 
+  const renderLandingHero = () => {
     return (
-      <div ref={stepsScrollRef} className="flex flex-col space-y-4 h-full overflow-y-auto pr-1 pb-8 custom-scrollbar">
-        <div ref={materialStepRef} className={`rounded-2xl border transition-all duration-500 overflow-hidden flex-shrink-0 ${activeStep === 'MATERIAL' ? 'border-[#DE6C53] bg-black/60 shadow-[0_0_20px_rgba(222,108,83,0.2)]' : selectedMaterial ? 'border-white/20 bg-black/40' : 'border-white/5 bg-black/20 opacity-60'}`}>
-          <div
-            className={`p-5 flex justify-between items-center ${selectedMaterial && activeStep !== 'MATERIAL' ? 'cursor-pointer hover:bg-white/5' : ''}`}
-            onClick={() => { if (selectedMaterial && activeStep !== 'MATERIAL' && !isLockedArtDecoPurchase) handleEditStep('MATERIAL') }}
-          >
-            <div className="flex items-center space-x-4">
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold ${activeStep === 'MATERIAL' ? 'bg-[#DE6C53] text-black' : selectedMaterial ? 'bg-green-500 text-black' : 'bg-white/10 text-white'}`}>
-                {selectedMaterial && activeStep !== 'MATERIAL' ? <Check className="w-5 h-5"/> : '1'}
-              </div>
-              <div>
-                <h3 className={`font-bold ${activeStep === 'MATERIAL' ? 'text-xl text-white' : 'text-lg text-gray-300'}`}>Material</h3>
-                {selectedMaterial && activeStep !== 'MATERIAL' && <p className="text-sm text-[#DE6C53]">{selectedMaterial.label}</p>}
-              </div>
+      <main className="relative z-10 flex-1 min-h-0 px-3 sm:px-6 lg:px-8 pt-24 pb-6">
+        <div className="relative h-full overflow-hidden rounded-[36px] border border-white/10 bg-black/35 shadow-[0_30px_140px_rgba(0,0,0,0.45)] backdrop-blur-xl">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(126,170,237,0.16),transparent_35%),radial-gradient(circle_at_80%_20%,rgba(222,108,83,0.14),transparent_28%),radial-gradient(circle_at_50%_100%,rgba(223,177,66,0.10),transparent_32%)]" />
+          <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-black via-black/40 to-transparent" />
+
+          <div className="relative h-full flex flex-col items-center justify-center text-center px-6 sm:px-10 py-10">
+            <div className="flex h-24 w-24 items-center justify-center rounded-[28px] border border-white/10 bg-white/5 shadow-[0_18px_60px_rgba(0,0,0,0.35)] backdrop-blur">
+              <OneNationUpIcon size={58} className="h-14 w-14 object-contain" alt="1NationUp" />
             </div>
-            {selectedMaterial && activeStep !== 'MATERIAL' && !isLockedArtDecoPurchase && <Edit2 className="w-4 h-4 text-gray-400 hover:text-white transition-colors"/>}
-          </div>
 
-          {activeStep === 'MATERIAL' && (
-            <div className="p-5 pt-0 animate-in slide-in-from-top-2 duration-300">
-              <div className="grid grid-cols-1 gap-3 mb-4">
-                {MATERIALS.map(mat => (
-                  <button
-                    key={mat.id}
-                    onClick={() => setPreviewMaterial(mat)}
-                    className={`w-full flex items-center p-4 rounded-xl border transition-all text-left group ${previewMaterial?.id === mat.id ? 'bg-[#DE6C53]/20 border-[#DE6C53] shadow-[0_0_15px_rgba(222,108,83,0.3)]' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}
-                  >
-                    <div className={`p-2 rounded-lg mr-4 transition-colors ${previewMaterial?.id === mat.id ? 'bg-[#DE6C53] text-black' : 'text-white bg-black/30 group-hover:text-[#DE6C53]'}`}>{mat.icon}</div>
-                    <div>
-                      <span className="block font-bold text-white">{mat.label}</span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-
-              <div className={`overflow-hidden transition-all duration-500 ${previewMaterial ? 'max-h-24 opacity-100' : 'max-h-0 opacity-0'}`}>
-                <button onClick={handleConfirmMaterial} className="w-full py-4 rounded-xl font-bold bg-[#DE6C53] text-black hover:bg-[#eb7d65] transition-colors shadow-[0_0_20px_rgba(222,108,83,0.4)] flex items-center justify-center">
-                  Confirmar material <ChevronRight className="w-5 h-5 ml-1"/>
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div ref={sizeStepRef} className={`rounded-2xl border transition-all duration-500 overflow-hidden flex-shrink-0 ${activeStep === 'SIZE' ? 'border-[#7EAAED] bg-black/60 shadow-[0_0_20px_rgba(126,170,237,0.2)]' : selectedSize ? 'border-white/20 bg-black/40' : 'border-white/5 bg-black/20 opacity-60'}`}>
-          <div
-            className={`p-5 flex justify-between items-center ${selectedSize && activeStep !== 'SIZE' ? 'cursor-pointer hover:bg-white/5' : ''}`}
-            onClick={() => { if (selectedSize && activeStep !== 'SIZE' && !isLockedArtDecoPurchase) handleEditStep('SIZE') }}
-          >
-            <div className="flex items-center space-x-4">
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold ${activeStep === 'SIZE' ? 'bg-[#7EAAED] text-black' : selectedSize ? 'bg-green-500 text-black' : 'bg-white/10 text-white'}`}>
-                {selectedSize && activeStep !== 'SIZE' ? <Check className="w-5 h-5"/> : '2'}
-              </div>
-              <div>
-                <h3 className={`font-bold ${activeStep === 'SIZE' ? 'text-xl text-white' : 'text-lg text-gray-300'}`}>Medida</h3>
-                {selectedSize && activeStep !== 'SIZE' && <p className="text-sm text-[#7EAAED]">{selectedSize.label}</p>}
-              </div>
-            </div>
-            {selectedSize && activeStep !== 'SIZE' && !isLockedArtDecoPurchase && <Edit2 className="w-4 h-4 text-gray-400 hover:text-white transition-colors"/>}
-          </div>
-
-          {activeStep === 'SIZE' && (
-            <div className="p-5 pt-0 animate-in slide-in-from-top-2 duration-300">
-              <div className="grid grid-cols-1 gap-2 mb-4">
-                {SIZES.map(size => (
-                  <button
-                    key={size.id}
-                    onClick={() => setPreviewSize(size)}
-                    className={`w-full flex items-center justify-between p-4 rounded-xl border transition-all group ${previewSize?.id === size.id ? 'bg-[#7EAAED]/20 border-[#7EAAED] shadow-[0_0_15px_rgba(126,170,237,0.3)]' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}
-                  >
-                    <span className="font-bold text-white flex items-center"><Maximize className={`w-4 h-4 mr-2 ${previewSize?.id === size.id ? 'text-[#7EAAED]' : 'text-gray-500 group-hover:text-[#7EAAED]'}`}/> {size.label}</span>
-                    <span className="text-[#DFB142] font-bold">${(size.basePrice * (selectedMaterial?.multiplier || 1)).toFixed(2)}</span>
-                  </button>
-                ))}
-              </div>
-
-              <div className={`overflow-hidden transition-all duration-500 ${previewSize ? 'max-h-24 opacity-100' : 'max-h-0 opacity-0'}`}>
-                <button onClick={handleConfirmSize} className="w-full py-4 rounded-xl font-bold bg-[#7EAAED] text-black hover:bg-[#8ebfff] transition-colors shadow-[0_0_20px_rgba(126,170,237,0.4)] flex items-center justify-center">
-                  Confirmar medida <ChevronRight className="w-5 h-5 ml-1"/>
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div ref={cropStepRef} className={`rounded-2xl border transition-all duration-500 overflow-hidden flex-shrink-0 ${activeStep === 'CROP' ? 'border-[#DFB142] bg-black/60 shadow-[0_0_20px_rgba(223,177,66,0.2)]' : isCropped ? 'border-white/20 bg-black/40' : 'border-white/5 bg-black/20 opacity-60'}`}>
-          <div
-            className={`p-5 flex justify-between items-center ${isCropped && activeStep !== 'CROP' ? 'cursor-pointer hover:bg-white/5' : ''}`}
-            onClick={() => { if (isCropped && activeStep !== 'CROP' && !isLockedArtDecoPurchase) handleEditStep('CROP') }}
-          >
-            <div className="flex items-center space-x-4">
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold ${activeStep === 'CROP' ? 'bg-[#DFB142] text-black' : isCropped ? 'bg-green-500 text-black' : 'bg-white/10 text-white'}`}>
-                {isCropped && activeStep !== 'CROP' ? <Check className="w-5 h-5"/> : '3'}
-              </div>
-              <div>
-                <h3 className={`font-bold ${activeStep === 'CROP' ? 'text-xl text-white' : 'text-lg text-gray-300'}`}>Encuadre</h3>
-                {isCropped && activeStep !== 'CROP' && <p className="text-sm text-[#DFB142]">Confirmado</p>}
-              </div>
-            </div>
-            {isCropped && activeStep !== 'CROP' && !isLockedArtDecoPurchase && <Edit2 className="w-4 h-4 text-gray-400 hover:text-white transition-colors"/>}
-          </div>
-
-          {activeStep === 'CROP' && (
-            <div className="p-5 pt-0 animate-in slide-in-from-top-2 duration-300">
-              {cropGenError ? (
-                <div className="mb-4 rounded-xl border border-amber-400/30 bg-amber-500/10 p-3 text-xs text-amber-100">{cropGenError}</div>
-              ) : null}
-              {isLockedArtDecoPurchase ? (
-                <div className="mb-4 rounded-xl border border-sky-400/20 bg-sky-500/10 p-3 text-xs text-sky-100">Este Art Deco ya fue publicado. El encuadre se mantiene bloqueado para esta compra.</div>
-              ) : null}
+            <div className="mt-8 max-w-4xl">
+              <div className="text-[10px] sm:text-[11px] uppercase tracking-[0.36em] text-white/45">1NationUp</div>
+              <h1 className="mt-4 text-3xl sm:text-5xl lg:text-6xl font-black leading-[1.05] text-white text-balance">
+                Con 1NationUp podrás convertir tus ideas creativas en un producto real de la más alta calidad
+              </h1>
 
               <button
-                onClick={handleConfirmCrop}
-                disabled={cropProcessing}
-                className={`group relative w-full p-1 rounded-2xl ${cropProcessing ? "opacity-60 cursor-not-allowed" : "animate-[pulse_1.5s_ease-in-out_infinite]"}`}
+                type="button"
+                onClick={openFilePicker}
+                disabled={uploadingAsset}
+                className="mt-8 inline-flex min-h-[64px] items-center justify-center rounded-[24px] bg-gradient-to-r from-[#7EAAED] via-[#DFB142] to-[#DE6C53] px-8 sm:px-10 py-4 text-base sm:text-lg font-black text-black shadow-[0_25px_80px_rgba(126,170,237,0.22)] transition hover:scale-[1.01] disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                <div className="absolute inset-0 bg-gradient-to-r from-[#DFB142] to-[#DE6C53] rounded-2xl blur opacity-70 group-hover:opacity-100 transition duration-500"></div>
-                <div className="relative flex items-center justify-center space-x-2 px-6 py-4 bg-[#0a0a0a] rounded-xl text-white font-bold">
-                  <Check className="w-5 h-5 text-[#DFB142] group-hover:scale-125 transition-transform" />
-                  <span>{cropProcessing ? "Generando recorte..." : "Confirmar encuadre"}</span>
-                </div>
+                {uploadingAsset ? 'Cargando imagen...' : 'Carga aquí tu creación y hazla realidad'}
               </button>
-            </div>
-          )}
-        </div>
 
-        <div ref={checkoutStepRef} className={`rounded-2xl border transition-all duration-500 overflow-hidden flex-shrink-0 ${activeStep === 'CHECKOUT' ? 'border-green-500 bg-black/60 shadow-[0_0_20px_rgba(34,197,94,0.2)]' : 'border-white/5 bg-black/20 opacity-60'}`}>
-          <div className="p-5 flex justify-between items-center">
-            <div className="flex items-center space-x-4">
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold ${activeStep === 'CHECKOUT' ? 'bg-green-500 text-black' : 'bg-white/10 text-white'}`}>
-                {checkoutStepNumber}
-              </div>
-              <h3 className={`font-bold ${activeStep === 'CHECKOUT' ? 'text-xl text-white' : 'text-lg text-gray-300'}`}>{isLockedArtDecoPurchase ? 'Completar compra Art Deco' : 'Finalizar compra'}</h3>
+              <p className="mt-6 mx-auto max-w-3xl text-sm sm:text-base leading-7 text-white/68">
+                Para convertir tus creaciones de imagen en producto real, tu imagen debe cumplir con los requerimientos de resolución. Si la imagen que cargues no cumple, podrá redirigirte a la herramienta de upscale y con un simple click quedará lista.
+              </p>
+
+              <button
+                type="button"
+                onClick={() => setPickerOpen(true)}
+                className="mt-6 rounded-full border border-white/10 bg-white/5 px-5 py-3 text-sm font-semibold text-white/90 transition hover:bg-white/10"
+              >
+                Usar una imagen de mi biblioteca
+              </button>
+
+              {uploadError ? (
+                <div className="mt-5 mx-auto max-w-xl rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">
+                  {uploadError}
+                </div>
+              ) : null}
             </div>
           </div>
-
-          {activeStep === 'CHECKOUT' && (
-            <div className="p-5 pt-0 animate-in slide-in-from-top-2 duration-300">
-              <div className="bg-white/5 rounded-xl p-4 mb-6 border border-white/10">
-                <div className="flex justify-between items-center text-sm text-gray-300 mb-2">
-                  <span>{isLockedArtDecoPurchase ? (prefillArtDeco?.name || 'Art Deco físico') : `${selectedMaterial?.label} (${selectedSize?.label})`}</span>
-                </div>
-                <div className="space-y-2 border-t border-white/10 pt-3 text-sm">
-                  <div className="flex justify-between items-center text-gray-300"><span>{isLockedArtDecoPurchase ? 'Precio Art Deco' : 'Costo de producción'}</span><span>{formatUsd(checkoutUnitPrice)}</span></div>
-                  <div className="flex justify-between items-center text-gray-300"><span>{formData.method === 'pickup' ? 'Retiro' : 'Envío'}</span><span>{formatUsd(shippingCost)}</span></div>
-                  <div className="flex justify-between items-center text-lg font-bold text-white pt-2"><span>Total</span><span className="text-[#DFB142]">{formatUsd(checkoutTotal)}</span></div>
-                </div>
-              </div>
-
-              <form onSubmit={handleCheckoutSubmit} className="space-y-4">
-                {submitError && (
-                  <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-white">
-                    {submitError}
-                  </div>
-                )}
-                <input required type="text" className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Nombre completo" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})}/>
-                <input required type="email" className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Correo electrónico" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})}/>
-                <input required type="tel" className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Número de teléfono" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})}/>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <button type="button" onClick={() => setFormData({...formData, method: 'shipping'})} className={`py-3 rounded-lg border flex flex-col items-center justify-center space-y-1 transition-all ${formData.method === 'shipping' ? 'bg-green-500/20 border-green-500 text-green-400' : 'bg-white/5 border-white/10 text-gray-400'}`}>
-                    <Truck className="w-5 h-5" />
-                    <span className="text-xs font-medium">Envío</span>
-                  </button>
-                  <button type="button" onClick={() => setFormData({...formData, method: 'pickup'})} className={`py-3 rounded-lg border flex flex-col items-center justify-center space-y-1 transition-all ${formData.method === 'pickup' ? 'bg-green-500/20 border-green-500 text-green-400' : 'bg-white/5 border-white/10 text-gray-400'}`}>
-                    <ShoppingCart className="w-5 h-5" />
-                    <span className="text-xs font-medium">Recoger</span>
-                  </button>
-                </div>
-
-                {formData.method === 'shipping' && (
-                  <div className="space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
-                    <div className="grid grid-cols-3 gap-2">
-                       <input required type="text" className="col-span-2 w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Dirección" value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})}/>
-                       <input type="text" className="col-span-1 w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Apt/Suite" value={formData.apt} onChange={e => setFormData({...formData, apt: e.target.value})}/>
-                    </div>
-                    <div className="grid grid-cols-3 gap-2">
-                      <input required type="text" className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Ciudad" value={formData.city} onChange={e => setFormData({...formData, city: e.target.value})}/>
-                      <input required type="text" className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Estado" value={formData.state} onChange={e => setFormData({...formData, state: e.target.value})}/>
-                      <input required type="text" className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm" placeholder="Cód. postal" value={formData.zip} onChange={e => setFormData({...formData, zip: e.target.value})}/>
-                    </div>
-                  </div>
-                )}
-
-                <textarea className="w-full bg-black/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-green-500 transition-colors text-sm h-20 resize-none" placeholder="Notas (opcional)" value={formData.notes} onChange={e => setFormData({...formData, notes: e.target.value})}></textarea>
-
-                <button type="submit" className="w-full relative group rounded-xl overflow-hidden mt-4">
-                  <div className="absolute inset-0 bg-gradient-to-r from-green-500 to-emerald-700 transition-transform duration-300 group-hover:scale-105"></div>
-                  <div className="relative px-6 py-4 flex items-center justify-center space-x-3 text-white font-bold text-lg">
-                    <CreditCard className="w-6 h-6" />
-                    <span>{`Pagar ${formatUsd(checkoutTotal)}`}</span>
-                  </div>
-                </button>
-              </form>
-            </div>
-          )}
         </div>
-      </div>
+      </main>
     );
   };
 
-  const isCropFocusView = Boolean(image && activeStep === 'CROP');
+  const isLandingView = !image && activeStep === 'UPLOAD';
+  const isCropFocusView = Boolean(image && activeStep === 'CROP' && !isCropped);
 
   return (
     <div className="h-[100dvh] min-h-screen bg-[#050505] font-sans text-white overflow-hidden flex flex-col relative">
@@ -1851,105 +2057,133 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
         }}
       />
 
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleUploadFromDevice}
+      />
 
-      <main className="relative z-10 flex-1 min-h-0 flex flex-col lg:flex-row w-full max-w-[1800px] mx-auto overflow-hidden">
-        <div className={`flex-none ${isCropFocusView ? 'h-[58dvh] min-h-[360px] max-h-none' : 'h-[38dvh] min-h-[260px] max-h-[420px]'} lg:h-auto lg:max-h-none lg:basis-[47%] lg:min-h-0 lg:flex-[1.3] p-2 sm:p-3 lg:p-8 flex flex-col items-center justify-center relative border-b lg:border-b-0 lg:border-r border-white/5 overflow-hidden bg-black/35 backdrop-blur-md`}>
-          {!image ? (
-            <div className="w-full h-full rounded-[28px] border border-white/10 bg-white/5 backdrop-blur-sm shadow-2xl overflow-hidden p-6 flex flex-col items-center justify-center text-center">
-              <button
-                type="button"
-                onClick={() => setPickerOpen(true)}
-                className="w-24 h-24 sm:w-28 sm:h-28 rounded-3xl bg-white/10 hover:bg-white/20 border border-white/10 hover:border-[#7EAAED] transition flex items-center justify-center shadow-2xl"
-                title="Cargar desde historial"
-              >
-                <ImageIcon size={42} className="text-white/90" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setPickerOpen(true)}
-                className="mt-6 px-6 py-3 rounded-2xl bg-[#7EAAED] text-black font-extrabold hover:brightness-110 transition"
-              >
-                Seleccionar imagen
-              </button>
-              <div className="mt-3 text-xs text-white/55">4K mínimo</div>
-            </div>
-          ) : (
-            renderVisualEditor()
-          )}
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-center justify-end gap-3 px-3 sm:px-6 lg:px-8 pt-4">
+        {isLandingView ? (
+          <button
+            type="button"
+            onClick={openFilePicker}
+            disabled={uploadingAsset}
+            className="pointer-events-auto rounded-full border border-white/10 bg-black/55 px-4 py-2.5 text-sm font-semibold text-white backdrop-blur transition hover:bg-black/70 disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            {uploadingAsset ? 'Cargando...' : 'Cargar imagen'}
+          </button>
+        ) : null}
 
-          {pickerOpen && (
-            <div className="fixed inset-0 z-[100] bg-black/70 backdrop-blur-sm flex items-center justify-center p-0 sm:p-4">
-              <div className="w-full h-[100dvh] sm:h-auto sm:max-w-6xl sm:max-h-[85vh] rounded-none sm:rounded-3xl border border-white/10 bg-black/60 shadow-2xl overflow-hidden flex flex-col">
-                <div className="p-5 border-b border-white/10 flex items-center justify-between">
-                  <div>
-                    <div className="text-xl font-extrabold">Selecciona una imagen</div>
-                    <div className="text-xs text-gray-400 mt-1">
-                      Se muestran todas tus imágenes (excepto Camera Angles).
-                    </div>
-                  </div>
+        <ToolExitMenu
+          className="pointer-events-auto inline-flex h-11 w-11 items-center justify-center rounded-full border border-white/12 bg-black/60 text-xl text-white/92 backdrop-blur transition hover:bg-black/80"
+          title="Close"
+          ariaLabel="Open tool exit menu"
+        >
+          ×
+        </ToolExitMenu>
+      </div>
 
-                  <button
-                    type="button"
-                    onClick={() => setPickerOpen(false)}
-                    className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 transition text-sm font-bold"
-                  >
-                    Cerrar
-                  </button>
+      {isLandingView ? (
+        renderLandingHero()
+      ) : (
+        <main className={`relative z-10 flex-1 min-h-0 px-3 sm:px-6 lg:px-8 pt-20 pb-4 ${isCropFocusView ? 'pb-3' : 'pb-4'}`}>
+          <div className="h-full flex flex-col gap-4">
+            {activeStep === 'PROCESSING' || activeStep === 'SUCCESS' ? (
+              renderTerminalState()
+            ) : (
+              <>
+                <div className={`flex-1 min-h-[260px] ${isCropFocusView ? 'min-h-[46dvh]' : ''}`}>
+                  {renderVisualEditor()}
                 </div>
+                {activeStep === 'CHECKOUT' ? renderCheckoutFormCard() : null}
+                {renderBottomDock()}
+              </>
+            )}
+          </div>
+        </main>
+      )}
 
-                <div className="flex-1 overflow-y-auto p-5 custom-scrollbar">
-                  {historyLoading && <div className="text-gray-300">Cargando historial...</div>}
-                  {historyError && <div className="text-red-400">{historyError}</div>}
-
-                  {!historyLoading && !historyError && historyImages.length === 0 && (
-                    <div className="text-gray-400">No hay imágenes disponibles en tu historial.</div>
-                  )}
-
-                  {!historyLoading && !historyError && historyImages.length > 0 && (
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-                      {historyImages.map((a) => (
-                        <button
-                          key={a.id}
-                          type="button"
-                          onClick={() => {
-                            setPickerOpen(false);
-                            handleSelectFromHistory(a);
-                          }}
-                          className="group relative aspect-square rounded-2xl overflow-hidden border border-white/10 bg-black/40 hover:border-[#7EAAED] transition"
-                          title={a.prompt || a.name}
-                        >
-                          <img src={a.url} alt={a.name} className="w-full h-full object-cover" />
-
-                          <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity bg-gradient-to-t from-black/85 via-transparent to-transparent flex items-end p-2">
-                            <span className="text-[10px] text-white/90 line-clamp-2 text-left">
-                              {a.prompt || a.name}
-                            </span>
-                          </div>
-
-                          <div className="absolute top-2 left-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <div className="flex items-center gap-1 px-2 py-1 rounded-xl bg-black/60 border border-white/10 backdrop-blur-sm">
-                              <OneNationUpIcon size={14} />
-                              <span className="text-[10px] text-white font-bold">1NationUp</span>
-                            </div>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div className="p-5 border-t border-white/10 text-xs text-gray-400">
-                  Requisito para avanzar: <span className="text-white font-bold">mínimo 4K (3840×2160)</span>.
+      {pickerOpen && (
+        <div className="fixed inset-0 z-[100] bg-black/70 backdrop-blur-sm flex items-center justify-center p-0 sm:p-4">
+          <div className="w-full h-[100dvh] sm:h-auto sm:max-w-6xl sm:max-h-[85vh] rounded-none sm:rounded-3xl border border-white/10 bg-black/60 shadow-2xl overflow-hidden flex flex-col">
+            <div className="p-5 border-b border-white/10 flex items-center justify-between gap-4">
+              <div>
+                <div className="text-xl font-extrabold">Selecciona una imagen</div>
+                <div className="text-xs text-gray-400 mt-1">
+                  Puedes subir una imagen nueva o usar una creación existente.
                 </div>
               </div>
-            </div>
-          )}
-        </div>
 
-        <div className="flex-1 min-h-0 w-full lg:max-w-[500px] lg:flex-[0.7] p-2 sm:p-3 lg:p-8 bg-black/40 backdrop-blur-xl border-t border-white/5 lg:border-t-0 overflow-hidden">
-          {renderSidebar()}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={openFilePicker}
+                  className="px-4 py-2 rounded-xl bg-[#7EAAED] text-black hover:brightness-110 transition text-sm font-bold"
+                >
+                  Subir imagen
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPickerOpen(false)}
+                  className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 transition text-sm font-bold"
+                >
+                  Cerrar
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5 custom-scrollbar">
+              {historyLoading && <div className="text-gray-300">Cargando historial...</div>}
+              {historyError && <div className="text-red-400">{historyError}</div>}
+
+              {!historyLoading && !historyError && historyImages.length === 0 && (
+                <div className="text-gray-400">No hay imágenes disponibles en tu historial.</div>
+              )}
+
+              {!historyLoading && !historyError && historyImages.length > 0 && (
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                  {historyImages.map((a) => (
+                    <button
+                      key={a.id}
+                      type="button"
+                      onClick={() => {
+                        setPickerOpen(false);
+                        void handleSelectFromHistory(a);
+                      }}
+                      className="group relative aspect-square rounded-2xl overflow-hidden border border-white/10 bg-black/40 hover:border-[#7EAAED] transition"
+                      title={a.prompt || a.name}
+                    >
+                      <img src={a.url} alt={a.name} className="w-full h-full object-cover" />
+
+                      <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity bg-gradient-to-t from-black/85 via-transparent to-transparent flex items-end p-2">
+                        <span className="text-[10px] text-white/90 line-clamp-2 text-left">
+                          {a.prompt || a.name}
+                        </span>
+                      </div>
+
+                      <div className="absolute top-2 left-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="flex items-center gap-1 px-2 py-1 rounded-xl bg-black/60 border border-white/10 backdrop-blur-sm">
+                          <OneNationUpIcon size={14} />
+                          <span className="text-[10px] text-white font-bold">1NationUp</span>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="p-5 border-t border-white/10 text-xs text-gray-400">
+              Requisito para avanzar: <span className="text-white font-bold">mínimo 4K (3840×2160)</span>.
+            </div>
+          </div>
         </div>
-      </main>
+      )}
+
+      {renderSelectorSheet()}
 
       <style dangerouslySetInnerHTML={{__html: `
         .custom-scrollbar::-webkit-scrollbar { width: 6px; }
@@ -1974,5 +2208,6 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
           transition: transform 0.8s cubic-bezier(0.4, 0, 0.2, 1);
         }
       `}} />
-    </div>  );
+    </div>
+  );
 }
