@@ -230,14 +230,30 @@ export default function Layout({
   const { wallet } = useWallet();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [createSheetOpen, setCreateSheetOpen] = useState(false);
+  const [storeImmersive, setStoreImmersive] = useState(false);
 
   useEffect(() => {
     if (!user) setSidebarOpen(false);
   }, [user?.id]);
 
+  useEffect(() => {
+    const handleStoreImmersive = (event: Event) => {
+      const customEvent = event as CustomEvent<{ immersive?: boolean }>;
+      setStoreImmersive(Boolean(customEvent?.detail?.immersive));
+    };
+
+    window.addEventListener("tales:store-immersive", handleStoreImmersive as EventListener);
+    return () => window.removeEventListener("tales:store-immersive", handleStoreImmersive as EventListener);
+  }, []);
+
+  useEffect(() => {
+    if (currentRoute !== AppRoute.STORE) setStoreImmersive(false);
+  }, [currentRoute]);
+
   const availableCredits = Number(wallet?.generationCredits ?? 0);
   const showHomeTopBar = currentRoute === AppRoute.HOME;
   const isReel = currentRoute === AppRoute.REEL_FEED;
+  const isStoreRoute = currentRoute === AppRoute.STORE;
 
   const isImageZone =
     currentRoute === AppRoute.IMAGE_GEN_ROOT ||
@@ -259,6 +275,8 @@ export default function Layout({
     currentRoute === AppRoute.TOOL_MOTION_CONTROL;
 
   const isToolRoute = isImageZone || isVideoZone;
+  const isStoreImmersive = isStoreRoute && storeImmersive;
+  const hideBottomNav = isToolRoute || isStoreImmersive;
   const plusActive = createSheetOpen;
 
   function goProfileTab(tab: "profile" | "security" | "billing") {
@@ -308,6 +326,8 @@ export default function Layout({
     ? "mx-auto max-w-[1360px] px-3 pb-[calc(env(safe-area-inset-bottom)+118px)] pt-[calc(env(safe-area-inset-top)+86px)] md:px-6 md:pb-[132px] md:pt-[calc(env(safe-area-inset-top)+94px)]"
     : isReel
     ? "h-full px-0 pb-0 pt-0"
+    : isStoreRoute
+    ? "mx-auto max-w-[1600px] h-full px-0 pb-0 pt-0 md:px-0 md:pb-0 md:pt-0"
     : isToolRoute
     ? "mx-auto max-w-[1600px] px-0 pb-0 pt-0 md:px-0 md:pb-0 md:pt-0"
     : "mx-auto max-w-[1600px] px-3 pb-[calc(env(safe-area-inset-bottom)+118px)] pt-[max(env(safe-area-inset-top),14px)] md:px-6 md:pb-[132px] md:pt-[max(env(safe-area-inset-top),18px)]";
@@ -471,7 +491,7 @@ export default function Layout({
         <div className={mainPaddingClass}>{children}</div>
       </main>
 
-      {!isToolRoute ? (
+      {!hideBottomNav ? (
         <nav className="pointer-events-none fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-[rgba(6,6,8,0.92)] shadow-[0_-18px_40px_rgba(0,0,0,0.45)] backdrop-blur-2xl">
           <div className="mx-auto flex max-w-[920px] items-end justify-between gap-2 px-2 pt-2 pb-[max(env(safe-area-inset-bottom),10px)] md:px-5">
             {bottomItems.slice(0, 2).map((item) => (
@@ -528,7 +548,7 @@ export default function Layout({
         </nav>
       ) : null}
 
-      {user && !isReel && !isToolRoute ? <GenerationQueueWidget /> : null}
+      {user && !isReel && !isToolRoute && !isStoreImmersive ? <GenerationQueueWidget /> : null}
 
       <BottomSheet open={createSheetOpen} title="Create" onClose={() => setCreateSheetOpen(false)}>
         <div className="pb-2">

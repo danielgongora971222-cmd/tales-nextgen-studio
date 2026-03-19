@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Maximize, Layers, Check, ShoppingCart, CreditCard, Image as ImageIcon, Sparkles, ShieldCheck, Truck } from 'lucide-react';
 import { AppRoute, type Asset, type StoreArtDecoListing, type StoreArtDecoPayload, type StorePrefill } from "../types";
-import { listMyAssets, uploadUserAsset } from "../services/assetsApi";
+import { listMyAssets } from "../services/assetsApi";
 import { supabase } from "../services/supabaseClient";
 import { apiUrl } from "../services/apiBase";
 import { createArtDecoListing } from "../services/communityStoreApi";
@@ -176,11 +176,9 @@ export default function StoreNewUI({ onNavigate, onRequestUpscale, prefill }: St
   const [cropGenError, setCropGenError] = useState<string | null>(null);
   const [cropProcessing, setCropProcessing] = useState(false);
   const [imageOrientation, setImageOrientation] = useState('portrait');
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const transientImageUrlRef = useRef<string | null>(null);
   const checkoutFormRef = useRef<HTMLFormElement | null>(null);
   const [selectorPanel, setSelectorPanel] = useState<'material' | 'size' | null>(null);
-  const [uploadingAsset, setUploadingAsset] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
   const clearTransientImageUrl = useCallback((preserve: string | null = null) => {
@@ -226,15 +224,19 @@ export default function StoreNewUI({ onNavigate, onRequestUpscale, prefill }: St
       }
 
 
-      // 1) excluir camera-angles
-      const noCameraAngles = (items || []).filter((a: any) => {
+      // 1) excluir assets que no pertenecen al historial útil para 1NationUp
+      const usableHistory = (items || []).filter((a: any) => {
         const tool = a?.tool || a?.meta?.tool || null;
-        return tool !== "camera-angles";
+        const source = typeof a?.meta?.source === "string" ? a.meta.source.toLowerCase() : "";
+        if (tool === "camera-angles") return false;
+        if (tool === "1nationup") return false;
+        if (source === "upload" || source === "user_upload" || source === "user_upload_direct") return false;
+        return true;
       });
 
       // 2) quedarnos solo con "imágenes"
       // (evitamos videos y cualquier cosa rara)
-      const onlyImages = noCameraAngles.filter((a: any) => {
+      const onlyImages = usableHistory.filter((a: any) => {
         const t = typeof a?.type === "string" ? a.type.toLowerCase() : "";
         const mime = typeof a?.meta?.mime === "string" ? a.meta.mime.toLowerCase() : "";
         const url = typeof a?.url === "string" ? a.url.toLowerCase() : "";
@@ -336,15 +338,6 @@ function approxDataUrlBytes(dataUrl: string): number {
   return Math.floor((b64.length * 3) / 4) - padding;
 }
 
-function loadImgDimsFromDataUrl(dataUrl: string): Promise<{ w: number; h: number }> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.decoding = "async";
-    img.onload = () => resolve({ w: img.naturalWidth || 0, h: img.naturalHeight || 0 });
-    img.onerror = reject;
-    img.src = dataUrl;
-  });
-}
 
 function loadImgDimsFromUrl(url: string): Promise<{ w: number; h: number }> {
   return new Promise((resolve, reject) => {
@@ -529,6 +522,16 @@ useEffect(() => {
   setPickerOpen(false);
 }, [prefill?.asset, prefill?.artDecoListing?.id]);
 
+useEffect(() => {
+  if (typeof window === 'undefined') return;
+
+  window.dispatchEvent(new CustomEvent('tales:store-immersive', { detail: { immersive: Boolean(image) } }));
+
+  return () => {
+    window.dispatchEvent(new CustomEvent('tales:store-immersive', { detail: { immersive: false } }));
+  };
+}, [image]);
+
 const handleGoToUpscale = () => {
   if (!asset) return;
   if (onRequestUpscale) {
@@ -539,10 +542,9 @@ const handleGoToUpscale = () => {
   onNavigate(AppRoute.TOOL_UPSCALER);
 };
 
-const openFilePicker = () => {
-  if (uploadingAsset) return;
+const openHistoryPicker = () => {
   setUploadError(null);
-  fileInputRef.current?.click();
+  setPickerOpen(true);
 };
 
 const resetToLanding = () => {
@@ -554,51 +556,6 @@ const resetToLanding = () => {
   setIs4kOk(false);
   setDimsLoading(false);
   setActiveStep('UPLOAD');
-};
-
-const handleUploadFromDevice = async (event: React.ChangeEvent<HTMLInputElement>) => {
-  const file = event.currentTarget.files?.[0];
-  if (!file) return;
-
-  const previewUrl = URL.createObjectURL(file);
-  clearTransientImageUrl(previewUrl);
-  transientImageUrlRef.current = previewUrl;
-
-  resetFlowForNewImage();
-  setImage(previewUrl);
-  setAsset(null);
-  setDims(null);
-  setIs4kOk(false);
-  setDimsLoading(true);
-  setUploadingAsset(true);
-  setActiveStep('VERIFYING');
-
-  try {
-    const d = await loadImgDimsFromUrl(previewUrl);
-    const uploadedAsset = await uploadUserAsset(file, {
-      tool: '1nationup',
-      category: 'store',
-      name: file.name,
-    });
-
-    setAsset(uploadedAsset);
-    setDims(d);
-    setIs4kOk(is4K(d));
-    setImageOrientation(d.w > d.h ? 'landscape' : 'portrait');
-    setActiveStep('CONFIRM');
-  } catch (e: any) {
-    clearTransientImageUrl();
-    setImage(null);
-    setAsset(null);
-    setDims(null);
-    setIs4kOk(false);
-    setActiveStep('UPLOAD');
-    setUploadError(e?.message || 'No se pudo cargar la imagen.');
-  } finally {
-    setDimsLoading(false);
-    setUploadingAsset(false);
-    event.currentTarget.value = '';
-  }
 };
 
 useEffect(() => {
@@ -1681,13 +1638,13 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
 
   const renderCheckoutFormCard = () => {
     return (
-      <div className="rounded-[28px] border border-white/10 bg-black/55 backdrop-blur-xl shadow-[0_22px_80px_rgba(0,0,0,0.42)] overflow-hidden">
+      <div className="flex h-full min-h-0 flex-col rounded-[28px] border border-white/10 bg-black/55 backdrop-blur-xl shadow-[0_22px_80px_rgba(0,0,0,0.42)] overflow-hidden">
         <div className="px-5 sm:px-6 py-4 border-b border-white/10">
           <div className="text-[10px] uppercase tracking-[0.34em] text-white/45">Paso final</div>
           <div className="mt-2 text-xl font-semibold text-white">Checkout</div>
         </div>
 
-        <div className="p-5 sm:p-6 space-y-5 max-h-[42dvh] overflow-y-auto custom-scrollbar">
+        <div className="flex-1 min-h-0 space-y-5 overflow-y-auto p-5 sm:p-6 custom-scrollbar">
           <div className="bg-white/5 rounded-2xl p-4 border border-white/10">
             <div className="flex justify-between items-center text-sm text-gray-300 mb-2 gap-3">
               <span className="min-w-0 truncate">{isLockedArtDecoPurchase ? (prefillArtDeco?.name || 'Art Deco físico') : `${selectedMaterial?.label} (${selectedSize?.label})`}</span>
@@ -1987,48 +1944,41 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
 
   const renderLandingHero = () => {
     return (
-      <main className="relative z-10 flex-1 min-h-0 px-3 sm:px-6 lg:px-8 pt-24 pb-6">
-        <div className="relative h-full overflow-hidden rounded-[36px] border border-white/10 bg-black/35 shadow-[0_30px_140px_rgba(0,0,0,0.45)] backdrop-blur-xl">
+      <main className="relative z-10 flex-1 min-h-0 overflow-y-auto px-3 sm:px-6 lg:px-8 pt-20 sm:pt-24 pb-[calc(env(safe-area-inset-bottom)+112px)] sm:pb-8">
+        <div className="relative min-h-full overflow-hidden rounded-[30px] sm:rounded-[36px] border border-white/10 bg-black/35 shadow-[0_30px_140px_rgba(0,0,0,0.45)] backdrop-blur-xl">
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(126,170,237,0.16),transparent_35%),radial-gradient(circle_at_80%_20%,rgba(222,108,83,0.14),transparent_28%),radial-gradient(circle_at_50%_100%,rgba(223,177,66,0.10),transparent_32%)]" />
           <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-black via-black/40 to-transparent" />
 
-          <div className="relative h-full flex flex-col items-center justify-center text-center px-6 sm:px-10 py-10">
-            <div className="flex h-24 w-24 items-center justify-center rounded-[28px] border border-white/10 bg-white/5 shadow-[0_18px_60px_rgba(0,0,0,0.35)] backdrop-blur">
-              <OneNationUpIcon size={58} className="h-14 w-14 object-contain" alt="1NationUp" />
-            </div>
+          <div className="relative flex min-h-full flex-col items-center justify-center px-5 py-8 text-center sm:px-10 sm:py-10">
+            <div className="w-full max-w-4xl">
+              <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-[24px] border border-white/10 bg-white/5 shadow-[0_18px_60px_rgba(0,0,0,0.35)] backdrop-blur sm:h-24 sm:w-24 sm:rounded-[28px]">
+                <OneNationUpIcon size={58} className="h-12 w-12 object-contain sm:h-14 sm:w-14" alt="1NationUp" />
+              </div>
 
-            <div className="mt-8 max-w-4xl">
-              <div className="text-[10px] sm:text-[11px] uppercase tracking-[0.36em] text-white/45">1NationUp</div>
-              <h1 className="mt-4 text-3xl sm:text-5xl lg:text-6xl font-black leading-[1.05] text-white text-balance">
-                Con 1NationUp podrás convertir tus ideas creativas en un producto real de la más alta calidad
-              </h1>
+              <div className="mt-6 sm:mt-8">
+                <div className="text-[10px] uppercase tracking-[0.28em] text-white/45 sm:text-[11px] sm:tracking-[0.36em]">1NationUp</div>
+                <h1 className="mt-4 text-[1.95rem] font-black leading-[1.08] text-white sm:text-5xl lg:text-6xl">
+                  Con 1NationUp podrás convertir tus ideas creativas en un producto real de la más alta calidad
+                </h1>
 
-              <button
-                type="button"
-                onClick={openFilePicker}
-                disabled={uploadingAsset}
-                className="mt-8 inline-flex min-h-[64px] items-center justify-center rounded-[24px] bg-gradient-to-r from-[#7EAAED] via-[#DFB142] to-[#DE6C53] px-8 sm:px-10 py-4 text-base sm:text-lg font-black text-black shadow-[0_25px_80px_rgba(126,170,237,0.22)] transition hover:scale-[1.01] disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                {uploadingAsset ? 'Cargando imagen...' : 'Carga aquí tu creación y hazla realidad'}
-              </button>
+                <button
+                  type="button"
+                  onClick={openHistoryPicker}
+                  className="mt-7 inline-flex min-h-[64px] w-full items-center justify-center rounded-[24px] bg-gradient-to-r from-[#7EAAED] via-[#DFB142] to-[#DE6C53] px-6 py-4 text-base font-black text-black shadow-[0_25px_80px_rgba(126,170,237,0.22)] transition hover:scale-[1.01] sm:mt-8 sm:w-auto sm:px-10 sm:text-lg"
+                >
+                  Carga aquí tu creación y hazla realidad
+                </button>
 
-              <p className="mt-6 mx-auto max-w-3xl text-sm sm:text-base leading-7 text-white/68">
-                Para convertir tus creaciones de imagen en producto real, tu imagen debe cumplir con los requerimientos de resolución. Si la imagen que cargues no cumple, podrá redirigirte a la herramienta de upscale y con un simple click quedará lista.
-              </p>
+                <p className="mt-5 mx-auto max-w-3xl text-sm leading-6 text-white/68 sm:mt-6 sm:text-base sm:leading-7">
+                  Para convertir tus creaciones de imagen en producto real, tu imagen debe cumplir con los requerimientos de resolución. Si la imagen que cargues no cumple, podrá redirigirte a la herramienta de upscale y con un simple click quedará lista.
+                </p>
 
-              <button
-                type="button"
-                onClick={() => setPickerOpen(true)}
-                className="mt-6 rounded-full border border-white/10 bg-white/5 px-5 py-3 text-sm font-semibold text-white/90 transition hover:bg-white/10"
-              >
-                Usar una imagen de mi biblioteca
-              </button>
-
-              {uploadError ? (
-                <div className="mt-5 mx-auto max-w-xl rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">
-                  {uploadError}
-                </div>
-              ) : null}
+                {uploadError ? (
+                  <div className="mt-5 mx-auto max-w-xl rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">
+                    {uploadError}
+                  </div>
+                ) : null}
+              </div>
             </div>
           </div>
         </div>
@@ -2057,23 +2007,14 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
         }}
       />
 
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={handleUploadFromDevice}
-      />
-
       <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-center justify-end gap-3 px-3 sm:px-6 lg:px-8 pt-4">
         {isLandingView ? (
           <button
             type="button"
-            onClick={openFilePicker}
-            disabled={uploadingAsset}
-            className="pointer-events-auto rounded-full border border-white/10 bg-black/55 px-4 py-2.5 text-sm font-semibold text-white backdrop-blur transition hover:bg-black/70 disabled:opacity-60 disabled:cursor-not-allowed"
+            onClick={openHistoryPicker}
+            className="pointer-events-auto rounded-full border border-white/10 bg-black/55 px-4 py-2.5 text-sm font-semibold text-white backdrop-blur transition hover:bg-black/70"
           >
-            {uploadingAsset ? 'Cargando...' : 'Cargar imagen'}
+            Cargar imagen
           </button>
         ) : null}
 
@@ -2081,6 +2022,11 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
           className="pointer-events-auto inline-flex h-11 w-11 items-center justify-center rounded-full border border-white/12 bg-black/60 text-xl text-white/92 backdrop-blur transition hover:bg-black/80"
           title="Close"
           ariaLabel="Open tool exit menu"
+          onBeforeNavigate={(route) => {
+            setPickerOpen(false);
+            setSelectorPanel(null);
+            onNavigate(route);
+          }}
         >
           ×
         </ToolExitMenu>
@@ -2095,10 +2041,15 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
               renderTerminalState()
             ) : (
               <>
-                <div className={`flex-1 min-h-[260px] ${isCropFocusView ? 'min-h-[46dvh]' : ''}`}>
-                  {renderVisualEditor()}
-                </div>
-                {activeStep === 'CHECKOUT' ? renderCheckoutFormCard() : null}
+                {activeStep === 'CHECKOUT' ? (
+                  <div className="flex-1 min-h-0">
+                    {renderCheckoutFormCard()}
+                  </div>
+                ) : (
+                  <div className={`flex-1 min-h-[260px] ${isCropFocusView ? 'min-h-[46dvh]' : ''}`}>
+                    {renderVisualEditor()}
+                  </div>
+                )}
                 {renderBottomDock()}
               </>
             )}
@@ -2112,19 +2063,12 @@ const handleCheckoutSubmit = async (e: React.FormEvent) => {
             <div className="p-5 border-b border-white/10 flex items-center justify-between gap-4">
               <div>
                 <div className="text-xl font-extrabold">Selecciona una imagen</div>
-                <div className="text-xs text-gray-400 mt-1">
-                  Puedes subir una imagen nueva o usar una creación existente.
+                <div className="mt-1 text-xs text-gray-400">
+                  Solo puedes usar imágenes de tu historial de generaciones.
                 </div>
               </div>
 
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={openFilePicker}
-                  className="px-4 py-2 rounded-xl bg-[#7EAAED] text-black hover:brightness-110 transition text-sm font-bold"
-                >
-                  Subir imagen
-                </button>
                 <button
                   type="button"
                   onClick={() => setPickerOpen(false)}
