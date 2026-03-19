@@ -657,14 +657,14 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     if (!user) return [] as Asset[];
     setIsLoadingImages(true);
     try {
-      const imgs = await listMyAssets({ type: "image", limit: 500 });
+      const imgs = await listMyAssets({ type: "image", limit: 500, fresh: true });
 
       if (Array.isArray(imgs) && imgs.length > 0) {
         setImageAssets(imgs);
         return imgs;
       }
 
-      const all = await listMyAssets({ limit: 500 } as any);
+      const all = await listMyAssets({ limit: 500, fresh: true } as any);
       const onlyImages = (all || []).filter((x: any) => {
         if (x?.type === "image") return true;
         const mime = String(x?.mime || x?.contentType || x?.mimeType || x?.meta?.mimeType || "");
@@ -685,14 +685,14 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     if (!user) return [] as Asset[];
     setIsLoadingVideos(true);
     try {
-      const vids = await listMyAssets({ type: "video", limit: 250 });
+      const vids = await listMyAssets({ type: "video", limit: 250, fresh: true });
 
       if (Array.isArray(vids) && vids.length > 0) {
         setVideoAssets(vids);
         return vids;
       }
 
-      const all = await listMyAssets({ limit: 250 } as any);
+      const all = await listMyAssets({ limit: 250, fresh: true } as any);
       const onlyVideos = (all || []).filter((x: any) => {
         if (x?.type === "video") return true;
         const mime = String(x?.mime || x?.contentType || x?.mimeType || x?.meta?.mimeType || "");
@@ -713,7 +713,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     if (!user) return [] as Asset[];
     setIsLoadingHistory(true);
     try {
-      const vids = await listMyAssets({ type: "video", limit: 250 });
+      const vids = await listMyAssets({ type: "video", limit: 250, fresh: true });
       const filtered = vids.filter((a) => getMetaTool(a) === TOOL_NAME);
       setHistory(filtered);
       setVisibleCount(18);
@@ -1976,6 +1976,15 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
             {/* Prompt */}
             <div className={`${styles.promptInputWrap} ${styles.cookPromptInputWrap}`}>
               <div className={`${styles.promptEditor} ${styles.cookPromptEditor}`}>
+                <div className={styles.promptTags}>
+                  <button type="button" className={styles.promptTag} onClick={() => setPanel("model")}>
+                    Model: {selectedModel.uiName}
+                  </button>
+                  <button type="button" className={styles.promptTag} onClick={() => setPanel("params")}>
+                    Settings
+                  </button>
+                </div>
+
                 {(referenceImageIds.length > 0 || klingElementIds.length > 0 || (ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode)) && (
                   <div className={styles.promptTags}>
                     {referenceImageIds.length > 0 && (
@@ -2160,6 +2169,19 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
           {/* Controls */}
           <div className={styles.controlsArea} ref={controlsRef}>
             <div className={styles.controlsRow}>
+              <button
+                type="button"
+                className={`${styles.controlBtn} ${panel === "model" ? styles.controlBtnActive : ""}`}
+                onClick={() => setPanel((p) => (p === "model" ? null : "model"))}
+                title="Cambiar modelo"
+              >
+                <span className={styles.controlBtnLeft}>
+                  <Icon name="model" />
+                  Modelo
+                </span>
+                <span className={styles.controlBtnMeta}>{selectedModel.uiName}</span>
+              </button>
+
               <button
                 type="button"
                 className={`${styles.controlBtn} ${panel === "params" ? styles.controlBtnActive : ""}`}

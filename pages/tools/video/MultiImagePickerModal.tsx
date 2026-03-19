@@ -128,8 +128,7 @@ export function MultiImagePickerModal({
         </div>
 
         <div className={styles.noteSmall} style={{ padding: "0 14px 10px" }}>
-          Seleccionadas: <b>{selectedIds.length}</b> / {max} · Kling permite máximo{" "}
-          <b>4 referencias combinadas</b>.
+          Seleccionadas: <b>{selectedIds.length}</b> / {max}
         </div>
 
         <div className={styles.pickerGrid}>

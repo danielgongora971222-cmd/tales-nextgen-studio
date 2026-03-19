@@ -1260,7 +1260,7 @@ useEffect(() => {
     setIsLoadingHistory(true);
     try {
       const [ownedRes, purchasedRes] = await Promise.allSettled([
-        listMyAssets({ type: "image", limit: 300 }),
+        listMyAssets({ type: "image", limit: 300, fresh: true }),
         listPurchasedAssets({ type: "image", limit: 300, fresh: true }),
       ]);
 
@@ -2371,9 +2371,18 @@ const promptReferences: PromptReference[] = useMemo(() => {
     return () => window.removeEventListener("keydown", onKey);
   }, [viewer, panel, isCookOpen, closeCook, restoreCookFromPanel]);
 
+  const pickerHistoryAssets = useMemo(() => {
+    return (myAssets || []).filter((a: any) => {
+      if (!a?.url || a?.type !== "image") return false;
+      const meta = (a as any)?.meta || {};
+      const source = typeof meta?.source === "string" ? meta.source : null;
+      return source !== "upload";
+    });
+  }, [myAssets]);
+
   const refLibraryAssets = useMemo(() => {
-    return refLibraryTab === "purchased" ? purchasedAssets : history;
-  }, [refLibraryTab, purchasedAssets, history]);
+    return refLibraryTab === "purchased" ? purchasedAssets : pickerHistoryAssets;
+  }, [refLibraryTab, purchasedAssets, pickerHistoryAssets]);
 
   const filteredPickerAssets = useMemo(() => {
     const q = pickerQuery.trim().toLowerCase();

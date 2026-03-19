@@ -487,7 +487,7 @@ const VideoGeneratorTool: React.FC = () => {
   async function reloadVideosForElements() {
     setIsLoadingVideosForElements(true);
     try {
-      const vids = await listMyAssets({ type: "video", limit: 500 });
+      const vids = await listMyAssets({ type: "video", limit: 500, fresh: true });
       setVideoLibraryAssets(Array.isArray(vids) ? vids : []);
       return vids;
     } catch (e: any) {
@@ -502,7 +502,7 @@ const VideoGeneratorTool: React.FC = () => {
   async function reloadImages() {
     setIsLoadingImages(true);
     try {
-      const imgs = await listMyAssets({ type: "image", limit: 500 });
+      const imgs = await listMyAssets({ type: "image", limit: 500, fresh: true });
 
       if (Array.isArray(imgs) && imgs.length > 0) {
         setImageAssets(imgs);
@@ -510,7 +510,7 @@ const VideoGeneratorTool: React.FC = () => {
       }
 
       // Fallback: algunos backends no usan type="image" para imágenes generadas
-      const all = await listMyAssets({ limit: 500 } as any);
+      const all = await listMyAssets({ limit: 500, fresh: true } as any);
       const onlyImages = (all || []).filter((x: any) => {
         if (x?.type === "image") return true;
         const mime = String(x?.mime || x?.contentType || x?.mimeType || "");
@@ -530,7 +530,7 @@ const VideoGeneratorTool: React.FC = () => {
   async function reloadHistory() {
     setIsLoadingHistory(true);
     try {
-      const vids = await listMyAssets({ type: "video", limit: 300 });
+      const vids = await listMyAssets({ type: "video", limit: 300, fresh: true });
       const sorted = [...vids].sort((a: any, b: any) => {
         const ta = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
         const tb = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
