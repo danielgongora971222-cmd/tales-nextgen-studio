@@ -120,127 +120,6 @@ export function createAiVideoRouter(ctx) {
 
   const PIAPI_BASE_URL = String(process.env.PIAPI_BASE_URL || "https://api.piapi.ai/api/v1").replace(/\/+$/, "");
 
-  function getPiapiRetryAfterMs(value) {
-    if (value == null) return null;
-
-    const raw = String(value || "").trim();
-    if (!raw) return null;
-
-    const secs = Number(raw);
-    if (Number.isFinite(secs) && secs >= 0) return secs * 1000;
-
-    const at = Date.parse(raw);
-    if (!Number.isNaN(at)) {
-      return Math.max(0, at - Date.now());
-    }
-
-    return null;
-  }
-
-  function isRetryablePiapiStatus(status) {
-    return !status || [408, 409, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524].includes(status);
-  }
-
-  function extractPiapiErrorMessage(data, fallback = "PiAPI request failed.") {
-    const message =
-      data?.message ||
-      data?.error?.message ||
-      data?.error?.raw_message ||
-      data?.detail ||
-      data?.raw ||
-      fallback;
-
-    return String(message || fallback).trim() || fallback;
-  }
-
-  function extractPiapiErrorCode(data, fallback = null) {
-    const raw = data?.code ?? data?.error?.code ?? fallback;
-    if (raw == null) return null;
-    const value = String(raw).trim();
-    return value || null;
-  }
-
-  function summarizeSeedanceInput(input) {
-    return {
-      duration: input?.duration ?? null,
-      aspect_ratio: input?.aspect_ratio ?? null,
-      imageCount: Array.isArray(input?.image_urls) ? input.image_urls.length : 0,
-      hasVideoUrls: Array.isArray(input?.video_urls) && input.video_urls.length > 0,
-      hasParentTaskId: Boolean(input?.parent_task_id),
-    };
-  }
-
-  function toPiapiHttpError(err, fallbackMessage, details = {}) {
-    const upstreamStatus = Number(err?.status || 0);
-    const upstreamData = err?.data || null;
-    const upstreamCode = extractPiapiErrorCode(upstreamData, err?.code || null);
-    const upstreamMessage = extractPiapiErrorMessage(upstreamData, err?.message || fallbackMessage);
-    const retryAfterMs = Number(err?.retryAfterMs || 0) || null;
-    const msgLower = String(upstreamMessage || "").toLowerCase();
-    const isTimeout =
-      err?.name === "AbortError" ||
-      msgLower.includes("timeout") ||
-      msgLower.includes("timed out") ||
-      msgLower.includes("aborted");
-    const looksBusy =
-      upstreamStatus === 429 ||
-      /busy|overload|overloaded|high demand|rate limit|try again later|capacity|queue|queued|saturat|service unavailable/.test(msgLower);
-
-    const baseDetails = {
-      provider: "piapi",
-      upstreamStatus: upstreamStatus || null,
-      upstreamCode,
-      upstreamMessage,
-      retryAfterMs,
-      ...(looksBusy || isTimeout
-        ? {
-            retryAfterSeconds: Math.max(15, Math.round((retryAfterMs || 45_000) / 1000)),
-            retryable: true,
-          }
-        : {}),
-      ...(upstreamData ? { upstream: upstreamData } : {}),
-      ...(details || {}),
-    };
-
-    if (upstreamStatus === 400) {
-      return httpError(400, "PIAPI_BAD_REQUEST", upstreamMessage, baseDetails);
-    }
-
-    if (upstreamStatus === 401 || upstreamStatus === 403) {
-      return httpError(
-        502,
-        "PIAPI_AUTH_ERROR",
-        "PiAPI rechazó la autenticación o los permisos para Seedance.",
-        baseDetails
-      );
-    }
-
-    if (looksBusy) {
-      return httpError(
-        upstreamStatus === 429 ? 429 : 503,
-        "PIAPI_BUSY",
-        "Seedance está con alta demanda en el proveedor. Inténtalo de nuevo en unos minutos.",
-        baseDetails
-      );
-    }
-
-    if (isTimeout) {
-      return httpError(
-        503,
-        "PIAPI_TIMEOUT",
-        fallbackMessage || "PiAPI tardó demasiado en aceptar la tarea de Seedance.",
-        baseDetails
-      );
-    }
-
-    return httpError(
-      503,
-      "PIAPI_UPSTREAM_ERROR",
-      upstreamMessage || fallbackMessage || "PiAPI devolvió un error inesperado.",
-      baseDetails
-    );
-  }
-
   function isSeedanceModelId(value) {
     const v = String(value || "").trim();
     return v === "seedance-2-preview" || v === "seedance-2-fast-preview";
@@ -257,18 +136,75 @@ export function createAiVideoRouter(ctx) {
   function piapiHeaders() {
     return {
       "X-API-Key": getPiapiApiKey(),
-      Accept: "application/json",
       "Content-Type": "application/json",
     };
   }
 
-  async function piapiRequest(path, { method = "GET", body = undefined, timeoutMs = 60_000, retries = 2 } = {}) {
+  function getPiapiErrorMessage(payload, fallback = "PiAPI request failed.") {
+    return String(
+      payload?.message ||
+      payload?.error?.message ||
+      payload?.error?.raw_message ||
+      payload?.detail ||
+      payload?.raw ||
+      fallback
+    ).trim();
+  }
+
+  function classifyPiapiError(err, { defaultMessage = "PiAPI request failed.", fallbackStatus = 502 } = {}) {
+    const status = Number(err?.status || 0);
+    const data = err?.data || null;
+    const providerCode = data?.error?.code || data?.code || null;
+    const providerMessage = getPiapiErrorMessage(data, String(err?.message || defaultMessage));
+    const details = {
+      provider: "piapi",
+      upstreamStatus: status || null,
+      upstreamCode: providerCode,
+      response: data,
+      retryAfterSeconds: Number.isFinite(Number(err?.retryAfterSeconds)) ? Number(err.retryAfterSeconds) : null,
+    };
+
+    if (status === 400) {
+      return httpError(400, "PIAPI_BAD_REQUEST", `Seedance rechazó la solicitud: ${providerMessage}`, details);
+    }
+
+    if (status === 401 || status === 403) {
+      return httpError(502, "PIAPI_AUTH_ERROR", `PiAPI rechazó la autenticación o el acceso a Seedance: ${providerMessage}`, details);
+    }
+
+    if (status === 404) {
+      return httpError(502, "PIAPI_ENDPOINT_ERROR", `PiAPI no encontró el endpoint o modelo de Seedance: ${providerMessage}`, details);
+    }
+
+    if (status === 408 || err?.name === "AbortError") {
+      return httpError(504, "PIAPI_TIMEOUT", `PiAPI tardó demasiado en aceptar la tarea de Seedance: ${providerMessage}`, details);
+    }
+
+    if (status === 409 || status === 425 || status === 429) {
+      return httpError(503, "PIAPI_BUSY", `Seedance/PiAPI está saturado temporalmente: ${providerMessage}`, details);
+    }
+
+    if (status === 500 || status === 502 || status === 503 || status === 504) {
+      return httpError(503, "PIAPI_UPSTREAM_ERROR", `PiAPI devolvió un error temporal al crear la tarea de Seedance: ${providerMessage}`, details);
+    }
+
+    if (!status) {
+      const message = String(err?.message || defaultMessage || "PiAPI request failed.").trim();
+      if (/aborted|timeout/i.test(message)) {
+        return httpError(504, "PIAPI_TIMEOUT", `PiAPI tardó demasiado en aceptar la tarea de Seedance: ${message}`, details);
+      }
+      return httpError(503, "PIAPI_NETWORK_ERROR", `No se pudo conectar con PiAPI para Seedance: ${message}`, details);
+    }
+
+    return httpError(fallbackStatus, "PIAPI_REQUEST_FAILED", providerMessage || defaultMessage, details);
+  }
+
+  async function piapiRequest(path, { method = "GET", body = undefined, timeoutMs = 90_000, retries = 3 } = {}) {
     let lastErr = null;
 
     for (let attempt = 0; attempt <= retries; attempt += 1) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
-
       try {
         const response = await fetch(`${PIAPI_BASE_URL}${path}`, {
           method,
@@ -286,38 +222,39 @@ export function createAiVideoRouter(ctx) {
         }
 
         if (!response.ok) {
-          const err = new Error(extractPiapiErrorMessage(data, `PiAPI error (${response.status})`));
+          const err = new Error(getPiapiErrorMessage(data, `PiAPI error (${response.status})`));
           err.status = response.status;
           err.data = data;
-          err.code = extractPiapiErrorCode(data, null);
-          err.retryAfterMs = getPiapiRetryAfterMs(response.headers?.get?.("retry-after"));
+          const retryAfter = response.headers.get("retry-after");
+          if (retryAfter && !Number.isNaN(Number(retryAfter))) {
+            err.retryAfterSeconds = Number(retryAfter);
+          }
           throw err;
         }
 
         return data;
       } catch (err) {
         lastErr = err;
-
         const status = Number(err?.status || 0);
-        const retryAfterMs = Number(err?.retryAfterMs || 0) || null;
-        const isAbort = err?.name === "AbortError";
-        const retryable =
-          isAbort ||
-          err instanceof TypeError ||
-          isRetryablePiapiStatus(status);
+        const retryable = !status || [408, 409, 425, 429, 500, 502, 503, 504].includes(status);
 
-        if (attempt >= retries || !retryable) throw err;
+        if (attempt >= retries || !retryable) {
+          throw classifyPiapiError(err, { defaultMessage: "PiAPI request failed." });
+        }
 
-        const backoff =
-          (retryAfterMs ?? (1500 * (attempt + 1) + Math.floor(Math.random() * 500)));
-
-        await sleep(backoff);
+        const retryAfterMs = Number.isFinite(Number(err?.retryAfterSeconds))
+          ? Math.max(1_000, Math.min(120_000, Number(err.retryAfterSeconds) * 1000))
+          : null;
+        const waitMs = (retryAfterMs ?? (1_500 * (attempt + 1) + Math.floor(Math.random() * 600)));
+        await sleep(waitMs);
       } finally {
         clearTimeout(timer);
       }
     }
 
-    throw lastErr || new Error("PiAPI request failed.");
+    throw classifyPiapiError(lastErr || new Error("PiAPI request failed."), {
+      defaultMessage: "PiAPI request failed.",
+    });
   }
 
   function extractPiapiTaskData(raw) {
@@ -348,7 +285,18 @@ export function createAiVideoRouter(ctx) {
   }
 
   function normalizeSeedancePrompt(prompt) {
-    return String(prompt || "").replace(/\s+/g, " ").trim();
+    let value = String(prompt || "").trim();
+    if (!value) return "";
+
+    // PiAPI documenta referencias de imagen como @imageN.
+    // Normalizamos variantes legacy (@Image1) para evitar rechazos por placeholder.
+    value = value.replace(/@image(\d+)/gi, (_, n) => `@image${String(n)}`);
+
+    // Seedance video edit usa video_urls; @Video1 es una ayuda UX interna de Tales,
+    // no un placeholder documentado del proveedor. Lo convertimos a una frase segura.
+    value = value.replace(/@video\d+/gi, "the input video");
+
+    return value.replace(/\s{2,}/g, " ").trim();
   }
 
   function buildSeedanceFramePrompt({ prompt, hasFirst, hasLast }) {
@@ -362,23 +310,16 @@ export function createAiVideoRouter(ctx) {
   }
 
   async function createPiapiSeedanceTask({ taskType, input }) {
-    try {
-      return await piapiRequest("/task", {
-        method: "POST",
-        timeoutMs: 60_000,
-        retries: 2,
-        body: {
-          model: "seedance",
-          task_type: taskType,
-          input,
-        },
-      });
-    } catch (err) {
-      throw toPiapiHttpError(err, "No pude crear la tarea de Seedance en PiAPI.", {
-        taskType: taskType || null,
-        input: summarizeSeedanceInput(input),
-      });
-    }
+    return piapiRequest("/task", {
+      method: "POST",
+      timeoutMs: 60_000,
+      retries: 2,
+      body: {
+        model: "seedance",
+        task_type: taskType,
+        input,
+      },
+    });
   }
 
   async function getOwnedAssetById(assetId, ownerId) {

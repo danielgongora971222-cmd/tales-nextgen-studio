@@ -883,10 +883,37 @@ export async function listMyAssetsRobust(opts?: { type?: "image" | "video"; limi
 
 export async function listMyAssetsPickerLibrary(opts?: { type?: "image" | "video"; limit?: number; fresh?: boolean }): Promise<Asset[]> {
   const type = opts?.type;
-  if (!type) return listMyAssets(opts);
+  const safeLimit = (() => {
+    const raw = Number(opts?.limit || 0);
+    if (!Number.isFinite(raw) || raw <= 0) return 200;
+    return Math.min(Math.max(Math.trunc(raw), 1), 200);
+  })();
 
-  const items = await listMyAssetsRobust({ type, limit: opts?.limit, fresh: opts?.fresh });
-  return sliceByLimit(sortAssetsNewestFirst(filterAssetsByType(items, type)), opts?.limit);
+  if (!type) {
+    const items = await listMyAssets({ limit: safeLimit, fresh: opts?.fresh });
+    return sliceByLimit(sortAssetsNewestFirst(items), safeLimit);
+  }
+
+  const normalize = (items: Asset[]) => {
+    const typed = (Array.isArray(items) ? items : []).filter((asset) => {
+      if (!asset) return false;
+      if (asset.type === type) return true;
+      return detectAssetKind(asset) === type;
+    });
+    return sliceByLimit(sortAssetsNewestFirst(typed), safeLimit);
+  };
+
+  try {
+    // Base estable: mismo origen y ventana que Motion Control.
+    const typedItems = await listMyAssets({ type, limit: safeLimit, fresh: opts?.fresh });
+    const normalized = normalize(typedItems);
+    if (normalized.length > 0) return normalized;
+  } catch {
+    // Fallback below.
+  }
+
+  const fallbackItems = await listMyAssetsRobust({ type, limit: safeLimit, fresh: opts?.fresh });
+  return normalize(fallbackItems);
 }
 
 export async function listPurchasedAssetsRobust(opts?: { type?: "image" | "video"; limit?: number; fresh?: boolean }): Promise<Asset[]> {
