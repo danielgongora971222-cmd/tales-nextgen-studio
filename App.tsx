@@ -293,7 +293,7 @@ const AppContent: React.FC = () => {
             clearPendingStripeCheckout();
             emitWalletRefresh();
             try {
-              const fresh = await billingMe();
+              const fresh = await billingMe(true);
               if (!cancelled) {
                 setSubscription(fresh || null);
                 setBillingChecked(true);
@@ -335,7 +335,7 @@ const AppContent: React.FC = () => {
 
         emitWalletRefresh();
         try {
-          const fresh = await billingMe();
+          const fresh = await billingMe(true);
           if (!cancelled) {
             setSubscription(fresh || null);
             setBillingChecked(true);
@@ -383,7 +383,7 @@ const AppContent: React.FC = () => {
     setCheckoutOverlayBusy(true);
     try {
       emitWalletRefresh();
-      const fresh = await billingMe();
+      const fresh = await billingMe(true);
       setSubscription(fresh || null);
       setBillingChecked(true);
       setRoute(AppRoute.HOME);

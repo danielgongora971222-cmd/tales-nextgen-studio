@@ -858,6 +858,34 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
     });
   }
 
+  async function finalizeSubscriptionCheckoutSession(sessionLike) {
+    const session = typeof sessionLike === "object" && sessionLike?.id ? sessionLike : await fetchCheckoutSession(String(sessionLike));
+
+    if (normalizeString(session?.mode) !== "subscription") {
+      return { skipped: true, reason: "session_not_subscription_mode" };
+    }
+
+    if (!isStripeSessionPaymentComplete(session)) {
+      return { skipped: true, reason: "session_not_paid_yet" };
+    }
+
+    const stripeSubscriptionId = normalizeStripeObjectId(session?.subscription);
+    if (!stripeSubscriptionId) {
+      return { skipped: true, reason: "session_without_subscription" };
+    }
+
+    const synced = await syncSubscriptionFromStripe(session?.subscription || stripeSubscriptionId);
+    const grant = await ensurePlanGrantForSyncedSubscription(synced, { applyReferral: true });
+
+    return {
+      ok: true,
+      sessionId: normalizeString(session?.id),
+      synced,
+      grant,
+      replacement: grant?.replacement || null,
+    };
+  }
+
   async function applyTopupFromCheckoutSession(sessionLike) {
     const session = typeof sessionLike === "object" && sessionLike?.id ? sessionLike : await fetchCheckoutSession(String(sessionLike));
 
@@ -1038,9 +1066,16 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
             await syncSubscriptionFromStripe(event.data?.object || {});
             break;
           case "checkout.session.completed":
-          case "checkout.session.async_payment_succeeded":
-            await applyTopupFromCheckoutSession(event.data?.object || {});
+          case "checkout.session.async_payment_succeeded": {
+            const checkoutSession = event.data?.object || {};
+            const checkoutMode = normalizeString(checkoutSession?.mode).toLowerCase();
+            if (checkoutMode === "subscription") {
+              await finalizeSubscriptionCheckoutSession(checkoutSession);
+            } else {
+              await applyTopupFromCheckoutSession(checkoutSession);
+            }
             break;
+          }
           default:
             break;
         }
@@ -1127,12 +1162,8 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
 
     if (isStripeSessionPaymentComplete(session)) {
       if (sessionMode === "subscription") {
-        const stripeSubscriptionId = normalizeStripeObjectId(session?.subscription);
-        if (stripeSubscriptionId) {
-          const synced = await syncSubscriptionFromStripe(session?.subscription || stripeSubscriptionId);
-          const grant = await ensurePlanGrantForSyncedSubscription(synced, { applyReferral: true });
-          planGrantIdempotencyKey = normalizeString(grant?.grantIdempotencyKey);
-        }
+        const finalized = await finalizeSubscriptionCheckoutSession(session);
+        planGrantIdempotencyKey = normalizeString(finalized?.grant?.grantIdempotencyKey);
       } else if (sessionMode === "payment") {
         await applyTopupFromCheckoutSession(session);
       }
@@ -1162,8 +1193,32 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
           );
         }
 
-        localRef = data ? { ...data, planGrantApplied } : null;
-        fulfilled = Boolean(data?.id && data?.status === "active" && planGrantApplied);
+        const replacementStripeSubscriptionId = normalizeStripeObjectId(session?.metadata?.replace_stripe_subscription_id);
+        let replacementClosed = true;
+        let replacementLocal = null;
+
+        if (replacementStripeSubscriptionId) {
+          const { data: replacementData, error: replacementError } = await supabaseAdmin
+            .from("billing_subscriptions")
+            .select("id, status, current_period_end, cancel_at_period_end")
+            .eq("stripe_subscription_id", replacementStripeSubscriptionId)
+            .maybeSingle();
+
+          if (replacementError) throw makeError("DB_QUERY_FAILED", replacementError.message, 500);
+          replacementLocal = replacementData || null;
+          replacementClosed = !replacementData || replacementData.status !== "active";
+        }
+
+        localRef = data
+          ? {
+              ...data,
+              planGrantApplied,
+              replacementClosed,
+              replacementSubscriptionId: replacementStripeSubscriptionId || null,
+              replacementLocal,
+            }
+          : null;
+        fulfilled = Boolean(data?.id && data?.status === "active" && planGrantApplied && replacementClosed);
       }
     } else if (sessionMode === "payment") {
       const { data, error } = await supabaseAdmin
@@ -1210,6 +1265,7 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
     getCheckoutStatusForUser,
     handleWebhook,
     syncSubscriptionFromStripe,
+    finalizeSubscriptionCheckoutSession,
     repairLatestStripeSubscriptionForUser,
     cancelSubscriptionImmediately,
     getReferralCouponId,

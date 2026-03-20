@@ -34,9 +34,10 @@ async function request(path: string, init?: RequestInit) {
   return data;
 }
 
-export async function billingMe() {
+export async function billingMe(syncStripe = false) {
   const headers = await authHeaders();
-  const data = await request("/api/billing/me", { method: "GET", headers });
+  const qs = syncStripe ? "?syncStripe=1" : "";
+  const data = await request(`/api/billing/me${qs}`, { method: "GET", headers });
   return data.subscription;
 }
 

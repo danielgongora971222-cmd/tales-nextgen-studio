@@ -386,10 +386,14 @@ export function createBillingRouter(ctx) {
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
 
+    const forceSyncStripe = normalizeString(req.query?.syncStripe || "") === "1";
+
     let r = await getActiveSubscription(user.id);
     if (r.error) return err(res, 500, r.error.code, r.error.message, r.error.details);
 
-    if (!r.subscription && stripeBilling?.isConfigured?.()) {
+    const hasStripeManagedSubscription = r.subscription?.provider === "stripe" && !!r.subscription?.stripeSubscriptionId;
+
+    if ((forceSyncStripe || !r.subscription || hasStripeManagedSubscription) && stripeBilling?.isConfigured?.()) {
       try {
         await stripeBilling.repairLatestStripeSubscriptionForUser(user.id);
         r = await getActiveSubscription(user.id);
@@ -685,11 +689,32 @@ export function createBillingRouter(ctx) {
         return err(res, 409, "NO_STRIPE_SUBSCRIPTION", "No hay una suscripción activa de Stripe para cancelar.");
       }
 
-      const canceled = await stripeBilling.cancelSubscriptionImmediately(current.subscription.stripeSubscriptionId);
-      await stripeBilling.syncSubscriptionFromStripe(canceled || current.subscription.stripeSubscriptionId);
+      const stripeSubscriptionId = current.subscription.stripeSubscriptionId;
+      const canceled = await stripeBilling.cancelSubscriptionImmediately(stripeSubscriptionId);
+      await stripeBilling.syncSubscriptionFromStripe(canceled || stripeSubscriptionId);
 
-      const refreshed = await getActiveSubscription(user.id);
+      let refreshed = await getActiveSubscription(user.id);
       if (refreshed.error) return err(res, 500, refreshed.error.code, refreshed.error.message, refreshed.error.details);
+
+      const sameStripeSubStillActive =
+        refreshed.subscription?.provider === "stripe" &&
+        String(refreshed.subscription?.stripeSubscriptionId || "") === String(stripeSubscriptionId || "");
+
+      if (sameStripeSubStillActive) {
+        const { error: cancelLocalErr } = await supabaseAdmin.rpc("billing_cancel_subscription", {
+          p_user_id: user.id,
+          p_wipe_generation_credits: false,
+          p_idempotency_key: `stripe-cancel-fallback:${getIdempotencyKey(req)}`,
+        });
+
+        if (cancelLocalErr) {
+          // eslint-disable-next-line no-console
+          console.warn("billing_cancel_subscription fallback after Stripe cancel failed:", cancelLocalErr.message);
+        }
+
+        refreshed = await getActiveSubscription(user.id);
+        if (refreshed.error) return err(res, 500, refreshed.error.code, refreshed.error.message, refreshed.error.details);
+      }
 
       return res.json({ ok: true, subscription: refreshed.subscription || null });
     } catch (e) {

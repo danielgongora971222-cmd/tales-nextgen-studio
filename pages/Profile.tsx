@@ -97,7 +97,7 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
       setPortalMessage("Actualizando tu estado de facturación...");
       try {
         await refreshWallet();
-        await loadAll();
+        await loadAll({ syncStripe: true });
         if (cancelled) return;
         setPortalMessage("Stripe terminó correctamente y tu cuenta ya quedó sincronizada.");
       } catch (e: any) {
@@ -135,11 +135,11 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
     }
   }
 
-  async function loadAll() {
+  async function loadAll(opts?: { syncStripe?: boolean }) {
     setLoading(true);
     setErr("");
 
-    const [pR, sR, plansR] = await Promise.allSettled([profileMe(), billingMe(), billingPlans()]);
+    const [pR, sR, plansR] = await Promise.allSettled([profileMe(), billingMe(opts?.syncStripe === true), billingPlans()]);
 
     if (pR.status === "fulfilled") {
       setMe(pR.value);
@@ -403,7 +403,7 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
         await cancelStripeSubscriptionNow();
         emitWalletRefresh();
         await refreshWallet();
-        setSub((await billingMe()) || null);
+        setSub((await billingMe(true)) || null);
       } catch (e: any) {
         setErr(e?.message || "No se pudo cancelar la suscripción de Stripe.");
       }

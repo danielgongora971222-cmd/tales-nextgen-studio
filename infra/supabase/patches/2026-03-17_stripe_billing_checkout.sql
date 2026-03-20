@@ -234,10 +234,10 @@ begin
   where user_id = p_user_id
   for update;
 
-  update public.wallet_balances
-    set gen_topup_credits = coalesce(gen_topup_credits, 0) + v_added,
+  update public.wallet_balances as wb
+    set gen_topup_credits = coalesce(wb.gen_topup_credits, 0) + v_added,
         updated_at = now()
-  where user_id = p_user_id
+  where wb.user_id = p_user_id
   returning * into v_bal;
 
   insert into public.credit_topup_purchases(
