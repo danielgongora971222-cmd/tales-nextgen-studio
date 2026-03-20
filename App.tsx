@@ -29,19 +29,36 @@ import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { GenerationQueueProvider } from "./contexts/GenerationQueueContext";
 import { apiUrl } from "./services/apiBase";
 import Paywall from "./pages/Paywall";
-import { billingMe } from "./services/billingApi";
+import { billingMe, getStripeCheckoutStatus } from "./services/billingApi";
 import { WalletProvider } from "@/contexts/WalletContext";
 import InsufficientCreditsModal from "@/components/InsufficientCreditsModal";
 import PlanRequiredModal from "@/components/PlanRequiredModal";
-import { EVENT_INSUFFICIENT_CREDITS, EVENT_PLAN_REQUIRED } from "@/services/appEvents";
+import { EVENT_INSUFFICIENT_CREDITS, EVENT_PLAN_REQUIRED, emitWalletRefresh } from "@/services/appEvents";
 import EarnMoney from "./pages/EarnMoney.tsx";
 import ReelFeed from "./pages/ReelFeed.tsx";
+import StripeCheckoutStatusModal from "./components/StripeCheckoutStatusModal";
+import {
+  clearBillingSearchParams,
+  clearPendingStripeCheckout,
+  isStripeCheckoutSessionTemplate,
+  readPendingStripeCheckout,
+} from "./services/stripeCheckoutState";
 
 const PUBLIC_ROUTES = new Set<AppRoute>([
   AppRoute.HOME,
   AppRoute.COMMUNITY_STORE,
   AppRoute.REEL_FEED,
 ]);
+
+type CheckoutOverlayState =
+  | null
+  | {
+      phase: "confirming" | "success" | "notice" | "error";
+      title: string;
+      message: string;
+      mode?: "subscription" | "payment" | null;
+      actionLabel?: string;
+    };
 
 const AppContent: React.FC = () => {
   const [route, setRoute] = useState<AppRoute>(AppRoute.HOME);
@@ -65,6 +82,8 @@ const AppContent: React.FC = () => {
 
   const [planRequiredOpen, setPlanRequiredOpen] = useState(false);
   const [planRequiredMessage, setPlanRequiredMessage] = useState<string | null>(null);
+  const [checkoutOverlay, setCheckoutOverlay] = useState<CheckoutOverlayState>(null);
+  const [checkoutOverlayBusy, setCheckoutOverlayBusy] = useState(false);
 
   const { user, isLoading: authLoading } = useAuth();
   const healthUrl = apiUrl("/api/health");
@@ -219,6 +238,169 @@ const AppContent: React.FC = () => {
     setAuthModalOpen(false);
   }, [user?.id, route]);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const stripeStatus = params.get("stripe_status");
+    const sessionIdFromUrl = params.get("session_id");
+    const pendingCheckout = readPendingStripeCheckout();
+    const sessionId = isStripeCheckoutSessionTemplate(sessionIdFromUrl)
+      ? pendingCheckout?.sessionId || ""
+      : String(sessionIdFromUrl || "").trim() || pendingCheckout?.sessionId || "";
+
+    if (!stripeStatus) return;
+    if (stripeStatus === "success" && !user) return;
+
+    let cancelled = false;
+    const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+    (async () => {
+      if (stripeStatus === "cancel") {
+        clearPendingStripeCheckout();
+        setRoute(AppRoute.HOME);
+        setCheckoutOverlay({
+          phase: "notice",
+          title: "Checkout cancelado",
+          message: "No se realizó ningún cobro. Puedes volver a intentarlo cuando quieras.",
+          mode: pendingCheckout?.mode || null,
+          actionLabel: "OK",
+        });
+        clearBillingSearchParams();
+        return;
+      }
+
+      if (stripeStatus !== "success") {
+        clearPendingStripeCheckout();
+        clearBillingSearchParams();
+        return;
+      }
+
+      if (!sessionId) {
+        clearPendingStripeCheckout();
+        setRoute(AppRoute.HOME);
+        setCheckoutOverlay({
+          phase: "error",
+          title: "No pudimos confirmar la compra",
+          message: "Stripe cerró el checkout, pero no recibí el identificador de la sesión para validar la operación.",
+          mode: pendingCheckout?.mode || null,
+          actionLabel: "OK",
+        });
+        clearBillingSearchParams();
+        return;
+      }
+
+      setRoute(AppRoute.HOME);
+      setCheckoutOverlay({
+        phase: "confirming",
+        title: pendingCheckout?.mode === "payment" ? "Acreditando tus créditos" : "Confirmando tu compra",
+        message:
+          pendingCheckout?.mode === "payment"
+            ? "Estamos validando el pago y aplicando tus créditos extra. Esto tarda solo unos segundos."
+            : "Estamos validando el pago, activando tu plan y aplicando los cambios en tu cuenta.",
+        mode: pendingCheckout?.mode || null,
+      });
+
+      try {
+        for (let attempt = 0; attempt < 12; attempt += 1) {
+          const status = await getStripeCheckoutStatus(sessionId);
+          if (cancelled) return;
+
+          if (status?.fulfilled || status?.state === "fulfilled") {
+            clearPendingStripeCheckout();
+            emitWalletRefresh();
+            try {
+              const sub = await billingMe();
+              if (!cancelled) setSubscription(sub || null);
+            } catch {
+              // best effort
+            }
+            setCheckoutOverlay({
+              phase: "success",
+              title: status?.mode === "payment" ? "Créditos aplicados" : "Compra confirmada",
+              message:
+                status?.mode === "payment"
+                  ? "Tus créditos extra ya fueron acreditados correctamente."
+                  : "Tu plan ya está activo y los cambios se aplicaron correctamente en tu cuenta.",
+              mode: status?.mode || pendingCheckout?.mode || null,
+              actionLabel: "OK",
+            });
+            clearBillingSearchParams();
+            return;
+          }
+
+          if (status?.state === "expired") {
+            clearPendingStripeCheckout();
+            setCheckoutOverlay({
+              phase: "notice",
+              title: "La sesión expiró",
+              message: "La sesión de pago expiró antes de completarse. Puedes iniciar la compra de nuevo.",
+              mode: status?.mode || pendingCheckout?.mode || null,
+              actionLabel: "OK",
+            });
+            clearBillingSearchParams();
+            return;
+          }
+
+          await sleep(2000);
+        }
+
+        emitWalletRefresh();
+        try {
+          const sub = await billingMe();
+          if (!cancelled) setSubscription(sub || null);
+        } catch {
+          // best effort
+        }
+        setCheckoutOverlay({
+          phase: "notice",
+          title: "Seguimos sincronizando",
+          message: "El cobro ya terminó, pero todavía estamos cerrando la activación. Revisa de nuevo en unos segundos si no ves el cambio inmediatamente.",
+          mode: pendingCheckout?.mode || null,
+          actionLabel: "OK",
+        });
+        clearBillingSearchParams();
+      } catch (e: any) {
+        if (cancelled) return;
+        clearPendingStripeCheckout();
+        setCheckoutOverlay({
+          phase: "error",
+          title: "No pudimos confirmar la compra",
+          message: e?.message || "No se pudo confirmar el estado del pago con Stripe.",
+          mode: pendingCheckout?.mode || null,
+          actionLabel: "OK",
+        });
+        clearBillingSearchParams();
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
+  async function handleCheckoutOverlayAction() {
+    if (!checkoutOverlay) return;
+
+    if (checkoutOverlay.phase !== "success") {
+      setCheckoutOverlay(null);
+      return;
+    }
+
+    setCheckoutOverlayBusy(true);
+    try {
+      emitWalletRefresh();
+      try {
+        const sub = await billingMe();
+        setSubscription(sub || null);
+      } catch {
+        // best effort
+      }
+      setRoute(AppRoute.HOME);
+      setCheckoutOverlay(null);
+    } finally {
+      setCheckoutOverlayBusy(false);
+    }
+  }
+
   const handleConnect = async () => {
     setChecking(true);
     try {
@@ -339,6 +521,8 @@ const AppContent: React.FC = () => {
     }
   };
 
+  const hasStripeReturnParams = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("stripe_status");
+
   if (checking || authLoading) {
     return (
       <div className="relative w-full h-screen bg-black text-white flex items-center justify-center">
@@ -387,7 +571,7 @@ const AppContent: React.FC = () => {
     );
   }
 
-  if (user && !billingChecked) {
+  if (user && !billingChecked && !hasStripeReturnParams) {
     return (
       <div className="relative w-full h-screen bg-black text-white flex items-center justify-center">
         <div className="absolute inset-0 z-0 opacity-50">
@@ -440,6 +624,17 @@ const AppContent: React.FC = () => {
             window.localStorage.setItem("tales_account_tab", "plans");
             setRoute(AppRoute.PAYWALL);
           }}
+        />
+
+        <StripeCheckoutStatusModal
+          open={!!checkoutOverlay}
+          phase={checkoutOverlay?.phase || "notice"}
+          title={checkoutOverlay?.title || ""}
+          message={checkoutOverlay?.message || ""}
+          mode={checkoutOverlay?.mode || null}
+          busy={checkoutOverlayBusy}
+          actionLabel={checkoutOverlay?.actionLabel || "OK"}
+          onAction={handleCheckoutOverlayAction}
         />
       </WalletProvider>
     </GenerationQueueProvider>

@@ -431,7 +431,7 @@ export function createBillingRouter(ctx) {
           res,
           409,
           "STRIPE_MANAGED_SUBSCRIPTION",
-          "Tu suscripción activa se gestiona en Stripe. Usa el portal de facturación para cambiarla o cancelarla.",
+          "Tu suscripción activa se gestiona en Stripe. Las mejoras de plan se hacen dentro de la app y las cancelaciones desde el portal de Stripe.",
           { provider: "stripe", flow: "update", subscriptionId: current.subscription.stripeSubscriptionId || null }
         );
       }
@@ -581,7 +581,7 @@ export function createBillingRouter(ctx) {
             res,
             409,
             "STRIPE_MANAGED_SUBSCRIPTION",
-            "Tu suscripción activa se gestiona en Stripe. Usa el portal para programar el cambio o la cancelación.",
+            "Tu suscripción activa se gestiona en Stripe. Las mejoras de plan se hacen dentro de la app. Para bajar de plan, primero cancela desde el portal y luego compra el plan menor.",
             { provider: "stripe", flow: "update", subscriptionId: current.subscription?.stripeSubscriptionId || null }
           );
         }
@@ -600,7 +600,7 @@ export function createBillingRouter(ctx) {
           res,
           409,
           "STRIPE_MANAGED_SUBSCRIPTION",
-          "Tu suscripción activa se gestiona en Stripe. Usa el portal de facturación para cambiarla o cancelarla.",
+          "Tu suscripción activa se gestiona en Stripe. Las mejoras de plan se hacen dentro de la app y las cancelaciones desde el portal de Stripe.",
           { provider: "stripe", flow: "update", subscriptionId: current.subscription.stripeSubscriptionId || null }
         );
       }
@@ -672,6 +672,77 @@ export function createBillingRouter(ctx) {
         Number(e?.status) || 500,
         e?.code || "STRIPE_CHECKOUT_FAILED",
         e?.message || "No se pudo iniciar Stripe Checkout para créditos extra.",
+        e?.details || null
+      );
+    }
+  });
+
+  // POST /api/billing/stripe/subscription/change-plan { planSlug }
+  router.post("/billing/stripe/subscription/change-plan", async (req, res) => {
+    const { user, error } = await requireUser(req);
+    if (error) return res.status(401).json({ ok: false, error });
+    if (!requireStripeConfigured(res)) return;
+
+    try {
+      const planSlug = req.body?.planSlug ? String(req.body.planSlug) : "";
+      if (!planSlug) return err(res, 400, "BAD_REQUEST", "Falta planSlug.");
+
+      const current = await getActiveSubscription(user.id);
+      if (current.error) return err(res, 500, current.error.code, current.error.message, current.error.details);
+      if (!current.subscription?.stripeSubscriptionId || current.subscription?.provider !== "stripe") {
+        return err(
+          res,
+          409,
+          "NO_STRIPE_SUBSCRIPTION",
+          "No hay una suscripción activa de Stripe para cambiar."
+        );
+      }
+
+      const currentPlan = await fetchCurrentPlan(current.subscription);
+      const targetPlan = await fetchPlanBySlug(planSlug, { requireStripePrice: true });
+
+      if (currentPlan?.slug === targetPlan.slug) {
+        return err(res, 409, "PLAN_ALREADY_ACTIVE", "Ya estás en ese plan.", {
+          planSlug: targetPlan.slug,
+        });
+      }
+
+      if (currentPlan?.id && planPowerScore(targetPlan) < planPowerScore(currentPlan)) {
+        return err(
+          res,
+          403,
+          "DOWNGRADE_REQUIRES_CANCEL",
+          "Para bajar de plan, primero cancela tu suscripción actual y luego compra el plan menor.",
+          {
+            currentPlanSlug: currentPlan.slug,
+            requestedPlanSlug: targetPlan.slug,
+          }
+        );
+      }
+
+      const result = await stripeBilling.changeSubscriptionPlan({
+        user,
+        subscriptionId: current.subscription.stripeSubscriptionId,
+        plan: targetPlan,
+        idempotencyKey: `stripe-change-plan:${getIdempotencyKey(req)}`,
+      });
+
+      return res.json({
+        ok: true,
+        subscription: {
+          planSlug: result?.synced?.plan?.slug || targetPlan.slug,
+          planName: result?.synced?.plan?.name || targetPlan.name,
+          currentPeriodStart: result?.synced?.row?.current_period_start || null,
+          currentPeriodEnd: result?.synced?.row?.current_period_end || null,
+          cancelAtPeriodEnd: result?.synced?.row?.cancel_at_period_end === true,
+        },
+      });
+    } catch (e) {
+      return err(
+        res,
+        Number(e?.status) || 500,
+        e?.code || "STRIPE_CHANGE_PLAN_FAILED",
+        e?.message || "No se pudo actualizar la suscripción en Stripe.",
         e?.details || null
       );
     }

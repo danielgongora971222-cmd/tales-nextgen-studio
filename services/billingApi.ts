@@ -105,6 +105,16 @@ export async function createStripeTopupCheckout(productId: string) {
   });
 }
 
+
+export async function changeStripeSubscriptionPlan(planSlug: string) {
+  const headers = await authHeaders({ "x-idempotency-key": crypto.randomUUID() });
+  return request("/api/billing/stripe/subscription/change-plan", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ planSlug }),
+  });
+}
+
 export async function createStripePortal(flow: "general" | "cancel" | "payment_method_update" | "update" = "general") {
   const headers = await authHeaders({ "x-idempotency-key": crypto.randomUUID() });
   return request("/api/billing/stripe/portal", {

@@ -1,24 +1,16 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { billingMe, billingPlans, billingTopups, createStripePortal, createStripeSubscriptionCheckout, createStripeTopupCheckout, getStripeCheckoutStatus } from "../services/billingApi";
+import { billingMe, billingPlans, billingTopups, changeStripeSubscriptionPlan, createStripeSubscriptionCheckout, createStripeTopupCheckout } from "../services/billingApi";
 import { acceptLegal } from "../services/legalApi";
 import { useWallet } from "../contexts/WalletContext";
 import { validateReferralCode } from "../services/referralsApi";
 import ConfirmDollarPurchaseModal from "@/components/ConfirmDollarPurchaseModal";
 import StripeCheckoutStatusModal from "@/components/StripeCheckoutStatusModal";
+import { persistPendingStripeCheckout } from "../services/stripeCheckoutState";
 
 const TERMS_VERSION = "2026-03-03";
 const PRIVACY_VERSION = "2026-03-03";
 const AUTOPAY_VERSION = "2026-03-03";
-const STRIPE_CHECKOUT_SESSION_TEMPLATE = "{CHECKOUT_SESSION_ID}";
-const STRIPE_PENDING_CHECKOUT_STORAGE_KEY = "tales_pending_stripe_checkout";
-
 type TabKey = "plans" | "credits";
-
-type PendingCheckoutState = {
-  sessionId: string;
-  mode: "subscription" | "payment";
-  createdAt: number;
-};
 
 type ConfirmState =
   | null
@@ -177,67 +169,6 @@ function planMarketing(slug: string) {
   return { badge: "Plan", tagline: "Elige el plan que mejor se ajuste a tu ritmo.", bullets: [] };
 }
 
-function clearBillingSearchParams() {
-  if (typeof window === "undefined") return;
-  const url = new URL(window.location.href);
-  url.searchParams.delete("route");
-  url.searchParams.delete("stripe_status");
-  url.searchParams.delete("session_id");
-  window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
-}
-
-function isStripeCheckoutSessionTemplate(value: string | null | undefined) {
-  return String(value || "").trim() === STRIPE_CHECKOUT_SESSION_TEMPLATE;
-}
-
-function readPendingStripeCheckout(): PendingCheckoutState | null {
-  if (typeof window === "undefined") return null;
-
-  try {
-    const raw = window.localStorage.getItem(STRIPE_PENDING_CHECKOUT_STORAGE_KEY);
-    if (!raw) return null;
-
-    const parsed = JSON.parse(raw);
-    const sessionId = typeof parsed?.sessionId === "string" ? parsed.sessionId.trim() : "";
-    const mode = parsed?.mode === "payment" ? "payment" : parsed?.mode === "subscription" ? "subscription" : null;
-    const createdAt = Number(parsed?.createdAt || 0);
-
-    if (!sessionId || !mode) {
-      window.localStorage.removeItem(STRIPE_PENDING_CHECKOUT_STORAGE_KEY);
-      return null;
-    }
-
-    if (Number.isFinite(createdAt) && createdAt > 0) {
-      const ageMs = Date.now() - createdAt;
-      if (ageMs > 1000 * 60 * 60 * 48) {
-        window.localStorage.removeItem(STRIPE_PENDING_CHECKOUT_STORAGE_KEY);
-        return null;
-      }
-    }
-
-    return { sessionId, mode, createdAt: Number.isFinite(createdAt) && createdAt > 0 ? createdAt : Date.now() };
-  } catch {
-    window.localStorage.removeItem(STRIPE_PENDING_CHECKOUT_STORAGE_KEY);
-    return null;
-  }
-}
-
-function persistPendingStripeCheckout(sessionId: string, mode: PendingCheckoutState["mode"]) {
-  if (typeof window === "undefined") return;
-  const cleanSessionId = String(sessionId || "").trim();
-  if (!cleanSessionId) return;
-
-  window.localStorage.setItem(
-    STRIPE_PENDING_CHECKOUT_STORAGE_KEY,
-    JSON.stringify({ sessionId: cleanSessionId, mode, createdAt: Date.now() })
-  );
-}
-
-function clearPendingStripeCheckout() {
-  if (typeof window === "undefined") return;
-  window.localStorage.removeItem(STRIPE_PENDING_CHECKOUT_STORAGE_KEY);
-}
-
 export default function Paywall({
   onSubscribed,
   onContinueExploring,
@@ -301,133 +232,6 @@ export default function Paywall({
     setLoading(false);
   }
 
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const stripeStatus = params.get("stripe_status");
-    const sessionIdFromUrl = params.get("session_id");
-    const pendingCheckout = readPendingStripeCheckout();
-    const sessionId = isStripeCheckoutSessionTemplate(sessionIdFromUrl)
-      ? pendingCheckout?.sessionId || ""
-      : String(sessionIdFromUrl || "").trim() || pendingCheckout?.sessionId || "";
-
-    if (!stripeStatus) return;
-
-    let cancelled = false;
-
-    const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
-
-    (async () => {
-      if (stripeStatus === "cancel") {
-        clearPendingStripeCheckout();
-        setCheckoutOverlay({
-          phase: "notice",
-          title: "Pago cancelado",
-          message: "No se realizó ningún cobro. Puedes intentarlo de nuevo cuando quieras.",
-          mode: pendingCheckout?.mode || null,
-          actionLabel: "Entendido",
-        });
-        clearBillingSearchParams();
-        return;
-      }
-
-      if (stripeStatus !== "success") {
-        clearPendingStripeCheckout();
-        clearBillingSearchParams();
-        return;
-      }
-
-      if (!sessionId) {
-        clearPendingStripeCheckout();
-        setCheckoutOverlay({
-          phase: "error",
-          title: "No pudimos confirmar la compra",
-          message: "Stripe cerró el checkout, pero no recibí el identificador de la sesión para verificar la operación.",
-          mode: pendingCheckout?.mode || null,
-          actionLabel: "Entendido",
-        });
-        clearBillingSearchParams();
-        return;
-      }
-
-      setCheckoutOverlay({
-        phase: "confirming",
-        title: "Estamos confirmando tu compra...",
-        message:
-          pendingCheckout?.mode === "payment"
-            ? "Estamos validando el pago, acreditando tus créditos extra y aplicando los cambios en tu cuenta."
-            : "Estamos validando el pago, activando tu plan y aplicando los cambios en tu cuenta.",
-        mode: pendingCheckout?.mode || null,
-      });
-
-      try {
-        for (let attempt = 0; attempt < 12; attempt += 1) {
-          const status = await getStripeCheckoutStatus(sessionId);
-          if (cancelled) return;
-
-          if (status?.fulfilled || status?.state === "fulfilled") {
-            clearPendingStripeCheckout();
-            await refreshWallet();
-            await loadAll();
-            setCheckoutOverlay({
-              phase: "success",
-              title: "Tu compra ha sido confirmada",
-              message:
-                status?.mode === "payment"
-                  ? "Tus créditos extra ya fueron acreditados correctamente y los cambios han sido aplicados en tu cuenta."
-                  : "Tu compra ha sido exitosa, tu plan ya quedó activo y los cambios han sido aplicados correctamente en tu cuenta.",
-              mode: status?.mode || pendingCheckout?.mode || null,
-              actionLabel: "OK",
-            });
-            clearBillingSearchParams();
-            return;
-          }
-
-          if (status?.state === "expired") {
-            clearPendingStripeCheckout();
-            setCheckoutOverlay({
-              phase: "notice",
-              title: "La sesión expiró",
-              message: "La sesión de pago expiró antes de completarse. Puedes iniciar la compra de nuevo.",
-              mode: status?.mode || pendingCheckout?.mode || null,
-              actionLabel: "Entendido",
-            });
-            clearBillingSearchParams();
-            return;
-          }
-
-          await sleep(2000);
-        }
-
-        await refreshWallet();
-        await loadAll();
-        setCheckoutOverlay({
-          phase: "notice",
-          title: "Estamos terminando la sincronización",
-          message:
-            "Stripe ya cerró el checkout, pero la activación todavía se está sincronizando. Revisa de nuevo en unos segundos si no ves el cambio inmediatamente.",
-          mode: pendingCheckout?.mode || null,
-          actionLabel: "Entendido",
-        });
-        clearBillingSearchParams();
-      } catch (e: any) {
-        if (cancelled) return;
-        clearPendingStripeCheckout();
-        setCheckoutOverlay({
-          phase: "error",
-          title: "No pudimos confirmar la compra",
-          message: e?.message || "No se pudo confirmar el estado del pago con Stripe.",
-          mode: pendingCheckout?.mode || null,
-          actionLabel: "Entendido",
-        });
-        clearBillingSearchParams();
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // Auto-validación (debounced) del código de referido (Planes)
   useEffect(() => {
@@ -993,35 +797,38 @@ export default function Paywall({
               const savings = pricing.discountCents;
 
               const checkoutEnabled = p.checkoutEnabled !== false;
-              const stripeManagedChange = isStripeManagedSub && !isCurrent;
+              const stripeManagedUpgrade = isStripeManagedSub && !isCurrent && !!isHigher;
+              const stripeManagedDowngrade = isStripeManagedSub && !isCurrent && !!isLower;
 
               const ctaLabel = !checkoutEnabled
                 ? "Próximamente"
                 : isCurrent
                   ? "Plan actual"
-                  : stripeManagedChange
-                    ? "Cambiar en portal"
-                    : currentPlanPower !== null
-                      ? isHigher
-                        ? "Mejorar plan"
-                        : "No disponible"
-                      : "Suscribirme";
+                  : stripeManagedUpgrade
+                    ? "Mejorar ahora"
+                    : stripeManagedDowngrade
+                      ? "Cancelar y cambiar"
+                      : currentPlanPower !== null
+                        ? isHigher
+                          ? "Mejorar plan"
+                          : "No disponible"
+                        : "Suscribirme";
 
-              const ctaDisabled = !checkoutEnabled || isCurrent || (!stripeManagedChange && isLower);
+              const ctaDisabled = !checkoutEnabled || isCurrent || stripeManagedDowngrade || (!isStripeManagedSub && isLower);
 
               const factor = planPeriodFactor(p.billing_period);
               const creditsEqMonth = Number(p.plan_credits || 0) * factor;
 
               const showBest = bestValuePlanId && String(p.id) === String(bestValuePlanId);
 
-              const showDiscount = !stripeManagedChange && !!appliedReferral?.code && discountPct > 0 && pricing.discountedCents < pricing.base;
+              const showDiscount = !stripeManagedUpgrade && !stripeManagedDowngrade && !!appliedReferral?.code && discountPct > 0 && pricing.discountedCents < pricing.base;
 
               return (
                 <div
                   key={p.id}
                   className={[
                     "premium-hero-card plan-tier-card min-w-0 p-4 md:p-5 transition-transform duration-200 group",
-                    (!stripeManagedChange && isLower) ? "plan-tier-card--locked" : "",
+                    (stripeManagedDowngrade || (!isStripeManagedSub && isLower)) ? "plan-tier-card--locked" : "",
                     isCurrent ? "plan-tier-card--current" : "",
                   ]
                     .filter(Boolean)
@@ -1034,7 +841,7 @@ export default function Paywall({
                         <span className="plan-tier-pill">{mk.badge}</span>
                         {showBest ? <span className="plan-tier-pill plan-tier-pill--best">Mejor valor</span> : null}
                         {isCurrent ? <span className="plan-tier-pill plan-tier-pill--current">Actual</span> : null}
-                        {!stripeManagedChange && isLower ? <span className="plan-tier-pill">Bloqueado</span> : null}
+                        {stripeManagedDowngrade || (!isStripeManagedSub && isLower) ? <span className="plan-tier-pill">Bloqueado</span> : null}
                       </div>
 
                       <div className="text-xl md:text-2xl font-extrabold mt-3">{p.name}</div>
@@ -1136,10 +943,17 @@ export default function Paywall({
                         .join(" ")}
                       disabled={ctaDisabled}
                       onClick={() => {
-                        const noteParts: string[] = ["Suscripción recurrente hasta cancelación."];
-                        if (appliedReferral?.code) {
+                        const noteParts: string[] = [
+                          stripeManagedUpgrade
+                            ? "La mejora se aplica ahora mismo sobre tu suscripción activa."
+                            : "Suscripción recurrente hasta cancelación.",
+                        ];
+                        if (appliedReferral?.code && !stripeManagedUpgrade) {
                           const pct = clampPct(appliedReferral?.buyerDiscountPct);
                           noteParts.push(`Código: ${String(appliedReferral.code)} · Descuento: ${pct}% · Reward partner: ${clampPct(appliedReferral?.refRewardPct)}%`);
+                        }
+                        if (stripeManagedUpgrade && appliedReferral?.code) {
+                          noteParts.push("Los descuentos por referido solo aplican al alta inicial, no a mejoras sobre una suscripción ya activa.");
                         }
 
                         setConfirm({
@@ -1155,10 +969,34 @@ export default function Paywall({
 
                             window.localStorage.setItem("tales_account_tab", "plans");
 
-                            if (isStripeManagedSub) {
-                              window.localStorage.setItem("tales_profile_focus", "billing");
-                              const portal = await createStripePortal("update");
-                              window.location.assign(portal.url);
+                            if (stripeManagedUpgrade) {
+                              setCheckoutOverlay({
+                                phase: "confirming",
+                                title: "Actualizando tu plan",
+                                message: "Estamos aplicando la mejora, recalculando el cobro prorrateado y renovando tus créditos.",
+                                mode: "subscription",
+                              });
+
+                              try {
+                                await changeStripeSubscriptionPlan(p.slug);
+                                await refreshWallet();
+                                await loadAll();
+                                setCheckoutOverlay({
+                                  phase: "success",
+                                  title: "Plan mejorado con éxito",
+                                  message: "Tu nuevo plan ya está activo y tus créditos fueron actualizados correctamente.",
+                                  mode: "subscription",
+                                  actionLabel: "OK",
+                                });
+                              } catch (e: any) {
+                                setCheckoutOverlay({
+                                  phase: "error",
+                                  title: "No pudimos aplicar la mejora",
+                                  message: e?.message || "No se pudo actualizar el plan en Stripe.",
+                                  mode: "subscription",
+                                  actionLabel: "OK",
+                                });
+                              }
                               return;
                             }
 
@@ -1184,13 +1022,19 @@ export default function Paywall({
                       </div>
                     ) : null}
 
-                    {stripeManagedChange ? (
+                    {stripeManagedUpgrade ? (
                       <div className="text-[11px] text-white/55 mt-2 text-center">
-                        Tu suscripción actual se gestiona en Stripe. El cambio de plan se hace dentro del portal seguro.
+                        La mejora se aplica dentro de la app. Stripe recalcula el cobro prorrateado y renueva tu periodo automáticamente.
                       </div>
                     ) : null}
 
-                    {ctaDisabled && !stripeManagedChange && isLower ? (
+                    {ctaDisabled && stripeManagedDowngrade ? (
+                      <div className="text-[11px] text-white/55 mt-2 text-center">
+                        Para bajar de plan, primero cancela tu suscripción actual desde Settings → Billing y luego compra el plan menor.
+                      </div>
+                    ) : null}
+
+                    {ctaDisabled && !isStripeManagedSub && isLower ? (
                       <div className="text-[11px] text-white/55 mt-2 text-center">
                         Para bajar de plan, primero debes cancelar tu suscripción actual y luego comprar el plan menor.
                       </div>

@@ -121,9 +121,13 @@ function localStatusFromStripeStatus(status) {
   return "expired";
 }
 
-function firstPriceIdFromSubscription(subscription) {
+function firstSubscriptionItem(subscription) {
   const items = Array.isArray(subscription?.items?.data) ? subscription.items.data : [];
-  const first = items[0] || null;
+  return items[0] || null;
+}
+
+function firstPriceIdFromSubscription(subscription) {
+  const first = firstSubscriptionItem(subscription);
   const price = first?.price || null;
   return normalizeString(price?.id);
 }
@@ -424,8 +428,8 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
 
   async function createSubscriptionCheckoutSession({ req, user, plan, referralCode = "", referralDiscountPct = 0, idempotencyKey }) {
     const customerId = await ensureCustomerForUser(user);
-    const successUrl = buildAppReturnUrl(req, { route: "paywall", status: "success", sessionId: "{CHECKOUT_SESSION_ID}" });
-    const cancelUrl = buildAppReturnUrl(req, { route: "paywall", status: "cancel" });
+    const successUrl = buildAppReturnUrl(req, { route: "home", status: "success", sessionId: "{CHECKOUT_SESSION_ID}" });
+    const cancelUrl = buildAppReturnUrl(req, { route: "home", status: "cancel" });
 
     const cleanReferralCode = normalizeString(referralCode).toUpperCase();
     const couponId = getReferralCouponId(referralDiscountPct);
@@ -472,8 +476,8 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
 
   async function createTopupCheckoutSession({ req, user, product, idempotencyKey }) {
     const customerId = await ensureCustomerForUser(user);
-    const successUrl = buildAppReturnUrl(req, { route: "paywall", status: "success", sessionId: "{CHECKOUT_SESSION_ID}" });
-    const cancelUrl = buildAppReturnUrl(req, { route: "paywall", status: "cancel" });
+    const successUrl = buildAppReturnUrl(req, { route: "home", status: "success", sessionId: "{CHECKOUT_SESSION_ID}" });
+    const cancelUrl = buildAppReturnUrl(req, { route: "home", status: "cancel" });
 
     const metadata = {
       app_user_id: user.id,
@@ -558,6 +562,85 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
     }
 
     return stripeRequest("POST", "/v1/billing_portal/sessions", params);
+  }
+
+  async function changeSubscriptionPlan({ user, subscriptionId, plan, idempotencyKey }) {
+    const cleanSubscriptionId = normalizeStripeObjectId(subscriptionId);
+    if (!cleanSubscriptionId) {
+      throw makeError("NO_STRIPE_SUBSCRIPTION", "No hay una suscripción de Stripe activa para cambiar.");
+    }
+
+    if (!plan?.id || !normalizeString(plan?.stripe_price_id)) {
+      throw makeError(
+        "PLAN_CHECKOUT_NOT_AVAILABLE",
+        "El plan solicitado todavía no tiene Stripe Price ID configurado."
+      );
+    }
+
+    const subscription = await fetchSubscription(cleanSubscriptionId);
+    const stripeCustomerId = normalizeStripeObjectId(subscription?.customer);
+    const resolvedUserId = await resolveUserIdFromStripeContext({
+      metadata: subscription?.metadata || {},
+      stripeCustomerId,
+    });
+
+    if (!resolvedUserId || resolvedUserId !== user.id) {
+      throw makeError("FORBIDDEN", "Esta suscripción de Stripe no pertenece al usuario autenticado.", 403);
+    }
+
+    const currentItem = firstSubscriptionItem(subscription);
+    const currentItemId = normalizeStripeObjectId(currentItem?.id);
+    const currentPriceId = firstPriceIdFromSubscription(subscription);
+    if (!currentItemId || !currentPriceId) {
+      throw makeError("STRIPE_PRICE_NOT_FOUND", "No pude resolver el precio actual de la suscripción.", 500, {
+        stripeSubscriptionId: cleanSubscriptionId,
+      });
+    }
+
+    if (currentPriceId === normalizeString(plan.stripe_price_id)) {
+      throw makeError("PLAN_ALREADY_ACTIVE", "Ya estás en ese plan.", 409, {
+        stripeSubscriptionId: cleanSubscriptionId,
+        priceId: currentPriceId,
+      });
+    }
+
+    const metadata = {
+      ...(subscription?.metadata || {}),
+      app_user_id: user.id,
+      app_plan_id: String(plan.id),
+      app_plan_slug: String(plan.slug),
+    };
+
+    const updated = await stripeRequest(
+      "POST",
+      `/v1/subscriptions/${cleanSubscriptionId}`,
+      {
+        cancel_at_period_end: false,
+        billing_cycle_anchor: "now",
+        proration_behavior: "create_prorations",
+        payment_behavior: "error_if_incomplete",
+        metadata,
+        items: [
+          {
+            id: currentItemId,
+            price: plan.stripe_price_id,
+            quantity: Number(currentItem?.quantity || 1),
+          },
+        ],
+        expand: ["items.data.price"],
+      },
+      { idempotencyKey }
+    );
+
+    const synced = await syncSubscriptionFromStripe(updated);
+    const grant = await ensurePlanGrantForSyncedSubscription(synced, { applyReferral: false });
+
+    return {
+      ok: true,
+      subscription: updated,
+      synced,
+      grant,
+    };
   }
 
   async function fetchCheckoutSession(sessionId) {
@@ -1152,6 +1235,7 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
     createSubscriptionCheckoutSession,
     createTopupCheckoutSession,
     createPortalSession,
+    changeSubscriptionPlan,
     getCheckoutStatusForUser,
     handleWebhook,
     syncSubscriptionFromStripe,
