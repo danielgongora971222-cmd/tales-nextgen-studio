@@ -96,11 +96,17 @@ function firstPriceIdFromSubscription(subscription) {
   return normalizeString(price?.id);
 }
 
+const STRIPE_CHECKOUT_SESSION_TEMPLATE = "{CHECKOUT_SESSION_ID}";
+
 function normalizeStripeObjectId(value) {
   if (!value) return "";
   if (typeof value === "string") return value.trim();
   if (typeof value === "object" && value.id) return String(value.id).trim();
   return "";
+}
+
+function isCheckoutSessionTemplateValue(value) {
+  return normalizeString(value) === STRIPE_CHECKOUT_SESSION_TEMPLATE;
 }
 
 export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
@@ -164,7 +170,14 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
     if (status) url.searchParams.set("stripe_status", status);
     if (sessionId) url.searchParams.set("session_id", sessionId);
     if (portal) url.searchParams.set("portal", portal);
-    return url.toString();
+
+    const out = url.toString();
+    if (!isCheckoutSessionTemplateValue(sessionId)) return out;
+
+    return out.replace(
+      `session_id=${encodeURIComponent(STRIPE_CHECKOUT_SESSION_TEMPLATE)}`,
+      `session_id=${STRIPE_CHECKOUT_SESSION_TEMPLATE}`
+    );
   }
 
   async function stripeRequest(method, path, params = null, opts = {}) {
@@ -878,6 +891,14 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
   }
 
   async function getCheckoutStatusForUser({ userId, sessionId }) {
+    if (isCheckoutSessionTemplateValue(sessionId)) {
+      throw makeError(
+        "CHECKOUT_SESSION_PLACEHOLDER",
+        "Stripe devolvió el placeholder literal CHECKOUT_SESSION_ID en vez de la sesión real. Vuelve a iniciar el checkout con el bundle corregido.",
+        400
+      );
+    }
+
     const session = await fetchCheckoutSession(sessionId);
 
     const sessionUserId = await resolveUserIdFromStripeContext({

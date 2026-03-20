@@ -8,8 +8,16 @@ import ConfirmDollarPurchaseModal from "@/components/ConfirmDollarPurchaseModal"
 const TERMS_VERSION = "2026-03-03";
 const PRIVACY_VERSION = "2026-03-03";
 const AUTOPAY_VERSION = "2026-03-03";
+const STRIPE_CHECKOUT_SESSION_TEMPLATE = "{CHECKOUT_SESSION_ID}";
+const STRIPE_PENDING_CHECKOUT_STORAGE_KEY = "tales_pending_stripe_checkout";
 
 type TabKey = "plans" | "credits";
+
+type PendingCheckoutState = {
+  sessionId: string;
+  mode: "subscription" | "payment";
+  createdAt: number;
+};
 
 type ConfirmState =
   | null
@@ -167,6 +175,58 @@ function clearBillingSearchParams() {
   window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
 }
 
+function isStripeCheckoutSessionTemplate(value: string | null | undefined) {
+  return String(value || "").trim() === STRIPE_CHECKOUT_SESSION_TEMPLATE;
+}
+
+function readPendingStripeCheckout(): PendingCheckoutState | null {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const raw = window.localStorage.getItem(STRIPE_PENDING_CHECKOUT_STORAGE_KEY);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw);
+    const sessionId = typeof parsed?.sessionId === "string" ? parsed.sessionId.trim() : "";
+    const mode = parsed?.mode === "payment" ? "payment" : parsed?.mode === "subscription" ? "subscription" : null;
+    const createdAt = Number(parsed?.createdAt || 0);
+
+    if (!sessionId || !mode) {
+      window.localStorage.removeItem(STRIPE_PENDING_CHECKOUT_STORAGE_KEY);
+      return null;
+    }
+
+    if (Number.isFinite(createdAt) && createdAt > 0) {
+      const ageMs = Date.now() - createdAt;
+      if (ageMs > 1000 * 60 * 60 * 48) {
+        window.localStorage.removeItem(STRIPE_PENDING_CHECKOUT_STORAGE_KEY);
+        return null;
+      }
+    }
+
+    return { sessionId, mode, createdAt: Number.isFinite(createdAt) && createdAt > 0 ? createdAt : Date.now() };
+  } catch {
+    window.localStorage.removeItem(STRIPE_PENDING_CHECKOUT_STORAGE_KEY);
+    return null;
+  }
+}
+
+function persistPendingStripeCheckout(sessionId: string, mode: PendingCheckoutState["mode"]) {
+  if (typeof window === "undefined") return;
+  const cleanSessionId = String(sessionId || "").trim();
+  if (!cleanSessionId) return;
+
+  window.localStorage.setItem(
+    STRIPE_PENDING_CHECKOUT_STORAGE_KEY,
+    JSON.stringify({ sessionId: cleanSessionId, mode, createdAt: Date.now() })
+  );
+}
+
+function clearPendingStripeCheckout() {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(STRIPE_PENDING_CHECKOUT_STORAGE_KEY);
+}
+
 export default function Paywall({
   onSubscribed,
   onContinueExploring,
@@ -233,7 +293,11 @@ export default function Paywall({
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const stripeStatus = params.get("stripe_status");
-    const sessionId = params.get("session_id");
+    const sessionIdFromUrl = params.get("session_id");
+    const pendingCheckout = readPendingStripeCheckout();
+    const sessionId = isStripeCheckoutSessionTemplate(sessionIdFromUrl)
+      ? pendingCheckout?.sessionId || ""
+      : String(sessionIdFromUrl || "").trim() || pendingCheckout?.sessionId || "";
 
     if (!stripeStatus) return;
 
@@ -243,12 +307,21 @@ export default function Paywall({
 
     (async () => {
       if (stripeStatus === "cancel") {
+        clearPendingStripeCheckout();
         setCheckoutMessage("Pago cancelado. No se realizó ningún cobro.");
         clearBillingSearchParams();
         return;
       }
 
-      if (stripeStatus !== "success" || !sessionId) {
+      if (stripeStatus !== "success") {
+        clearPendingStripeCheckout();
+        clearBillingSearchParams();
+        return;
+      }
+
+      if (!sessionId) {
+        clearPendingStripeCheckout();
+        setError("Stripe cerró el checkout, pero no recibí el identificador de la sesión para confirmar la compra.");
         clearBillingSearchParams();
         return;
       }
@@ -262,6 +335,7 @@ export default function Paywall({
           if (cancelled) return;
 
           if (status?.fulfilled || status?.state === "fulfilled") {
+            clearPendingStripeCheckout();
             await refreshWallet();
             await loadAll();
             setCheckoutMessage(
@@ -275,6 +349,7 @@ export default function Paywall({
           }
 
           if (status?.state === "expired") {
+            clearPendingStripeCheckout();
             setCheckoutMessage("La sesión de pago expiró antes de completarse.");
             clearBillingSearchParams();
             return;
@@ -291,6 +366,7 @@ export default function Paywall({
         clearBillingSearchParams();
       } catch (e: any) {
         if (cancelled) return;
+        clearPendingStripeCheckout();
         setError(e?.message || "No se pudo confirmar el estado del pago con Stripe.");
         clearBillingSearchParams();
       } finally {
@@ -1022,6 +1098,7 @@ export default function Paywall({
                             }
 
                             const checkout = await createStripeSubscriptionCheckout(p.slug, appliedReferral?.code || undefined);
+                            persistPendingStripeCheckout(checkout.sessionId, "subscription");
                             window.location.assign(checkout.url);
                           },
                         });
@@ -1140,6 +1217,7 @@ export default function Paywall({
                             await acceptLegal({ termsVersion: TERMS_VERSION, privacyVersion: PRIVACY_VERSION, autopayVersion: AUTOPAY_VERSION });
                             window.localStorage.setItem("tales_account_tab", "credits");
                             const checkout = await createStripeTopupCheckout(t.id);
+                            persistPendingStripeCheckout(checkout.sessionId, "payment");
                             window.location.assign(checkout.url);
                           },
                         });
