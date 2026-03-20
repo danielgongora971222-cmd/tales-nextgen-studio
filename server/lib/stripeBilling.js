@@ -188,10 +188,10 @@ function isStripeSubscriptionTerminal(subscriptionLike) {
 function shouldForceImmediateCancellation(subscriptionLike) {
   if (!subscriptionLike || typeof subscriptionLike !== "object") return false;
   if (isStripeSubscriptionTerminal(subscriptionLike)) return false;
-  if (subscriptionLike?.cancel_at_period_end !== true) return false;
 
   const cancellationReason = normalizeString(subscriptionLike?.cancellation_details?.reason).toLowerCase();
   return (
+    subscriptionLike?.cancel_at_period_end === true ||
     cancellationReason === "cancellation_requested" ||
     hasPositiveUnixTimestamp(subscriptionLike?.canceled_at) ||
     hasPositiveUnixTimestamp(subscriptionLike?.cancel_at)
@@ -244,7 +244,7 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
     return "";
   }
 
-  function buildAppReturnUrl(req, { route = "paywall", status = null, sessionId = null, portal = null } = {}) {
+  function buildAppReturnUrl(req, { route = "paywall", status = null, sessionId = null, portal = null, portalFlow = null } = {}) {
     const base = resolveAppBaseUrl(req);
     if (!base) {
       throw makeError(
@@ -259,6 +259,7 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
     if (status) url.searchParams.set("stripe_status", status);
     if (sessionId) url.searchParams.set("session_id", sessionId);
     if (portal) url.searchParams.set("portal", portal);
+    if (portalFlow) url.searchParams.set("portal_flow", portalFlow);
 
     const out = url.toString();
     if (!isCheckoutSessionTemplateValue(sessionId)) return out;
@@ -545,7 +546,7 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
 
   async function createPortalSession({ req, user, subscriptionId = "", flow = "general" }) {
     const customerId = await ensureCustomerForUser(user);
-    const returnUrl = buildAppReturnUrl(req, { route: "profile", portal: "return" });
+    const returnUrl = buildAppReturnUrl(req, { route: "profile", portal: "return", portalFlow: flow });
 
     const params = {
       customer: customerId,
@@ -850,9 +851,41 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
       });
     }
 
-    const activeAfter = await billing.getActiveSubscription(userId);
+    let activeAfter = await billing.getActiveSubscription(userId);
     if (activeAfter.error) {
       throw makeError("DB_RPC_FAILED", activeAfter.error.message, 500, activeAfter.error.details || null);
+    }
+
+    if (!activeAfter.subscription && keepId) {
+      const recoveredKeep = await syncSubscriptionFromStripe(await fetchSubscription(keepId));
+      if (recoveredKeep?.userId !== userId) {
+        throw makeError(
+          "STRIPE_ACTIVE_SUBSCRIPTION_USER_MISMATCH",
+          "La suscripción activa recuperada de Stripe no pertenece al usuario esperado.",
+          500,
+          { userId, keepStripeSubscriptionId: keepId, recoveredUserId: recoveredKeep?.userId || null }
+        );
+      }
+
+      activeAfter = await billing.getActiveSubscription(userId);
+      if (activeAfter.error) {
+        throw makeError("DB_RPC_FAILED", activeAfter.error.message, 500, activeAfter.error.details || null);
+      }
+    }
+
+    if (!activeAfter.subscription && activeLike.length) {
+      throw makeError(
+        "STRIPE_ACTIVE_SUBSCRIPTION_SYNC_FAILED",
+        "Stripe reporta una suscripción activa, pero la app no pudo dejarla activa localmente.",
+        500,
+        {
+          userId,
+          keepStripeSubscriptionId: keepId || null,
+          remoteActiveSubscriptionIds: activeLike
+            .map((subscription) => normalizeStripeObjectId(subscription))
+            .filter(Boolean),
+        }
+      );
     }
 
     if (!activeAfter.subscription) {
@@ -981,9 +1014,16 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
 
     const startMs = new Date(resolvedPeriodStart).getTime();
     const endMs = new Date(resolvedPeriodEnd).getTime();
+    const nowMs = Date.now();
     if (localStatus !== "active" && terminatedAt) {
       resolvedPeriodEnd = terminatedAt;
-    } else if (!resolvedPeriodEnd || !Number.isFinite(endMs) || !Number.isFinite(startMs) || endMs <= startMs) {
+    } else if (
+      !resolvedPeriodEnd ||
+      !Number.isFinite(endMs) ||
+      !Number.isFinite(startMs) ||
+      endMs <= startMs ||
+      (localStatus === "active" && endMs <= nowMs)
+    ) {
       resolvedPeriodEnd = addBillingPeriodToIso(resolvedPeriodStart, plan?.billing_period);
     }
 
@@ -996,7 +1036,7 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
       current_period_end: resolvedPeriodEnd,
       stripe_customer_id: stripeCustomerId || null,
       stripe_subscription_id: stripeSubscriptionId,
-      cancel_at_period_end: subscription?.cancel_at_period_end === true,
+      cancel_at_period_end: localStatus === "active" && subscription?.cancel_at_period_end === true,
       canceled_at: unixToIso(subscription?.canceled_at),
       ended_at: unixToIso(subscription?.ended_at),
       updated_at: new Date().toISOString(),

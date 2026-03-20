@@ -37,6 +37,7 @@ function clearProfileSearchParams() {
   const url = new URL(window.location.href);
   url.searchParams.delete("route");
   url.searchParams.delete("portal");
+  url.searchParams.delete("portal_flow");
   window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
 }
 
@@ -91,15 +92,51 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
     const params = new URLSearchParams(window.location.search);
     if (params.get("portal") !== "return") return;
 
+    const portalFlow = params.get("portal_flow") || "general";
     let cancelled = false;
+    const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
     (async () => {
       setPortalMessage("Actualizando tu estado de facturación...");
       try {
-        await refreshWallet();
-        await loadAll({ syncStripe: true });
+        let settled = false;
+        let lastStillHasStripePlan = false;
+        let lastCancelAtPeriodEnd = false;
+
+        for (let attempt = 0; attempt < 4; attempt += 1) {
+          if (cancelled) return;
+
+          const result = await loadAll({ syncStripe: true, strictSync: true });
+          await refreshWallet();
+          if (cancelled) return;
+
+          const currentSub = result?.subscription || null;
+          const stillHasStripePlan = currentSub?.provider === "stripe" && !!currentSub?.stripeSubscriptionId;
+          lastStillHasStripePlan = stillHasStripePlan;
+          lastCancelAtPeriodEnd = currentSub?.cancelAtPeriodEnd === true;
+
+          if (portalFlow === "cancel" && !stillHasStripePlan) {
+            settled = true;
+            break;
+          }
+
+          if (portalFlow !== "cancel" && attempt === 3) {
+            settled = true;
+            break;
+          }
+
+          await sleep(1400);
+        }
+
         if (cancelled) return;
-        setPortalMessage("Stripe terminó correctamente y tu cuenta ya quedó sincronizada.");
+        if (portalFlow !== "cancel" && lastStillHasStripePlan && lastCancelAtPeriodEnd) {
+          settled = false;
+        }
+        setPortalMessage(
+          settled
+            ? "Stripe terminó correctamente y tu cuenta ya quedó sincronizada."
+            : "Stripe ya respondió, pero la app sigue validando el estado final. Revisa de nuevo en unos segundos."
+        );
       } catch (e: any) {
         if (cancelled) return;
         setErr(e?.message || "No se pudo sincronizar el estado tras volver de Stripe.");
@@ -135,11 +172,15 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
     }
   }
 
-  async function loadAll(opts?: { syncStripe?: boolean }) {
+  async function loadAll(opts?: { syncStripe?: boolean; strictSync?: boolean }) {
     setLoading(true);
     setErr("");
 
-    const [pR, sR, plansR] = await Promise.allSettled([profileMe(), billingMe(opts?.syncStripe === true), billingPlans()]);
+    const [pR, sR, plansR] = await Promise.allSettled([
+      profileMe(),
+      billingMe(opts?.syncStripe === true, opts?.strictSync === true),
+      billingPlans(),
+    ]);
 
     if (pR.status === "fulfilled") {
       setMe(pR.value);
@@ -164,6 +205,12 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
     if (plansR.status === "fulfilled") setAvailablePlans(Array.isArray(plansR.value) ? plansR.value : []);
 
     setLoading(false);
+
+    return {
+      profile: pR.status === "fulfilled" ? pR.value : null,
+      subscription: sR.status === "fulfilled" ? sR.value || null : null,
+      plans: plansR.status === "fulfilled" ? (Array.isArray(plansR.value) ? plansR.value : []) : [],
+    };
   }
 
   async function saveName() {
@@ -419,7 +466,7 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
       await mockCancel({ wipeGenerationCredits });
       emitWalletRefresh();
       await refreshWallet();
-      setSub((await billingMe()) || null);
+      setSub((await billingMe(false, false)) || null);
     } catch (e: any) {
       setErr(e?.message || "No se pudo cancelar el plan.");
     }
@@ -440,7 +487,7 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
       await ownerForceSelfCancelLocal({ wipeGenerationCredits });
       emitWalletRefresh();
       await refreshWallet();
-      setSub((await billingMe()) || null);
+      setSub((await billingMe(false, false)) || null);
     } catch (e: any) {
       setErr(e?.message || "No se pudo forzar la cancelación local.");
     }

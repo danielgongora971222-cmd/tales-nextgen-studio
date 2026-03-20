@@ -34,10 +34,13 @@ async function request(path: string, init?: RequestInit) {
   return data;
 }
 
-export async function billingMe(syncStripe = false) {
+export async function billingMe(syncStripe = false, strictSync = false) {
   const headers = await authHeaders();
-  const qs = syncStripe ? "?syncStripe=1" : "";
-  const data = await request(`/api/billing/me${qs}`, { method: "GET", headers });
+  const params = new URLSearchParams();
+  if (syncStripe) params.set("syncStripe", "1");
+  if (strictSync) params.set("strictSync", "1");
+  const qs = params.toString();
+  const data = await request(`/api/billing/me${qs ? `?${qs}` : ""}`, { method: "GET", headers });
   return data.subscription;
 }
 

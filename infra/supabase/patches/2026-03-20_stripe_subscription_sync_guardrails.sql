@@ -1,0 +1,138 @@
+begin;
+
+create or replace function public.wallet_grant_plan_credits(
+  p_user_id uuid,
+  p_plan_id uuid,
+  p_period_start timestamptz,
+  p_period_end timestamptz,
+  p_idempotency_key text default null
+) returns table (
+  ledger_id uuid,
+  gen_plan_credits integer,
+  gen_topup_credits integer,
+  gen_bonus_credits integer
+)
+language plpgsql
+as $$
+declare
+  v_ledger_id uuid;
+  v_plan_credits integer := 0;
+  v_bonus_credits integer := 0;
+  v_bal public.wallet_balances%rowtype;
+  v_before_plan integer := 0;
+  v_before_topup integer := 0;
+  v_before_bonus integer := 0;
+begin
+  if p_idempotency_key is not null and length(trim(p_idempotency_key)) > 0 then
+    select id into v_ledger_id
+    from public.wallet_ledger
+    where user_id = p_user_id
+      and idempotency_key = p_idempotency_key
+    limit 1;
+
+    if v_ledger_id is not null then
+      select * into v_bal
+      from public.wallet_balances
+      where user_id = p_user_id;
+
+      return query
+      select
+        v_ledger_id,
+        coalesce(v_bal.gen_plan_credits, 0),
+        coalesce(v_bal.gen_topup_credits, 0),
+        coalesce(v_bal.gen_bonus_credits, 0);
+      return;
+    end if;
+  end if;
+
+  if not exists (
+    select 1
+    from public.billing_subscriptions
+    where user_id = p_user_id
+      and status = 'active'
+      and plan_id = p_plan_id
+      and current_period_end > now()
+  ) then
+    raise exception 'NO_ACTIVE_SUBSCRIPTION';
+  end if;
+
+  select
+    coalesce(plan_credits, 0),
+    coalesce(bonus_credits, 0)
+  into
+    v_plan_credits,
+    v_bonus_credits
+  from public.billing_plans
+  where id = p_plan_id
+  limit 1;
+
+  if not found then
+    raise exception 'PLAN_NOT_FOUND';
+  end if;
+
+  select * into v_bal
+  from public.wallet_balances
+  where user_id = p_user_id
+  for update;
+
+  if not found then
+    insert into public.wallet_balances(user_id) values (p_user_id);
+    select * into v_bal
+    from public.wallet_balances
+    where user_id = p_user_id
+    for update;
+  end if;
+
+  v_before_plan := coalesce(v_bal.gen_plan_credits, 0);
+  v_before_topup := coalesce(v_bal.gen_topup_credits, 0);
+  v_before_bonus := coalesce(v_bal.gen_bonus_credits, 0);
+
+  update public.wallet_balances
+    set gen_plan_credits = v_plan_credits,
+        gen_bonus_credits = v_bonus_credits,
+        updated_at = now()
+  where user_id = p_user_id
+  returning * into v_bal;
+
+  insert into public.wallet_ledger(
+    user_id,
+    entry_type,
+    amount_credits,
+    ref_type,
+    ref_id,
+    idempotency_key,
+    meta
+  ) values (
+    p_user_id,
+    'plan_grant',
+    0,
+    'plan',
+    p_plan_id,
+    p_idempotency_key,
+    jsonb_build_object(
+      'period_start', p_period_start,
+      'period_end', p_period_end,
+      'before_plan_credits', v_before_plan,
+      'before_topup_credits', v_before_topup,
+      'before_bonus_credits', v_before_bonus,
+      'after_plan_credits', coalesce(v_bal.gen_plan_credits, 0),
+      'after_topup_credits', coalesce(v_bal.gen_topup_credits, 0),
+      'after_bonus_credits', coalesce(v_bal.gen_bonus_credits, 0),
+      'note', 'Plan purchase/reset: keep topups, replace plan+bonus buckets with new plan offer'
+    )
+  )
+  returning id into v_ledger_id;
+
+  return query
+  select
+    v_ledger_id,
+    coalesce(v_bal.gen_plan_credits, 0),
+    coalesce(v_bal.gen_topup_credits, 0),
+    coalesce(v_bal.gen_bonus_credits, 0);
+end;
+$$;
+
+revoke all on function public.wallet_grant_plan_credits(uuid, uuid, timestamptz, timestamptz, text) from PUBLIC, anon, authenticated;
+grant execute on function public.wallet_grant_plan_credits(uuid, uuid, timestamptz, timestamptz, text) to service_role;
+
+commit;

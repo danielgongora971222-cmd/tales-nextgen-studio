@@ -381,14 +381,18 @@ export function createBillingRouter(ctx) {
     return current.subscription || null;
   }
 
-  async function reconcileStripeCustomerState(userId, logContext = "billing") {
-    if (!stripeBilling?.isConfigured?.()) return;
+  async function reconcileStripeCustomerState(userId, logContext = "billing", opts = {}) {
+    if (!stripeBilling?.isConfigured?.()) return null;
+
+    const throwOnError = opts?.throwOnError === true;
 
     try {
-      await stripeBilling.reconcileCustomerSubscriptionsForUser(userId, { enforceSingleActive: true });
+      return await stripeBilling.reconcileCustomerSubscriptionsForUser(userId, { enforceSingleActive: true });
     } catch (syncError) {
       // eslint-disable-next-line no-console
       console.warn(`reconcileCustomerSubscriptionsForUser failed in ${logContext}:`, String(syncError?.message || syncError));
+      if (throwOnError) throw syncError;
+      return null;
     }
   }
 
@@ -398,6 +402,7 @@ export function createBillingRouter(ctx) {
     if (error) return res.status(401).json({ ok: false, error });
 
     const forceSyncStripe = normalizeString(req.query?.syncStripe || "") === "1";
+    const strictSyncStripe = normalizeString(req.query?.strictSync || "") === "1";
 
     let r = await getActiveSubscription(user.id);
     if (r.error) return err(res, 500, r.error.code, r.error.message, r.error.details);
@@ -405,7 +410,18 @@ export function createBillingRouter(ctx) {
     const hasStripeManagedSubscription = r.subscription?.provider === "stripe" && !!r.subscription?.stripeSubscriptionId;
 
     if ((forceSyncStripe || !r.subscription || hasStripeManagedSubscription) && stripeBilling?.isConfigured?.()) {
-      await reconcileStripeCustomerState(user.id, "/billing/me");
+      try {
+        await reconcileStripeCustomerState(user.id, "/billing/me", { throwOnError: strictSyncStripe });
+      } catch (syncError) {
+        return err(
+          res,
+          Number(syncError?.status) || 500,
+          syncError?.code || "STRIPE_SYNC_FAILED",
+          syncError?.message || "No se pudo sincronizar el estado de Stripe.",
+          syncError?.details || null
+        );
+      }
+
       r = await getActiveSubscription(user.id);
       if (r.error) return err(res, 500, r.error.code, r.error.message, r.error.details);
     }
