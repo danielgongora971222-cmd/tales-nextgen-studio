@@ -85,3 +85,39 @@ export async function mockCancel(opts?: { wipeGenerationCredits?: boolean }) {
   emitWalletRefresh();
   return data;
 }
+
+export async function createStripeSubscriptionCheckout(planSlug: string, referralCode?: string) {
+  const headers = await authHeaders({ "x-idempotency-key": crypto.randomUUID() });
+  const clean = referralCode ? referralCode.trim() : "";
+  return request("/api/billing/stripe/checkout/subscription", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ planSlug, referralCode: clean || null }),
+  });
+}
+
+export async function createStripeTopupCheckout(productId: string) {
+  const headers = await authHeaders({ "x-idempotency-key": crypto.randomUUID() });
+  return request("/api/billing/stripe/checkout/topup", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ productId }),
+  });
+}
+
+export async function createStripePortal(flow: "general" | "cancel" | "payment_method_update" | "update" = "general") {
+  const headers = await authHeaders({ "x-idempotency-key": crypto.randomUUID() });
+  return request("/api/billing/stripe/portal", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ flow }),
+  });
+}
+
+export async function getStripeCheckoutStatus(sessionId: string) {
+  const headers = await authHeaders();
+  return request(`/api/billing/stripe/checkout/status?sessionId=${encodeURIComponent(sessionId)}`, {
+    method: "GET",
+    headers,
+  });
+}

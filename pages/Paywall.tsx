@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { billingMe, billingPlans, billingTopups, mockSubscribe, mockTopup } from "../services/billingApi";
+import { billingMe, billingPlans, billingTopups, createStripePortal, createStripeSubscriptionCheckout, createStripeTopupCheckout, getStripeCheckoutStatus } from "../services/billingApi";
 import { acceptLegal } from "../services/legalApi";
 import { useWallet } from "../contexts/WalletContext";
 import { validateReferralCode } from "../services/referralsApi";
@@ -158,6 +158,15 @@ function planMarketing(slug: string) {
   return { badge: "Plan", tagline: "Elige el plan que mejor se ajuste a tu ritmo.", bullets: [] };
 }
 
+function clearBillingSearchParams() {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  url.searchParams.delete("route");
+  url.searchParams.delete("stripe_status");
+  url.searchParams.delete("session_id");
+  window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
 export default function Paywall({
   onSubscribed,
   onContinueExploring,
@@ -183,6 +192,8 @@ export default function Paywall({
   const [referralInput, setReferralInput] = useState("");
   const [referralCheck, setReferralCheck] = useState<any>({ state: "idle" });
   const [appliedReferral, setAppliedReferral] = useState<any | null>(null);
+  const [checkoutMessage, setCheckoutMessage] = useState<string | null>(null);
+  const [checkoutSyncing, setCheckoutSyncing] = useState(false);
 
   const availableCredits = Number(wallet?.generationCredits ?? 0);
   const planCredits = Number(wallet?.gen_plan_credits ?? 0);
@@ -218,6 +229,80 @@ export default function Paywall({
     if (err) setError(err);
     setLoading(false);
   }
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const stripeStatus = params.get("stripe_status");
+    const sessionId = params.get("session_id");
+
+    if (!stripeStatus) return;
+
+    let cancelled = false;
+
+    const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+    (async () => {
+      if (stripeStatus === "cancel") {
+        setCheckoutMessage("Pago cancelado. No se realizó ningún cobro.");
+        clearBillingSearchParams();
+        return;
+      }
+
+      if (stripeStatus !== "success" || !sessionId) {
+        clearBillingSearchParams();
+        return;
+      }
+
+      setCheckoutSyncing(true);
+      setCheckoutMessage("Estamos confirmando tu pago con Stripe y activando tu compra...");
+
+      try {
+        for (let attempt = 0; attempt < 12; attempt += 1) {
+          const status = await getStripeCheckoutStatus(sessionId);
+          if (cancelled) return;
+
+          if (status?.fulfilled || status?.state === "fulfilled") {
+            await refreshWallet();
+            await loadAll();
+            setCheckoutMessage(
+              status?.mode === "payment"
+                ? "Tus créditos extra ya fueron acreditados correctamente."
+                : "Tu plan ya quedó activo correctamente."
+            );
+            clearBillingSearchParams();
+            await onSubscribed();
+            return;
+          }
+
+          if (status?.state === "expired") {
+            setCheckoutMessage("La sesión de pago expiró antes de completarse.");
+            clearBillingSearchParams();
+            return;
+          }
+
+          await sleep(2000);
+        }
+
+        await refreshWallet();
+        await loadAll();
+        setCheckoutMessage(
+          "Stripe ya cerró el checkout, pero la activación todavía se está sincronizando. Revisa de nuevo en unos segundos si no ves el cambio inmediatamente."
+        );
+        clearBillingSearchParams();
+      } catch (e: any) {
+        if (cancelled) return;
+        setError(e?.message || "No se pudo confirmar el estado del pago con Stripe.");
+        clearBillingSearchParams();
+      } finally {
+        if (!cancelled) setCheckoutSyncing(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Auto-validación (debounced) del código de referido (Planes)
   useEffect(() => {
@@ -277,7 +362,9 @@ export default function Paywall({
 
 
   const currentPlanSlug = sub?.planSlug || null;
+  const isStripeManagedSub = sub?.provider === "stripe" && !!sub?.stripeSubscriptionId;
   const heroPlanName = sub?.planName || "Ninguno";
+  const heroNextLabel = sub?.cancelAtPeriodEnd ? "Acceso hasta" : "Next renewal";
   const heroNext = sub?.currentPeriodEnd ? new Date(sub.currentPeriodEnd).toLocaleString() : "—";
 
   const currentPlan = useMemo(() => {
@@ -395,6 +482,15 @@ export default function Paywall({
       </div>
 
       {error ? <div className="mb-4 p-3 rounded-xl bg-red-500/20 border border-red-500/40">{error}</div> : null}
+      {checkoutMessage ? (
+        <div
+          className={`mb-4 p-3 rounded-xl border ${
+            checkoutSyncing ? "bg-sky-500/15 border-sky-400/30 text-sky-100" : "bg-emerald-500/15 border-emerald-400/30 text-emerald-100"
+          }`}
+        >
+          {checkoutMessage}
+        </div>
+      ) : null}
 
       {/* Hero cards */}
       <div className="-mx-3 mb-6 overflow-x-auto overscroll-x-contain px-3 pb-2 md:mx-0 md:px-0 md:pb-0">
@@ -411,7 +507,7 @@ export default function Paywall({
               </div>
 
               <div className="text-xl md:text-2xl font-extrabold mt-3 truncate">{heroPlanName}</div>
-              <div className="text-xs md:text-sm text-white/60 mt-2">Next renewal: {heroNext}</div>
+              <div className="text-xs md:text-sm text-white/60 mt-2">{heroNextLabel}: {heroNext}</div>
             </div>
 
             <div className="premium-hero-icon" aria-hidden="true" title="Plan">
@@ -755,29 +851,36 @@ export default function Paywall({
               const priceWas = moneyUSD(pricing.base);
               const savings = pricing.discountCents;
 
-              const ctaLabel = isCurrent
-                ? "Plan actual"
-                : currentPlanPower !== null
-                  ? isHigher
-                    ? "Mejorar plan"
-                    : "No disponible"
-                  : "Suscribirme";
+              const checkoutEnabled = p.checkoutEnabled !== false;
+              const stripeManagedChange = isStripeManagedSub && !isCurrent;
 
-              const ctaDisabled = isCurrent || isLower;
+              const ctaLabel = !checkoutEnabled
+                ? "Próximamente"
+                : isCurrent
+                  ? "Plan actual"
+                  : stripeManagedChange
+                    ? "Cambiar en portal"
+                    : currentPlanPower !== null
+                      ? isHigher
+                        ? "Mejorar plan"
+                        : "No disponible"
+                      : "Suscribirme";
+
+              const ctaDisabled = !checkoutEnabled || isCurrent || (!stripeManagedChange && isLower);
 
               const factor = planPeriodFactor(p.billing_period);
               const creditsEqMonth = Number(p.plan_credits || 0) * factor;
 
               const showBest = bestValuePlanId && String(p.id) === String(bestValuePlanId);
 
-              const showDiscount = !!appliedReferral?.code && discountPct > 0 && pricing.discountedCents < pricing.base;
+              const showDiscount = !stripeManagedChange && !!appliedReferral?.code && discountPct > 0 && pricing.discountedCents < pricing.base;
 
               return (
                 <div
                   key={p.id}
                   className={[
                     "premium-hero-card plan-tier-card min-w-0 p-4 md:p-5 transition-transform duration-200 group",
-                    isLower ? "plan-tier-card--locked" : "",
+                    (!stripeManagedChange && isLower) ? "plan-tier-card--locked" : "",
                     isCurrent ? "plan-tier-card--current" : "",
                   ]
                     .filter(Boolean)
@@ -790,7 +893,7 @@ export default function Paywall({
                         <span className="plan-tier-pill">{mk.badge}</span>
                         {showBest ? <span className="plan-tier-pill plan-tier-pill--best">Mejor valor</span> : null}
                         {isCurrent ? <span className="plan-tier-pill plan-tier-pill--current">Actual</span> : null}
-                        {isLower ? <span className="plan-tier-pill">Bloqueado</span> : null}
+                        {!stripeManagedChange && isLower ? <span className="plan-tier-pill">Bloqueado</span> : null}
                       </div>
 
                       <div className="text-xl md:text-2xl font-extrabold mt-3">{p.name}</div>
@@ -909,10 +1012,17 @@ export default function Paywall({
                               autopayVersion: AUTOPAY_VERSION,
                             });
 
-                            await mockSubscribe(p.slug, appliedReferral?.code || null);
-                            await refreshWallet();
-                            await loadAll();
-                            await onSubscribed();
+                            window.localStorage.setItem("tales_account_tab", "plans");
+
+                            if (isStripeManagedSub) {
+                              window.localStorage.setItem("tales_profile_focus", "billing");
+                              const portal = await createStripePortal("update");
+                              window.location.assign(portal.url);
+                              return;
+                            }
+
+                            const checkout = await createStripeSubscriptionCheckout(p.slug, appliedReferral?.code || undefined);
+                            window.location.assign(checkout.url);
                           },
                         });
                       }}
@@ -926,7 +1036,19 @@ export default function Paywall({
                       </div>
                     ) : null}
 
-                    {ctaDisabled && isLower ? (
+                    {ctaDisabled && !checkoutEnabled ? (
+                      <div className="text-[11px] text-white/55 mt-2 text-center">
+                        Este plan todavía no tiene checkout habilitado en Stripe.
+                      </div>
+                    ) : null}
+
+                    {stripeManagedChange ? (
+                      <div className="text-[11px] text-white/55 mt-2 text-center">
+                        Tu suscripción actual se gestiona en Stripe. El cambio de plan se hace dentro del portal seguro.
+                      </div>
+                    ) : null}
+
+                    {ctaDisabled && !stripeManagedChange && isLower ? (
                       <div className="text-[11px] text-white/55 mt-2 text-center">
                         Para bajar de plan, primero debes cancelar tu suscripción actual y luego comprar el plan menor.
                       </div>
@@ -974,6 +1096,9 @@ export default function Paywall({
 
               const [accent, accent2] = topupPalette(credits);
 
+              const topupCheckoutEnabled = t.checkoutEnabled !== false;
+              const canPurchaseTopup = !!sub && topupCheckoutEnabled;
+
               return (
                 <div key={key} className="premium-hero-card p-4 md:p-5" style={premiumVars(accent, accent2)}>
                   <div className="flex items-start justify-between gap-3">
@@ -1003,25 +1128,33 @@ export default function Paywall({
 
                     <button
                       type="button"
-                      className="premium-hero-btn premium-hero-btn--primary px-4 py-2 text-sm"
+                      disabled={!canPurchaseTopup}
+                      className={`premium-hero-btn premium-hero-btn--primary px-4 py-2 text-sm ${!canPurchaseTopup ? "opacity-60 cursor-not-allowed" : ""}`}
                       onClick={() => {
+                        if (!canPurchaseTopup) return;
                         setConfirm({
                           itemLabel: `Extra credits (${credits} credits)`,
                           amountLabel: price,
                           note: "Compra puntual. Requiere plan activo.",
                           action: async () => {
                             await acceptLegal({ termsVersion: TERMS_VERSION, privacyVersion: PRIVACY_VERSION, autopayVersion: AUTOPAY_VERSION });
-                            await mockTopup(t.id);
-                            await refreshWallet();
-                            await loadAll();
-                            await onSubscribed();
+                            window.localStorage.setItem("tales_account_tab", "credits");
+                            const checkout = await createStripeTopupCheckout(t.id);
+                            window.location.assign(checkout.url);
                           },
                         });
                       }}
                     >
-                      Purchase
+                      {!sub ? "Activa un plan" : !topupCheckoutEnabled ? "Próximamente" : "Comprar"}
                     </button>
                   </div>
+
+                  {!sub ? (
+                    <div className="text-[11px] text-white/55 mt-2 text-right">Necesitas un plan activo para comprar este pack.</div>
+                  ) : null}
+                  {sub && !topupCheckoutEnabled ? (
+                    <div className="text-[11px] text-white/55 mt-2 text-right">Este pack todavía no tiene checkout habilitado en Stripe.</div>
+                  ) : null}
                 </div>
               );
             })}

@@ -1,13 +1,21 @@
 // server/routes/billing.js
 import express from "express";
 
+function normalizeString(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
 export function createBillingRouter(ctx) {
   const router = express.Router();
-  const { supabaseAdmin, requireUser, adminAuth } = ctx;
+  const { supabaseAdmin, requireUser, adminAuth, stripeBilling } = ctx;
   const { requireActiveSubscription, getActiveSubscription, getIdempotencyKey } = ctx.billing;
 
   function err(res, status, code, message, details) {
     return res.status(status).json({ ok: false, error: { code, message, details: details || null } });
+  }
+
+  function publicMockBillingEnabled() {
+    return String(process.env.ALLOW_PUBLIC_MOCK_BILLING || "").trim() === "1";
   }
 
   function planPeriodFactor(bp) {
@@ -37,15 +45,31 @@ export function createBillingRouter(ctx) {
     }
 
     const factor = planPeriodFactor(plan?.billing_period);
-    const creditsEqMonth =
-      (Number(plan?.plan_credits || 0) + Number(plan?.bonus_credits || 0)) * factor;
+    const creditsEqMonth = (Number(plan?.plan_credits || 0) + Number(plan?.bonus_credits || 0)) * factor;
     return creditsEqMonth * 1_000_000 + concurrency * 10_000 + features * 100 + Number(plan?.price_cents || 0);
+  }
+
+  function requireStripeConfigured(res) {
+    if (stripeBilling?.isConfigured?.()) return true;
+    err(
+      res,
+      503,
+      "STRIPE_NOT_CONFIGURED",
+      "Stripe no está configurado todavía en el backend. Revisa STRIPE_SECRET_KEY y el mapeo de Price IDs en Render/Supabase."
+    );
+    return false;
   }
 
   async function requireAdmin(req, res) {
     const auth = await adminAuth.requireAdminAccess(req);
     if (!auth.ok) {
-      err(res, auth.status || 403, auth.error?.code || "FORBIDDEN", auth.error?.message || "Acceso denegado.", auth.error?.details);
+      err(
+        res,
+        auth.status || 403,
+        auth.error?.code || "FORBIDDEN",
+        auth.error?.message || "Acceso denegado.",
+        auth.error?.details
+      );
       return null;
     }
     return auth;
@@ -58,69 +82,303 @@ export function createBillingRouter(ctx) {
     });
 
     if (target.error || !target.user) {
-      err(res, 404, target.error?.code || "USER_NOT_FOUND", target.error?.message || "Usuario no encontrado.", target.error?.details);
+      err(
+        res,
+        404,
+        target.error?.code || "USER_NOT_FOUND",
+        target.error?.message || "Usuario no encontrado.",
+        target.error?.details
+      );
       return null;
     }
 
     return target.user;
   }
 
-  async function activateMockPlanForUser({ userId, planSlug, idemPrefix = "admin-plan" }) {
-    const { data: plan, error: pErr } = await supabaseAdmin
+  async function fetchPlanBySlug(planSlug, opts = {}) {
+    const requireStripePrice = opts.requireStripePrice === true;
+    const query = supabaseAdmin
       .from("billing_plans")
-      .select("id, slug, billing_period, price_cents, plan_credits, bonus_credits, max_concurrency, can_sell, can_referrals")
+      .select(
+        "id, slug, name, billing_period, price_cents, plan_credits, bonus_credits, max_concurrency, can_sell, can_referrals, is_active, stripe_price_id"
+      )
       .eq("slug", planSlug)
       .eq("is_active", true)
       .maybeSingle();
 
-    if (pErr) return { subscription: null, error: { code: "DB_QUERY_FAILED", message: pErr.message } };
-    if (!plan?.id) return { subscription: null, error: { code: "PLAN_NOT_FOUND", message: "Plan no existe o está inactivo." } };
+    const { data, error } = await query;
+    if (error) throw Object.assign(new Error(error.message), { code: "DB_QUERY_FAILED", status: 500 });
+    if (!data?.id) throw Object.assign(new Error("Plan no existe o está inactivo."), { code: "PLAN_NOT_FOUND", status: 404 });
+    if (requireStripePrice && !normalizeString(data.stripe_price_id)) {
+      throw Object.assign(
+        new Error("Este plan aún no tiene Stripe Price ID configurado en billing_plans.stripe_price_id."),
+        { code: "PLAN_CHECKOUT_NOT_AVAILABLE", status: 409, details: { planSlug: data.slug } }
+      );
+    }
+    return data;
+  }
 
+  async function fetchCurrentPlan(currentSubscription) {
+    if (!currentSubscription?.planId) return null;
+    const { data, error } = await supabaseAdmin
+      .from("billing_plans")
+      .select(
+        "id, slug, name, billing_period, price_cents, plan_credits, bonus_credits, max_concurrency, can_sell, can_referrals, is_active, stripe_price_id"
+      )
+      .eq("id", currentSubscription.planId)
+      .maybeSingle();
+
+    if (error) throw Object.assign(new Error(error.message), { code: "DB_QUERY_FAILED", status: 500 });
+    return data || null;
+  }
+
+  async function fetchTopupProductById(productId, opts = {}) {
+    const requireStripePrice = opts.requireStripePrice === true;
+    const { data, error } = await supabaseAdmin
+      .from("credit_topup_products")
+      .select("id, sku, name, price_cents, credits_amount, is_active, stripe_price_id")
+      .eq("id", productId)
+      .eq("is_active", true)
+      .maybeSingle();
+
+    if (error) throw Object.assign(new Error(error.message), { code: "DB_QUERY_FAILED", status: 500 });
+    if (!data?.id) throw Object.assign(new Error("El pack de créditos no existe o está inactivo."), { code: "TOPUP_NOT_FOUND", status: 404 });
+    if (requireStripePrice && !normalizeString(data.stripe_price_id)) {
+      throw Object.assign(
+        new Error("Este pack de créditos aún no tiene Stripe Price ID configurado en credit_topup_products.stripe_price_id."),
+        { code: "TOPUP_CHECKOUT_NOT_AVAILABLE", status: 409, details: { productId: data.id } }
+      );
+    }
+    return data;
+  }
+
+  function pickPreferredTopupRow(currentRow, candidateRow) {
+    if (!currentRow) return candidateRow;
+    if (!candidateRow) return currentRow;
+
+    const currentHasStripe = !!normalizeString(currentRow.stripe_price_id);
+    const candidateHasStripe = !!normalizeString(candidateRow.stripe_price_id);
+    if (candidateHasStripe !== currentHasStripe) {
+      return candidateHasStripe ? candidateRow : currentRow;
+    }
+
+    const currentUpdated = Date.parse(currentRow.updated_at || currentRow.created_at || "");
+    const candidateUpdated = Date.parse(candidateRow.updated_at || candidateRow.created_at || "");
+    if (Number.isFinite(candidateUpdated) && Number.isFinite(currentUpdated) && candidateUpdated !== currentUpdated) {
+      return candidateUpdated > currentUpdated ? candidateRow : currentRow;
+    }
+
+    const currentCreated = Date.parse(currentRow.created_at || "");
+    const candidateCreated = Date.parse(candidateRow.created_at || "");
+    if (Number.isFinite(candidateCreated) && Number.isFinite(currentCreated) && candidateCreated !== currentCreated) {
+      return candidateCreated < currentCreated ? candidateRow : currentRow;
+    }
+
+    return currentRow;
+  }
+
+  function canonicalTopupKey(row) {
+    const sku = normalizeString(row?.sku);
+    if (sku) return `sku:${sku.toLowerCase()}`;
+
+    const price = Number(row?.price_cents || 0);
+    const credits = Number(row?.credits_amount || row?.credits || 0);
+    const name = normalizeString(row?.name).toLowerCase();
+    return `${price}|${credits}|${name}`;
+  }
+
+  async function assertLegalAccepted(userId) {
+    const REQUIRED_TERMS = process.env.LEGAL_TERMS_VERSION || "2026-03-03";
+    const REQUIRED_PRIVACY = process.env.LEGAL_PRIVACY_VERSION || "2026-03-03";
+    const REQUIRED_AUTOPAY = process.env.LEGAL_AUTOPAY_VERSION || "2026-03-03";
+
+    const { data: acceptance, error } = await supabaseAdmin
+      .from("legal_acceptances")
+      .select("terms_version, privacy_version, autopay_version")
+      .eq("user_id", userId)
+      .order("accepted_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      throw Object.assign(new Error(error.message), { code: "DB_QUERY_FAILED", status: 500 });
+    }
+
+    const okLegal =
+      acceptance &&
+      acceptance.terms_version === REQUIRED_TERMS &&
+      acceptance.privacy_version === REQUIRED_PRIVACY &&
+      acceptance.autopay_version === REQUIRED_AUTOPAY;
+
+    if (!okLegal) {
+      throw Object.assign(
+        new Error("Debes aceptar términos, privacidad y auto-renovación antes de iniciar el cobro."),
+        {
+          code: "LEGAL_NOT_ACCEPTED",
+          status: 403,
+          details: {
+            required: {
+              terms: REQUIRED_TERMS,
+              privacy: REQUIRED_PRIVACY,
+              autopay: REQUIRED_AUTOPAY,
+            },
+          },
+        }
+      );
+    }
+  }
+
+  async function validateReferralForPlan({ userId, referralCode }) {
+    const code = normalizeString(referralCode).toUpperCase();
+    if (!code) {
+      return {
+        code: "",
+        buyerDiscountPct: 0,
+        refRewardPct: 0,
+        ownerPlanSlug: null,
+        ownerPlanName: null,
+      };
+    }
+
+    const { data: rc, error: rcErr } = await supabaseAdmin
+      .from("community_referral_codes")
+      .select("id, code, owner_id, buyer_discount_pct, ref_reward_pct, is_active")
+      .eq("code", code)
+      .eq("is_active", true)
+      .maybeSingle();
+
+    if (rcErr) throw Object.assign(new Error(rcErr.message), { code: "DB_QUERY_FAILED", status: 500 });
+    if (!rc?.id) {
+      throw Object.assign(new Error("El código de referido no es válido o está inactivo."), {
+        code: "INVALID_REFERRAL_CODE",
+        status: 400,
+      });
+    }
+
+    if (rc.owner_id === userId) {
+      throw Object.assign(new Error("No puedes usar tu propio código de referido."), {
+        code: "INVALID_REFERRAL_CODE",
+        status: 400,
+      });
+    }
+
+    const owner = await getActiveSubscription(rc.owner_id);
+    if (owner?.error) {
+      throw Object.assign(new Error(owner.error.message), {
+        code: owner.error.code || "DB_QUERY_FAILED",
+        status: 500,
+        details: owner.error.details || null,
+      });
+    }
+
+    if (!owner?.subscription || !owner.subscription.canReferrals) {
+      throw Object.assign(
+        new Error("El dueño de este código no tiene un plan Partner/Business activo. Pídele que renueve su plan o usa otro código."),
+        {
+          code: "REFERRAL_OWNER_NOT_ELIGIBLE",
+          status: 400,
+          details: { ownerPlan: owner?.subscription?.planSlug || null },
+        }
+      );
+    }
+
+    return {
+      code,
+      buyerDiscountPct: Number(rc.buyer_discount_pct) || 0,
+      refRewardPct: Number(rc.ref_reward_pct) || 0,
+      ownerPlanSlug: owner.subscription.planSlug || null,
+      ownerPlanName: owner.subscription.planName || null,
+    };
+  }
+
+  async function activateManualPlanForUser({ userId, plan, idempotencyKey, referralCode = "" }) {
     const now = new Date();
-    const periodMs = plan.billing_period === "week" ? 7 * 24 * 60 * 60 * 1000 : 30 * 24 * 60 * 60 * 1000;
-    const start = new Date(now.getTime());
-    const end = new Date(now.getTime() + periodMs);
+    const periodMs = String(plan?.billing_period || "month").toLowerCase() === "week"
+      ? 7 * 24 * 60 * 60 * 1000
+      : 30 * 24 * 60 * 60 * 1000;
+    const periodStart = new Date(now.getTime()).toISOString();
+    const periodEnd = new Date(now.getTime() + periodMs).toISOString();
 
-    await supabaseAdmin
+    const { error: expireErr } = await supabaseAdmin
       .from("billing_subscriptions")
-      .update({ status: "expired", updated_at: new Date().toISOString() })
+      .update({ status: "expired", current_period_end: new Date().toISOString(), updated_at: new Date().toISOString() })
       .eq("user_id", userId)
       .eq("status", "active");
 
-    const { data: sub, error: sErr } = await supabaseAdmin
+    if (expireErr) {
+      throw Object.assign(new Error(expireErr.message), { code: "DB_UPDATE_FAILED", status: 500 });
+    }
+
+    const { data: sub, error: subErr } = await supabaseAdmin
       .from("billing_subscriptions")
       .insert({
         user_id: userId,
         plan_id: plan.id,
         status: "active",
-        current_period_start: start.toISOString(),
-        current_period_end: end.toISOString(),
         provider: "mock",
+        current_period_start: periodStart,
+        current_period_end: periodEnd,
       })
-      .select("id, plan_id, status, current_period_start, current_period_end")
+      .select("id, plan_id, status, provider, current_period_start, current_period_end")
       .maybeSingle();
 
-    if (sErr) return { subscription: null, error: { code: "DB_INSERT_FAILED", message: sErr.message } };
-
-    const idem = `${idemPrefix}:${userId}:${Date.now()}`;
-    const { error: gErr } = await supabaseAdmin.rpc("wallet_grant_plan_credits", {
-      p_user_id: userId,
-      p_plan_id: plan.id,
-      p_period_start: start.toISOString(),
-      p_period_end: end.toISOString(),
-      p_idempotency_key: idem,
-    });
-
-    if (gErr) {
-      await supabaseAdmin
-        .from("billing_subscriptions")
-        .update({ status: "expired", updated_at: new Date().toISOString() })
-        .eq("id", sub.id);
-
-      return { subscription: null, error: { code: "PLAN_GRANT_FAILED", message: gErr.message } };
+    if (subErr) {
+      throw Object.assign(new Error(subErr.message), { code: "DB_INSERT_FAILED", status: 500 });
     }
 
-    return { subscription: sub, plan, error: null };
+    const { error: grantErr } = await supabaseAdmin.rpc("wallet_grant_plan_credits", {
+      p_user_id: userId,
+      p_plan_id: plan.id,
+      p_period_start: periodStart,
+      p_period_end: periodEnd,
+      p_idempotency_key: `${idempotencyKey}:grant`,
+    });
+
+    if (grantErr) {
+      await supabaseAdmin
+        .from("billing_subscriptions")
+        .update({ status: "expired", current_period_end: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .eq("id", sub.id);
+
+      throw Object.assign(new Error(grantErr.message), { code: "PLAN_GRANT_FAILED", status: 500 });
+    }
+
+    let referral = { applied: false };
+    const cleanReferralCode = normalizeString(referralCode).toUpperCase();
+    if (cleanReferralCode) {
+      const { data: refData, error: refErr } = await supabaseAdmin.rpc("billing_apply_referral_on_subscribe", {
+        p_buyer_id: userId,
+        p_referral_code: cleanReferralCode,
+        p_plan_id: plan.id,
+        p_idempotency_key: `${idempotencyKey}:referral`,
+      });
+
+      if (refErr) {
+        referral = {
+          applied: false,
+          warning: "REFERRAL_APPLY_FAILED",
+          message: refErr.message,
+        };
+      } else {
+        const row = Array.isArray(refData) ? refData[0] : null;
+        referral = {
+          applied: true,
+          buyerBonusCredits: Number(row?.buyer_bonus_credits) || 0,
+          referrerRewardCredits: Number(row?.referrer_reward_credits) || 0,
+        };
+      }
+    }
+
+    return { subscription: sub, referral };
+  }
+
+  async function parseCurrentSubscriptionOrError(userId, res) {
+    const current = await getActiveSubscription(userId);
+    if (current.error) {
+      err(res, 500, current.error.code, current.error.message, current.error.details);
+      return null;
+    }
+    return current.subscription || null;
   }
 
   // GET /api/billing/me -> plan activo (o null)
@@ -139,187 +397,61 @@ export function createBillingRouter(ctx) {
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
 
-    const planSlug = req.body?.planSlug ? String(req.body.planSlug) : "";
-    if (!planSlug) return err(res, 400, "BAD_REQUEST", "Falta planSlug.");
-
-    const rawReferral = req.body?.referralCode ? String(req.body.referralCode) : "";
-    const referralCode = rawReferral ? rawReferral.trim().toUpperCase() : "";
-
-    // ✅ Requiere aceptación legal previa (ETAPA 2)
-    const REQUIRED_TERMS = process.env.LEGAL_TERMS_VERSION || "2026-03-03";
-    const REQUIRED_PRIVACY = process.env.LEGAL_PRIVACY_VERSION || "2026-03-03";
-    const REQUIRED_AUTOPAY = process.env.LEGAL_AUTOPAY_VERSION || "2026-03-03";
-
-    const { data: acceptance, error: aErr } = await supabaseAdmin
-      .from("legal_acceptances")
-      .select("terms_version, privacy_version, autopay_version")
-      .eq("user_id", user.id)
-      .order("accepted_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (aErr) return err(res, 500, "DB_QUERY_FAILED", aErr.message);
-
-    const okLegal =
-      acceptance &&
-      acceptance.terms_version === REQUIRED_TERMS &&
-      acceptance.privacy_version === REQUIRED_PRIVACY &&
-      acceptance.autopay_version === REQUIRED_AUTOPAY;
-
-    if (!okLegal) {
-      return err(res, 403, "LEGAL_NOT_ACCEPTED", "Debes aceptar términos, privacidad y auto-renovación antes de activar un plan.", {
-        required: { terms: REQUIRED_TERMS, privacy: REQUIRED_PRIVACY, autopay: REQUIRED_AUTOPAY },
-      });
+    if (!publicMockBillingEnabled()) {
+      return err(
+        res,
+        403,
+        "PUBLIC_MOCK_BILLING_DISABLED",
+        "La compra pública mock está desactivada. Usa Stripe Checkout para planes reales."
+      );
     }
 
-  const { data: plan, error: pErr } = await supabaseAdmin
-      .from("billing_plans")
-      .select("id, slug, billing_period, price_cents, plan_credits, bonus_credits, max_concurrency, can_sell, can_referrals")
-      .eq("slug", planSlug)
-      .eq("is_active", true)
-      .maybeSingle();
+    try {
+      const planSlug = req.body?.planSlug ? String(req.body.planSlug) : "";
+      if (!planSlug) return err(res, 400, "BAD_REQUEST", "Falta planSlug.");
 
-    if (pErr) return err(res, 500, "DB_QUERY_FAILED", pErr.message);
-    if (!plan?.id) return err(res, 404, "PLAN_NOT_FOUND", "Plan no existe o está inactivo.");
+      await assertLegalAccepted(user.id);
+      const plan = await fetchPlanBySlug(planSlug, { requireStripePrice: false });
+      const current = await getActiveSubscription(user.id);
+      if (current.error) return err(res, 500, current.error.code, current.error.message, current.error.details);
 
-    const current = await getActiveSubscription(user.id);
-    if (current.error) return err(res, 500, current.error.code, current.error.message, current.error.details);
+      if (current.subscription?.provider === "stripe") {
+        return err(
+          res,
+          409,
+          "STRIPE_MANAGED_SUBSCRIPTION",
+          "Tu suscripción activa se gestiona en Stripe. Usa el portal de facturación para cambiarla o cancelarla.",
+          { provider: "stripe", flow: "update", subscriptionId: current.subscription.stripeSubscriptionId || null }
+        );
+      }
 
-    if (current.subscription?.planId) {
-      const { data: currentPlan, error: cpErr } = await supabaseAdmin
-        .from("billing_plans")
-        .select("id, slug, billing_period, price_cents, plan_credits, bonus_credits, max_concurrency, can_sell, can_referrals")
-        .eq("id", current.subscription.planId)
-        .eq("is_active", true)
-        .maybeSingle();
-
-      if (cpErr) return err(res, 500, "DB_QUERY_FAILED", cpErr.message);
-
+      const currentPlan = await fetchCurrentPlan(current.subscription);
       if (currentPlan?.id && planPowerScore(plan) < planPowerScore(currentPlan)) {
         return err(
           res,
           403,
           "DOWNGRADE_REQUIRES_CANCEL",
           "Tienes un plan activo superior. Para bajar de plan primero debes cancelar tu suscripción y luego comprar el plan menor.",
-          {
-            currentPlanSlug: currentPlan.slug,
-            requestedPlanSlug: plan.slug,
-          }
+          { currentPlanSlug: currentPlan.slug, requestedPlanSlug: plan.slug }
         );
       }
-    }
 
-    // Validación temprana del código (si viene)
-    // Reglas:
-    // - Debe existir y estar activo
-    // - No puede ser del mismo usuario
-    // - El dueño debe tener un plan activo con can_referrals=true (Partner/Business)
-    if (referralCode) {
-      const { data: rc, error: rcErr } = await supabaseAdmin
-        .from("community_referral_codes")
-        .select("id, owner_id, is_active")
-        .eq("code", referralCode)
-        .eq("is_active", true)
-        .maybeSingle();
-
-      if (rcErr) return err(res, 500, "DB_QUERY_FAILED", rcErr.message);
-      if (!rc?.id) return err(res, 400, "INVALID_REFERRAL_CODE", "El código de referido no es válido o está inactivo.");
-      if (rc.owner_id === user.id) {
-        return err(res, 400, "INVALID_REFERRAL_CODE", "No puedes usar tu propio código de referido.");
-      }
-
-      const owner = await getActiveSubscription(rc.owner_id);
-      if (owner?.error) return err(res, 500, owner.error.code, owner.error.message, owner.error.details);
-
-      if (!owner?.subscription || !owner.subscription.canReferrals) {
-        return err(
-          res,
-          400,
-          "REFERRAL_OWNER_NOT_ELIGIBLE",
-          "El dueño de este código no tiene un plan Partner/Business activo. Pídele que renueve su plan o usa otro código.",
-          { ownerPlan: owner?.subscription?.planSlug || null }
-        );
-      }
-    }
-
-    const now = new Date();
-    const periodMs = plan.billing_period === "week" ? 7 * 24 * 60 * 60 * 1000 : 30 * 24 * 60 * 60 * 1000;
-    const start = new Date(now.getTime());
-    const end = new Date(now.getTime() + periodMs);
-
-    // Expirar cualquiera previa activa (seguro)
-    await supabaseAdmin
-      .from("billing_subscriptions")
-      .update({ status: "expired", updated_at: new Date().toISOString() })
-      .eq("user_id", user.id)
-      .eq("status", "active");
-
-    const { data: sub, error: sErr } = await supabaseAdmin
-      .from("billing_subscriptions")
-      .insert({
-        user_id: user.id,
-        plan_id: plan.id,
-        status: "active",
-        current_period_start: start.toISOString(),
-        current_period_end: end.toISOString(),
-        provider: "mock",
-      })
-      .select("id, plan_id, status, current_period_start, current_period_end")
-      .maybeSingle();
-
-    if (sErr) return err(res, 500, "DB_INSERT_FAILED", sErr.message);
-
-    // Grant plan credits (reset del bucket plan)
-    const idem = getIdempotencyKey(req);
-    const { error: gErr } = await supabaseAdmin.rpc("wallet_grant_plan_credits", {
-      p_user_id: user.id,
-      p_plan_id: plan.id,
-      p_period_start: start.toISOString(),
-      p_period_end: end.toISOString(),
-      p_idempotency_key: `grant:${idem}`,
-    });
-
-    if (gErr) {
-      // rollback: no queremos dejar una subscripción "active" si no se pudieron otorgar créditos
-      const { error: rbErr } = await supabaseAdmin
-        .from("billing_subscriptions")
-        .update({ status: "expired", updated_at: new Date().toISOString() })
-        .eq("id", sub.id);
-
-      return err(res, 500, "PLAN_GRANT_FAILED", gErr.message, rbErr ? { rollback: rbErr.message } : null);
-    }
-
-    // Aplicar referral si viene (no rompemos la compra si el bonus falla por un deploy incompleto)
-    if (referralCode) {
-      const { data: refData, error: refErr } = await supabaseAdmin.rpc("billing_apply_referral_on_subscribe", {
-        p_buyer_id: user.id,
-        p_referral_code: referralCode,
-        p_plan_id: plan.id,
-        p_idempotency_key: `subref:${idem}`,
+      const referralMeta = await validateReferralForPlan({
+        userId: user.id,
+        referralCode: req.body?.referralCode ? String(req.body.referralCode) : "",
       });
 
-      if (refErr) {
-        return res.json({
-          ok: true,
-          subscription: sub,
-          referral: { applied: false, warning: "REFERRAL_APPLY_FAILED", message: refErr.message },
-        });
-      }
-
-      const rrow = Array.isArray(refData) ? refData[0] : null;
-
-      return res.json({
-        ok: true,
-        subscription: sub,
-        referral: {
-          applied: true,
-          buyerBonusCredits: Number(rrow?.buyer_bonus_credits) || 0,
-          referrerRewardCredits: Number(rrow?.referrer_reward_credits) || 0,
-        },
+      const result = await activateManualPlanForUser({
+        userId: user.id,
+        plan,
+        idempotencyKey: `mock-sub:${getIdempotencyKey(req)}`,
+        referralCode: referralMeta.code,
       });
-    }
 
-    return res.json({ ok: true, subscription: sub, referral: { applied: false } });
+      return res.json({ ok: true, subscription: result.subscription, referral: result.referral });
+    } catch (e) {
+      return err(res, Number(e?.status) || 500, e?.code || "SUBSCRIBE_FAILED", e?.message || "No se pudo activar el plan.", e?.details || null);
+    }
   });
 
   // POST /api/billing/mock/topup { productId }
@@ -327,7 +459,15 @@ export function createBillingRouter(ctx) {
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
 
-    // Requiere plan activo
+    if (!publicMockBillingEnabled()) {
+      return err(
+        res,
+        403,
+        "PUBLIC_MOCK_BILLING_DISABLED",
+        "La compra pública mock está desactivada. Usa Stripe Checkout para créditos extra reales."
+      );
+    }
+
     const sub = await requireActiveSubscription(user.id);
     if (sub.error) return err(res, 403, sub.error.code, sub.error.message, sub.error.details);
 
@@ -359,6 +499,28 @@ export function createBillingRouter(ctx) {
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
 
+    const current = await parseCurrentSubscriptionOrError(user.id, res);
+    if (current === null && res.headersSent) return;
+
+    if (current?.provider === "stripe") {
+      return err(
+        res,
+        409,
+        "STRIPE_MANAGED_SUBSCRIPTION",
+        "Tu suscripción activa se gestiona en Stripe. Usa el portal de facturación para cancelarla o cambiarla.",
+        { provider: "stripe", flow: "cancel", subscriptionId: current.stripeSubscriptionId || null }
+      );
+    }
+
+    if (!publicMockBillingEnabled() && current && current.provider !== "mock") {
+      return err(
+        res,
+        403,
+        "PUBLIC_MOCK_BILLING_DISABLED",
+        "La cancelación pública mock está desactivada porque no hay una suscripción manual activa para este usuario."
+      );
+    }
+
     const idem = getIdempotencyKey(req);
     const wipeGenerationCredits = req.body?.wipeGenerationCredits === true;
 
@@ -386,29 +548,236 @@ export function createBillingRouter(ctx) {
     });
   });
 
+  // POST /api/billing/stripe/checkout/subscription { planSlug, referralCode? }
+  router.post("/billing/stripe/checkout/subscription", async (req, res) => {
+    const { user, error } = await requireUser(req);
+    if (error) return res.status(401).json({ ok: false, error });
+    if (!requireStripeConfigured(res)) return;
+
+    try {
+      const planSlug = req.body?.planSlug ? String(req.body.planSlug) : "";
+      if (!planSlug) return err(res, 400, "BAD_REQUEST", "Falta planSlug.");
+
+      await assertLegalAccepted(user.id);
+      const plan = await fetchPlanBySlug(planSlug, { requireStripePrice: true });
+      const current = await getActiveSubscription(user.id);
+      if (current.error) return err(res, 500, current.error.code, current.error.message, current.error.details);
+
+      const currentPlan = await fetchCurrentPlan(current.subscription);
+      if (currentPlan?.id && planPowerScore(plan) < planPowerScore(currentPlan)) {
+        if (current.subscription?.provider === "stripe") {
+          return err(
+            res,
+            409,
+            "STRIPE_MANAGED_SUBSCRIPTION",
+            "Tu suscripción activa se gestiona en Stripe. Usa el portal para programar el cambio o la cancelación.",
+            { provider: "stripe", flow: "update", subscriptionId: current.subscription?.stripeSubscriptionId || null }
+          );
+        }
+
+        return err(
+          res,
+          403,
+          "DOWNGRADE_REQUIRES_CANCEL",
+          "Tienes un plan activo superior. Para bajar de plan primero debes cancelar tu suscripción y luego comprar el plan menor.",
+          { currentPlanSlug: currentPlan.slug, requestedPlanSlug: plan.slug }
+        );
+      }
+
+      if (current.subscription?.provider === "stripe") {
+        return err(
+          res,
+          409,
+          "STRIPE_MANAGED_SUBSCRIPTION",
+          "Tu suscripción activa se gestiona en Stripe. Usa el portal de facturación para cambiarla o cancelarla.",
+          { provider: "stripe", flow: "update", subscriptionId: current.subscription.stripeSubscriptionId || null }
+        );
+      }
+
+      const referralMeta = await validateReferralForPlan({
+        userId: user.id,
+        referralCode: req.body?.referralCode ? String(req.body.referralCode) : "",
+      });
+
+      const session = await stripeBilling.createSubscriptionCheckoutSession({
+        req,
+        user,
+        plan,
+        referralCode: referralMeta.code,
+        referralDiscountPct: referralMeta.buyerDiscountPct,
+        idempotencyKey: `stripe-sub:${getIdempotencyKey(req)}`,
+      });
+
+      return res.json({
+        ok: true,
+        sessionId: session.id,
+        url: session.url,
+        referral: {
+          code: referralMeta.code || null,
+          buyerDiscountPct: referralMeta.buyerDiscountPct || 0,
+          refRewardPct: referralMeta.refRewardPct || 0,
+          ownerPlanSlug: referralMeta.ownerPlanSlug,
+          ownerPlanName: referralMeta.ownerPlanName,
+        },
+      });
+    } catch (e) {
+      return err(
+        res,
+        Number(e?.status) || 500,
+        e?.code || "STRIPE_CHECKOUT_FAILED",
+        e?.message || "No se pudo iniciar Stripe Checkout.",
+        e?.details || null
+      );
+    }
+  });
+
+  // POST /api/billing/stripe/checkout/topup { productId }
+  router.post("/billing/stripe/checkout/topup", async (req, res) => {
+    const { user, error } = await requireUser(req);
+    if (error) return res.status(401).json({ ok: false, error });
+    if (!requireStripeConfigured(res)) return;
+
+    try {
+      await assertLegalAccepted(user.id);
+
+      const sub = await requireActiveSubscription(user.id);
+      if (sub.error) return err(res, 403, sub.error.code, sub.error.message, sub.error.details);
+
+      const productId = req.body?.productId ? String(req.body.productId) : "";
+      if (!productId) return err(res, 400, "BAD_REQUEST", "Falta productId.");
+
+      const product = await fetchTopupProductById(productId, { requireStripePrice: true });
+      const session = await stripeBilling.createTopupCheckoutSession({
+        req,
+        user,
+        product,
+        idempotencyKey: `stripe-topup:${getIdempotencyKey(req)}`,
+      });
+
+      return res.json({ ok: true, sessionId: session.id, url: session.url });
+    } catch (e) {
+      return err(
+        res,
+        Number(e?.status) || 500,
+        e?.code || "STRIPE_CHECKOUT_FAILED",
+        e?.message || "No se pudo iniciar Stripe Checkout para créditos extra.",
+        e?.details || null
+      );
+    }
+  });
+
+  // POST /api/billing/stripe/portal { flow }
+  router.post("/billing/stripe/portal", async (req, res) => {
+    const { user, error } = await requireUser(req);
+    if (error) return res.status(401).json({ ok: false, error });
+    if (!requireStripeConfigured(res)) return;
+
+    try {
+      const flow = normalizeString(req.body?.flow || "general") || "general";
+      if (!["general", "cancel", "payment_method_update", "update"].includes(flow)) {
+        return err(res, 400, "BAD_REQUEST", "flow inválido. Usa general, cancel, payment_method_update o update.");
+      }
+
+      const current = await getActiveSubscription(user.id);
+      if (current.error) return err(res, 500, current.error.code, current.error.message, current.error.details);
+
+      const needsSubscription = flow === "cancel" || flow === "update";
+      if (needsSubscription) {
+        if (!current.subscription?.stripeSubscriptionId || current.subscription?.provider !== "stripe") {
+          return err(
+            res,
+            409,
+            "NO_STRIPE_SUBSCRIPTION",
+            "No hay una suscripción activa de Stripe para ese flujo."
+          );
+        }
+      }
+
+      const session = await stripeBilling.createPortalSession({
+        req,
+        user,
+        subscriptionId: current.subscription?.stripeSubscriptionId || "",
+        flow,
+      });
+
+      return res.json({ ok: true, url: session.url, flow });
+    } catch (e) {
+      return err(
+        res,
+        Number(e?.status) || 500,
+        e?.code || "STRIPE_PORTAL_FAILED",
+        e?.message || "No se pudo abrir el portal de Stripe.",
+        e?.details || null
+      );
+    }
+  });
+
+  // GET /api/billing/stripe/checkout/status?sessionId=cs_xxx
+  router.get("/billing/stripe/checkout/status", async (req, res) => {
+    const { user, error } = await requireUser(req);
+    if (error) return res.status(401).json({ ok: false, error });
+    if (!requireStripeConfigured(res)) return;
+
+    const sessionId = req.query?.sessionId ? String(req.query.sessionId) : "";
+    if (!sessionId) return err(res, 400, "BAD_REQUEST", "Falta sessionId.");
+
+    try {
+      const status = await stripeBilling.getCheckoutStatusForUser({ userId: user.id, sessionId });
+      return res.json(status);
+    } catch (e) {
+      return err(
+        res,
+        Number(e?.status) || 500,
+        e?.code || "STRIPE_STATUS_FAILED",
+        e?.message || "No se pudo consultar el estado del checkout.",
+        e?.details || null
+      );
+    }
+  });
+
   // POST /api/billing/admin/assign-plan { email|userId, planSlug }
   router.post("/billing/admin/assign-plan", async (req, res) => {
     const auth = await requireAdmin(req, res);
     if (!auth) return;
 
-    const targetUser = await resolveTargetUserFromBody(req, res);
-    if (!targetUser) return;
+    try {
+      const targetUser = await resolveTargetUserFromBody(req, res);
+      if (!targetUser) return;
 
-    const planSlug = req.body?.planSlug ? String(req.body.planSlug) : "";
-    if (!planSlug) return err(res, 400, "BAD_REQUEST", "Falta planSlug.");
+      const planSlug = req.body?.planSlug ? String(req.body.planSlug) : "";
+      if (!planSlug) return err(res, 400, "BAD_REQUEST", "Falta planSlug.");
 
-    const result = await activateMockPlanForUser({ userId: targetUser.id, planSlug, idemPrefix: `owner-plan:${getIdempotencyKey(req)}` });
-    if (result.error) return err(res, 500, result.error.code, result.error.message, result.error.details);
+      const current = await getActiveSubscription(targetUser.id);
+      if (current.error) return err(res, 500, current.error.code, current.error.message, current.error.details);
+      if (current.subscription?.provider === "stripe") {
+        return err(
+          res,
+          409,
+          "TARGET_HAS_STRIPE_SUBSCRIPTION",
+          "Ese usuario tiene una suscripción activa de Stripe. Cancélala primero para evitar cobro duplicado.",
+          { subscriptionId: current.subscription.stripeSubscriptionId || null }
+        );
+      }
 
-    return res.json({
-      ok: true,
-      user: {
-        id: targetUser.id,
-        email: targetUser.email || null,
-      },
-      plan: result.plan,
-      subscription: result.subscription,
-    });
+      const plan = await fetchPlanBySlug(planSlug, { requireStripePrice: false });
+      const result = await activateManualPlanForUser({
+        userId: targetUser.id,
+        plan,
+        idempotencyKey: `owner-plan:${getIdempotencyKey(req)}`,
+      });
+
+      return res.json({
+        ok: true,
+        user: {
+          id: targetUser.id,
+          email: targetUser.email || null,
+        },
+        plan,
+        subscription: result.subscription,
+      });
+    } catch (e) {
+      return err(res, Number(e?.status) || 500, e?.code || "ASSIGN_PLAN_FAILED", e?.message || "No se pudo asignar el plan.", e?.details || null);
+    }
   });
 
   // POST /api/billing/admin/cancel-plan { email|userId, wipeGenerationCredits? }
@@ -421,6 +790,26 @@ export function createBillingRouter(ctx) {
 
     const idem = getIdempotencyKey(req);
     const wipeGenerationCredits = req.body?.wipeGenerationCredits === true;
+
+    const current = await getActiveSubscription(targetUser.id);
+    if (current.error) return err(res, 500, current.error.code, current.error.message, current.error.details);
+
+    if (current.subscription?.provider === "stripe") {
+      if (!requireStripeConfigured(res)) return;
+      try {
+        if (current.subscription?.stripeSubscriptionId) {
+          await stripeBilling.cancelSubscriptionImmediately(current.subscription.stripeSubscriptionId);
+        }
+      } catch (e) {
+        return err(
+          res,
+          Number(e?.status) || 500,
+          e?.code || "STRIPE_CANCEL_FAILED",
+          e?.message || "No se pudo cancelar la suscripción de Stripe del usuario objetivo.",
+          e?.details || null
+        );
+      }
+    }
 
     const { data, error: cErr } = await supabaseAdmin.rpc("billing_cancel_subscription", {
       p_user_id: targetUser.id,
@@ -456,24 +845,53 @@ export function createBillingRouter(ctx) {
   router.get("/billing/plans", async (req, res) => {
     const { data, error } = await supabaseAdmin
       .from("billing_plans")
-            .select("id, slug, name, billing_period, price_cents, plan_credits, bonus_credits, max_concurrency, can_sell, can_referrals, is_active")
+      .select(
+        "id, slug, name, billing_period, price_cents, plan_credits, bonus_credits, max_concurrency, can_sell, can_referrals, is_active, stripe_price_id"
+      )
       .eq("is_active", true)
       .order("price_cents", { ascending: true });
 
     if (error) return err(res, 500, "DB_QUERY_FAILED", error.message);
-    return res.json({ ok: true, plans: data || [] });
+
+    const plans = (data || []).map((plan) => ({
+      ...plan,
+      checkoutEnabled: Boolean(normalizeString(plan?.stripe_price_id)),
+      stripe_price_id: undefined,
+    }));
+
+    return res.json({ ok: true, plans });
   });
 
   // GET /api/billing/topups
   router.get("/billing/topups", async (req, res) => {
     const { data, error } = await supabaseAdmin
       .from("credit_topup_products")
-      .select("id, sku, name, price_cents, credits_amount, is_active")
+      .select("id, sku, name, price_cents, credits_amount, is_active, stripe_price_id, created_at, updated_at")
       .eq("is_active", true)
-      .order("price_cents", { ascending: true });
+      .order("price_cents", { ascending: true })
+      .order("created_at", { ascending: true });
 
     if (error) return err(res, 500, "DB_QUERY_FAILED", error.message);
-    return res.json({ ok: true, topups: data || [] });
+
+    const grouped = new Map();
+    for (const row of data || []) {
+      const key = canonicalTopupKey(row);
+      grouped.set(key, pickPreferredTopupRow(grouped.get(key), row));
+    }
+
+    const topups = Array.from(grouped.values())
+      .sort((a, b) => Number(a?.price_cents || 0) - Number(b?.price_cents || 0))
+      .map((topup) => ({
+        id: topup.id,
+        sku: topup.sku,
+        name: topup.name,
+        price_cents: topup.price_cents,
+        credits_amount: topup.credits_amount,
+        is_active: topup.is_active,
+        checkoutEnabled: Boolean(normalizeString(topup?.stripe_price_id)),
+      }));
+
+    return res.json({ ok: true, topups });
   });
 
   return router;

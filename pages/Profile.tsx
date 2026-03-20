@@ -5,7 +5,7 @@ import { useWallet } from "../contexts/WalletContext";
 import { apiUrl } from "../services/apiBase";
 import { supabase } from "../services/supabaseClient";
 import { profileMe, type ProfileMeResponse } from "../services/profileApi";
-import { billingMe, billingPlans, mockCancel } from "../services/billingApi";
+import { billingMe, billingPlans, createStripePortal, mockCancel } from "../services/billingApi";
 import { emitProfileRefresh, emitWalletRefresh } from "../services/appEvents";
 import { ownerAssignMockPlanByEmail, ownerCancelPlanByEmail, ownerFetchSystemStatus, ownerGrantCreditsByEmail, type OwnerSystemStatusResponse } from "../services/ownerAdminApi";
 
@@ -30,6 +30,14 @@ function formatProviderSummary(value: Record<string, number> | undefined) {
     .slice(0, 3)
     .map(([key, count]) => `${key}: ${count}`)
     .join(" · ");
+}
+
+function clearProfileSearchParams() {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  url.searchParams.delete("route");
+  url.searchParams.delete("portal");
+  window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
 }
 
 export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => void }) {
@@ -63,6 +71,7 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
   const [ownerMsg, setOwnerMsg] = useState("");
   const [ownerSystem, setOwnerSystem] = useState<OwnerSystemStatusResponse | null>(null);
   const [ownerSystemBusy, setOwnerSystemBusy] = useState(false);
+  const [portalMessage, setPortalMessage] = useState("");
 
   useEffect(() => {
     const focus = window.localStorage.getItem("tales_profile_focus");
@@ -77,6 +86,33 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
       if (avatarPreview) URL.revokeObjectURL(avatarPreview);
     };
   }, [avatarPreview]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("portal") !== "return") return;
+
+    let cancelled = false;
+
+    (async () => {
+      setPortalMessage("Actualizando tu estado de facturación...");
+      try {
+        await refreshWallet();
+        await loadAll();
+        if (cancelled) return;
+        setPortalMessage("Stripe terminó correctamente y tu cuenta ya quedó sincronizada.");
+      } catch (e: any) {
+        if (cancelled) return;
+        setErr(e?.message || "No se pudo sincronizar el estado tras volver de Stripe.");
+      } finally {
+        if (!cancelled) clearProfileSearchParams();
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (ownerPlanSlug) return;
@@ -339,8 +375,31 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
     }
   }
 
+  async function openBillingPortal(flow: "general" | "cancel" | "payment_method_update" | "update" = "general") {
+    setErr("");
+    setPortalMessage("");
+
+    try {
+      window.localStorage.setItem("tales_profile_focus", "billing");
+      const data = await createStripePortal(flow);
+      window.location.assign(data.url);
+    } catch (e: any) {
+      setErr(e?.message || "No se pudo abrir el portal de facturación.");
+    }
+  }
+
   async function cancelSubscription(opts?: { wipeGenerationCredits?: boolean }) {
     const wipeGenerationCredits = opts?.wipeGenerationCredits === true;
+    const isStripeManaged = sub?.provider === "stripe" && !!sub?.stripeSubscriptionId;
+
+    if (isStripeManaged) {
+      const okStripe = window.confirm(
+        "Tu suscripción activa se gestiona en Stripe. Te voy a abrir el portal seguro para que confirmes la cancelación allí."
+      );
+      if (!okStripe) return;
+      await openBillingPortal("cancel");
+      return;
+    }
 
     const ok = window.confirm(
       wipeGenerationCredits
@@ -389,6 +448,7 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
       </div>
 
       {err ? <div className="mb-4 p-3 rounded-xl bg-red-500/20 border border-red-500/40">{err}</div> : null}
+      {portalMessage ? <div className="mb-4 p-3 rounded-xl bg-sky-500/15 border border-sky-400/30 text-sky-100">{portalMessage}</div> : null}
 
       <div className="flex flex-wrap gap-2 mb-6">
         <button
@@ -555,8 +615,11 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
               <div className="text-sm text-white/60">Active plan</div>
               <div className="text-lg font-extrabold mt-1">{sub?.planName || "Ninguno"}</div>
               <div className="text-sm text-white/60 mt-1">Billing: {sub?.billingPeriod || "—"}</div>
+              <div className="text-sm text-white/60 mt-1">Provider: {sub?.provider || "—"}</div>
               {sub?.currentPeriodEnd ? (
-                <div className="text-sm text-white/60 mt-1">Next renewal: {new Date(sub.currentPeriodEnd).toLocaleDateString()}</div>
+                <div className="text-sm text-white/60 mt-1">
+                  {sub?.cancelAtPeriodEnd ? "Access until" : "Next renewal"}: {new Date(sub.currentPeriodEnd).toLocaleDateString()}
+                </div>
               ) : null}
             </div>
 
@@ -586,10 +649,22 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
               <div className="text-xs text-white/55">{email}</div>
 
               <div className="mt-4 flex gap-2">
-                <button type="button" className="px-4 py-2 rounded-xl bg-white/10 border border-white/10 text-sm opacity-60 cursor-not-allowed" title="Coming soon">
+                <button
+                  type="button"
+                  className={`px-4 py-2 rounded-xl bg-white/10 border border-white/10 text-sm ${sub?.provider === "stripe" ? "hover:bg-white/15" : "opacity-60 cursor-not-allowed"}`}
+                  onClick={() => void openBillingPortal("payment_method_update")}
+                  disabled={sub?.provider !== "stripe"}
+                  title={sub?.provider === "stripe" ? "Gestionar método de pago" : "Disponible cuando tu suscripción esté en Stripe"}
+                >
                   Change billing information
                 </button>
-                <button type="button" className="px-4 py-2 rounded-xl bg-white/10 border border-white/10 text-sm opacity-60 cursor-not-allowed" title="Coming soon">
+                <button
+                  type="button"
+                  className={`px-4 py-2 rounded-xl bg-white/10 border border-white/10 text-sm ${sub?.provider === "stripe" ? "hover:bg-white/15" : "opacity-60 cursor-not-allowed"}`}
+                  onClick={() => void openBillingPortal("general")}
+                  disabled={sub?.provider !== "stripe"}
+                  title={sub?.provider === "stripe" ? "Abrir portal de Stripe" : "Disponible cuando tu suscripción esté en Stripe"}
+                >
                   Billing history
                 </button>
               </div>
@@ -599,7 +674,7 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
               <div className="md:col-span-2 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4">
                 <div className="text-sm font-semibold text-emerald-100">Owner controls</div>
                 <div className="text-xs text-emerald-100/70 mt-1">
-                  Uso interno para pruebas: asignar planes mock, cancelar planes y dar créditos sin cobros reales.
+                  Uso interno: asignar planes manuales/internos, cancelar planes y dar créditos sin cobros reales.
                 </div>
 
                 <div className="mt-4 grid md:grid-cols-2 gap-3">
@@ -674,7 +749,7 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
 
                 <div className="mt-4 grid md:grid-cols-2 gap-3">
                   <div>
-                    <div className="text-xs text-white/60 mb-2">Plan mock a asignar</div>
+                    <div className="text-xs text-white/60 mb-2">Plan manual a asignar</div>
                     <select
                       value={ownerPlanSlug}
                       onChange={(e) => setOwnerPlanSlug(e.target.value)}
@@ -696,7 +771,7 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
                     className={`px-4 py-2 rounded-xl bg-emerald-400 text-black font-bold ${ownerBusy ? "opacity-50 pointer-events-none" : ""}`}
                     onClick={() => void ownerAssignPlan()}
                   >
-                    Assign mock plan
+                    Assign manual plan
                   </button>
 
                   <button
@@ -735,30 +810,46 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
             <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4">
               <div className="text-sm font-semibold text-red-200">Danger zone</div>
               <div className="text-xs text-red-200/70 mt-1">
-                Pruebas de cancelación con o sin wipe de créditos de generación.
+                {sub?.provider === "stripe"
+                  ? "Las suscripciones reales se cancelan desde el portal seguro de Stripe."
+                  : "Pruebas de cancelación manual con o sin wipe de créditos de generación."}
               </div>
 
-              <div className="mt-3 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  className="px-4 py-2 rounded-xl bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 text-sm"
-                  onClick={() => void cancelSubscription({ wipeGenerationCredits: false })}
-                >
-                  Cancel subscription (keep credits)
-                </button>
+              {sub?.provider === "stripe" ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="px-4 py-2 rounded-xl bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 text-sm"
+                    onClick={() => void cancelSubscription({ wipeGenerationCredits: false })}
+                  >
+                    Manage cancellation in Stripe
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className="px-4 py-2 rounded-xl bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 text-sm"
+                      onClick={() => void cancelSubscription({ wipeGenerationCredits: false })}
+                    >
+                      Cancel subscription (keep credits)
+                    </button>
 
-                <button
-                  type="button"
-                  className="px-4 py-2 rounded-xl bg-red-600/25 hover:bg-red-600/35 border border-red-500/40 text-sm"
-                  onClick={() => void cancelSubscription({ wipeGenerationCredits: true })}
-                >
-                  Cancel + wipe generation credits
-                </button>
-              </div>
+                    <button
+                      type="button"
+                      className="px-4 py-2 rounded-xl bg-red-600/25 hover:bg-red-600/35 border border-red-500/40 text-sm"
+                      onClick={() => void cancelSubscription({ wipeGenerationCredits: true })}
+                    >
+                      Cancel + wipe generation credits
+                    </button>
+                  </div>
 
-              <div className="text-[11px] text-red-100/70 mt-3">
-                El wipe borra solo créditos de generación: plan, topup y bonus. Los earnings no se borran aquí.
-              </div>
+                  <div className="text-[11px] text-red-100/70 mt-3">
+                    El wipe borra solo créditos de generación: plan, topup y bonus. Los earnings no se borran aquí.
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>

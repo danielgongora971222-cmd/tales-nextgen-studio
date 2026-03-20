@@ -72,6 +72,10 @@ export function createWalletRouter(ctx) {
       subscription: active?.subscription_id
         ? {
             subscription_id: active.subscription_id,
+            status: active.status || null,
+            provider: active.provider || "mock",
+            stripe_subscription_id: active.stripe_subscription_id || null,
+            cancel_at_period_end: active.cancel_at_period_end === true,
             plan_slug: active.plan_slug,
             plan_name: active.plan_name,
             can_sell: !!active.can_sell,

@@ -81,6 +81,17 @@ const AppContent: React.FC = () => {
   );
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const routeParam = params.get("route");
+    if (!routeParam) return;
+
+    const nextRoute = routeParam as AppRoute;
+    if ((Object.values(AppRoute) as string[]).includes(nextRoute)) {
+      setRoute(nextRoute);
+    }
+  }, []);
+
+  useEffect(() => {
     async function checkBackend() {
       try {
         const resp = await fetch(healthUrl);

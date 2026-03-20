@@ -50,6 +50,7 @@ import { createCommunityStoreRouter } from "./routes/communityStore.js";
 import { createTradesRouter } from "./routes/trades.js";
 import { createWalletRouter } from "./routes/wallet.js";
 import { createBillingHelpers } from "./lib/billing.js";
+import { createStripeBillingHelpers } from "./lib/stripeBilling.js";
 import { createBillingRouter } from "./routes/billing.js";
 import { createReferralsRouter } from "./routes/referrals.js";
 import { FalFinalizeSchema } from "./schemas/index.js";
@@ -90,6 +91,7 @@ const supabaseAdmin =
     : null;
 
 const billing = createBillingHelpers(supabaseAdmin);
+const stripeBilling = createStripeBillingHelpers({ supabaseAdmin, billing });
 
 
 function isWorkerHeartbeatTableMissingError(error) {
@@ -328,7 +330,7 @@ app.use(
       return cb(new Error("CORS blocked"));
     },
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    allowedHeaders: ["Content-Type", "Authorization", "x-idempotency-key", "x-admin-token", "stripe-signature"],
   })
 );
 
@@ -368,7 +370,7 @@ const apiLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => ipKeyGenerator(getClientIp(req)),
-  skip: (req) => req.path === "/api/health" || req.originalUrl === "/api/health",
+  skip: (req) => req.path === "/api/health" || req.originalUrl === "/api/health" || req.originalUrl === "/api/billing/stripe/webhook",
 });
 
 // Aplica limitadores
@@ -474,6 +476,8 @@ const aiLimiter = rateLimit({
 app.use("/api/ai", aiLimiter);
 
 // Body limits (evita DoS y picos de memoria)
+app.post("/api/billing/stripe/webhook", express.raw({ type: "application/json", limit: "2mb" }), (req, res) => stripeBilling.handleWebhook(req, res));
+
 app.use(express.json({ limit: "25mb" }));
 app.use(express.urlencoded({ extended: true, limit: "25mb" }));
 
@@ -553,6 +557,7 @@ app.use(
     requireUser,
     adminAuth,
     billing,
+    stripeBilling,
   })
 );
 
