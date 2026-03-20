@@ -579,6 +579,291 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
     return stripeRequest("DELETE", `/v1/subscriptions/${subscriptionId}`);
   }
 
+  async function listSubscriptionsForCustomer(customerId, opts = {}) {
+    const cleanCustomerId = normalizeStripeObjectId(customerId);
+    if (!cleanCustomerId) return [];
+
+    const maxResults = Math.min(100, Math.max(1, Math.trunc(Number(opts?.limit || 100))));
+    const status = normalizeString(opts?.status || "all") || "all";
+    const out = [];
+    let startingAfter = "";
+
+    while (out.length < maxResults) {
+      const pageLimit = Math.min(100, maxResults - out.length);
+      const page = await stripeRequest("GET", "/v1/subscriptions", {
+        customer: cleanCustomerId,
+        status,
+        limit: pageLimit,
+        starting_after: startingAfter || undefined,
+        expand: ["data.items.data.price"],
+      });
+
+      const rows = Array.isArray(page?.data) ? page.data : [];
+      if (!rows.length) break;
+      out.push(...rows);
+
+      if (!page?.has_more || out.length >= maxResults) break;
+      startingAfter = normalizeStripeObjectId(rows[rows.length - 1]?.id);
+      if (!startingAfter) break;
+    }
+
+    return out;
+  }
+
+  function stripeSubscriptionRecencyMs(subscriptionLike) {
+    const currentPeriodStartIso = normalizeString(subscriptionLike?.current_period_start);
+    if (currentPeriodStartIso) {
+      const parsedIso = Date.parse(currentPeriodStartIso);
+      if (Number.isFinite(parsedIso)) return parsedIso;
+    }
+
+    const currentPeriodStartUnix = Number(subscriptionLike?.current_period_start || 0);
+    if (Number.isFinite(currentPeriodStartUnix) && currentPeriodStartUnix > 0) {
+      return currentPeriodStartUnix * 1000;
+    }
+
+    const createdUnix = Number(subscriptionLike?.created || 0);
+    if (Number.isFinite(createdUnix) && createdUnix > 0) {
+      return createdUnix * 1000;
+    }
+
+    const updatedIso = normalizeString(subscriptionLike?.updated_at);
+    if (updatedIso) {
+      const parsedUpdated = Date.parse(updatedIso);
+      if (Number.isFinite(parsedUpdated)) return parsedUpdated;
+    }
+
+    return 0;
+  }
+
+  function sortSubscriptionsByRecencyAsc(items) {
+    return [...(Array.isArray(items) ? items : [])].sort(
+      (a, b) => stripeSubscriptionRecencyMs(a) - stripeSubscriptionRecencyMs(b)
+    );
+  }
+
+  function sortSubscriptionsByRecencyDesc(items) {
+    return [...(Array.isArray(items) ? items : [])].sort(
+      (a, b) => stripeSubscriptionRecencyMs(b) - stripeSubscriptionRecencyMs(a)
+    );
+  }
+
+  async function listLocalStripeSubscriptionRowsByUserId(userId, opts = {}) {
+    const cleanUserId = normalizeString(userId);
+    if (!cleanUserId) return [];
+
+    let query = supabaseAdmin
+      .from("billing_subscriptions")
+      .select("id, user_id, status, provider, stripe_subscription_id, current_period_start, current_period_end, cancel_at_period_end, updated_at")
+      .eq("user_id", cleanUserId)
+      .eq("provider", "stripe")
+      .not("stripe_subscription_id", "is", null);
+
+    if (opts?.activeOnly === true) {
+      query = query.eq("status", "active");
+    }
+
+    const { data, error } = await query.order("updated_at", { ascending: false });
+    if (error) {
+      throw makeError("DB_QUERY_FAILED", error.message, 500);
+    }
+
+    return Array.isArray(data) ? data : [];
+  }
+
+  async function repairStripeSubscriptionsForUser(userId, opts = {}) {
+    const cleanUserId = normalizeString(userId);
+    if (!cleanUserId) {
+      return { skipped: true, reason: "user_id_missing" };
+    }
+
+    if (!isConfigured()) {
+      return { skipped: true, reason: "stripe_not_configured" };
+    }
+
+    const cancelExtraActive = opts?.cancelExtraActive === true;
+    const applyPlanGrant = opts?.applyPlanGrant !== false;
+    const syncedById = new Map();
+
+    async function syncAndRemember(subscriptionLike) {
+      const stripeSubscriptionId = normalizeStripeObjectId(subscriptionLike?.id || subscriptionLike);
+      if (!stripeSubscriptionId) return null;
+      if (syncedById.has(stripeSubscriptionId)) return syncedById.get(stripeSubscriptionId) || null;
+
+      const synced = await syncSubscriptionFromStripe(subscriptionLike);
+      syncedById.set(stripeSubscriptionId, synced || null);
+      return synced || null;
+    }
+
+    const localActiveRows = await listLocalStripeSubscriptionRowsByUserId(cleanUserId, { activeOnly: true });
+    for (const row of sortSubscriptionsByRecencyAsc(localActiveRows)) {
+      const stripeSubscriptionId = normalizeStripeObjectId(row?.stripe_subscription_id);
+      if (!stripeSubscriptionId) continue;
+      try {
+        await syncAndRemember(stripeSubscriptionId);
+      } catch (error) {
+        if (Number(error?.status) === 404) {
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    let remoteActiveSubscriptionIds = [];
+    const customerRow = await getCustomerRowByUserId(cleanUserId);
+    if (customerRow?.stripe_customer_id) {
+      const remoteSubscriptions = await listSubscriptionsForCustomer(customerRow.stripe_customer_id, {
+        status: "all",
+        limit: 100,
+      });
+
+      const filteredRemoteSubscriptions = remoteSubscriptions.filter((subscription) => {
+        const metadataUserId = normalizeString(subscription?.metadata?.app_user_id || subscription?.metadata?.user_id);
+        return !metadataUserId || metadataUserId === cleanUserId;
+      });
+
+      remoteActiveSubscriptionIds = sortSubscriptionsByRecencyDesc(
+        filteredRemoteSubscriptions.filter((subscription) => localStatusFromStripeStatus(subscription?.status) === "active")
+      )
+        .map((subscription) => normalizeStripeObjectId(subscription?.id))
+        .filter(Boolean);
+
+      const inactiveRemote = sortSubscriptionsByRecencyAsc(
+        filteredRemoteSubscriptions.filter((subscription) => localStatusFromStripeStatus(subscription?.status) !== "active")
+      );
+      const activeRemote = sortSubscriptionsByRecencyAsc(
+        filteredRemoteSubscriptions.filter((subscription) => localStatusFromStripeStatus(subscription?.status) === "active")
+      );
+
+      for (const subscription of [...inactiveRemote, ...activeRemote]) {
+        await syncAndRemember(subscription);
+      }
+    }
+
+    let activeRows = sortSubscriptionsByRecencyDesc(
+      await listLocalStripeSubscriptionRowsByUserId(cleanUserId, { activeOnly: true })
+    );
+    const canceledExtraSubscriptionIds = [];
+
+    if (cancelExtraActive) {
+      const remoteExtraIds = remoteActiveSubscriptionIds.length > 1 ? remoteActiveSubscriptionIds.slice(1) : [];
+      const fallbackExtraIds = remoteExtraIds.length
+        ? remoteExtraIds
+        : activeRows.length > 1
+          ? activeRows.slice(1).map((row) => normalizeStripeObjectId(row?.stripe_subscription_id)).filter(Boolean)
+          : [];
+
+      for (const stripeSubscriptionId of fallbackExtraIds) {
+        if (!stripeSubscriptionId) continue;
+
+        try {
+          const canceled = await cancelSubscriptionImmediately(stripeSubscriptionId);
+          const syncedCanceled = await syncSubscriptionFromStripe(canceled || stripeSubscriptionId);
+          syncedById.set(stripeSubscriptionId, syncedCanceled || null);
+          canceledExtraSubscriptionIds.push(stripeSubscriptionId);
+        } catch (error) {
+          if (Number(error?.status) === 404) {
+            try {
+              const syncedMissing = await syncSubscriptionFromStripe(stripeSubscriptionId);
+              syncedById.set(stripeSubscriptionId, syncedMissing || null);
+            } catch {
+              // ignore missing subscriptions that no longer exist remotely
+            }
+            continue;
+          }
+          throw error;
+        }
+      }
+
+      activeRows = sortSubscriptionsByRecencyDesc(
+        await listLocalStripeSubscriptionRowsByUserId(cleanUserId, { activeOnly: true })
+      );
+    }
+
+    const canonicalActiveRow = activeRows[0] || null;
+    let canonicalActive = null;
+
+    if (canonicalActiveRow?.stripe_subscription_id) {
+      canonicalActive = await syncSubscriptionFromStripe(canonicalActiveRow.stripe_subscription_id);
+      syncedById.set(normalizeStripeObjectId(canonicalActiveRow.stripe_subscription_id), canonicalActive || null);
+
+      if (applyPlanGrant && localStatusFromStripeStatus(canonicalActive?.subscription?.status) === "active") {
+        await ensurePlanGrantForSyncedSubscription(canonicalActive, { applyReferral: false });
+      }
+    }
+
+    return {
+      ok: true,
+      canonicalActiveSubscriptionId: normalizeStripeObjectId(canonicalActiveRow?.stripe_subscription_id) || null,
+      activeCount: activeRows.length,
+      remoteActiveSubscriptionIds,
+      canceledExtraSubscriptionIds,
+      syncedSubscriptionIds: [...syncedById.keys()],
+      canonicalActive,
+    };
+  }
+
+  async function cancelAllActiveSubscriptionsForUser(userId) {
+    const cleanUserId = normalizeString(userId);
+    if (!cleanUserId) {
+      return { skipped: true, reason: "user_id_missing" };
+    }
+
+    if (!isConfigured()) {
+      return { skipped: true, reason: "stripe_not_configured" };
+    }
+
+    const repairSummary = await repairStripeSubscriptionsForUser(cleanUserId, {
+      cancelExtraActive: false,
+      applyPlanGrant: false,
+    });
+
+    const remoteActiveIds = Array.isArray(repairSummary?.remoteActiveSubscriptionIds)
+      ? repairSummary.remoteActiveSubscriptionIds.filter(Boolean)
+      : [];
+    const fallbackLocalActiveIds = sortSubscriptionsByRecencyDesc(
+      await listLocalStripeSubscriptionRowsByUserId(cleanUserId, { activeOnly: true })
+    )
+      .map((row) => normalizeStripeObjectId(row?.stripe_subscription_id))
+      .filter(Boolean);
+
+    const targetSubscriptionIds = remoteActiveIds.length ? remoteActiveIds : fallbackLocalActiveIds;
+
+    if (!targetSubscriptionIds.length) {
+      return { ok: true, canceledSubscriptionIds: [], remainingActiveCount: 0 };
+    }
+
+    const canceledSubscriptionIds = [];
+
+    for (const stripeSubscriptionId of targetSubscriptionIds) {
+      if (!stripeSubscriptionId) continue;
+
+      try {
+        const canceled = await cancelSubscriptionImmediately(stripeSubscriptionId);
+        await syncSubscriptionFromStripe(canceled || stripeSubscriptionId);
+        canceledSubscriptionIds.push(stripeSubscriptionId);
+      } catch (error) {
+        if (Number(error?.status) === 404) {
+          try {
+            await syncSubscriptionFromStripe(stripeSubscriptionId);
+          } catch {
+            // ignore if Stripe already removed the subscription
+          }
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    const remainingActiveRows = await listLocalStripeSubscriptionRowsByUserId(cleanUserId, { activeOnly: true });
+
+    return {
+      ok: true,
+      canceledSubscriptionIds,
+      remainingActiveCount: remainingActiveRows.length,
+    };
+  }
+
   async function maybeCancelReplacedStripeSubscription(synced) {
     const replacementId = normalizeStripeObjectId(synced?.subscription?.metadata?.replace_stripe_subscription_id);
     const newSubscriptionId = normalizeStripeObjectId(synced?.subscription?.id);
@@ -1100,40 +1385,10 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
   }
 
   async function repairLatestStripeSubscriptionForUser(userId) {
-    if (!normalizeString(userId)) {
-      return { skipped: true, reason: "user_id_missing" };
-    }
-
-    if (!isConfigured()) {
-      return { skipped: true, reason: "stripe_not_configured" };
-    }
-
-    const { data, error } = await supabaseAdmin
-      .from("billing_subscriptions")
-      .select("stripe_subscription_id, status, provider, updated_at")
-      .eq("user_id", userId)
-      .eq("provider", "stripe")
-      .eq("status", "active")
-      .not("stripe_subscription_id", "is", null)
-      .order("updated_at", { ascending: false })
-      .limit(1);
-
-    if (error) {
-      throw makeError("DB_QUERY_FAILED", error.message, 500);
-    }
-
-    const row = Array.isArray(data) ? data[0] : null;
-    const stripeSubscriptionId = normalizeStripeObjectId(row?.stripe_subscription_id);
-    if (!stripeSubscriptionId) {
-      return { skipped: true, reason: "no_stripe_subscription_row" };
-    }
-
-    const synced = await syncSubscriptionFromStripe(stripeSubscriptionId);
-    if (localStatusFromStripeStatus(synced?.subscription?.status) === "active") {
-      await ensurePlanGrantForSyncedSubscription(synced, { applyReferral: false });
-    }
-
-    return { ok: true, stripeSubscriptionId, synced };
+    return repairStripeSubscriptionsForUser(userId, {
+      cancelExtraActive: false,
+      applyPlanGrant: true,
+    });
   }
 
   async function getCheckoutStatusForUser({ userId, sessionId }) {
@@ -1164,6 +1419,10 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
       if (sessionMode === "subscription") {
         const finalized = await finalizeSubscriptionCheckoutSession(session);
         planGrantIdempotencyKey = normalizeString(finalized?.grant?.grantIdempotencyKey);
+        await repairStripeSubscriptionsForUser(userId, {
+          cancelExtraActive: true,
+          applyPlanGrant: true,
+        });
       } else if (sessionMode === "payment") {
         await applyTopupFromCheckoutSession(session);
       }
@@ -1267,6 +1526,8 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
     syncSubscriptionFromStripe,
     finalizeSubscriptionCheckoutSession,
     repairLatestStripeSubscriptionForUser,
+    repairStripeSubscriptionsForUser,
+    cancelAllActiveSubscriptionsForUser,
     cancelSubscriptionImmediately,
     getReferralCouponId,
   };

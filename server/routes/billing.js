@@ -395,12 +395,15 @@ export function createBillingRouter(ctx) {
 
     if ((forceSyncStripe || !r.subscription || hasStripeManagedSubscription) && stripeBilling?.isConfigured?.()) {
       try {
-        await stripeBilling.repairLatestStripeSubscriptionForUser(user.id);
+        await stripeBilling.repairStripeSubscriptionsForUser(user.id, {
+          cancelExtraActive: true,
+          applyPlanGrant: true,
+        });
         r = await getActiveSubscription(user.id);
         if (r.error) return err(res, 500, r.error.code, r.error.message, r.error.details);
       } catch (repairError) {
         // eslint-disable-next-line no-console
-        console.warn("repairLatestStripeSubscriptionForUser failed in /billing/me:", String(repairError?.message || repairError));
+        console.warn("repairStripeSubscriptionsForUser failed in /billing/me:", String(repairError?.message || repairError));
       }
     }
 
@@ -574,6 +577,10 @@ export function createBillingRouter(ctx) {
       if (!planSlug) return err(res, 400, "BAD_REQUEST", "Falta planSlug.");
 
       await assertLegalAccepted(user.id);
+      await stripeBilling.repairStripeSubscriptionsForUser(user.id, {
+        cancelExtraActive: true,
+        applyPlanGrant: true,
+      });
       const plan = await fetchPlanBySlug(planSlug, { requireStripePrice: true });
       const current = await getActiveSubscription(user.id);
       if (current.error) return err(res, 500, current.error.code, current.error.message, current.error.details);
@@ -682,6 +689,11 @@ export function createBillingRouter(ctx) {
     if (!requireStripeConfigured(res)) return;
 
     try {
+      await stripeBilling.repairStripeSubscriptionsForUser(user.id, {
+        cancelExtraActive: false,
+        applyPlanGrant: false,
+      });
+
       const current = await getActiveSubscription(user.id);
       if (current.error) return err(res, 500, current.error.code, current.error.message, current.error.details);
 
@@ -689,18 +701,12 @@ export function createBillingRouter(ctx) {
         return err(res, 409, "NO_STRIPE_SUBSCRIPTION", "No hay una suscripción activa de Stripe para cancelar.");
       }
 
-      const stripeSubscriptionId = current.subscription.stripeSubscriptionId;
-      const canceled = await stripeBilling.cancelSubscriptionImmediately(stripeSubscriptionId);
-      await stripeBilling.syncSubscriptionFromStripe(canceled || stripeSubscriptionId);
+      const canceledSummary = await stripeBilling.cancelAllActiveSubscriptionsForUser(user.id);
 
       let refreshed = await getActiveSubscription(user.id);
       if (refreshed.error) return err(res, 500, refreshed.error.code, refreshed.error.message, refreshed.error.details);
 
-      const sameStripeSubStillActive =
-        refreshed.subscription?.provider === "stripe" &&
-        String(refreshed.subscription?.stripeSubscriptionId || "") === String(stripeSubscriptionId || "");
-
-      if (sameStripeSubStillActive) {
+      if (refreshed.subscription?.provider === "stripe") {
         const { error: cancelLocalErr } = await supabaseAdmin.rpc("billing_cancel_subscription", {
           p_user_id: user.id,
           p_wipe_generation_credits: false,
@@ -716,7 +722,13 @@ export function createBillingRouter(ctx) {
         if (refreshed.error) return err(res, 500, refreshed.error.code, refreshed.error.message, refreshed.error.details);
       }
 
-      return res.json({ ok: true, subscription: refreshed.subscription || null });
+      return res.json({
+        ok: true,
+        subscription: refreshed.subscription || null,
+        canceledSubscriptionIds: Array.isArray(canceledSummary?.canceledSubscriptionIds)
+          ? canceledSummary.canceledSubscriptionIds
+          : [],
+      });
     } catch (e) {
       return err(
         res,

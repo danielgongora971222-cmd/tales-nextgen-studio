@@ -44,9 +44,13 @@ export function createWalletRouter(ctx) {
     if (sErr) return err(res, 500, "DB_RPC_FAILED", sErr.message);
     let active = Array.isArray(sub) ? sub[0] : null;
 
-    if (!active?.subscription_id && stripeBilling?.isConfigured?.()) {
+    const hasStripeManagedSubscription = active?.provider === "stripe" && !!active?.stripe_subscription_id;
+    if ((!active?.subscription_id || hasStripeManagedSubscription) && stripeBilling?.isConfigured?.()) {
       try {
-        await stripeBilling.repairLatestStripeSubscriptionForUser(user.id);
+        await stripeBilling.repairStripeSubscriptionsForUser(user.id, {
+          cancelExtraActive: true,
+          applyPlanGrant: true,
+        });
         const repaired = await supabaseAdmin.rpc("get_active_subscription", { p_user_id: user.id });
         if (!repaired.error) {
           sub = repaired.data;
@@ -54,7 +58,7 @@ export function createWalletRouter(ctx) {
         }
       } catch (repairError) {
         // eslint-disable-next-line no-console
-        console.warn("repairLatestStripeSubscriptionForUser failed in /wallet/me:", String(repairError?.message || repairError));
+        console.warn("repairStripeSubscriptionsForUser failed in /wallet/me:", String(repairError?.message || repairError));
       }
     }
 
