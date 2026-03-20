@@ -36,19 +36,8 @@ import PlanRequiredModal from "@/components/PlanRequiredModal";
 import { EVENT_INSUFFICIENT_CREDITS, EVENT_PLAN_REQUIRED, emitWalletRefresh } from "@/services/appEvents";
 import EarnMoney from "./pages/EarnMoney.tsx";
 import ReelFeed from "./pages/ReelFeed.tsx";
-import StripeCheckoutStatusModal from "./components/StripeCheckoutStatusModal";
-import {
-  clearBillingSearchParams,
-  clearPendingStripeCheckout,
-  isStripeCheckoutSessionTemplate,
-  readPendingStripeCheckout,
-} from "./services/stripeCheckoutState";
-
-const PUBLIC_ROUTES = new Set<AppRoute>([
-  AppRoute.HOME,
-  AppRoute.COMMUNITY_STORE,
-  AppRoute.REEL_FEED,
-]);
+import StripeCheckoutStatusModal from "@/components/StripeCheckoutStatusModal";
+import { clearBillingSearchParams, clearPendingStripeCheckout, hasStripeCheckoutSearchParams, isStripeCheckoutSessionTemplate, readPendingStripeCheckout } from "@/services/stripeCheckoutState";
 
 type CheckoutOverlayState =
   | null
@@ -59,6 +48,12 @@ type CheckoutOverlayState =
       mode?: "subscription" | "payment" | null;
       actionLabel?: string;
     };
+
+const PUBLIC_ROUTES = new Set<AppRoute>([
+  AppRoute.HOME,
+  AppRoute.COMMUNITY_STORE,
+  AppRoute.REEL_FEED,
+]);
 
 const AppContent: React.FC = () => {
   const [route, setRoute] = useState<AppRoute>(AppRoute.HOME);
@@ -84,6 +79,7 @@ const AppContent: React.FC = () => {
   const [planRequiredMessage, setPlanRequiredMessage] = useState<string | null>(null);
   const [checkoutOverlay, setCheckoutOverlay] = useState<CheckoutOverlayState>(null);
   const [checkoutOverlayBusy, setCheckoutOverlayBusy] = useState(false);
+  const [hasStripeReturnParams, setHasStripeReturnParams] = useState<boolean>(() => hasStripeCheckoutSearchParams());
 
   const { user, isLoading: authLoading } = useAuth();
   const healthUrl = apiUrl("/api/health");
@@ -227,18 +223,6 @@ const AppContent: React.FC = () => {
   }, [user?.id]);
 
   useEffect(() => {
-    if (!user) {
-      setAuthModalOpen(false);
-      if (!PUBLIC_ROUTES.has(route)) {
-        setRoute(AppRoute.HOME);
-      }
-      return;
-    }
-
-    setAuthModalOpen(false);
-  }, [user?.id, route]);
-
-  useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const stripeStatus = params.get("stripe_status");
     const sessionIdFromUrl = params.get("session_id");
@@ -247,8 +231,8 @@ const AppContent: React.FC = () => {
       ? pendingCheckout?.sessionId || ""
       : String(sessionIdFromUrl || "").trim() || pendingCheckout?.sessionId || "";
 
+    setHasStripeReturnParams(Boolean(stripeStatus || sessionId));
     if (!stripeStatus) return;
-    if (stripeStatus === "success" && !user) return;
 
     let cancelled = false;
     const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -256,51 +240,52 @@ const AppContent: React.FC = () => {
     (async () => {
       if (stripeStatus === "cancel") {
         clearPendingStripeCheckout();
-        setRoute(AppRoute.HOME);
         setCheckoutOverlay({
           phase: "notice",
-          title: "Checkout cancelado",
-          message: "No se realizó ningún cobro. Puedes volver a intentarlo cuando quieras.",
+          title: "Pago cancelado",
+          message: "No se realizó ningún cobro. Puedes intentarlo de nuevo cuando quieras.",
           mode: pendingCheckout?.mode || null,
-          actionLabel: "OK",
+          actionLabel: "Entendido",
         });
         clearBillingSearchParams();
+        setHasStripeReturnParams(false);
         return;
       }
 
       if (stripeStatus !== "success") {
         clearPendingStripeCheckout();
         clearBillingSearchParams();
+        setHasStripeReturnParams(false);
         return;
       }
 
       if (!sessionId) {
         clearPendingStripeCheckout();
-        setRoute(AppRoute.HOME);
         setCheckoutOverlay({
           phase: "error",
           title: "No pudimos confirmar la compra",
-          message: "Stripe cerró el checkout, pero no recibí el identificador de la sesión para validar la operación.",
+          message: "Stripe cerró el checkout, pero no recibí el identificador de la sesión para verificar la operación.",
           mode: pendingCheckout?.mode || null,
-          actionLabel: "OK",
+          actionLabel: "Entendido",
         });
         clearBillingSearchParams();
+        setHasStripeReturnParams(false);
         return;
       }
 
       setRoute(AppRoute.HOME);
       setCheckoutOverlay({
         phase: "confirming",
-        title: pendingCheckout?.mode === "payment" ? "Acreditando tus créditos" : "Confirmando tu compra",
+        title: "Estamos confirmando tu compra",
         message:
           pendingCheckout?.mode === "payment"
-            ? "Estamos validando el pago y aplicando tus créditos extra. Esto tarda solo unos segundos."
-            : "Estamos validando el pago, activando tu plan y aplicando los cambios en tu cuenta.",
+            ? "Estamos validando el pago y acreditando tus créditos extra."
+            : "Estamos validando el pago y activando tu nuevo plan.",
         mode: pendingCheckout?.mode || null,
       });
 
       try {
-        for (let attempt = 0; attempt < 12; attempt += 1) {
+        for (let attempt = 0; attempt < 15; attempt += 1) {
           const status = await getStripeCheckoutStatus(sessionId);
           if (cancelled) return;
 
@@ -308,22 +293,26 @@ const AppContent: React.FC = () => {
             clearPendingStripeCheckout();
             emitWalletRefresh();
             try {
-              const sub = await billingMe();
-              if (!cancelled) setSubscription(sub || null);
+              const fresh = await billingMe();
+              if (!cancelled) {
+                setSubscription(fresh || null);
+                setBillingChecked(true);
+              }
             } catch {
-              // best effort
+              // ignore sync read errors here; modal still informs the user.
             }
             setCheckoutOverlay({
               phase: "success",
-              title: status?.mode === "payment" ? "Créditos aplicados" : "Compra confirmada",
+              title: status?.mode === "payment" ? "Créditos acreditados" : "Compra confirmada",
               message:
                 status?.mode === "payment"
-                  ? "Tus créditos extra ya fueron acreditados correctamente."
-                  : "Tu plan ya está activo y los cambios se aplicaron correctamente en tu cuenta.",
+                  ? "Tus créditos extra ya fueron aplicados correctamente."
+                  : "Tu plan ya quedó activo y los cambios fueron aplicados.",
               mode: status?.mode || pendingCheckout?.mode || null,
               actionLabel: "OK",
             });
             clearBillingSearchParams();
+            setHasStripeReturnParams(false);
             return;
           }
 
@@ -334,30 +323,35 @@ const AppContent: React.FC = () => {
               title: "La sesión expiró",
               message: "La sesión de pago expiró antes de completarse. Puedes iniciar la compra de nuevo.",
               mode: status?.mode || pendingCheckout?.mode || null,
-              actionLabel: "OK",
+              actionLabel: "Entendido",
             });
             clearBillingSearchParams();
+            setHasStripeReturnParams(false);
             return;
           }
 
-          await sleep(2000);
+          await sleep(1600);
         }
 
         emitWalletRefresh();
         try {
-          const sub = await billingMe();
-          if (!cancelled) setSubscription(sub || null);
+          const fresh = await billingMe();
+          if (!cancelled) {
+            setSubscription(fresh || null);
+            setBillingChecked(true);
+          }
         } catch {
-          // best effort
+          // ignore
         }
         setCheckoutOverlay({
           phase: "notice",
           title: "Seguimos sincronizando",
-          message: "El cobro ya terminó, pero todavía estamos cerrando la activación. Revisa de nuevo en unos segundos si no ves el cambio inmediatamente.",
+          message: "El pago ya fue aceptado por Stripe. Si no ves el cambio todavía, vuelve a revisar en unos segundos.",
           mode: pendingCheckout?.mode || null,
-          actionLabel: "OK",
+          actionLabel: "Entendido",
         });
         clearBillingSearchParams();
+        setHasStripeReturnParams(false);
       } catch (e: any) {
         if (cancelled) return;
         clearPendingStripeCheckout();
@@ -366,9 +360,10 @@ const AppContent: React.FC = () => {
           title: "No pudimos confirmar la compra",
           message: e?.message || "No se pudo confirmar el estado del pago con Stripe.",
           mode: pendingCheckout?.mode || null,
-          actionLabel: "OK",
+          actionLabel: "Entendido",
         });
         clearBillingSearchParams();
+        setHasStripeReturnParams(false);
       }
     })();
 
@@ -388,18 +383,35 @@ const AppContent: React.FC = () => {
     setCheckoutOverlayBusy(true);
     try {
       emitWalletRefresh();
-      try {
-        const sub = await billingMe();
-        setSubscription(sub || null);
-      } catch {
-        // best effort
-      }
+      const fresh = await billingMe();
+      setSubscription(fresh || null);
+      setBillingChecked(true);
       setRoute(AppRoute.HOME);
       setCheckoutOverlay(null);
+    } catch (e: any) {
+      setCheckoutOverlay({
+        phase: "notice",
+        title: "Compra confirmada",
+        message: e?.message || "La compra ya fue confirmada. Si no ves el cambio reflejado, recarga la app en unos segundos.",
+        mode: checkoutOverlay.mode || null,
+        actionLabel: "Entendido",
+      });
     } finally {
       setCheckoutOverlayBusy(false);
     }
   }
+
+  useEffect(() => {
+    if (!user) {
+      setAuthModalOpen(false);
+      if (!PUBLIC_ROUTES.has(route)) {
+        setRoute(AppRoute.HOME);
+      }
+      return;
+    }
+
+    setAuthModalOpen(false);
+  }, [user?.id, route]);
 
   const handleConnect = async () => {
     setChecking(true);
@@ -521,8 +533,6 @@ const AppContent: React.FC = () => {
     }
   };
 
-  const hasStripeReturnParams = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("stripe_status");
-
   if (checking || authLoading) {
     return (
       <div className="relative w-full h-screen bg-black text-white flex items-center justify-center">
@@ -625,6 +635,7 @@ const AppContent: React.FC = () => {
             setRoute(AppRoute.PAYWALL);
           }}
         />
+
 
         <StripeCheckoutStatusModal
           open={!!checkoutOverlay}

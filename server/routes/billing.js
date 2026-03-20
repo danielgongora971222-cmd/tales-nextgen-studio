@@ -431,7 +431,7 @@ export function createBillingRouter(ctx) {
           res,
           409,
           "STRIPE_MANAGED_SUBSCRIPTION",
-          "Tu suscripción activa se gestiona en Stripe. Las mejoras de plan se hacen dentro de la app y las cancelaciones desde el portal de Stripe.",
+          "Tu suscripción activa se gestiona en Stripe. Usa el portal de facturación para cambiarla o cancelarla.",
           { provider: "stripe", flow: "update", subscriptionId: current.subscription.stripeSubscriptionId || null }
         );
       }
@@ -575,33 +575,23 @@ export function createBillingRouter(ctx) {
       if (current.error) return err(res, 500, current.error.code, current.error.message, current.error.details);
 
       const currentPlan = await fetchCurrentPlan(current.subscription);
-      if (currentPlan?.id && planPowerScore(plan) < planPowerScore(currentPlan)) {
-        if (current.subscription?.provider === "stripe") {
-          return err(
-            res,
-            409,
-            "STRIPE_MANAGED_SUBSCRIPTION",
-            "Tu suscripción activa se gestiona en Stripe. Las mejoras de plan se hacen dentro de la app. Para bajar de plan, primero cancela desde el portal y luego compra el plan menor.",
-            { provider: "stripe", flow: "update", subscriptionId: current.subscription?.stripeSubscriptionId || null }
-          );
-        }
+      const currentPower = currentPlan?.id ? planPowerScore(currentPlan) : null;
+      const requestedPower = planPowerScore(plan);
+      const isDowngrade = currentPower !== null && requestedPower < currentPower;
+      const isUpgrade = currentPower !== null && requestedPower > currentPower;
+      const isSamePlan = !!currentPlan?.id && String(currentPlan.slug || "") === String(plan.slug || "");
 
+      if (isSamePlan) {
+        return err(res, 409, "CURRENT_PLAN", "Ese ya es tu plan activo actual.");
+      }
+
+      if (isDowngrade) {
         return err(
           res,
           403,
           "DOWNGRADE_REQUIRES_CANCEL",
           "Tienes un plan activo superior. Para bajar de plan primero debes cancelar tu suscripción y luego comprar el plan menor.",
           { currentPlanSlug: currentPlan.slug, requestedPlanSlug: plan.slug }
-        );
-      }
-
-      if (current.subscription?.provider === "stripe") {
-        return err(
-          res,
-          409,
-          "STRIPE_MANAGED_SUBSCRIPTION",
-          "Tu suscripción activa se gestiona en Stripe. Las mejoras de plan se hacen dentro de la app y las cancelaciones desde el portal de Stripe.",
-          { provider: "stripe", flow: "update", subscriptionId: current.subscription.stripeSubscriptionId || null }
         );
       }
 
@@ -616,6 +606,10 @@ export function createBillingRouter(ctx) {
         plan,
         referralCode: referralMeta.code,
         referralDiscountPct: referralMeta.buyerDiscountPct,
+        replaceStripeSubscriptionId:
+          current.subscription?.provider === "stripe" && isUpgrade
+            ? current.subscription?.stripeSubscriptionId || ""
+            : "",
         idempotencyKey: `stripe-sub:${getIdempotencyKey(req)}`,
       });
 
@@ -677,75 +671,73 @@ export function createBillingRouter(ctx) {
     }
   });
 
-  // POST /api/billing/stripe/subscription/change-plan { planSlug }
-  router.post("/billing/stripe/subscription/change-plan", async (req, res) => {
+  // POST /api/billing/stripe/cancel-now
+  router.post("/billing/stripe/cancel-now", async (req, res) => {
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
     if (!requireStripeConfigured(res)) return;
 
     try {
-      const planSlug = req.body?.planSlug ? String(req.body.planSlug) : "";
-      if (!planSlug) return err(res, 400, "BAD_REQUEST", "Falta planSlug.");
-
       const current = await getActiveSubscription(user.id);
       if (current.error) return err(res, 500, current.error.code, current.error.message, current.error.details);
+
       if (!current.subscription?.stripeSubscriptionId || current.subscription?.provider !== "stripe") {
-        return err(
-          res,
-          409,
-          "NO_STRIPE_SUBSCRIPTION",
-          "No hay una suscripción activa de Stripe para cambiar."
-        );
+        return err(res, 409, "NO_STRIPE_SUBSCRIPTION", "No hay una suscripción activa de Stripe para cancelar.");
       }
 
-      const currentPlan = await fetchCurrentPlan(current.subscription);
-      const targetPlan = await fetchPlanBySlug(planSlug, { requireStripePrice: true });
+      const canceled = await stripeBilling.cancelSubscriptionImmediately(current.subscription.stripeSubscriptionId);
+      await stripeBilling.syncSubscriptionFromStripe(canceled || current.subscription.stripeSubscriptionId);
 
-      if (currentPlan?.slug === targetPlan.slug) {
-        return err(res, 409, "PLAN_ALREADY_ACTIVE", "Ya estás en ese plan.", {
-          planSlug: targetPlan.slug,
-        });
-      }
+      const refreshed = await getActiveSubscription(user.id);
+      if (refreshed.error) return err(res, 500, refreshed.error.code, refreshed.error.message, refreshed.error.details);
 
-      if (currentPlan?.id && planPowerScore(targetPlan) < planPowerScore(currentPlan)) {
-        return err(
-          res,
-          403,
-          "DOWNGRADE_REQUIRES_CANCEL",
-          "Para bajar de plan, primero cancela tu suscripción actual y luego compra el plan menor.",
-          {
-            currentPlanSlug: currentPlan.slug,
-            requestedPlanSlug: targetPlan.slug,
-          }
-        );
-      }
-
-      const result = await stripeBilling.changeSubscriptionPlan({
-        user,
-        subscriptionId: current.subscription.stripeSubscriptionId,
-        plan: targetPlan,
-        idempotencyKey: `stripe-change-plan:${getIdempotencyKey(req)}`,
-      });
-
-      return res.json({
-        ok: true,
-        subscription: {
-          planSlug: result?.synced?.plan?.slug || targetPlan.slug,
-          planName: result?.synced?.plan?.name || targetPlan.name,
-          currentPeriodStart: result?.synced?.row?.current_period_start || null,
-          currentPeriodEnd: result?.synced?.row?.current_period_end || null,
-          cancelAtPeriodEnd: result?.synced?.row?.cancel_at_period_end === true,
-        },
-      });
+      return res.json({ ok: true, subscription: refreshed.subscription || null });
     } catch (e) {
       return err(
         res,
         Number(e?.status) || 500,
-        e?.code || "STRIPE_CHANGE_PLAN_FAILED",
-        e?.message || "No se pudo actualizar la suscripción en Stripe.",
+        e?.code || "STRIPE_CANCEL_FAILED",
+        e?.message || "No se pudo cancelar la suscripción de Stripe.",
         e?.details || null
       );
     }
+  });
+
+  // POST /api/billing/admin/self-cancel-local { wipeGenerationCredits?: boolean }
+  router.post("/billing/admin/self-cancel-local", async (req, res) => {
+    const auth = await requireAdmin(req, res);
+    if (!auth) return;
+
+    const userId = auth.user?.id || auth.admin?.user?.id || auth.admin?.id;
+    if (!userId) {
+      return err(res, 403, "FORBIDDEN", "No se pudo resolver el usuario admin autenticado.");
+    }
+
+    const idem = getIdempotencyKey(req);
+    const wipeGenerationCredits = req.body?.wipeGenerationCredits === true;
+
+    const { data, error: cErr } = await supabaseAdmin.rpc("billing_cancel_subscription", {
+      p_user_id: userId,
+      p_wipe_generation_credits: wipeGenerationCredits,
+      p_idempotency_key: `self-force-cancel:${idem}`,
+    });
+
+    if (cErr) {
+      const msg = String(cErr.message || "");
+      if (msg.includes("NO_ACTIVE_SUBSCRIPTION")) return err(res, 400, "NO_ACTIVE_PLAN", "No tienes plan activo.");
+      return err(res, 500, "CANCEL_FAILED", cErr.message);
+    }
+
+    const row = Array.isArray(data) ? data[0] : null;
+    return res.json({
+      ok: true,
+      wipeGenerationCredits: Boolean(row?.wipe_generation_credits),
+      balances: {
+        plan: Number(row?.plan_credits) || 0,
+        topup: Number(row?.topup_credits) || 0,
+        bonus: Number(row?.bonus_credits) || 0,
+      },
+    });
   });
 
   // POST /api/billing/stripe/portal { flow }

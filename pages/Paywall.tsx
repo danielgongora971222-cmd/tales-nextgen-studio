@@ -1,11 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { billingMe, billingPlans, billingTopups, changeStripeSubscriptionPlan, createStripeSubscriptionCheckout, createStripeTopupCheckout } from "../services/billingApi";
+import { billingMe, billingPlans, billingTopups, createStripeSubscriptionCheckout, createStripeTopupCheckout } from "../services/billingApi";
 import { acceptLegal } from "../services/legalApi";
 import { useWallet } from "../contexts/WalletContext";
 import { validateReferralCode } from "../services/referralsApi";
 import ConfirmDollarPurchaseModal from "@/components/ConfirmDollarPurchaseModal";
-import StripeCheckoutStatusModal from "@/components/StripeCheckoutStatusModal";
-import { persistPendingStripeCheckout } from "../services/stripeCheckoutState";
+import { persistPendingStripeCheckout } from "@/services/stripeCheckoutState";
 
 const TERMS_VERSION = "2026-03-03";
 const PRIVACY_VERSION = "2026-03-03";
@@ -15,16 +14,6 @@ type TabKey = "plans" | "credits";
 type ConfirmState =
   | null
   | { itemLabel: string; amountLabel: string; note?: string | null; action: () => Promise<void> };
-
-type CheckoutOverlayState =
-  | null
-  | {
-      phase: "confirming" | "success" | "notice" | "error";
-      title: string;
-      message: string;
-      mode?: "subscription" | "payment" | null;
-      actionLabel?: string;
-    };
 
 function moneyUSD(cents: number) {
   const v = Number(cents || 0) / 100;
@@ -194,8 +183,6 @@ export default function Paywall({
   const [referralInput, setReferralInput] = useState("");
   const [referralCheck, setReferralCheck] = useState<any>({ state: "idle" });
   const [appliedReferral, setAppliedReferral] = useState<any | null>(null);
-  const [checkoutOverlay, setCheckoutOverlay] = useState<CheckoutOverlayState>(null);
-  const [checkoutOverlayBusy, setCheckoutOverlayBusy] = useState(false);
 
   const availableCredits = Number(wallet?.generationCredits ?? 0);
   const planCredits = Number(wallet?.gen_plan_credits ?? 0);
@@ -387,32 +374,6 @@ export default function Paywall({
 
     return bestKey;
   }, [uniqueTopups]);
-
-  async function handleCheckoutOverlayAction() {
-    if (!checkoutOverlay) return;
-
-    if (checkoutOverlay.phase !== "success") {
-      setCheckoutOverlay(null);
-      return;
-    }
-
-    setCheckoutOverlayBusy(true);
-    try {
-      await onSubscribed();
-    } catch (e: any) {
-      setCheckoutOverlay({
-        phase: "notice",
-        title: "Compra confirmada",
-        message:
-          e?.message ||
-          "La compra ya fue confirmada. Si todavía no ves el cambio reflejado fuera de esta pantalla, actualiza la app en unos segundos.",
-        mode: checkoutOverlay.mode || null,
-        actionLabel: "Entendido",
-      });
-    } finally {
-      setCheckoutOverlayBusy(false);
-    }
-  }
 
   return (
     <div className="text-white">
@@ -797,38 +758,33 @@ export default function Paywall({
               const savings = pricing.discountCents;
 
               const checkoutEnabled = p.checkoutEnabled !== false;
-              const stripeManagedUpgrade = isStripeManagedSub && !isCurrent && !!isHigher;
-              const stripeManagedDowngrade = isStripeManagedSub && !isCurrent && !!isLower;
+              const stripeManagedChange = isStripeManagedSub && !isCurrent;
 
               const ctaLabel = !checkoutEnabled
                 ? "Próximamente"
                 : isCurrent
                   ? "Plan actual"
-                  : stripeManagedUpgrade
-                    ? "Mejorar ahora"
-                    : stripeManagedDowngrade
-                      ? "Cancelar y cambiar"
-                      : currentPlanPower !== null
-                        ? isHigher
-                          ? "Mejorar plan"
-                          : "No disponible"
-                        : "Suscribirme";
+                  : currentPlanPower !== null
+                    ? isHigher
+                      ? "Upgrade"
+                      : "No disponible"
+                    : "Suscribirme";
 
-              const ctaDisabled = !checkoutEnabled || isCurrent || stripeManagedDowngrade || (!isStripeManagedSub && isLower);
+              const ctaDisabled = !checkoutEnabled || isCurrent || isLower;
 
               const factor = planPeriodFactor(p.billing_period);
               const creditsEqMonth = Number(p.plan_credits || 0) * factor;
 
               const showBest = bestValuePlanId && String(p.id) === String(bestValuePlanId);
 
-              const showDiscount = !stripeManagedUpgrade && !stripeManagedDowngrade && !!appliedReferral?.code && discountPct > 0 && pricing.discountedCents < pricing.base;
+              const showDiscount = !stripeManagedChange && !!appliedReferral?.code && discountPct > 0 && pricing.discountedCents < pricing.base;
 
               return (
                 <div
                   key={p.id}
                   className={[
                     "premium-hero-card plan-tier-card min-w-0 p-4 md:p-5 transition-transform duration-200 group",
-                    (stripeManagedDowngrade || (!isStripeManagedSub && isLower)) ? "plan-tier-card--locked" : "",
+                    isLower ? "plan-tier-card--locked" : "",
                     isCurrent ? "plan-tier-card--current" : "",
                   ]
                     .filter(Boolean)
@@ -841,7 +797,7 @@ export default function Paywall({
                         <span className="plan-tier-pill">{mk.badge}</span>
                         {showBest ? <span className="plan-tier-pill plan-tier-pill--best">Mejor valor</span> : null}
                         {isCurrent ? <span className="plan-tier-pill plan-tier-pill--current">Actual</span> : null}
-                        {stripeManagedDowngrade || (!isStripeManagedSub && isLower) ? <span className="plan-tier-pill">Bloqueado</span> : null}
+                        {isLower ? <span className="plan-tier-pill">Bloqueado</span> : null}
                       </div>
 
                       <div className="text-xl md:text-2xl font-extrabold mt-3">{p.name}</div>
@@ -943,17 +899,13 @@ export default function Paywall({
                         .join(" ")}
                       disabled={ctaDisabled}
                       onClick={() => {
-                        const noteParts: string[] = [
-                          stripeManagedUpgrade
-                            ? "La mejora se aplica ahora mismo sobre tu suscripción activa."
-                            : "Suscripción recurrente hasta cancelación.",
-                        ];
-                        if (appliedReferral?.code && !stripeManagedUpgrade) {
+                        const noteParts: string[] = ["Suscripción recurrente hasta cancelación."];
+                        if (appliedReferral?.code) {
                           const pct = clampPct(appliedReferral?.buyerDiscountPct);
                           noteParts.push(`Código: ${String(appliedReferral.code)} · Descuento: ${pct}% · Reward partner: ${clampPct(appliedReferral?.refRewardPct)}%`);
                         }
-                        if (stripeManagedUpgrade && appliedReferral?.code) {
-                          noteParts.push("Los descuentos por referido solo aplican al alta inicial, no a mejoras sobre una suscripción ya activa.");
+                        if (isHigher) {
+                          noteParts.push("El upgrade se cobra como una nueva compra del plan superior. Cuando el pago se confirme, tu suscripción anterior se cancelará automáticamente para evitar una doble factura futura.");
                         }
 
                         setConfirm({
@@ -968,37 +920,6 @@ export default function Paywall({
                             });
 
                             window.localStorage.setItem("tales_account_tab", "plans");
-
-                            if (stripeManagedUpgrade) {
-                              setCheckoutOverlay({
-                                phase: "confirming",
-                                title: "Actualizando tu plan",
-                                message: "Estamos aplicando la mejora, recalculando el cobro prorrateado y renovando tus créditos.",
-                                mode: "subscription",
-                              });
-
-                              try {
-                                await changeStripeSubscriptionPlan(p.slug);
-                                await refreshWallet();
-                                await loadAll();
-                                setCheckoutOverlay({
-                                  phase: "success",
-                                  title: "Plan mejorado con éxito",
-                                  message: "Tu nuevo plan ya está activo y tus créditos fueron actualizados correctamente.",
-                                  mode: "subscription",
-                                  actionLabel: "OK",
-                                });
-                              } catch (e: any) {
-                                setCheckoutOverlay({
-                                  phase: "error",
-                                  title: "No pudimos aplicar la mejora",
-                                  message: e?.message || "No se pudo actualizar el plan en Stripe.",
-                                  mode: "subscription",
-                                  actionLabel: "OK",
-                                });
-                              }
-                              return;
-                            }
 
                             const checkout = await createStripeSubscriptionCheckout(p.slug, appliedReferral?.code || undefined);
                             persistPendingStripeCheckout(checkout.sessionId, "subscription");
@@ -1022,19 +943,13 @@ export default function Paywall({
                       </div>
                     ) : null}
 
-                    {stripeManagedUpgrade ? (
+                    {stripeManagedChange && isHigher ? (
                       <div className="text-[11px] text-white/55 mt-2 text-center">
-                        La mejora se aplica dentro de la app. Stripe recalcula el cobro prorrateado y renueva tu periodo automáticamente.
+                        El upgrade se cobra en Stripe Checkout y la suscripción anterior se cancela automáticamente al confirmarse el pago.
                       </div>
                     ) : null}
 
-                    {ctaDisabled && stripeManagedDowngrade ? (
-                      <div className="text-[11px] text-white/55 mt-2 text-center">
-                        Para bajar de plan, primero cancela tu suscripción actual desde Settings → Billing y luego compra el plan menor.
-                      </div>
-                    ) : null}
-
-                    {ctaDisabled && !isStripeManagedSub && isLower ? (
+                    {ctaDisabled && isLower ? (
                       <div className="text-[11px] text-white/55 mt-2 text-center">
                         Para bajar de plan, primero debes cancelar tu suscripción actual y luego comprar el plan menor.
                       </div>
@@ -1162,17 +1077,6 @@ export default function Paywall({
           await confirm.action();
           setConfirm(null);
         }}
-      />
-
-      <StripeCheckoutStatusModal
-        open={!!checkoutOverlay}
-        phase={checkoutOverlay?.phase || "notice"}
-        title={checkoutOverlay?.title || ""}
-        message={checkoutOverlay?.message || ""}
-        mode={checkoutOverlay?.mode || null}
-        busy={checkoutOverlayBusy}
-        actionLabel={checkoutOverlay?.actionLabel || "OK"}
-        onAction={handleCheckoutOverlayAction}
       />
     </div>
   );

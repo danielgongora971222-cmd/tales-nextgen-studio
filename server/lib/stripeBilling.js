@@ -121,13 +121,9 @@ function localStatusFromStripeStatus(status) {
   return "expired";
 }
 
-function firstSubscriptionItem(subscription) {
-  const items = Array.isArray(subscription?.items?.data) ? subscription.items.data : [];
-  return items[0] || null;
-}
-
 function firstPriceIdFromSubscription(subscription) {
-  const first = firstSubscriptionItem(subscription);
+  const items = Array.isArray(subscription?.items?.data) ? subscription.items.data : [];
+  const first = items[0] || null;
   const price = first?.price || null;
   return normalizeString(price?.id);
 }
@@ -426,10 +422,10 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
     return normalizeString(process.env[envKey]);
   }
 
-  async function createSubscriptionCheckoutSession({ req, user, plan, referralCode = "", referralDiscountPct = 0, idempotencyKey }) {
+  async function createSubscriptionCheckoutSession({ req, user, plan, referralCode = "", referralDiscountPct = 0, replaceStripeSubscriptionId = "", idempotencyKey }) {
     const customerId = await ensureCustomerForUser(user);
     const successUrl = buildAppReturnUrl(req, { route: "home", status: "success", sessionId: "{CHECKOUT_SESSION_ID}" });
-    const cancelUrl = buildAppReturnUrl(req, { route: "home", status: "cancel" });
+    const cancelUrl = buildAppReturnUrl(req, { route: "paywall", status: "cancel" });
 
     const cleanReferralCode = normalizeString(referralCode).toUpperCase();
     const couponId = getReferralCouponId(referralDiscountPct);
@@ -440,11 +436,14 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
       );
     }
 
+    const cleanReplaceStripeSubscriptionId = normalizeStripeObjectId(replaceStripeSubscriptionId);
+
     const metadata = {
       app_user_id: user.id,
       app_plan_id: String(plan.id),
       app_plan_slug: String(plan.slug),
       referral_code: cleanReferralCode || undefined,
+      replace_stripe_subscription_id: cleanReplaceStripeSubscriptionId || undefined,
     };
 
     const params = {
@@ -477,7 +476,7 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
   async function createTopupCheckoutSession({ req, user, product, idempotencyKey }) {
     const customerId = await ensureCustomerForUser(user);
     const successUrl = buildAppReturnUrl(req, { route: "home", status: "success", sessionId: "{CHECKOUT_SESSION_ID}" });
-    const cancelUrl = buildAppReturnUrl(req, { route: "home", status: "cancel" });
+    const cancelUrl = buildAppReturnUrl(req, { route: "paywall", status: "cancel" });
 
     const metadata = {
       app_user_id: user.id,
@@ -564,85 +563,6 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
     return stripeRequest("POST", "/v1/billing_portal/sessions", params);
   }
 
-  async function changeSubscriptionPlan({ user, subscriptionId, plan, idempotencyKey }) {
-    const cleanSubscriptionId = normalizeStripeObjectId(subscriptionId);
-    if (!cleanSubscriptionId) {
-      throw makeError("NO_STRIPE_SUBSCRIPTION", "No hay una suscripción de Stripe activa para cambiar.");
-    }
-
-    if (!plan?.id || !normalizeString(plan?.stripe_price_id)) {
-      throw makeError(
-        "PLAN_CHECKOUT_NOT_AVAILABLE",
-        "El plan solicitado todavía no tiene Stripe Price ID configurado."
-      );
-    }
-
-    const subscription = await fetchSubscription(cleanSubscriptionId);
-    const stripeCustomerId = normalizeStripeObjectId(subscription?.customer);
-    const resolvedUserId = await resolveUserIdFromStripeContext({
-      metadata: subscription?.metadata || {},
-      stripeCustomerId,
-    });
-
-    if (!resolvedUserId || resolvedUserId !== user.id) {
-      throw makeError("FORBIDDEN", "Esta suscripción de Stripe no pertenece al usuario autenticado.", 403);
-    }
-
-    const currentItem = firstSubscriptionItem(subscription);
-    const currentItemId = normalizeStripeObjectId(currentItem?.id);
-    const currentPriceId = firstPriceIdFromSubscription(subscription);
-    if (!currentItemId || !currentPriceId) {
-      throw makeError("STRIPE_PRICE_NOT_FOUND", "No pude resolver el precio actual de la suscripción.", 500, {
-        stripeSubscriptionId: cleanSubscriptionId,
-      });
-    }
-
-    if (currentPriceId === normalizeString(plan.stripe_price_id)) {
-      throw makeError("PLAN_ALREADY_ACTIVE", "Ya estás en ese plan.", 409, {
-        stripeSubscriptionId: cleanSubscriptionId,
-        priceId: currentPriceId,
-      });
-    }
-
-    const metadata = {
-      ...(subscription?.metadata || {}),
-      app_user_id: user.id,
-      app_plan_id: String(plan.id),
-      app_plan_slug: String(plan.slug),
-    };
-
-    const updated = await stripeRequest(
-      "POST",
-      `/v1/subscriptions/${cleanSubscriptionId}`,
-      {
-        cancel_at_period_end: false,
-        billing_cycle_anchor: "now",
-        proration_behavior: "create_prorations",
-        payment_behavior: "error_if_incomplete",
-        metadata,
-        items: [
-          {
-            id: currentItemId,
-            price: plan.stripe_price_id,
-            quantity: Number(currentItem?.quantity || 1),
-          },
-        ],
-        expand: ["items.data.price"],
-      },
-      { idempotencyKey }
-    );
-
-    const synced = await syncSubscriptionFromStripe(updated);
-    const grant = await ensurePlanGrantForSyncedSubscription(synced, { applyReferral: false });
-
-    return {
-      ok: true,
-      subscription: updated,
-      synced,
-      grant,
-    };
-  }
-
   async function fetchCheckoutSession(sessionId) {
     return stripeRequest("GET", `/v1/checkout/sessions/${sessionId}`, {
       expand: ["subscription", "payment_intent"],
@@ -657,6 +577,39 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
 
   async function cancelSubscriptionImmediately(subscriptionId) {
     return stripeRequest("DELETE", `/v1/subscriptions/${subscriptionId}`);
+  }
+
+  async function maybeCancelReplacedStripeSubscription(synced) {
+    const replacementId = normalizeStripeObjectId(synced?.subscription?.metadata?.replace_stripe_subscription_id);
+    const newSubscriptionId = normalizeStripeObjectId(synced?.subscription?.id);
+
+    if (!replacementId || !newSubscriptionId || replacementId === newSubscriptionId) {
+      return { skipped: true, reason: "no_replacement_subscription" };
+    }
+
+    let previousSubscription = null;
+    try {
+      previousSubscription = await fetchSubscription(replacementId);
+    } catch (error) {
+      if (Number(error?.status) === 404) {
+        return { skipped: true, reason: "replacement_subscription_missing" };
+      }
+      throw error;
+    }
+
+    const previousStatus = normalizeString(previousSubscription?.status).toLowerCase();
+    if (["canceled", "incomplete_expired"].includes(previousStatus)) {
+      return { skipped: true, reason: "replacement_subscription_already_closed", previousStatus };
+    }
+
+    const canceled = await cancelSubscriptionImmediately(replacementId);
+    await syncSubscriptionFromStripe(canceled || replacementId);
+
+    return {
+      ok: true,
+      canceledSubscriptionId: replacementId,
+      previousStatus,
+    };
   }
 
   async function syncSubscriptionFromStripe(subscriptionLike) {
@@ -724,9 +677,16 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
       normalizeString(existing?.current_period_end) ||
       "";
 
+    const terminatedAt =
+      unixToIso(subscription?.ended_at) ||
+      unixToIso(subscription?.canceled_at) ||
+      "";
+
     const startMs = new Date(resolvedPeriodStart).getTime();
     const endMs = new Date(resolvedPeriodEnd).getTime();
-    if (!resolvedPeriodEnd || !Number.isFinite(endMs) || !Number.isFinite(startMs) || endMs <= startMs) {
+    if (localStatus !== "active" && terminatedAt) {
+      resolvedPeriodEnd = terminatedAt;
+    } else if (!resolvedPeriodEnd || !Number.isFinite(endMs) || !Number.isFinite(startMs) || endMs <= startMs) {
       resolvedPeriodEnd = addBillingPeriodToIso(resolvedPeriodStart, plan?.billing_period);
     }
 
@@ -871,12 +831,15 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
       }
     }
 
+    const replacement = await maybeCancelReplacedStripeSubscription(synced);
+
     return {
       ok: true,
       synced,
       periodStart,
       periodEnd,
       grantIdempotencyKey,
+      replacement,
     };
   }
 
@@ -941,7 +904,16 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
     });
 
     if (topupErr) {
-      throw makeError("TOPUP_FAILED", topupErr.message, 500);
+      const msg = String(topupErr.message || "");
+      if (msg.toLowerCase().includes('gen_topup_credits') && msg.toLowerCase().includes('ambiguous')) {
+        throw makeError(
+          "TOPUP_FAILED",
+          "Falta aplicar el hotfix SQL de topups Stripe: 2026-03-20_stripe_topup_rpc_ambiguity_hotfix.sql.",
+          500,
+          { originalMessage: msg }
+        );
+      }
+      throw makeError("TOPUP_FAILED", msg, 500);
     }
 
     return { ok: true, userId, product };
@@ -1235,7 +1207,6 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
     createSubscriptionCheckoutSession,
     createTopupCheckoutSession,
     createPortalSession,
-    changeSubscriptionPlan,
     getCheckoutStatusForUser,
     handleWebhook,
     syncSubscriptionFromStripe,

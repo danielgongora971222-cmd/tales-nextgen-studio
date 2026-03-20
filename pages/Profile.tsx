@@ -5,7 +5,7 @@ import { useWallet } from "../contexts/WalletContext";
 import { apiUrl } from "../services/apiBase";
 import { supabase } from "../services/supabaseClient";
 import { profileMe, type ProfileMeResponse } from "../services/profileApi";
-import { billingMe, billingPlans, createStripePortal, mockCancel } from "../services/billingApi";
+import { billingMe, billingPlans, cancelStripeSubscriptionNow, createStripePortal, mockCancel, ownerForceSelfCancelLocal } from "../services/billingApi";
 import { emitProfileRefresh, emitWalletRefresh } from "../services/appEvents";
 import { ownerAssignMockPlanByEmail, ownerCancelPlanByEmail, ownerFetchSystemStatus, ownerGrantCreditsByEmail, type OwnerSystemStatusResponse } from "../services/ownerAdminApi";
 
@@ -394,10 +394,19 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
 
     if (isStripeManaged) {
       const okStripe = window.confirm(
-        "Tu suscripción activa se gestiona en Stripe. Te voy a abrir el portal seguro para que confirmes la cancelación allí."
+        "Esto cancelará tu suscripción de Stripe inmediatamente. No se abrirá el portal y no se programará para fin de periodo. ¿Deseas continuar?"
       );
       if (!okStripe) return;
-      await openBillingPortal("cancel");
+
+      setErr("");
+      try {
+        await cancelStripeSubscriptionNow();
+        emitWalletRefresh();
+        await refreshWallet();
+        setSub((await billingMe()) || null);
+      } catch (e: any) {
+        setErr(e?.message || "No se pudo cancelar la suscripción de Stripe.");
+      }
       return;
     }
 
@@ -416,6 +425,27 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
       setSub((await billingMe()) || null);
     } catch (e: any) {
       setErr(e?.message || "No se pudo cancelar el plan.");
+    }
+  }
+
+  async function forceLocalCancelForOwner(opts?: { wipeGenerationCredits?: boolean }) {
+    if (!me?.ownerAdmin) return;
+    const wipeGenerationCredits = opts?.wipeGenerationCredits === true;
+    const ok = window.confirm(
+      wipeGenerationCredits
+        ? "Forzar desactivación local del plan y borrar créditos de generación. Esto es solo para pruebas internas y no sustituye una cancelación real en Stripe. ¿Deseas continuar?"
+        : "Forzar desactivación local del plan conservando créditos. Esto es solo para pruebas internas y no sustituye una cancelación real en Stripe. ¿Deseas continuar?"
+    );
+    if (!ok) return;
+
+    setErr("");
+    try {
+      await ownerForceSelfCancelLocal({ wipeGenerationCredits });
+      emitWalletRefresh();
+      await refreshWallet();
+      setSub((await billingMe()) || null);
+    } catch (e: any) {
+      setErr(e?.message || "No se pudo forzar la cancelación local.");
     }
   }
 
@@ -811,45 +841,65 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
               <div className="text-sm font-semibold text-red-200">Danger zone</div>
               <div className="text-xs text-red-200/70 mt-1">
                 {sub?.provider === "stripe"
-                  ? "Las suscripciones reales se cancelan desde el portal seguro de Stripe."
+                  ? "La suscripción real puede cancelarse al instante desde aquí. El portal queda para método de pago e historial."
                   : "Pruebas de cancelación manual con o sin wipe de créditos de generación."}
               </div>
 
-              {sub?.provider === "stripe" ? (
-                <div className="mt-3 flex flex-wrap gap-2">
+              <div className="mt-3 flex flex-wrap gap-2">
+                {sub?.provider === "stripe" ? (
                   <button
                     type="button"
                     className="px-4 py-2 rounded-xl bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 text-sm"
                     onClick={() => void cancelSubscription({ wipeGenerationCredits: false })}
                   >
-                    Manage cancellation in Stripe
+                    Cancel subscription in Stripe now
                   </button>
-                </div>
-              ) : (
-                <>
-                  <div className="mt-3 flex flex-wrap gap-2">
+                ) : (
+                  <button
+                    type="button"
+                    className="px-4 py-2 rounded-xl bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 text-sm"
+                    onClick={() => void cancelSubscription({ wipeGenerationCredits: false })}
+                  >
+                    Cancel subscription (keep credits)
+                  </button>
+                )}
+
+                {sub?.provider !== "stripe" ? (
+                  <button
+                    type="button"
+                    className="px-4 py-2 rounded-xl bg-red-600/25 hover:bg-red-600/35 border border-red-500/40 text-sm"
+                    onClick={() => void cancelSubscription({ wipeGenerationCredits: true })}
+                  >
+                    Cancel + wipe generation credits
+                  </button>
+                ) : null}
+
+                {me?.ownerAdmin ? (
+                  <>
                     <button
                       type="button"
-                      className="px-4 py-2 rounded-xl bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 text-sm"
-                      onClick={() => void cancelSubscription({ wipeGenerationCredits: false })}
+                      className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-sm"
+                      onClick={() => void forceLocalCancelForOwner({ wipeGenerationCredits: false })}
                     >
-                      Cancel subscription (keep credits)
+                      Deactivate locally
                     </button>
 
                     <button
                       type="button"
-                      className="px-4 py-2 rounded-xl bg-red-600/25 hover:bg-red-600/35 border border-red-500/40 text-sm"
-                      onClick={() => void cancelSubscription({ wipeGenerationCredits: true })}
+                      className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-sm"
+                      onClick={() => void forceLocalCancelForOwner({ wipeGenerationCredits: true })}
                     >
-                      Cancel + wipe generation credits
+                      Deactivate locally + wipe credits
                     </button>
-                  </div>
+                  </>
+                ) : null}
+              </div>
 
-                  <div className="text-[11px] text-red-100/70 mt-3">
-                    El wipe borra solo créditos de generación: plan, topup y bonus. Los earnings no se borran aquí.
-                  </div>
-                </>
-              )}
+              <div className="text-[11px] text-red-100/70 mt-3">
+                {sub?.provider === "stripe"
+                  ? "La cancelación real de Stripe ahora se ejecuta de inmediato. Los botones de desactivación local son solo para pruebas internas del owner admin."
+                  : "El wipe borra solo créditos de generación: plan, topup y bonus. Los earnings no se borran aquí."}
+              </div>
             </div>
           </div>
         </div>

@@ -105,16 +105,6 @@ export async function createStripeTopupCheckout(productId: string) {
   });
 }
 
-
-export async function changeStripeSubscriptionPlan(planSlug: string) {
-  const headers = await authHeaders({ "x-idempotency-key": crypto.randomUUID() });
-  return request("/api/billing/stripe/subscription/change-plan", {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ planSlug }),
-  });
-}
-
 export async function createStripePortal(flow: "general" | "cancel" | "payment_method_update" | "update" = "general") {
   const headers = await authHeaders({ "x-idempotency-key": crypto.randomUUID() });
   return request("/api/billing/stripe/portal", {
@@ -131,3 +121,27 @@ export async function getStripeCheckoutStatus(sessionId: string) {
     headers,
   });
 }
+
+export async function cancelStripeSubscriptionNow() {
+  const headers = await authHeaders({ "x-idempotency-key": crypto.randomUUID() });
+  const data = await request("/api/billing/stripe/cancel-now", {
+    method: "POST",
+    headers,
+  });
+  emitWalletRefresh();
+  return data;
+}
+
+export async function ownerForceSelfCancelLocal(opts?: { wipeGenerationCredits?: boolean }) {
+  const headers = await authHeaders({ "x-idempotency-key": crypto.randomUUID() });
+  const data = await request("/api/billing/admin/self-cancel-local", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      wipeGenerationCredits: opts?.wipeGenerationCredits === true,
+    }),
+  });
+  emitWalletRefresh();
+  return data;
+}
+
