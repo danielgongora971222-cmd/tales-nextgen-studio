@@ -96,6 +96,27 @@ function firstPriceIdFromSubscription(subscription) {
   return normalizeString(price?.id);
 }
 
+function isStripeSessionPaymentComplete(session) {
+  const status = normalizeString(session?.status).toLowerCase();
+  const paymentStatus = normalizeString(session?.payment_status).toLowerCase();
+  if (status !== "complete") return false;
+  return paymentStatus === "paid" || paymentStatus === "no_payment_required";
+}
+
+function buildStripePlanGrantKey(subscriptionLike, periodStartOverride = "") {
+  const stripeSubscriptionId = normalizeStripeObjectId(subscriptionLike?.id || subscriptionLike);
+  if (!stripeSubscriptionId) return "";
+
+  const periodStart = normalizeString(periodStartOverride) || unixToIso(subscriptionLike?.current_period_start) || "period_unknown";
+  return `stripe:plan_period:${stripeSubscriptionId}:${periodStart}`;
+}
+
+function buildStripeReferralApplyKey(subscriptionLike) {
+  const stripeSubscriptionId = normalizeStripeObjectId(subscriptionLike?.id || subscriptionLike);
+  if (!stripeSubscriptionId) return "";
+  return `stripe:subscription_referral:${stripeSubscriptionId}`;
+}
+
 const STRIPE_CHECKOUT_SESSION_TEMPLATE = "{CHECKOUT_SESSION_ID}";
 
 function normalizeStripeObjectId(value) {
@@ -651,6 +672,82 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
     };
   }
 
+  async function getWalletLedgerByIdempotencyKey({ userId, idempotencyKey }) {
+    const cleanUserId = normalizeString(userId);
+    const cleanKey = normalizeString(idempotencyKey);
+    if (!cleanUserId || !cleanKey) return null;
+
+    const { data, error } = await supabaseAdmin
+      .from("wallet_ledger")
+      .select("id, idempotency_key, created_at")
+      .eq("user_id", cleanUserId)
+      .eq("idempotency_key", cleanKey)
+      .maybeSingle();
+
+    if (error) {
+      throw makeError("DB_QUERY_FAILED", error.message, 500);
+    }
+
+    return data || null;
+  }
+
+  async function ensurePlanGrantForSyncedSubscription(synced, { applyReferral = false } = {}) {
+    if (!synced?.userId || !synced?.plan?.id || !synced?.subscription?.id) {
+      throw makeError("SUBSCRIPTION_SYNC_FAILED", "No se pudo preparar la activación del plan desde Stripe.", 500);
+    }
+
+    const localStatus = localStatusFromStripeStatus(synced.subscription?.status);
+    if (localStatus !== "active") {
+      return { skipped: true, reason: "subscription_not_active", synced };
+    }
+
+    const periodStart =
+      synced.row?.current_period_start ||
+      unixToIso(synced.subscription?.current_period_start) ||
+      new Date().toISOString();
+    const periodEnd =
+      synced.row?.current_period_end ||
+      unixToIso(synced.subscription?.current_period_end) ||
+      new Date().toISOString();
+
+    const grantIdempotencyKey = buildStripePlanGrantKey(synced.subscription, periodStart);
+    const { error: grantErr } = await supabaseAdmin.rpc("wallet_grant_plan_credits", {
+      p_user_id: synced.userId,
+      p_plan_id: synced.plan.id,
+      p_period_start: periodStart,
+      p_period_end: periodEnd,
+      p_idempotency_key: grantIdempotencyKey,
+    });
+
+    if (grantErr) {
+      throw makeError("PLAN_GRANT_FAILED", grantErr.message, 500);
+    }
+
+    if (applyReferral) {
+      const referralCode = normalizeString(synced.subscription?.metadata?.referral_code).toUpperCase();
+      if (referralCode) {
+        const { error: referralErr } = await supabaseAdmin.rpc("billing_apply_referral_on_subscribe", {
+          p_buyer_id: synced.userId,
+          p_referral_code: referralCode,
+          p_plan_id: synced.plan.id,
+          p_idempotency_key: buildStripeReferralApplyKey(synced.subscription),
+        });
+
+        if (referralErr) {
+          throw makeError("REFERRAL_APPLY_FAILED", referralErr.message, 500);
+        }
+      }
+    }
+
+    return {
+      ok: true,
+      synced,
+      periodStart,
+      periodEnd,
+      grantIdempotencyKey,
+    };
+  }
+
   async function applyPlanGrantFromInvoice(invoice) {
     const stripeSubscriptionId = normalizeStripeObjectId(invoice?.subscription);
     if (!stripeSubscriptionId) return { skipped: true, reason: "invoice_without_subscription" };
@@ -660,37 +757,10 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
       throw makeError("SUBSCRIPTION_SYNC_FAILED", "No se pudo sincronizar la suscripción pagada.", 500);
     }
 
-    const periodStart = synced.row.current_period_start || unixToIso(synced.subscription?.current_period_start) || new Date().toISOString();
-    const periodEnd = synced.row.current_period_end || unixToIso(synced.subscription?.current_period_end) || new Date().toISOString();
-
-    const { error: grantErr } = await supabaseAdmin.rpc("wallet_grant_plan_credits", {
-      p_user_id: synced.userId,
-      p_plan_id: synced.plan.id,
-      p_period_start: periodStart,
-      p_period_end: periodEnd,
-      p_idempotency_key: `stripe:invoice_paid:${invoice.id}`,
-    });
-
-    if (grantErr) {
-      throw makeError("PLAN_GRANT_FAILED", grantErr.message, 500);
-    }
-
     const billingReason = normalizeString(invoice?.billing_reason).toLowerCase();
-    const referralCode = normalizeString(synced.subscription?.metadata?.referral_code).toUpperCase();
-    if (billingReason === "subscription_create" && referralCode) {
-      const { error: referralErr } = await supabaseAdmin.rpc("billing_apply_referral_on_subscribe", {
-        p_buyer_id: synced.userId,
-        p_referral_code: referralCode,
-        p_plan_id: synced.plan.id,
-        p_idempotency_key: `stripe:subref:${invoice.id}`,
-      });
-
-      if (referralErr) {
-        throw makeError("REFERRAL_APPLY_FAILED", referralErr.message, 500);
-      }
-    }
-
-    return { ok: true, synced };
+    return ensurePlanGrantForSyncedSubscription(synced, {
+      applyReferral: billingReason === "subscription_create",
+    });
   }
 
   async function applyTopupFromCheckoutSession(sessionLike) {
@@ -911,10 +981,26 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
       throw makeError("FORBIDDEN", "Ese Checkout Session no pertenece al usuario autenticado.", 403);
     }
 
+    const sessionMode = normalizeString(session?.mode).toLowerCase();
+    let planGrantIdempotencyKey = "";
+
+    if (isStripeSessionPaymentComplete(session)) {
+      if (sessionMode === "subscription") {
+        const stripeSubscriptionId = normalizeStripeObjectId(session?.subscription);
+        if (stripeSubscriptionId) {
+          const synced = await syncSubscriptionFromStripe(session?.subscription || stripeSubscriptionId);
+          const grant = await ensurePlanGrantForSyncedSubscription(synced, { applyReferral: true });
+          planGrantIdempotencyKey = normalizeString(grant?.grantIdempotencyKey);
+        }
+      } else if (sessionMode === "payment") {
+        await applyTopupFromCheckoutSession(session);
+      }
+    }
+
     let fulfilled = false;
     let localRef = null;
 
-    if (normalizeString(session?.mode) === "subscription") {
+    if (sessionMode === "subscription") {
       const stripeSubscriptionId = normalizeStripeObjectId(session?.subscription);
       if (stripeSubscriptionId) {
         const { data, error } = await supabaseAdmin
@@ -924,10 +1010,21 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
           .maybeSingle();
 
         if (error) throw makeError("DB_QUERY_FAILED", error.message, 500);
-        localRef = data || null;
-        fulfilled = Boolean(data?.id && data?.status === "active");
+
+        let planGrantApplied = false;
+        if (planGrantIdempotencyKey) {
+          planGrantApplied = Boolean(
+            await getWalletLedgerByIdempotencyKey({
+              userId,
+              idempotencyKey: planGrantIdempotencyKey,
+            })
+          );
+        }
+
+        localRef = data ? { ...data, planGrantApplied } : null;
+        fulfilled = Boolean(data?.id && data?.status === "active" && planGrantApplied);
       }
-    } else if (normalizeString(session?.mode) === "payment") {
+    } else if (sessionMode === "payment") {
       const { data, error } = await supabaseAdmin
         .from("credit_topup_purchases")
         .select("id, credits_amount, created_at")
