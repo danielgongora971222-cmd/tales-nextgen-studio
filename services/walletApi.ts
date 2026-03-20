@@ -32,9 +32,13 @@ export async function getMyWallet() {
   return data.wallet;
 }
 
-export async function getWalletMe(): Promise<{ wallet: any; subscription: any | null }> {
+export async function getWalletMe(opts?: { syncStripe?: boolean; strictSync?: boolean }): Promise<{ wallet: any; subscription: any | null }> {
   const headers = await authHeaders();
-  const resp = await fetch(apiUrl(`/api/wallet/me`), { method: "GET", headers });
+  const params = new URLSearchParams();
+  if (opts?.syncStripe) params.set("syncStripe", "1");
+  if (opts?.strictSync) params.set("strictSync", "1");
+  const qs = params.toString();
+  const resp = await fetch(apiUrl(`/api/wallet/me${qs ? `?${qs}` : ""}`), { method: "GET", headers });
 
   const raw = await resp.text();
   const data = parseJsonOrThrow(raw);

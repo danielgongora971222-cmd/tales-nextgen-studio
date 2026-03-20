@@ -47,6 +47,8 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
 
   const [tab, setTab] = useState<TabKey>("profile");
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [portalSyncing, setPortalSyncing] = useState(false);
   const [err, setErr] = useState<string>("");
 
   const [me, setMe] = useState<ProfileMeResponse | null>(null);
@@ -97,41 +99,50 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
     const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
     (async () => {
-      setPortalMessage("Actualizando tu estado de facturación...");
+      setErr("");
+      setPortalSyncing(true);
+      setPortalMessage("Sincronizando tu cuenta con Stripe...");
+
       try {
         let settled = false;
         let lastStillHasStripePlan = false;
         let lastCancelAtPeriodEnd = false;
+        const maxAttempts = portalFlow === "cancel" ? 3 : 2;
 
-        for (let attempt = 0; attempt < 4; attempt += 1) {
+        for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
           if (cancelled) return;
 
-          const result = await loadAll({ syncStripe: true, strictSync: true });
-          await refreshWallet();
+          const currentSub = (await billingMe(true, true)) || null;
           if (cancelled) return;
+          setSub(currentSub);
 
-          const currentSub = result?.subscription || null;
           const stillHasStripePlan = currentSub?.provider === "stripe" && !!currentSub?.stripeSubscriptionId;
           lastStillHasStripePlan = stillHasStripePlan;
           lastCancelAtPeriodEnd = currentSub?.cancelAtPeriodEnd === true;
 
-          if (portalFlow === "cancel" && !stillHasStripePlan) {
+          if (!stillHasStripePlan) {
             settled = true;
             break;
           }
 
-          if (portalFlow !== "cancel" && attempt === 3) {
+          if (portalFlow !== "cancel" && !lastCancelAtPeriodEnd) {
             settled = true;
             break;
           }
 
-          await sleep(1400);
+          if (attempt < maxAttempts - 1) {
+            await sleep(1200);
+          }
         }
 
         if (cancelled) return;
+        await refreshWallet({ silent: true });
+        if (cancelled) return;
+
         if (portalFlow !== "cancel" && lastStillHasStripePlan && lastCancelAtPeriodEnd) {
           settled = false;
         }
+
         setPortalMessage(
           settled
             ? "Stripe terminó correctamente y tu cuenta ya quedó sincronizada."
@@ -141,7 +152,10 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
         if (cancelled) return;
         setErr(e?.message || "No se pudo sincronizar el estado tras volver de Stripe.");
       } finally {
-        if (!cancelled) clearProfileSearchParams();
+        if (!cancelled) {
+          setPortalSyncing(false);
+          clearProfileSearchParams();
+        }
       }
     })();
 
@@ -150,6 +164,12 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!portalMessage || portalSyncing) return;
+    const t = window.setTimeout(() => setPortalMessage(""), 4200);
+    return () => window.clearTimeout(t);
+  }, [portalMessage, portalSyncing]);
 
   useEffect(() => {
     if (ownerPlanSlug) return;
@@ -172,45 +192,52 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
     }
   }
 
-  async function loadAll(opts?: { syncStripe?: boolean; strictSync?: boolean }) {
-    setLoading(true);
+  async function loadAll(opts?: { syncStripe?: boolean; strictSync?: boolean; background?: boolean }) {
+    const background = opts?.background === true;
+    if (background) setRefreshing(true);
+    else setLoading(true);
     setErr("");
 
-    const [pR, sR, plansR] = await Promise.allSettled([
-      profileMe(),
-      billingMe(opts?.syncStripe === true, opts?.strictSync === true),
-      billingPlans(),
-    ]);
+    try {
+      const [pR, sR, plansR] = await Promise.allSettled([
+        profileMe(),
+        billingMe(opts?.syncStripe === true, opts?.strictSync === true),
+        billingPlans(),
+      ]);
 
-    if (pR.status === "fulfilled") {
-      setMe(pR.value);
-      setDisplayName(pR.value.displayName || user?.username || "");
+      if (pR.status === "fulfilled") {
+        setMe(pR.value);
+        setDisplayName(pR.value.displayName || user?.username || "");
 
-      if (pR.value.ownerAdmin) {
-        try {
-          const system = await ownerFetchSystemStatus();
-          setOwnerSystem(system);
-        } catch {
+        if (pR.value.ownerAdmin) {
+          if (!background) {
+            try {
+              const system = await ownerFetchSystemStatus();
+              setOwnerSystem(system);
+            } catch {
+              setOwnerSystem(null);
+            }
+          }
+        } else {
           setOwnerSystem(null);
         }
       } else {
+        setErr(pR.reason?.message || "No se pudo cargar tu perfil.");
         setOwnerSystem(null);
       }
-    } else {
-      setErr(pR.reason?.message || "No se pudo cargar tu perfil.");
-      setOwnerSystem(null);
+
+      if (sR.status === "fulfilled") setSub(sR.value || null);
+      if (plansR.status === "fulfilled") setAvailablePlans(Array.isArray(plansR.value) ? plansR.value : []);
+
+      return {
+        profile: pR.status === "fulfilled" ? pR.value : null,
+        subscription: sR.status === "fulfilled" ? sR.value || null : null,
+        plans: plansR.status === "fulfilled" ? (Array.isArray(plansR.value) ? plansR.value : []) : [],
+      };
+    } finally {
+      if (background) setRefreshing(false);
+      else setLoading(false);
     }
-
-    if (sR.status === "fulfilled") setSub(sR.value || null);
-    if (plansR.status === "fulfilled") setAvailablePlans(Array.isArray(plansR.value) ? plansR.value : []);
-
-    setLoading(false);
-
-    return {
-      profile: pR.status === "fulfilled" ? pR.value : null,
-      subscription: sR.status === "fulfilled" ? sR.value || null : null,
-      plans: plansR.status === "fulfilled" ? (Array.isArray(plansR.value) ? plansR.value : []) : [],
-    };
   }
 
   async function saveName() {
@@ -360,7 +387,7 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
       const planName = data?.plan?.name || ownerPlanSlug;
       setOwnerMsg(`Plan asignado: ${planName} -> ${data?.user?.email || email}`);
       await refreshWallet();
-      await loadAll();
+      await loadAll({ background: true });
     } catch (e: any) {
       setErr(e?.message || "No se pudo asignar el plan.");
     } finally {
@@ -385,7 +412,7 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
       const data = await ownerGrantCreditsByEmail(email, amount);
       setOwnerMsg(`Créditos agregados: +${amount} -> ${data?.email || email}`);
       await refreshWallet();
-      await loadAll();
+      await loadAll({ background: true });
     } catch (e: any) {
       setErr(e?.message || "No se pudo agregar créditos.");
     } finally {
@@ -414,7 +441,7 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
       const data = await ownerCancelPlanByEmail(email, { wipeGenerationCredits });
       setOwnerMsg(`Plan cancelado para ${data?.user?.email || email}.`);
       await refreshWallet();
-      await loadAll();
+      await loadAll({ background: true });
     } catch (e: any) {
       setErr(e?.message || "No se pudo cancelar el plan del usuario.");
     } finally {
@@ -522,7 +549,20 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
       </div>
 
       {err ? <div className="mb-4 p-3 rounded-xl bg-red-500/20 border border-red-500/40">{err}</div> : null}
-      {portalMessage ? <div className="mb-4 p-3 rounded-xl bg-sky-500/15 border border-sky-400/30 text-sky-100">{portalMessage}</div> : null}
+      {portalMessage ? (
+        <div
+          className={`mb-4 flex items-start gap-3 rounded-2xl border px-4 py-3 text-sm ${
+            portalSyncing ? "bg-sky-500/12 border-sky-400/30 text-sky-100" : "bg-white/5 border-white/10 text-white/80"
+          }`}
+        >
+          <span
+            className={`mt-1 inline-flex h-2.5 w-2.5 shrink-0 rounded-full ${
+              portalSyncing ? "animate-pulse bg-sky-300" : "bg-emerald-300"
+            }`}
+          />
+          <div className="min-w-0">{portalMessage}</div>
+        </div>
+      ) : null}
 
       <div className="flex flex-wrap gap-2 mb-6">
         <button
@@ -557,10 +597,11 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
 
         <button
           type="button"
-          onClick={loadAll}
-          className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-sm"
+          onClick={() => void loadAll({ background: true })}
+          disabled={refreshing || portalSyncing}
+          className={`px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-sm ${(refreshing || portalSyncing) ? "opacity-60 pointer-events-none" : ""}`}
         >
-          Refresh
+          {refreshing || portalSyncing ? "Refreshing..." : "Refresh"}
         </button>
       </div>
 
@@ -922,7 +963,7 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
                   <>
                     <button
                       type="button"
-                      className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-sm"
+                      className={`px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-sm ${(refreshing || portalSyncing) ? "opacity-60 pointer-events-none" : ""}`}
                       onClick={() => void forceLocalCancelForOwner({ wipeGenerationCredits: false })}
                     >
                       Deactivate locally
@@ -930,7 +971,7 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
 
                     <button
                       type="button"
-                      className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-sm"
+                      className={`px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-sm ${(refreshing || portalSyncing) ? "opacity-60 pointer-events-none" : ""}`}
                       onClick={() => void forceLocalCancelForOwner({ wipeGenerationCredits: true })}
                     >
                       Deactivate locally + wipe credits

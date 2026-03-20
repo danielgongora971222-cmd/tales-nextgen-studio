@@ -407,9 +407,11 @@ export function createBillingRouter(ctx) {
     let r = await getActiveSubscription(user.id);
     if (r.error) return err(res, 500, r.error.code, r.error.message, r.error.details);
 
-    const hasStripeManagedSubscription = r.subscription?.provider === "stripe" && !!r.subscription?.stripeSubscriptionId;
-
-    if ((forceSyncStripe || !r.subscription || hasStripeManagedSubscription) && stripeBilling?.isConfigured?.()) {
+    // Importante para rendimiento: una lectura normal de billing no debe abrir una
+    // reconciliación completa con Stripe en cada render/pantalla.
+    // Las rutas sensibles (checkout return, portal return, cancelaciones, upgrades)
+    // ya llaman explícitamente con syncStripe=1 cuando de verdad necesitan esa verificación fuerte.
+    if ((forceSyncStripe || strictSyncStripe) && stripeBilling?.isConfigured?.()) {
       try {
         await reconcileStripeCustomerState(user.id, "/billing/me", { throwOnError: strictSyncStripe });
       } catch (syncError) {

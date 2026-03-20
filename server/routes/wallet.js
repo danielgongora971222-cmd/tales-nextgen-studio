@@ -44,7 +44,13 @@ export function createWalletRouter(ctx) {
     if (sErr) return err(res, 500, "DB_RPC_FAILED", sErr.message);
     let active = Array.isArray(sub) ? sub[0] : null;
 
-    if (!active?.subscription_id && stripeBilling?.isConfigured?.()) {
+    const forceSyncStripe = String(req.query?.syncStripe || "").trim() === "1";
+    const strictSyncStripe = String(req.query?.strictSync || "").trim() === "1";
+
+    // Igual que en /billing/me, evitamos reconciliar Stripe en lecturas normales del wallet.
+    // Esto baja mucho la latencia global de la app. Si alguna pantalla necesita una reparación
+    // fuerte del estado, debe pedirla explícitamente con syncStripe=1.
+    if (forceSyncStripe && stripeBilling?.isConfigured?.()) {
       try {
         await stripeBilling.reconcileCustomerSubscriptionsForUser(user.id, { enforceSingleActive: true });
         const repaired = await supabaseAdmin.rpc("get_active_subscription", { p_user_id: user.id });
@@ -55,6 +61,15 @@ export function createWalletRouter(ctx) {
       } catch (repairError) {
         // eslint-disable-next-line no-console
         console.warn("reconcileCustomerSubscriptionsForUser failed in /wallet/me:", String(repairError?.message || repairError));
+        if (strictSyncStripe) {
+          return err(
+            res,
+            Number(repairError?.status) || 500,
+            repairError?.code || "STRIPE_SYNC_FAILED",
+            repairError?.message || "No se pudo sincronizar el wallet con Stripe.",
+            repairError?.details || null
+          );
+        }
       }
     }
 

@@ -1,14 +1,20 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "./AuthContext";
 import { getWalletMe } from "../services/walletApi";
 import { EVENT_WALLET_REFRESH } from "../services/appEvents";
+
+type WalletRefreshOptions = {
+  silent?: boolean;
+  syncStripe?: boolean;
+  strictSync?: boolean;
+};
 
 type WalletCtx = {
   wallet: any | null;
   subscription: any | null;
   loading: boolean;
   error: string | null;
-  refresh: () => Promise<void>;
+  refresh: (opts?: WalletRefreshOptions) => Promise<void>;
 };
 
 const Ctx = createContext<WalletCtx | null>(null);
@@ -20,7 +26,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = async () => {
+  const refreshInFlightRef = useRef<Promise<void> | null>(null);
+
+  const refresh = useCallback(async (opts?: WalletRefreshOptions) => {
     if (!user) {
       setWallet(null);
       setSubscription(null);
@@ -28,32 +36,47 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await getWalletMe();
-      setWallet(data.wallet);
-      setSubscription(data.subscription || null);
-    } catch (e: any) {
-      setError(e?.message || "No se pudo cargar wallet.");
-    } finally {
-      setLoading(false);
+    if (refreshInFlightRef.current) {
+      return refreshInFlightRef.current;
     }
-  };
 
-  useEffect(() => {
-    refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const silent = opts?.silent === true;
+
+    const run = (async () => {
+      if (!silent) setLoading(true);
+      setError(null);
+      try {
+        const data = await getWalletMe({
+          syncStripe: opts?.syncStripe === true,
+          strictSync: opts?.strictSync === true,
+        });
+        setWallet(data.wallet);
+        setSubscription(data.subscription || null);
+      } catch (e: any) {
+        setError(e?.message || "No se pudo cargar wallet.");
+      } finally {
+        if (!silent) setLoading(false);
+        refreshInFlightRef.current = null;
+      }
+    })();
+
+    refreshInFlightRef.current = run;
+    return run;
   }, [user?.id]);
 
   useEffect(() => {
-    const handler = () => refresh();
+    void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    const handler = () => {
+      void refresh({ silent: true });
+    };
     window.addEventListener(EVENT_WALLET_REFRESH, handler as any);
     return () => window.removeEventListener(EVENT_WALLET_REFRESH, handler as any);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id]);
+  }, [refresh]);
 
-  const value = useMemo(() => ({ wallet, subscription, loading, error, refresh }), [wallet, subscription, loading, error]);
+  const value = useMemo(() => ({ wallet, subscription, loading, error, refresh }), [wallet, subscription, loading, error, refresh]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
