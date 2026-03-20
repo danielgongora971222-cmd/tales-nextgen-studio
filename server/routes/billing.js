@@ -381,6 +381,17 @@ export function createBillingRouter(ctx) {
     return current.subscription || null;
   }
 
+  async function reconcileStripeCustomerState(userId, logContext = "billing") {
+    if (!stripeBilling?.isConfigured?.()) return;
+
+    try {
+      await stripeBilling.reconcileCustomerSubscriptionsForUser(userId, { enforceSingleActive: true });
+    } catch (syncError) {
+      // eslint-disable-next-line no-console
+      console.warn(`reconcileCustomerSubscriptionsForUser failed in ${logContext}:`, String(syncError?.message || syncError));
+    }
+  }
+
   // GET /api/billing/me -> plan activo (o null)
   router.get("/billing/me", async (req, res) => {
     const { user, error } = await requireUser(req);
@@ -394,14 +405,9 @@ export function createBillingRouter(ctx) {
     const hasStripeManagedSubscription = r.subscription?.provider === "stripe" && !!r.subscription?.stripeSubscriptionId;
 
     if ((forceSyncStripe || !r.subscription || hasStripeManagedSubscription) && stripeBilling?.isConfigured?.()) {
-      try {
-        await stripeBilling.repairLatestStripeSubscriptionForUser(user.id);
-        r = await getActiveSubscription(user.id);
-        if (r.error) return err(res, 500, r.error.code, r.error.message, r.error.details);
-      } catch (repairError) {
-        // eslint-disable-next-line no-console
-        console.warn("repairLatestStripeSubscriptionForUser failed in /billing/me:", String(repairError?.message || repairError));
-      }
+      await reconcileStripeCustomerState(user.id, "/billing/me");
+      r = await getActiveSubscription(user.id);
+      if (r.error) return err(res, 500, r.error.code, r.error.message, r.error.details);
     }
 
     return res.json({ ok: true, subscription: r.subscription });
@@ -574,6 +580,7 @@ export function createBillingRouter(ctx) {
       if (!planSlug) return err(res, 400, "BAD_REQUEST", "Falta planSlug.");
 
       await assertLegalAccepted(user.id);
+      await reconcileStripeCustomerState(user.id, "/billing/stripe/checkout/subscription");
       const plan = await fetchPlanBySlug(planSlug, { requireStripePrice: true });
       const current = await getActiveSubscription(user.id);
       if (current.error) return err(res, 500, current.error.code, current.error.message, current.error.details);
@@ -648,6 +655,7 @@ export function createBillingRouter(ctx) {
 
     try {
       await assertLegalAccepted(user.id);
+      await reconcileStripeCustomerState(user.id, "/billing/stripe/checkout/topup");
 
       const sub = await requireActiveSubscription(user.id);
       if (sub.error) return err(res, 403, sub.error.code, sub.error.message, sub.error.details);
@@ -692,6 +700,7 @@ export function createBillingRouter(ctx) {
       const stripeSubscriptionId = current.subscription.stripeSubscriptionId;
       const canceled = await stripeBilling.cancelSubscriptionImmediately(stripeSubscriptionId);
       await stripeBilling.syncSubscriptionFromStripe(canceled || stripeSubscriptionId);
+      await reconcileStripeCustomerState(user.id, "/billing/stripe/cancel-now");
 
       let refreshed = await getActiveSubscription(user.id);
       if (refreshed.error) return err(res, 500, refreshed.error.code, refreshed.error.message, refreshed.error.details);
@@ -776,6 +785,8 @@ export function createBillingRouter(ctx) {
       if (!["general", "cancel", "payment_method_update", "update"].includes(flow)) {
         return err(res, 400, "BAD_REQUEST", "flow inválido. Usa general, cancel, payment_method_update o update.");
       }
+
+      await reconcileStripeCustomerState(user.id, "/billing/stripe/portal");
 
       const current = await getActiveSubscription(user.id);
       if (current.error) return err(res, 500, current.error.code, current.error.message, current.error.details);

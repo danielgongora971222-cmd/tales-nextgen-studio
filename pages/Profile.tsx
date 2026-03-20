@@ -5,7 +5,7 @@ import { useWallet } from "../contexts/WalletContext";
 import { apiUrl } from "../services/apiBase";
 import { supabase } from "../services/supabaseClient";
 import { profileMe, type ProfileMeResponse } from "../services/profileApi";
-import { billingMe, billingPlans, cancelStripeSubscriptionNow, createStripePortal, mockCancel, ownerForceSelfCancelLocal } from "../services/billingApi";
+import { billingMe, billingPlans, createStripePortal, mockCancel, ownerForceSelfCancelLocal } from "../services/billingApi";
 import { emitProfileRefresh, emitWalletRefresh } from "../services/appEvents";
 import { ownerAssignMockPlanByEmail, ownerCancelPlanByEmail, ownerFetchSystemStatus, ownerGrantCreditsByEmail, type OwnerSystemStatusResponse } from "../services/ownerAdminApi";
 
@@ -394,18 +394,15 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
 
     if (isStripeManaged) {
       const okStripe = window.confirm(
-        "Esto cancelará tu suscripción de Stripe inmediatamente. No se abrirá el portal y no se programará para fin de periodo. ¿Deseas continuar?"
+        "Te llevaré al portal de Stripe para confirmar la cancelación. Cuando Stripe la cierre, la app sincronizará el plan y reiniciará tus créditos de generación a cero. ¿Deseas continuar?"
       );
       if (!okStripe) return;
 
       setErr("");
       try {
-        await cancelStripeSubscriptionNow();
-        emitWalletRefresh();
-        await refreshWallet();
-        setSub((await billingMe(true)) || null);
+        await openBillingPortal("cancel");
       } catch (e: any) {
-        setErr(e?.message || "No se pudo cancelar la suscripción de Stripe.");
+        setErr(e?.message || "No se pudo abrir el portal de cancelación de Stripe.");
       }
       return;
     }
@@ -841,7 +838,7 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
               <div className="text-sm font-semibold text-red-200">Danger zone</div>
               <div className="text-xs text-red-200/70 mt-1">
                 {sub?.provider === "stripe"
-                  ? "La suscripción real puede cancelarse al instante desde aquí. El portal queda para método de pago e historial."
+                  ? "La cancelación real se confirma en el portal de Stripe. Al volver, la app sincroniza el plan y reinicia los créditos de generación si ya no queda ningún plan activo."
                   : "Pruebas de cancelación manual con o sin wipe de créditos de generación."}
               </div>
 
@@ -852,7 +849,7 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
                     className="px-4 py-2 rounded-xl bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 text-sm"
                     onClick={() => void cancelSubscription({ wipeGenerationCredits: false })}
                   >
-                    Cancel subscription in Stripe now
+                    Cancel in Stripe portal
                   </button>
                 ) : (
                   <button
@@ -897,7 +894,7 @@ export default function Profile({ onNavigate }: { onNavigate: (r: AppRoute) => v
 
               <div className="text-[11px] text-red-100/70 mt-3">
                 {sub?.provider === "stripe"
-                  ? "La cancelación real de Stripe ahora se ejecuta de inmediato. Los botones de desactivación local son solo para pruebas internas del owner admin."
+                  ? "Usa este acceso para cancelar en Stripe. Billing history sigue disponible para facturas y también quedará sincronizado si cancelas desde ahí."
                   : "El wipe borra solo créditos de generación: plan, topup y bonus. Los earnings no se borran aquí."}
               </div>
             </div>

@@ -162,6 +162,42 @@ function isCheckoutSessionTemplateValue(value) {
   return normalizeString(value) === STRIPE_CHECKOUT_SESSION_TEMPLATE;
 }
 
+function stripeSubscriptionCreatedAtMs(subscriptionLike) {
+  const unixCreated = Number(subscriptionLike?.created || 0);
+  if (Number.isFinite(unixCreated) && unixCreated > 0) return unixCreated * 1000;
+
+  const periodStartIso = unixToIso(subscriptionLike?.current_period_start);
+  if (periodStartIso) {
+    const periodStartMs = new Date(periodStartIso).getTime();
+    if (Number.isFinite(periodStartMs) && periodStartMs > 0) return periodStartMs;
+  }
+
+  return 0;
+}
+
+function isStripeSubscriptionActiveLike(subscriptionLike) {
+  const status = normalizeString(subscriptionLike?.status).toLowerCase();
+  return ["active", "trialing", "past_due", "unpaid", "incomplete"].includes(status);
+}
+
+function isStripeSubscriptionTerminal(subscriptionLike) {
+  const status = normalizeString(subscriptionLike?.status).toLowerCase();
+  return ["canceled", "incomplete_expired"].includes(status);
+}
+
+function shouldForceImmediateCancellation(subscriptionLike) {
+  if (!subscriptionLike || typeof subscriptionLike !== "object") return false;
+  if (isStripeSubscriptionTerminal(subscriptionLike)) return false;
+  if (subscriptionLike?.cancel_at_period_end !== true) return false;
+
+  const cancellationReason = normalizeString(subscriptionLike?.cancellation_details?.reason).toLowerCase();
+  return (
+    cancellationReason === "cancellation_requested" ||
+    hasPositiveUnixTimestamp(subscriptionLike?.canceled_at) ||
+    hasPositiveUnixTimestamp(subscriptionLike?.cancel_at)
+  );
+}
+
 export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
   const STRIPE_SECRET_KEY = normalizeString(process.env.STRIPE_SECRET_KEY);
   const STRIPE_WEBHOOK_SECRET = normalizeString(process.env.STRIPE_WEBHOOK_SECRET);
@@ -579,6 +615,265 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
     return stripeRequest("DELETE", `/v1/subscriptions/${subscriptionId}`);
   }
 
+  async function listCustomerSubscriptions(stripeCustomerId) {
+    const customerId = normalizeStripeObjectId(stripeCustomerId);
+    if (!customerId) return [];
+
+    const out = [];
+    let startingAfter = "";
+
+    while (true) {
+      const page = await stripeRequest("GET", "/v1/subscriptions", {
+        customer: customerId,
+        status: "all",
+        limit: 100,
+        expand: ["data.items.data.price"],
+        starting_after: startingAfter || undefined,
+      });
+
+      const rows = Array.isArray(page?.data) ? page.data : [];
+      out.push(...rows);
+
+      if (!page?.has_more || !rows.length) break;
+      startingAfter = normalizeStripeObjectId(rows[rows.length - 1]);
+      if (!startingAfter) break;
+    }
+
+    return out;
+  }
+
+  async function listLocalActiveStripeSubscriptionRows(userId) {
+    const { data, error } = await supabaseAdmin
+      .from("billing_subscriptions")
+      .select("id, stripe_subscription_id, current_period_end, status")
+      .eq("user_id", userId)
+      .eq("provider", "stripe")
+      .eq("status", "active")
+      .not("stripe_subscription_id", "is", null)
+      .order("updated_at", { ascending: false });
+
+    if (error) {
+      throw makeError("DB_QUERY_FAILED", error.message, 500);
+    }
+
+    return Array.isArray(data) ? data : [];
+  }
+
+  async function closeLocalStripeSubscriptionRow({ rowId = "", stripeSubscriptionId = "", endedAtIso = "" } = {}) {
+    const cleanRowId = normalizeString(rowId);
+    const cleanStripeSubscriptionId = normalizeStripeObjectId(stripeSubscriptionId);
+    if (!cleanRowId && !cleanStripeSubscriptionId) return { skipped: true, reason: "local_subscription_identifier_missing" };
+
+    const endedAt = normalizeString(endedAtIso) || new Date().toISOString();
+
+    let query = supabaseAdmin
+      .from("billing_subscriptions")
+      .update({
+        status: "canceled",
+        current_period_end: endedAt,
+        cancel_at_period_end: false,
+        canceled_at: endedAt,
+        ended_at: endedAt,
+        updated_at: new Date().toISOString(),
+      });
+
+    if (cleanRowId) {
+      query = query.eq("id", cleanRowId);
+    } else {
+      query = query.eq("stripe_subscription_id", cleanStripeSubscriptionId);
+    }
+
+    const { error } = await query;
+    if (error) {
+      throw makeError("DB_UPDATE_FAILED", error.message, 500);
+    }
+
+    return { ok: true, rowId: cleanRowId || null, stripeSubscriptionId: cleanStripeSubscriptionId || null };
+  }
+
+  async function wipeGenerationCreditsIfNoActivePlan(userId, { reason = "stripe_subscription_ended", idempotencyKey = "" } = {}) {
+    const { data, error } = await supabaseAdmin.rpc("billing_wipe_generation_credits_if_no_active_plan", {
+      p_user_id: userId,
+      p_reason: reason,
+      p_idempotency_key: idempotencyKey || null,
+    });
+
+    if (error) {
+      throw makeError("PLAN_WIPE_FAILED", error.message, 500, {
+        userId,
+        reason,
+      });
+    }
+
+    return Array.isArray(data) ? data[0] || null : data || null;
+  }
+
+  async function maybeForceImmediateCancellation(subscriptionLike) {
+    const cleanSubscriptionId = normalizeStripeObjectId(subscriptionLike?.id || subscriptionLike);
+    if (!cleanSubscriptionId || !subscriptionLike || typeof subscriptionLike !== "object") return subscriptionLike;
+    if (!shouldForceImmediateCancellation(subscriptionLike)) return subscriptionLike;
+
+    const canceled = await cancelSubscriptionImmediately(cleanSubscriptionId);
+    return canceled || subscriptionLike;
+  }
+
+  async function reconcileCustomerSubscriptionsForUser(userId, opts = {}) {
+    const keepStripeSubscriptionId = normalizeStripeObjectId(opts?.keepStripeSubscriptionId);
+    const enforceSingleActive = opts?.enforceSingleActive !== false;
+
+    if (!normalizeString(userId)) {
+      return { skipped: true, reason: "user_id_missing" };
+    }
+
+    if (!isConfigured()) {
+      return { skipped: true, reason: "stripe_not_configured" };
+    }
+
+    const customerRow = await getCustomerRowByUserId(userId);
+    const customerId = normalizeStripeObjectId(customerRow?.stripe_customer_id);
+    const localActiveRows = await listLocalActiveStripeSubscriptionRows(userId);
+
+    let subscriptions = [];
+    if (customerId) {
+      subscriptions = await listCustomerSubscriptions(customerId);
+    }
+
+    if (!subscriptions.length && localActiveRows.length) {
+      for (const row of localActiveRows) {
+        const localStripeSubscriptionId = normalizeStripeObjectId(row?.stripe_subscription_id);
+        if (!localStripeSubscriptionId) continue;
+
+        try {
+          subscriptions.push(await fetchSubscription(localStripeSubscriptionId));
+        } catch (error) {
+          if (Number(error?.status) === 404) {
+            await closeLocalStripeSubscriptionRow({
+              rowId: row?.id,
+              stripeSubscriptionId: localStripeSubscriptionId,
+            });
+            continue;
+          }
+          throw error;
+        }
+      }
+    }
+
+    const normalizedSubscriptions = [];
+    for (const subscription of subscriptions) {
+      const normalized = await maybeForceImmediateCancellation(subscription);
+      normalizedSubscriptions.push(normalized);
+    }
+
+    const activeLike = normalizedSubscriptions
+      .filter((subscription) => isStripeSubscriptionActiveLike(subscription))
+      .sort((a, b) => stripeSubscriptionCreatedAtMs(a) - stripeSubscriptionCreatedAtMs(b));
+
+    let keepId = keepStripeSubscriptionId;
+    if (keepId && !activeLike.some((subscription) => normalizeStripeObjectId(subscription) === keepId)) {
+      keepId = "";
+    }
+    if (!keepId && activeLike.length) {
+      keepId = normalizeStripeObjectId(activeLike[activeLike.length - 1]);
+    }
+
+    const canceledExtraSubscriptions = [];
+    if (enforceSingleActive && keepId) {
+      for (const subscription of activeLike) {
+        const stripeSubscriptionId = normalizeStripeObjectId(subscription);
+        if (!stripeSubscriptionId || stripeSubscriptionId === keepId) continue;
+
+        const canceled = await cancelSubscriptionImmediately(stripeSubscriptionId);
+        canceledExtraSubscriptions.push(canceled || subscription);
+      }
+    }
+
+    const canceledExtraIds = new Set(
+      canceledExtraSubscriptions
+        .map((subscription) => normalizeStripeObjectId(subscription))
+        .filter(Boolean)
+    );
+
+    const subscriptionsToSync = [];
+    const terminalLike = [];
+
+    for (const subscription of normalizedSubscriptions) {
+      const stripeSubscriptionId = normalizeStripeObjectId(subscription);
+      if (!stripeSubscriptionId || canceledExtraIds.has(stripeSubscriptionId)) continue;
+
+      if (isStripeSubscriptionActiveLike(subscription)) {
+        if (keepId && stripeSubscriptionId !== keepId && enforceSingleActive) {
+          continue;
+        }
+        subscriptionsToSync.push(subscription);
+      } else {
+        terminalLike.push(subscription);
+      }
+    }
+
+    subscriptionsToSync.sort((a, b) => {
+      const aId = normalizeStripeObjectId(a);
+      const bId = normalizeStripeObjectId(b);
+      if (keepId) {
+        if (aId === keepId && bId !== keepId) return 1;
+        if (bId === keepId && aId !== keepId) return -1;
+      }
+      return stripeSubscriptionCreatedAtMs(a) - stripeSubscriptionCreatedAtMs(b);
+    });
+
+    const synced = [];
+    for (const subscription of subscriptionsToSync) {
+      synced.push(await syncSubscriptionFromStripe(subscription));
+    }
+
+    for (const subscription of canceledExtraSubscriptions) {
+      synced.push(await syncSubscriptionFromStripe(subscription));
+    }
+
+    for (const subscription of terminalLike) {
+      synced.push(await syncSubscriptionFromStripe(subscription));
+    }
+
+    const remoteIds = new Set(
+      normalizedSubscriptions
+        .concat(canceledExtraSubscriptions)
+        .map((subscription) => normalizeStripeObjectId(subscription))
+        .filter(Boolean)
+    );
+
+    for (const row of localActiveRows) {
+      const localStripeSubscriptionId = normalizeStripeObjectId(row?.stripe_subscription_id);
+      if (!localStripeSubscriptionId || remoteIds.has(localStripeSubscriptionId)) continue;
+
+      await closeLocalStripeSubscriptionRow({
+        rowId: row?.id,
+        stripeSubscriptionId: localStripeSubscriptionId,
+      });
+    }
+
+    const activeAfter = await billing.getActiveSubscription(userId);
+    if (activeAfter.error) {
+      throw makeError("DB_RPC_FAILED", activeAfter.error.message, 500, activeAfter.error.details || null);
+    }
+
+    if (!activeAfter.subscription) {
+      await wipeGenerationCreditsIfNoActivePlan(userId, {
+        reason: "stripe_reconcile_no_active_plan",
+        idempotencyKey: `stripe:reconcile:no_active_plan:${userId}`,
+      });
+    }
+
+    return {
+      ok: true,
+      userId,
+      stripeCustomerId: customerId || null,
+      syncedCount: synced.length,
+      activeSubscriptionId: activeAfter.subscription?.stripeSubscriptionId || null,
+      canceledExtraSubscriptionIds: canceledExtraSubscriptions
+        .map((subscription) => normalizeStripeObjectId(subscription))
+        .filter(Boolean),
+    };
+  }
+
   async function maybeCancelReplacedStripeSubscription(synced) {
     const replacementId = normalizeStripeObjectId(synced?.subscription?.metadata?.replace_stripe_subscription_id);
     const newSubscriptionId = normalizeStripeObjectId(synced?.subscription?.id);
@@ -629,9 +924,11 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
     }
 
     const shouldFetchFresh = !hasUsableStripeSubscriptionSnapshot(subscriptionLike);
-    const subscription = shouldFetchFresh
+    let subscription = shouldFetchFresh
       ? await fetchSubscription(stripeSubscriptionId)
       : subscriptionLike;
+
+    subscription = await maybeForceImmediateCancellation(subscription);
 
     const stripeCustomerId = normalizeStripeObjectId(subscription?.customer);
     const userId = await resolveUserIdFromStripeContext({
@@ -756,6 +1053,13 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
       await upsertCustomerRow({ userId, stripeCustomerId, email: existingCustomer?.email || null });
     }
 
+    if (isStripeSubscriptionTerminal(subscription)) {
+      await wipeGenerationCreditsIfNoActivePlan(userId, {
+        reason: "stripe_subscription_ended",
+        idempotencyKey: `stripe:subscription_end:${stripeSubscriptionId}`,
+      });
+    }
+
     return {
       userId,
       plan,
@@ -876,12 +1180,17 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
 
     const synced = await syncSubscriptionFromStripe(session?.subscription || stripeSubscriptionId);
     const grant = await ensurePlanGrantForSyncedSubscription(synced, { applyReferral: true });
+    const reconciliation = await reconcileCustomerSubscriptionsForUser(synced.userId, {
+      enforceSingleActive: true,
+      keepStripeSubscriptionId: stripeSubscriptionId,
+    });
 
     return {
       ok: true,
       sessionId: normalizeString(session?.id),
       synced,
       grant,
+      reconciliation,
       replacement: grant?.replacement || null,
     };
   }
@@ -1052,19 +1361,41 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
 
       try {
         switch (event.type) {
-          case "invoice.paid":
-            await applyPlanGrantFromInvoice(event.data?.object || {});
-            break;
-          case "invoice.payment_failed":
-            if (event.data?.object?.subscription) {
-              await syncSubscriptionFromStripe(event.data.object.subscription);
+          case "invoice.paid": {
+            const granted = await applyPlanGrantFromInvoice(event.data?.object || {});
+            if (granted?.synced?.userId) {
+              await reconcileCustomerSubscriptionsForUser(granted.synced.userId, {
+                enforceSingleActive: true,
+                keepStripeSubscriptionId: normalizeStripeObjectId(granted?.synced?.subscription?.id),
+              });
             }
             break;
+          }
+          case "invoice.payment_failed": {
+            if (event.data?.object?.subscription) {
+              const synced = await syncSubscriptionFromStripe(event.data.object.subscription);
+              if (synced?.userId) {
+                await reconcileCustomerSubscriptionsForUser(synced.userId, {
+                  enforceSingleActive: true,
+                });
+              }
+            }
+            break;
+          }
           case "customer.subscription.created":
           case "customer.subscription.updated":
-          case "customer.subscription.deleted":
-            await syncSubscriptionFromStripe(event.data?.object || {});
+          case "customer.subscription.deleted": {
+            const synced = await syncSubscriptionFromStripe(event.data?.object || {});
+            if (synced?.userId) {
+              await reconcileCustomerSubscriptionsForUser(synced.userId, {
+                enforceSingleActive: true,
+                keepStripeSubscriptionId: isStripeSubscriptionActiveLike(synced?.subscription)
+                  ? normalizeStripeObjectId(synced?.subscription?.id)
+                  : "",
+              });
+            }
             break;
+          }
           case "checkout.session.completed":
           case "checkout.session.async_payment_succeeded": {
             const checkoutSession = event.data?.object || {};
@@ -1108,32 +1439,7 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
       return { skipped: true, reason: "stripe_not_configured" };
     }
 
-    const { data, error } = await supabaseAdmin
-      .from("billing_subscriptions")
-      .select("stripe_subscription_id, status, provider, updated_at")
-      .eq("user_id", userId)
-      .eq("provider", "stripe")
-      .eq("status", "active")
-      .not("stripe_subscription_id", "is", null)
-      .order("updated_at", { ascending: false })
-      .limit(1);
-
-    if (error) {
-      throw makeError("DB_QUERY_FAILED", error.message, 500);
-    }
-
-    const row = Array.isArray(data) ? data[0] : null;
-    const stripeSubscriptionId = normalizeStripeObjectId(row?.stripe_subscription_id);
-    if (!stripeSubscriptionId) {
-      return { skipped: true, reason: "no_stripe_subscription_row" };
-    }
-
-    const synced = await syncSubscriptionFromStripe(stripeSubscriptionId);
-    if (localStatusFromStripeStatus(synced?.subscription?.status) === "active") {
-      await ensurePlanGrantForSyncedSubscription(synced, { applyReferral: false });
-    }
-
-    return { ok: true, stripeSubscriptionId, synced };
+    return reconcileCustomerSubscriptionsForUser(userId, { enforceSingleActive: true });
   }
 
   async function getCheckoutStatusForUser({ userId, sessionId }) {
@@ -1266,6 +1572,7 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
     handleWebhook,
     syncSubscriptionFromStripe,
     finalizeSubscriptionCheckoutSession,
+    reconcileCustomerSubscriptionsForUser,
     repairLatestStripeSubscriptionForUser,
     cancelSubscriptionImmediately,
     getReferralCouponId,

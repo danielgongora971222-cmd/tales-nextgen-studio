@@ -46,7 +46,7 @@ export function createWalletRouter(ctx) {
 
     if (!active?.subscription_id && stripeBilling?.isConfigured?.()) {
       try {
-        await stripeBilling.repairLatestStripeSubscriptionForUser(user.id);
+        await stripeBilling.reconcileCustomerSubscriptionsForUser(user.id, { enforceSingleActive: true });
         const repaired = await supabaseAdmin.rpc("get_active_subscription", { p_user_id: user.id });
         if (!repaired.error) {
           sub = repaired.data;
@@ -54,7 +54,7 @@ export function createWalletRouter(ctx) {
         }
       } catch (repairError) {
         // eslint-disable-next-line no-console
-        console.warn("repairLatestStripeSubscriptionForUser failed in /wallet/me:", String(repairError?.message || repairError));
+        console.warn("reconcileCustomerSubscriptionsForUser failed in /wallet/me:", String(repairError?.message || repairError));
       }
     }
 
