@@ -58,6 +58,38 @@ function unixToIso(value) {
   return new Date(num * 1000).toISOString();
 }
 
+function hasPositiveUnixTimestamp(value) {
+  const num = Number(value);
+  return Number.isFinite(num) && num > 0;
+}
+
+function hasUsableStripeSubscriptionSnapshot(subscriptionLike) {
+  if (!subscriptionLike || typeof subscriptionLike !== "object") return false;
+  if (!normalizeStripeObjectId(subscriptionLike?.id)) return false;
+  if (!normalizeString(subscriptionLike?.status)) return false;
+  if (!firstPriceIdFromSubscription(subscriptionLike)) return false;
+  return hasPositiveUnixTimestamp(subscriptionLike?.current_period_start) && hasPositiveUnixTimestamp(subscriptionLike?.current_period_end);
+}
+
+function addBillingPeriodToIso(startIso, billingPeriod) {
+  const lower = normalizeString(billingPeriod).toLowerCase();
+  const start = new Date(startIso || Date.now());
+  if (!Number.isFinite(start.getTime())) {
+    return new Date(Date.now() + 1000 * 60 * 60 * 24 * 30).toISOString();
+  }
+
+  const out = new Date(start.getTime());
+  if (lower === "week") {
+    out.setUTCDate(out.getUTCDate() + 7);
+  } else if (lower === "year") {
+    out.setUTCFullYear(out.getUTCFullYear() + 1);
+  } else {
+    out.setUTCMonth(out.getUTCMonth() + 1);
+  }
+
+  return out.toISOString();
+}
+
 function parseStripeSignature(header) {
   const out = { timestamp: null, signatures: [] };
   for (const part of String(header || "").split(",")) {
@@ -550,9 +582,20 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
       throw makeError("STRIPE_SUBSCRIPTION_ID_MISSING", "Stripe no devolvió el id de la suscripción.", 500);
     }
 
-    const subscription = typeof subscriptionLike === "object" && subscriptionLike?.items?.data
-      ? subscriptionLike
-      : await fetchSubscription(stripeSubscriptionId);
+    const { data: existing, error: existingErr } = await supabaseAdmin
+      .from("billing_subscriptions")
+      .select("id, current_period_start, current_period_end")
+      .eq("stripe_subscription_id", stripeSubscriptionId)
+      .maybeSingle();
+
+    if (existingErr) {
+      throw makeError("DB_QUERY_FAILED", existingErr.message, 500);
+    }
+
+    const shouldFetchFresh = !hasUsableStripeSubscriptionSnapshot(subscriptionLike);
+    const subscription = shouldFetchFresh
+      ? await fetchSubscription(stripeSubscriptionId)
+      : subscriptionLike;
 
     const stripeCustomerId = normalizeStripeObjectId(subscription?.customer);
     const userId = await resolveUserIdFromStripeContext({
@@ -588,14 +631,20 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
 
     const localStatus = localStatusFromStripeStatus(subscription?.status);
 
-    const { data: existing, error: existingErr } = await supabaseAdmin
-      .from("billing_subscriptions")
-      .select("id")
-      .eq("stripe_subscription_id", stripeSubscriptionId)
-      .maybeSingle();
+    const resolvedPeriodStart =
+      unixToIso(subscription?.current_period_start) ||
+      normalizeString(existing?.current_period_start) ||
+      new Date().toISOString();
 
-    if (existingErr) {
-      throw makeError("DB_QUERY_FAILED", existingErr.message, 500);
+    let resolvedPeriodEnd =
+      unixToIso(subscription?.current_period_end) ||
+      normalizeString(existing?.current_period_end) ||
+      "";
+
+    const startMs = new Date(resolvedPeriodStart).getTime();
+    const endMs = new Date(resolvedPeriodEnd).getTime();
+    if (!resolvedPeriodEnd || !Number.isFinite(endMs) || !Number.isFinite(startMs) || endMs <= startMs) {
+      resolvedPeriodEnd = addBillingPeriodToIso(resolvedPeriodStart, plan?.billing_period);
     }
 
     const payload = {
@@ -603,8 +652,8 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
       plan_id: plan.id,
       status: localStatus,
       provider: "stripe",
-      current_period_start: unixToIso(subscription?.current_period_start) || new Date().toISOString(),
-      current_period_end: unixToIso(subscription?.current_period_end) || new Date().toISOString(),
+      current_period_start: resolvedPeriodStart,
+      current_period_end: resolvedPeriodEnd,
       stripe_customer_id: stripeCustomerId || null,
       stripe_subscription_id: stripeSubscriptionId,
       cancel_at_period_end: subscription?.cancel_at_period_end === true,
@@ -960,6 +1009,43 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
     }
   }
 
+  async function repairLatestStripeSubscriptionForUser(userId) {
+    if (!normalizeString(userId)) {
+      return { skipped: true, reason: "user_id_missing" };
+    }
+
+    if (!isConfigured()) {
+      return { skipped: true, reason: "stripe_not_configured" };
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from("billing_subscriptions")
+      .select("stripe_subscription_id, status, provider, updated_at")
+      .eq("user_id", userId)
+      .eq("provider", "stripe")
+      .eq("status", "active")
+      .not("stripe_subscription_id", "is", null)
+      .order("updated_at", { ascending: false })
+      .limit(1);
+
+    if (error) {
+      throw makeError("DB_QUERY_FAILED", error.message, 500);
+    }
+
+    const row = Array.isArray(data) ? data[0] : null;
+    const stripeSubscriptionId = normalizeStripeObjectId(row?.stripe_subscription_id);
+    if (!stripeSubscriptionId) {
+      return { skipped: true, reason: "no_stripe_subscription_row" };
+    }
+
+    const synced = await syncSubscriptionFromStripe(stripeSubscriptionId);
+    if (localStatusFromStripeStatus(synced?.subscription?.status) === "active") {
+      await ensurePlanGrantForSyncedSubscription(synced, { applyReferral: false });
+    }
+
+    return { ok: true, stripeSubscriptionId, synced };
+  }
+
   async function getCheckoutStatusForUser({ userId, sessionId }) {
     if (isCheckoutSessionTemplateValue(sessionId)) {
       throw makeError(
@@ -1069,6 +1155,7 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
     getCheckoutStatusForUser,
     handleWebhook,
     syncSubscriptionFromStripe,
+    repairLatestStripeSubscriptionForUser,
     cancelSubscriptionImmediately,
     getReferralCouponId,
   };

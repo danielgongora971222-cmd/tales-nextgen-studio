@@ -4,6 +4,7 @@ import { acceptLegal } from "../services/legalApi";
 import { useWallet } from "../contexts/WalletContext";
 import { validateReferralCode } from "../services/referralsApi";
 import ConfirmDollarPurchaseModal from "@/components/ConfirmDollarPurchaseModal";
+import StripeCheckoutStatusModal from "@/components/StripeCheckoutStatusModal";
 
 const TERMS_VERSION = "2026-03-03";
 const PRIVACY_VERSION = "2026-03-03";
@@ -22,6 +23,16 @@ type PendingCheckoutState = {
 type ConfirmState =
   | null
   | { itemLabel: string; amountLabel: string; note?: string | null; action: () => Promise<void> };
+
+type CheckoutOverlayState =
+  | null
+  | {
+      phase: "confirming" | "success" | "notice" | "error";
+      title: string;
+      message: string;
+      mode?: "subscription" | "payment" | null;
+      actionLabel?: string;
+    };
 
 function moneyUSD(cents: number) {
   const v = Number(cents || 0) / 100;
@@ -252,8 +263,8 @@ export default function Paywall({
   const [referralInput, setReferralInput] = useState("");
   const [referralCheck, setReferralCheck] = useState<any>({ state: "idle" });
   const [appliedReferral, setAppliedReferral] = useState<any | null>(null);
-  const [checkoutMessage, setCheckoutMessage] = useState<string | null>(null);
-  const [checkoutSyncing, setCheckoutSyncing] = useState(false);
+  const [checkoutOverlay, setCheckoutOverlay] = useState<CheckoutOverlayState>(null);
+  const [checkoutOverlayBusy, setCheckoutOverlayBusy] = useState(false);
 
   const availableCredits = Number(wallet?.generationCredits ?? 0);
   const planCredits = Number(wallet?.gen_plan_credits ?? 0);
@@ -308,7 +319,13 @@ export default function Paywall({
     (async () => {
       if (stripeStatus === "cancel") {
         clearPendingStripeCheckout();
-        setCheckoutMessage("Pago cancelado. No se realizó ningún cobro.");
+        setCheckoutOverlay({
+          phase: "notice",
+          title: "Pago cancelado",
+          message: "No se realizó ningún cobro. Puedes intentarlo de nuevo cuando quieras.",
+          mode: pendingCheckout?.mode || null,
+          actionLabel: "Entendido",
+        });
         clearBillingSearchParams();
         return;
       }
@@ -321,13 +338,26 @@ export default function Paywall({
 
       if (!sessionId) {
         clearPendingStripeCheckout();
-        setError("Stripe cerró el checkout, pero no recibí el identificador de la sesión para confirmar la compra.");
+        setCheckoutOverlay({
+          phase: "error",
+          title: "No pudimos confirmar la compra",
+          message: "Stripe cerró el checkout, pero no recibí el identificador de la sesión para verificar la operación.",
+          mode: pendingCheckout?.mode || null,
+          actionLabel: "Entendido",
+        });
         clearBillingSearchParams();
         return;
       }
 
-      setCheckoutSyncing(true);
-      setCheckoutMessage("Estamos confirmando tu pago con Stripe y activando tu compra...");
+      setCheckoutOverlay({
+        phase: "confirming",
+        title: "Estamos confirmando tu compra...",
+        message:
+          pendingCheckout?.mode === "payment"
+            ? "Estamos validando el pago, acreditando tus créditos extra y aplicando los cambios en tu cuenta."
+            : "Estamos validando el pago, activando tu plan y aplicando los cambios en tu cuenta.",
+        mode: pendingCheckout?.mode || null,
+      });
 
       try {
         for (let attempt = 0; attempt < 12; attempt += 1) {
@@ -338,19 +368,29 @@ export default function Paywall({
             clearPendingStripeCheckout();
             await refreshWallet();
             await loadAll();
-            setCheckoutMessage(
-              status?.mode === "payment"
-                ? "Tus créditos extra ya fueron acreditados correctamente."
-                : "Tu plan ya quedó activo correctamente."
-            );
+            setCheckoutOverlay({
+              phase: "success",
+              title: "Tu compra ha sido confirmada",
+              message:
+                status?.mode === "payment"
+                  ? "Tus créditos extra ya fueron acreditados correctamente y los cambios han sido aplicados en tu cuenta."
+                  : "Tu compra ha sido exitosa, tu plan ya quedó activo y los cambios han sido aplicados correctamente en tu cuenta.",
+              mode: status?.mode || pendingCheckout?.mode || null,
+              actionLabel: "OK",
+            });
             clearBillingSearchParams();
-            await onSubscribed();
             return;
           }
 
           if (status?.state === "expired") {
             clearPendingStripeCheckout();
-            setCheckoutMessage("La sesión de pago expiró antes de completarse.");
+            setCheckoutOverlay({
+              phase: "notice",
+              title: "La sesión expiró",
+              message: "La sesión de pago expiró antes de completarse. Puedes iniciar la compra de nuevo.",
+              mode: status?.mode || pendingCheckout?.mode || null,
+              actionLabel: "Entendido",
+            });
             clearBillingSearchParams();
             return;
           }
@@ -360,17 +400,26 @@ export default function Paywall({
 
         await refreshWallet();
         await loadAll();
-        setCheckoutMessage(
-          "Stripe ya cerró el checkout, pero la activación todavía se está sincronizando. Revisa de nuevo en unos segundos si no ves el cambio inmediatamente."
-        );
+        setCheckoutOverlay({
+          phase: "notice",
+          title: "Estamos terminando la sincronización",
+          message:
+            "Stripe ya cerró el checkout, pero la activación todavía se está sincronizando. Revisa de nuevo en unos segundos si no ves el cambio inmediatamente.",
+          mode: pendingCheckout?.mode || null,
+          actionLabel: "Entendido",
+        });
         clearBillingSearchParams();
       } catch (e: any) {
         if (cancelled) return;
         clearPendingStripeCheckout();
-        setError(e?.message || "No se pudo confirmar el estado del pago con Stripe.");
+        setCheckoutOverlay({
+          phase: "error",
+          title: "No pudimos confirmar la compra",
+          message: e?.message || "No se pudo confirmar el estado del pago con Stripe.",
+          mode: pendingCheckout?.mode || null,
+          actionLabel: "Entendido",
+        });
         clearBillingSearchParams();
-      } finally {
-        if (!cancelled) setCheckoutSyncing(false);
       }
     })();
 
@@ -535,6 +584,32 @@ export default function Paywall({
     return bestKey;
   }, [uniqueTopups]);
 
+  async function handleCheckoutOverlayAction() {
+    if (!checkoutOverlay) return;
+
+    if (checkoutOverlay.phase !== "success") {
+      setCheckoutOverlay(null);
+      return;
+    }
+
+    setCheckoutOverlayBusy(true);
+    try {
+      await onSubscribed();
+    } catch (e: any) {
+      setCheckoutOverlay({
+        phase: "notice",
+        title: "Compra confirmada",
+        message:
+          e?.message ||
+          "La compra ya fue confirmada. Si todavía no ves el cambio reflejado fuera de esta pantalla, actualiza la app en unos segundos.",
+        mode: checkoutOverlay.mode || null,
+        actionLabel: "Entendido",
+      });
+    } finally {
+      setCheckoutOverlayBusy(false);
+    }
+  }
+
   return (
     <div className="text-white">
       <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
@@ -558,16 +633,6 @@ export default function Paywall({
       </div>
 
       {error ? <div className="mb-4 p-3 rounded-xl bg-red-500/20 border border-red-500/40">{error}</div> : null}
-      {checkoutMessage ? (
-        <div
-          className={`mb-4 p-3 rounded-xl border ${
-            checkoutSyncing ? "bg-sky-500/15 border-sky-400/30 text-sky-100" : "bg-emerald-500/15 border-emerald-400/30 text-emerald-100"
-          }`}
-        >
-          {checkoutMessage}
-        </div>
-      ) : null}
-
       {/* Hero cards */}
       <div className="-mx-3 mb-6 overflow-x-auto overscroll-x-contain px-3 pb-2 md:mx-0 md:px-0 md:pb-0">
         <div className="grid min-w-[780px] grid-cols-3 gap-4">
@@ -1253,6 +1318,17 @@ export default function Paywall({
           await confirm.action();
           setConfirm(null);
         }}
+      />
+
+      <StripeCheckoutStatusModal
+        open={!!checkoutOverlay}
+        phase={checkoutOverlay?.phase || "notice"}
+        title={checkoutOverlay?.title || ""}
+        message={checkoutOverlay?.message || ""}
+        mode={checkoutOverlay?.mode || null}
+        busy={checkoutOverlayBusy}
+        actionLabel={checkoutOverlay?.actionLabel || "OK"}
+        onAction={handleCheckoutOverlayAction}
       />
     </div>
   );

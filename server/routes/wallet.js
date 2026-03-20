@@ -3,7 +3,7 @@ import { randomUUID } from "crypto";
 
 export function createWalletRouter(ctx) {
   const router = express.Router();
-  const { supabaseAdmin, requireUser, adminAuth, billing } = ctx;
+  const { supabaseAdmin, requireUser, adminAuth, billing, stripeBilling } = ctx;
 
   function err(res, status, code, message, details) {
     return res.status(status).json({ ok: false, error: { code, message, details: details || null } });
@@ -40,9 +40,23 @@ export function createWalletRouter(ctx) {
     if (qErr) return err(res, 500, "DB_QUERY_FAILED", qErr.message);
 
     // plan activo (si existe)
-    const { data: sub, error: sErr } = await supabaseAdmin.rpc("get_active_subscription", { p_user_id: user.id });
+    let { data: sub, error: sErr } = await supabaseAdmin.rpc("get_active_subscription", { p_user_id: user.id });
     if (sErr) return err(res, 500, "DB_RPC_FAILED", sErr.message);
-    const active = Array.isArray(sub) ? sub[0] : null;
+    let active = Array.isArray(sub) ? sub[0] : null;
+
+    if (!active?.subscription_id && stripeBilling?.isConfigured?.()) {
+      try {
+        await stripeBilling.repairLatestStripeSubscriptionForUser(user.id);
+        const repaired = await supabaseAdmin.rpc("get_active_subscription", { p_user_id: user.id });
+        if (!repaired.error) {
+          sub = repaired.data;
+          active = Array.isArray(sub) ? sub[0] : null;
+        }
+      } catch (repairError) {
+        // eslint-disable-next-line no-console
+        console.warn("repairLatestStripeSubscriptionForUser failed in /wallet/me:", String(repairError?.message || repairError));
+      }
+    }
 
     const gen_plan_credits = Number(data?.gen_plan_credits) || 0;
     const gen_topup_credits = Number(data?.gen_topup_credits) || 0;

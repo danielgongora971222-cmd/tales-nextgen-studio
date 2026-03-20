@@ -386,8 +386,19 @@ export function createBillingRouter(ctx) {
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
 
-    const r = await getActiveSubscription(user.id);
+    let r = await getActiveSubscription(user.id);
     if (r.error) return err(res, 500, r.error.code, r.error.message, r.error.details);
+
+    if (!r.subscription && stripeBilling?.isConfigured?.()) {
+      try {
+        await stripeBilling.repairLatestStripeSubscriptionForUser(user.id);
+        r = await getActiveSubscription(user.id);
+        if (r.error) return err(res, 500, r.error.code, r.error.message, r.error.details);
+      } catch (repairError) {
+        // eslint-disable-next-line no-console
+        console.warn("repairLatestStripeSubscriptionForUser failed in /billing/me:", String(repairError?.message || repairError));
+      }
+    }
 
     return res.json({ ok: true, subscription: r.subscription });
   });

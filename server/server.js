@@ -530,6 +530,7 @@ app.use(
     requireUser,
     adminAuth,
     billing,
+    stripeBilling,
   })
 );
 
