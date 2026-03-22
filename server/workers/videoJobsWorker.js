@@ -128,7 +128,7 @@ async function assetIdToSignedUrl(assetId, ownerId, ttlSeconds) {
 
   const { data, error } = await supabaseAdmin
     .from("assets")
-    .select("id, owner_id, is_public, storage_path")
+    .select("id, owner_id, is_public, storage_path, url")
     .eq("id", assetId)
     .single();
 
@@ -139,7 +139,14 @@ async function assetIdToSignedUrl(assetId, ownerId, ttlSeconds) {
     throw new Error("ASSET_NOT_OWNED");
   }
 
-  return signStoragePath(data.storage_path, ttlSeconds);
+  if (data.storage_path) {
+    return signStoragePath(data.storage_path, ttlSeconds);
+  }
+
+  const directUrl = typeof data.url === "string" ? data.url.trim() : "";
+  if (directUrl) return directUrl;
+
+  throw new Error("ASSET_NO_SOURCE_URL");
 }
 
 async function lockJob(id, expectedStatus) {

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Asset } from "../types";
-import { listMyAssetsRobust, uploadUserAsset } from "../services/assetsApi";
+import { downloadAssetBlob, listMyAssetsRobust, uploadUserAsset } from "../services/assetsApi";
 
 type Props = {
   open: boolean;
@@ -34,17 +34,23 @@ async function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
-async function loadImageViaObjectUrl(src: string): Promise<{ img: HTMLImageElement; revoke?: () => void }> {
-  const isDataUrl = src.startsWith("data:");
+async function loadImageViaObjectUrl(
+  src: string,
+  opts?: { skipFetch?: boolean; revokeOnCleanup?: boolean }
+): Promise<{ img: HTMLImageElement; revoke?: () => void }> {
+  const canUseDirectSrc = src.startsWith("data:") || src.startsWith("blob:") || Boolean(opts?.skipFetch);
   const img = new Image();
 
-  if (isDataUrl) {
+  if (canUseDirectSrc) {
     img.src = src;
     await new Promise<void>((res, rej) => {
       img.onload = () => res();
       img.onerror = () => rej(new Error("No se pudo cargar la imagen."));
     });
-    return { img };
+    return {
+      img,
+      revoke: src.startsWith("blob:") && opts?.revokeOnCleanup ? () => URL.revokeObjectURL(src) : undefined,
+    };
   }
 
   const resp = await fetch(src);
@@ -169,18 +175,49 @@ export default function ElementLibraryPickerModal({ open, onClose, onSelect, tit
     });
   }
 
-  async function resolveSlotToUrl(input: SlotInput): Promise<string> {
-    if (input.kind === "dataUrl") return input.dataUrl;
-    const a = library.find((x) => x.id === input.assetId);
-    return a?.url || input.previewUrl;
+  function findSlotAssetUrl(assetId: string): string {
+    return library.find((x) => x.id === assetId)?.url || "";
+  }
+
+  async function loadImageFromSlot(input: SlotInput): Promise<{ img: HTMLImageElement; revoke?: () => void }> {
+    if (input.kind === "dataUrl") {
+      return await loadImageViaObjectUrl(input.dataUrl, { skipFetch: true });
+    }
+
+    try {
+      const { blob } = await downloadAssetBlob(input.assetId);
+      const objectUrl = URL.createObjectURL(blob);
+      return await loadImageViaObjectUrl(objectUrl, { skipFetch: true, revokeOnCleanup: true });
+    } catch (primaryErr) {
+      const fallbackSrc = findSlotAssetUrl(input.assetId) || input.previewUrl;
+      if (!fallbackSrc) throw primaryErr;
+      return await loadImageViaObjectUrl(fallbackSrc);
+    }
+  }
+
+  async function blobFromSlot(input: SlotInput): Promise<Blob> {
+    if (input.kind === "dataUrl") {
+      const resp = await fetch(input.dataUrl);
+      return await resp.blob();
+    }
+
+    try {
+      const { blob } = await downloadAssetBlob(input.assetId);
+      return blob;
+    } catch (primaryErr) {
+      const fallbackSrc = findSlotAssetUrl(input.assetId) || input.previewUrl;
+      if (!fallbackSrc) throw primaryErr;
+      const resp = await fetch(fallbackSrc);
+      if (!resp.ok) throw new Error(`No se pudo descargar la imagen (${resp.status}).`);
+      return await resp.blob();
+    }
   }
 
   async function buildMosaic2x2(inputs: (SlotInput | null)[]): Promise<File> {
     const s1 = inputs[0];
     if (!s1) throw new Error("Slot 1 es obligatorio (define el aspecto del mosaico).");
 
-    const url1 = await resolveSlotToUrl(s1);
-    const loaded1 = await loadImageViaObjectUrl(url1);
+    const loaded1 = await loadImageFromSlot(s1);
 
     const w1 = loaded1.img.naturalWidth || 1024;
     const h1 = loaded1.img.naturalHeight || 1024;
@@ -213,10 +250,12 @@ export default function ElementLibraryPickerModal({ open, onClose, onSelect, tit
     for (let i = 1; i < 4; i++) {
       const input = inputs[i];
       if (!input) continue;
-      const url = await resolveSlotToUrl(input);
-      const loaded = await loadImageViaObjectUrl(url);
-      drawContain(ctx, loaded.img, coords[i].x, coords[i].y, cellW, cellH);
-      loaded.revoke?.();
+      const loaded = await loadImageFromSlot(input);
+      try {
+        drawContain(ctx, loaded.img, coords[i].x, coords[i].y, cellW, cellH);
+      } finally {
+        loaded.revoke?.();
+      }
     }
 
     const blob: Blob = await new Promise((resolve, reject) => {
@@ -227,16 +266,7 @@ export default function ElementLibraryPickerModal({ open, onClose, onSelect, tit
   }
 
   async function buildSingleElementFile(input: SlotInput): Promise<File> {
-    if (input.kind === "dataUrl") {
-      const resp = await fetch(input.dataUrl);
-      const blob = await resp.blob();
-      return new File([blob], `element_${Date.now()}.jpg`, { type: blob.type || "image/jpeg" });
-    }
-
-    const src = await resolveSlotToUrl(input);
-    const resp = await fetch(src);
-    if (!resp.ok) throw new Error(`No se pudo descargar la imagen (${resp.status}).`);
-    const blob = await resp.blob();
+    const blob = await blobFromSlot(input);
     return new File([blob], `element_${Date.now()}.jpg`, { type: blob.type || "image/jpeg" });
   }
 
@@ -289,8 +319,8 @@ export default function ElementLibraryPickerModal({ open, onClose, onSelect, tit
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[90] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="w-full max-w-4xl rounded-2xl border border-white/10 bg-black/60 shadow-2xl overflow-hidden">
+    <div className="fixed inset-0 z-[90] bg-black/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-2 sm:p-4">
+      <div className="w-full max-w-4xl max-h-[calc(100dvh-1rem)] sm:max-h-[calc(100dvh-2rem)] rounded-2xl border border-white/10 bg-black/60 shadow-2xl overflow-hidden flex flex-col">
         <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
           <div className="text-sm font-bold text-white/90">
             {title || "Elegir Element (General Image Generator)"}
@@ -321,7 +351,7 @@ export default function ElementLibraryPickerModal({ open, onClose, onSelect, tit
           </button>
         </div>
 
-        <div className="p-5 space-y-4">
+        <div className="p-4 sm:p-5 space-y-4 overflow-y-auto">
           {err && (
             <div className="text-xs text-red-300">{err}</div>
           )}
@@ -345,7 +375,7 @@ export default function ElementLibraryPickerModal({ open, onClose, onSelect, tit
                 </div>
               )}
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
                 {filteredElements.map((el) => (
                   <button
                     key={el.id}
@@ -397,7 +427,7 @@ export default function ElementLibraryPickerModal({ open, onClose, onSelect, tit
                 <div className="text-xs text-white/60">Slot 1 es obligatorio (define el aspecto). Máximo 4 imágenes.</div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-3 sm:gap-4">
                 {slots.map((slot, idx) => (
                   <div key={idx} className="rounded-2xl border border-white/10 bg-white/5 overflow-hidden">
                     <div className="aspect-video bg-black/40">
@@ -415,7 +445,7 @@ export default function ElementLibraryPickerModal({ open, onClose, onSelect, tit
                       )}
                     </div>
 
-                    <div className="p-4 space-y-3">
+                    <div className="p-3 sm:p-4 space-y-3">
                       <div className="text-xs font-bold text-white/80">Slot {idx + 1}{idx === 0 ? " (obligatorio)" : ""}</div>
 
                       <div className="flex flex-wrap gap-2">
@@ -479,8 +509,8 @@ export default function ElementLibraryPickerModal({ open, onClose, onSelect, tit
       </div>
 
       {pickerSlot !== null && (
-        <div className="fixed inset-0 z-[95] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-4xl rounded-2xl border border-white/10 bg-black/70 shadow-2xl overflow-hidden">
+        <div className="fixed inset-0 z-[95] bg-black/70 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-2 sm:p-4">
+          <div className="w-full max-w-4xl max-h-[calc(100dvh-1rem)] sm:max-h-[calc(100dvh-2rem)] rounded-2xl border border-white/10 bg-black/70 shadow-2xl overflow-hidden flex flex-col">
             <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
               <div className="text-sm font-bold text-white/90">Seleccionar imagen (Slot {pickerSlot + 1})</div>
               <button
@@ -492,7 +522,7 @@ export default function ElementLibraryPickerModal({ open, onClose, onSelect, tit
               </button>
             </div>
 
-            <div className="p-5 space-y-4">
+            <div className="p-4 sm:p-5 space-y-4 overflow-y-auto">
               <input
                 value={libraryQ}
                 onChange={(e) => setLibraryQ(e.target.value)}
@@ -508,7 +538,7 @@ export default function ElementLibraryPickerModal({ open, onClose, onSelect, tit
                 <div className="text-xs text-red-300">{libraryErr}</div>
               )}
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
                 {filteredLibrary.map((a) => (
                   <button
                     key={a.id}
@@ -527,7 +557,7 @@ export default function ElementLibraryPickerModal({ open, onClose, onSelect, tit
                         style={{ objectFit: "contain", objectPosition: "center" }}
                       />
                     </div>
-                    <div className="p-3">
+                    <div className="p-2.5 sm:p-3">
                       <div className="text-xs font-bold text-white/85">{a.name}</div>
                     </div>
                   </button>

@@ -1771,10 +1771,23 @@ async function hasCommunityAssetEntitlement(assetId, userId) {
   return Boolean(data?.asset_id);
 }
 
+async function resolveAssetSourceUrlOrThrow(assetRow, expiresInSeconds = 600) {
+  if (assetRow?.storage_path) {
+    return await signStoragePath(assetRow.storage_path, expiresInSeconds);
+  }
+
+  const directUrl = typeof assetRow?.url === "string" ? assetRow.url.trim() : "";
+  if (directUrl) return directUrl;
+
+  throw httpError(500, "ASSET_NO_SOURCE_URL", "Asset sin storage_path ni url usable.", {
+    assetId: assetRow?.id || null,
+  });
+}
+
 async function assetIdToInlinePart(assetId, userId) {
   const { data, error } = await supabaseAdmin
     .from("assets")
-    .select("id, owner_id, is_public, storage_path, type")
+    .select("id, owner_id, is_public, storage_path, url, type")
     .eq("id", assetId)
     .maybeSingle();
 
@@ -1790,8 +1803,8 @@ async function assetIdToInlinePart(assetId, userId) {
     apiError(400, "ASSET_NOT_IMAGE", `El asset ${assetId} no es una imagen.`);
   }
 
-  const signedUrl = await signStoragePath(data.storage_path, 60 * 10);
-  const r = await fetch(signedUrl);
+  const sourceUrl = await resolveAssetSourceUrlOrThrow(data, 60 * 10);
+  const r = await fetch(sourceUrl);
   if (!r.ok) apiError(502, "ASSET_FETCH_FAILED", `No pude leer el asset ${assetId} desde storage.`);
 
   const mimeType = r.headers.get("content-type") || "image/png";
@@ -1811,7 +1824,7 @@ async function assetIdToImageObject(assetId, userId) {
 async function assetIdToSignedUrl(assetId, userId, expiresInSeconds = 600) {
   const { data, error } = await supabaseAdmin
     .from("assets")
-    .select("id, owner_id, is_public, storage_path, type")
+    .select("id, owner_id, is_public, storage_path, url, type")
     .eq("id", assetId)
     .single();
 
@@ -1824,8 +1837,7 @@ async function assetIdToSignedUrl(assetId, userId, expiresInSeconds = 600) {
     throw httpError(403, "FORBIDDEN", "You do not have access to this asset");
   }
 
-  // signed URL so Fal.ai can fetch it
-  return await signStoragePath(data.storage_path, expiresInSeconds);
+  return await resolveAssetSourceUrlOrThrow(data, expiresInSeconds);
 }
 
 

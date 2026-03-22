@@ -516,7 +516,7 @@ async function bflSampleToDataUrl(sampleUrl) {
 async function getAssetRowOrThrow(assetId) {
   const { data, error } = await supabaseAdmin
     .from("assets")
-    .select("id, owner_id, is_public, storage_path, type, meta")
+    .select("id, owner_id, is_public, storage_path, url, type, meta")
     .eq("id", assetId)
     .maybeSingle();
 
@@ -554,18 +554,44 @@ async function assertAssetReadable(row, requesterId) {
   throw httpError(403, "ASSET_FORBIDDEN", "No tienes permisos para acceder a ese asset.");
 }
 
+async function assetRowToSourceUrlOrThrow(row, expiresSeconds = 600) {
+  if (row?.storage_path) {
+    return await signStoragePath(row.storage_path, expiresSeconds);
+  }
+
+  const directUrl = typeof row?.url === "string" ? row.url.trim() : "";
+  if (directUrl) return directUrl;
+
+  throw httpError(500, "ASSET_NO_SOURCE_URL", "Asset sin storage_path ni url.", { assetId: row?.id || null });
+}
+
+async function downloadAssetRowBinary(row) {
+  if (row?.storage_path) {
+    return await downloadStoragePath(row.storage_path);
+  }
+
+  const sourceUrl = await assetRowToSourceUrlOrThrow(row);
+  const resp = await fetch(sourceUrl);
+  if (!resp.ok) {
+    throw httpError(502, "ASSET_FETCH_FAILED", `No pude leer el asset ${row?.id || ""}.`, { assetId: row?.id || null });
+  }
+
+  return {
+    buffer: Buffer.from(await resp.arrayBuffer()),
+    mimeType: resp.headers.get("content-type") || "image/png",
+  };
+}
+
 async function assetIdToSignedUrl(assetId, requesterId, expiresSeconds = 600) {
   const row = await getAssetRowOrThrow(assetId);
   await assertAssetReadable(row, requesterId);
-  if (!row.storage_path) throw httpError(500, "ASSET_NO_STORAGE_PATH", "Asset sin storage_path.", { assetId });
-  return await signStoragePath(row.storage_path, expiresSeconds);
+  return await assetRowToSourceUrlOrThrow(row, expiresSeconds);
 }
 
 async function assetIdToInlinePart(assetId, requesterId) {
   const row = await getAssetRowOrThrow(assetId);
   await assertAssetReadable(row, requesterId);
-  if (!row.storage_path) throw httpError(500, "ASSET_NO_STORAGE_PATH", "Asset sin storage_path.", { assetId });
-  const { buffer, mimeType } = await downloadStoragePath(row.storage_path);
+  const { buffer, mimeType } = await downloadAssetRowBinary(row);
   return {
     inlineData: {
       mimeType: mimeType || "image/png",
@@ -577,8 +603,7 @@ async function assetIdToInlinePart(assetId, requesterId) {
 async function assetIdToImageFile(assetId, requesterId) {
   const row = await getAssetRowOrThrow(assetId);
   await assertAssetReadable(row, requesterId);
-  if (!row.storage_path) throw httpError(500, "ASSET_NO_STORAGE_PATH", "Asset sin storage_path.", { assetId });
-  const { buffer, mimeType } = await downloadStoragePath(row.storage_path);
+  const { buffer, mimeType } = await downloadAssetRowBinary(row);
   const filename = `${row.id}.${(mimeType || "image/png").split("/")[1] || "png"}`;
   return { buffer, mimeType: mimeType || "image/png", filename };
 }

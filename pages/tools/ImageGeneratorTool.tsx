@@ -8,6 +8,7 @@ import {
   listPurchasedAssetsRobust,
   uploadUserAsset,
   downloadAssetToDisk,
+  downloadAssetBlob,
 } from "../../services/assetsApi";
 import { useAuth } from "../../contexts/AuthContext";
 import { usePendingImageToolJobs } from "../../hooks/usePendingImageToolJobs";
@@ -1979,26 +1980,32 @@ const promptReferences: PromptReference[] = useMemo(() => {
   }, [prompt, elementTokenToId]);
 
 
-  async function resolveInputToUrl(input: ElementImageInput): Promise<string> {
-    if (input.kind === "dataUrl") return input.dataUrl;
-
-    // kind === "asset"
-    const a = myAssets.find((x) => x.id === input.assetId);
-    return a?.url || input.previewUrl;
+  function findElementInputAssetUrl(assetId: string): string {
+    return (
+      myAssets.find((x) => x.id === assetId)?.url ||
+      purchasedAssets.find((x) => x.id === assetId)?.url ||
+      ""
+    );
   }
 
-  async function loadImageViaObjectUrl(src: string): Promise<{ img: HTMLImageElement; revoke?: () => void }> {
-    // Para evitar canvas tainted por CORS, convertimos http(s) -> blob -> objectURL
-    const isDataUrl = src.startsWith("data:");
+  async function loadImageViaObjectUrl(
+    src: string,
+    opts?: { skipFetch?: boolean; revokeOnCleanup?: boolean }
+  ): Promise<{ img: HTMLImageElement; revoke?: () => void }> {
+    // Para evitar canvas tainted por CORS, convertimos http(s) -> blob -> objectURL.
+    const canUseDirectSrc = src.startsWith("data:") || src.startsWith("blob:") || Boolean(opts?.skipFetch);
     const img = new Image();
 
-    if (isDataUrl) {
+    if (canUseDirectSrc) {
       img.src = src;
       await new Promise<void>((res, rej) => {
         img.onload = () => res();
         img.onerror = () => rej(new Error("No se pudo cargar la imagen."));
       });
-      return { img };
+      return {
+        img,
+        revoke: src.startsWith("blob:") && opts?.revokeOnCleanup ? () => URL.revokeObjectURL(src) : undefined,
+      };
     }
 
     const resp = await fetch(src);
@@ -2015,9 +2022,42 @@ const promptReferences: PromptReference[] = useMemo(() => {
     return { img, revoke: () => URL.revokeObjectURL(url) };
   }
 
-    async function buildElementPreviewDataUrl(input: ElementImageInput, maxSide = 320): Promise<string> {
-    const src = await resolveInputToUrl(input);
-    const loaded = await loadImageViaObjectUrl(src);
+  async function loadImageFromElementInput(input: ElementImageInput): Promise<{ img: HTMLImageElement; revoke?: () => void }> {
+    if (input.kind === "dataUrl") {
+      return await loadImageViaObjectUrl(input.dataUrl, { skipFetch: true });
+    }
+
+    try {
+      const { blob } = await downloadAssetBlob(input.assetId, input.label);
+      const objectUrl = URL.createObjectURL(blob);
+      return await loadImageViaObjectUrl(objectUrl, { skipFetch: true, revokeOnCleanup: true });
+    } catch (primaryErr) {
+      const fallbackSrc = findElementInputAssetUrl(input.assetId) || input.previewUrl;
+      if (!fallbackSrc) throw primaryErr;
+      return await loadImageViaObjectUrl(fallbackSrc);
+    }
+  }
+
+  async function blobFromElementInput(input: ElementImageInput): Promise<Blob> {
+    if (input.kind === "dataUrl") {
+      const resp = await fetch(input.dataUrl);
+      return await resp.blob();
+    }
+
+    try {
+      const { blob } = await downloadAssetBlob(input.assetId, input.label);
+      return blob;
+    } catch (primaryErr) {
+      const fallbackSrc = findElementInputAssetUrl(input.assetId) || input.previewUrl;
+      if (!fallbackSrc) throw primaryErr;
+      const resp = await fetch(fallbackSrc);
+      if (!resp.ok) throw new Error(`No se pudo descargar la imagen (${resp.status}).`);
+      return await resp.blob();
+    }
+  }
+
+  async function buildElementPreviewDataUrl(input: ElementImageInput, maxSide = 320): Promise<string> {
+    const loaded = await loadImageFromElementInput(input);
 
     try {
       const iw = loaded.img.naturalWidth || (loaded.img as any).width || 1;
@@ -2058,8 +2098,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
     const s1 = inputs[0];
     if (!s1) throw new Error("Slot 1 es obligatorio (define el aspecto del mosaico).");
 
-    const url1 = await resolveInputToUrl(s1);
-    const loaded1 = await loadImageViaObjectUrl(url1);
+    const loaded1 = await loadImageFromElementInput(s1);
 
     // Tamaño base de la celda según Slot1, con límite (para no explotar memoria)
     const w1 = loaded1.img.naturalWidth || 1024;
@@ -2096,10 +2135,12 @@ const promptReferences: PromptReference[] = useMemo(() => {
       const input = inputs[i];
       if (!input) continue;
 
-      const url = await resolveInputToUrl(input);
-      const loaded = await loadImageViaObjectUrl(url);
-      drawContain(ctx, loaded.img, coords[i].x, coords[i].y, cellW, cellH);
-      loaded.revoke?.();
+      const loaded = await loadImageFromElementInput(input);
+      try {
+        drawContain(ctx, loaded.img, coords[i].x, coords[i].y, cellW, cellH);
+      } finally {
+        loaded.revoke?.();
+      }
     }
 
     const blob: Blob = await new Promise((resolve, reject) => {
@@ -2110,16 +2151,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
   }
 
   async function buildSingleElementFile(input: ElementImageInput): Promise<File> {
-    if (input.kind === "dataUrl") {
-      const resp = await fetch(input.dataUrl);
-      const blob = await resp.blob();
-      return new File([blob], `element_${Date.now()}.jpg`, { type: blob.type || "image/jpeg" });
-    }
-
-    const src = await resolveInputToUrl(input);
-    const resp = await fetch(src);
-    if (!resp.ok) throw new Error(`No se pudo descargar la imagen (${resp.status}).`);
-    const blob = await resp.blob();
+    const blob = await blobFromElementInput(input);
     return new File([blob], `element_${Date.now()}.jpg`, { type: blob.type || "image/jpeg" });
   }
 

@@ -814,7 +814,7 @@ export async function uploadUserAsset(
   };
 }
 
-export async function downloadAssetToDisk(assetId: string, filenameHint?: string): Promise<void> {
+async function fetchAssetDownloadResponse(assetId: string): Promise<Response> {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
 
@@ -822,30 +822,53 @@ export async function downloadAssetToDisk(assetId: string, filenameHint?: string
     throw new Error("Debes iniciar sesión para descargar.");
   }
 
-  const resp = await fetch(assetApiUrl(`/api/assets/${assetId}/download`), {
+  return await fetch(assetApiUrl(`/api/assets/${assetId}/download`), {
     method: "GET",
     headers: { Authorization: `Bearer ${token}` },
   });
+}
 
-  if (!resp.ok) {
-    const raw = await resp.text();
-    try {
-      const parsed = JSON.parse(raw);
-      const msg = parsed?.error?.message || `Download failed (${resp.status})`;
-      throw new Error(msg);
-    } catch {
-      throw new Error(`Download failed (${resp.status}). Inicio: ${raw.slice(0, 120)}`);
-    }
+async function throwAssetDownloadError(resp: Response): Promise<never> {
+  const raw = await resp.text();
+  try {
+    const parsed = JSON.parse(raw);
+    const msg = parsed?.error?.message || `Download failed (${resp.status})`;
+    throw new Error(msg);
+  } catch {
+    throw new Error(`Download failed (${resp.status}). Inicio: ${raw.slice(0, 120)}`);
   }
+}
 
-  const blob = await resp.blob();
-
+function extractAssetDownloadFilename(resp: Response, filenameHint?: string): string {
   let filename = filenameHint || "download";
   const disp = resp.headers.get("content-disposition") || resp.headers.get("Content-Disposition");
   if (disp) {
-    const m = disp.match(/filename=\"?([^\";]+)\"?/i);
+    const m = disp.match(/filename="?([^";]+)"?/i);
     if (m && m[1]) filename = m[1];
   }
+  return filename;
+}
+
+export async function downloadAssetBlob(
+  assetId: string,
+  filenameHint?: string
+): Promise<{ blob: Blob; filename: string; contentType: string }> {
+  const resp = await fetchAssetDownloadResponse(assetId);
+
+  if (!resp.ok) {
+    await throwAssetDownloadError(resp);
+  }
+
+  const blob = await resp.blob();
+  return {
+    blob,
+    filename: extractAssetDownloadFilename(resp, filenameHint),
+    contentType: resp.headers.get("content-type") || blob.type || "application/octet-stream",
+  };
+}
+
+export async function downloadAssetToDisk(assetId: string, filenameHint?: string): Promise<void> {
+  const { blob, filename } = await downloadAssetBlob(assetId, filenameHint);
 
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");

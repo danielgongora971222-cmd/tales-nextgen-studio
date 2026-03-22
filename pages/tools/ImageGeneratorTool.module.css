@@ -2636,6 +2636,144 @@
   to{ opacity: 1; transform: translateY(0); }
 }
 
+
+/* Ajustes de estabilidad/responsive para modales de Elements */
+.elementBackdrop{
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow-y: auto;
+  padding: max(18px, env(safe-area-inset-top)) 18px max(18px, env(safe-area-inset-bottom));
+}
+
+.elementModal{
+  margin: 0 auto;
+  max-height: min(960px, calc(100dvh - 36px));
+}
+
+.elementBody{
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.elementFormRow{
+  grid-template-columns: minmax(0, 1.15fr) minmax(190px, 0.85fr);
+  align-items: start;
+}
+
+.elementSlots{
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.elementAllTop{
+  flex-wrap: wrap;
+}
+
+.elementAllTop .search{
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.elementFooter{
+  flex-wrap: wrap;
+}
+
+@media (max-width: 900px){
+  .elementModal{
+    max-width: min(100%, 760px);
+  }
+}
+
+@media (max-width: 700px){
+  .elementBackdrop{
+    padding: max(12px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom));
+  }
+
+  .elementModal{
+    max-height: calc(100dvh - 24px);
+    border-radius: 16px;
+  }
+
+  .elementBody{
+    padding: 12px;
+  }
+
+  .elementFormRow{
+    grid-template-columns: minmax(0, 1fr) minmax(132px, 0.72fr);
+    gap: 10px;
+  }
+
+  .elementSlots,
+  .elementAllGrid,
+  .pickerGrid{
+    gap: 10px;
+  }
+
+  .elementSlotCard,
+  .elementAllCard,
+  .pickerTile{
+    border-radius: 14px;
+  }
+
+  .elementSlotCard{
+    padding: 8px;
+  }
+
+  .elementFooter > button{
+    flex: 1 1 160px;
+  }
+}
+
+@media (max-width: 560px){
+  .elementFormRow{
+    grid-template-columns: minmax(0, 1fr) minmax(116px, 0.68fr);
+  }
+
+  .elementSlots,
+  .elementAllGrid{
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .elementTabBtn,
+  .elementTagPickerChip{
+    min-height: 32px;
+    padding: 0 12px;
+    font-size: 11px;
+  }
+}
+
+@media (max-width: 420px){
+  .elementBackdrop{
+    padding: max(10px, env(safe-area-inset-top)) 10px max(10px, env(safe-area-inset-bottom));
+  }
+
+  .elementModal{
+    max-height: calc(100dvh - 20px);
+  }
+
+  .elementFormRow{
+    grid-template-columns: minmax(0, 1fr) 104px;
+    gap: 8px;
+  }
+
+  .elementSlots,
+  .elementAllGrid,
+  .pickerGrid{
+    gap: 8px;
+  }
+
+  .elementSlotActions{
+    gap: 6px;
+  }
+
+  .smallBtn,
+  .smallBtnGhost{
+    font-size: 10px;
+    padding: 7px 8px;
+    border-radius: 10px;
+  }
+}
+
 /* --- IMAGE GENERATOR / COOK SIDEBAR LAYOUT --- */
 .rootCookOpen {
   --cook-rail-width: 0px;
