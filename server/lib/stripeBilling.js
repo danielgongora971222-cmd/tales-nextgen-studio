@@ -612,6 +612,75 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
     });
   }
 
+  async function fetchInvoice(invoiceId) {
+    return stripeRequest("GET", `/v1/invoices/${invoiceId}`, {
+      expand: ["subscription"],
+    });
+  }
+
+  async function fetchCharge(chargeId) {
+    return stripeRequest("GET", `/v1/charges/${chargeId}`, {
+      expand: ["invoice"],
+    });
+  }
+
+  async function resolveSubscriptionInvoiceFromStripeObject(objectLike = {}) {
+    const directInvoiceId = normalizeStripeObjectId(objectLike?.invoice);
+    if (directInvoiceId) {
+      const invoice = typeof objectLike?.invoice === "object" && objectLike.invoice?.id
+        ? objectLike.invoice
+        : await fetchInvoice(directInvoiceId);
+      return normalizeStripeObjectId(invoice?.subscription) ? invoice : null;
+    }
+
+    const directChargeId =
+      normalizeStripeObjectId(objectLike?.charge) ||
+      (String(objectLike?.object || "").toLowerCase() === "charge" ? normalizeStripeObjectId(objectLike?.id) : "");
+
+    if (!directChargeId) return null;
+
+    const charge = String(objectLike?.object || "").toLowerCase() === "charge" && normalizeStripeObjectId(objectLike?.id)
+      ? objectLike
+      : await fetchCharge(directChargeId);
+
+    const invoiceId = normalizeStripeObjectId(charge?.invoice);
+    if (!invoiceId) return null;
+
+    const invoice = typeof charge?.invoice === "object" && charge.invoice?.id
+      ? charge.invoice
+      : await fetchInvoice(invoiceId);
+
+    return normalizeStripeObjectId(invoice?.subscription) ? invoice : null;
+  }
+
+  async function reverseReferralForInvoice(invoiceLike, { reason = "stripe_reversal", eventId = "" } = {}) {
+    const invoiceId = normalizeStripeObjectId(invoiceLike?.id || invoiceLike);
+    if (!invoiceId) return { skipped: true, reason: "invoice_id_missing" };
+
+    const invoice = typeof invoiceLike === "object" && invoiceLike?.id ? invoiceLike : await fetchInvoice(invoiceId);
+    if (!normalizeStripeObjectId(invoice?.subscription)) {
+      return { skipped: true, reason: "invoice_without_subscription" };
+    }
+
+    const { data, error } = await supabaseAdmin.rpc("billing_reverse_referral_reward", {
+      p_stripe_invoice_id: invoiceId,
+      p_reason: normalizeString(reason) || null,
+      p_event_id: normalizeString(eventId) || null,
+      p_idempotency_key: normalizeString(eventId) ? `stripe:referral_reverse:${normalizeString(eventId)}` : `stripe:referral_reverse:${invoiceId}`,
+    });
+
+    if (error) {
+      throw makeError("REFERRAL_REVERSE_FAILED", error.message, 500, {
+        invoiceId,
+        reason,
+        eventId: normalizeString(eventId) || null,
+      });
+    }
+
+    const row = Array.isArray(data) ? data[0] || null : data || null;
+    return { ok: true, invoiceId, reversal: row };
+  }
+
   async function cancelSubscriptionImmediately(subscriptionId) {
     return stripeRequest("DELETE", `/v1/subscriptions/${subscriptionId}`);
   }
@@ -1127,7 +1196,10 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
     return data || null;
   }
 
-  async function ensurePlanGrantForSyncedSubscription(synced, { applyReferral = false } = {}) {
+  async function ensurePlanGrantForSyncedSubscription(
+    synced,
+    { applyReferral = false, stripeInvoiceId = "", stripeCustomerId = "" } = {}
+  ) {
     if (!synced?.userId || !synced?.plan?.id || !synced?.subscription?.id) {
       throw makeError("SUBSCRIPTION_SYNC_FAILED", "No se pudo preparar la activación del plan desde Stripe.", 500);
     }
@@ -1167,6 +1239,10 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
           p_referral_code: referralCode,
           p_plan_id: synced.plan.id,
           p_idempotency_key: buildStripeReferralApplyKey(synced.subscription),
+          p_stripe_subscription_id: normalizeStripeObjectId(synced.subscription?.id),
+          p_stripe_invoice_id: normalizeStripeObjectId(stripeInvoiceId),
+          p_stripe_customer_id:
+            normalizeStripeObjectId(stripeCustomerId) || normalizeStripeObjectId(synced.subscription?.customer),
         });
 
         if (referralErr) {
@@ -1199,6 +1275,8 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
     const billingReason = normalizeString(invoice?.billing_reason).toLowerCase();
     return ensurePlanGrantForSyncedSubscription(synced, {
       applyReferral: billingReason === "subscription_create",
+      stripeInvoiceId: normalizeStripeObjectId(invoice?.id),
+      stripeCustomerId: normalizeStripeObjectId(invoice?.customer),
     });
   }
 
@@ -1219,7 +1297,10 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
     }
 
     const synced = await syncSubscriptionFromStripe(session?.subscription || stripeSubscriptionId);
-    const grant = await ensurePlanGrantForSyncedSubscription(synced, { applyReferral: true });
+    const grant = await ensurePlanGrantForSyncedSubscription(synced, {
+      applyReferral: true,
+      stripeCustomerId: normalizeStripeObjectId(session?.customer),
+    });
     const reconciliation = await reconcileCustomerSubscriptionsForUser(synced.userId, {
       enforceSingleActive: true,
       keepStripeSubscriptionId: stripeSubscriptionId,
@@ -1433,6 +1514,44 @@ export function createStripeBillingHelpers({ supabaseAdmin, billing }) {
                   ? normalizeStripeObjectId(synced?.subscription?.id)
                   : "",
               });
+            }
+            break;
+          }
+          case "charge.refunded": {
+            const invoice = await resolveSubscriptionInvoiceFromStripeObject(event.data?.object || {});
+            if (invoice) {
+              await reverseReferralForInvoice(invoice, { reason: "charge_refunded", eventId: event.id });
+            }
+            break;
+          }
+          case "refund.created":
+          case "refund.updated": {
+            const refund = event.data?.object || {};
+            const refundStatus = normalizeString(refund?.status).toLowerCase();
+            if (event.type === "refund.updated" && refundStatus !== "succeeded") {
+              break;
+            }
+            if (event.type === "refund.created" && refundStatus && refundStatus !== "succeeded") {
+              break;
+            }
+            const invoice = await resolveSubscriptionInvoiceFromStripeObject(refund);
+            if (invoice) {
+              await reverseReferralForInvoice(invoice, {
+                reason: event.type === "refund.updated" ? "refund_succeeded" : "refund_created",
+                eventId: event.id,
+              });
+            }
+            break;
+          }
+          case "charge.dispute.closed": {
+            const dispute = event.data?.object || {};
+            const disputeStatus = normalizeString(dispute?.status).toLowerCase();
+            if (disputeStatus !== "lost") {
+              break;
+            }
+            const invoice = await resolveSubscriptionInvoiceFromStripeObject(dispute);
+            if (invoice) {
+              await reverseReferralForInvoice(invoice, { reason: "charge_dispute_lost", eventId: event.id });
             }
             break;
           }

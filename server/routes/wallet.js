@@ -78,7 +78,7 @@ export function createWalletRouter(ctx) {
     const gen_bonus_credits = Number(data?.gen_bonus_credits) || 0;
 
     // Config de cashout (puedes cambiar por ENV en Render)
-    const usdMicrosPerCredit = Math.max(1, Math.trunc(Number(process.env.EARNINGS_USD_MICROS_PER_CREDIT || 4990)));
+    const usdMicrosPerCredit = Math.max(1, Math.trunc(Number(process.env.EARNINGS_USD_MICROS_PER_CREDIT || 4505)));
     const feeBps = Math.min(10000, Math.max(0, Math.trunc(Number(process.env.EARNINGS_CASHOUT_FEE_BPS || 3700))));
     const minCashoutCredits = Math.max(1, Math.trunc(Number(process.env.EARNINGS_CASHOUT_MIN_CREDITS || 1)));
 
@@ -211,7 +211,7 @@ export function createWalletRouter(ctx) {
 
     const idempotencyKey = req.headers["x-idempotency-key"] ? String(req.headers["x-idempotency-key"]) : randomUUID();
 
-    const usdMicrosPerCredit = Math.max(1, Math.trunc(Number(process.env.EARNINGS_USD_MICROS_PER_CREDIT || 4990)));
+    const usdMicrosPerCredit = Math.max(1, Math.trunc(Number(process.env.EARNINGS_USD_MICROS_PER_CREDIT || 4505)));
     const feeBps = Math.min(10000, Math.max(0, Math.trunc(Number(process.env.EARNINGS_CASHOUT_FEE_BPS || 3700))));
 
     const { data, error: rpcErr } = await supabaseAdmin.rpc("wallet_request_cashout", {

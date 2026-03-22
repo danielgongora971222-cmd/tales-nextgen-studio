@@ -58,6 +58,43 @@ function formatDateTime(value?: number | null) {
   return new Date(value).toLocaleString();
 }
 
+function referralOfferLabel(item: any) {
+  const buyer = Math.max(0, Math.trunc(Number(item?.buyerDiscountPct) || 0));
+  const reward = Math.max(0, Math.trunc(Number(item?.refRewardPct) || 0));
+  return `Cliente -${buyer}% · Partner +${reward}%`;
+}
+
+function referralReverseReasonLabel(reason: any) {
+  const value = String(reason || "").toLowerCase();
+  if (!value) return "Reward revertido";
+  if (value.includes("dispute")) return "Reward revertido por disputa";
+  if (value.includes("refund") || value.includes("refunded")) return "Reward revertido por reembolso";
+  return "Reward revertido";
+}
+
+function referralStatusMeta(item: any) {
+  const status = String(item?.status || (item?.isMatured ? "matured" : "pending")).toLowerCase();
+  if (status === "reversed") {
+    return {
+      label: "Revertido",
+      tone: "text-rose-300",
+      description: referralReverseReasonLabel(item?.reverseReason),
+    };
+  }
+  if (status === "matured") {
+    return {
+      label: "Disponible",
+      tone: "text-emerald-300",
+      description: "Reward ya disponible en earnings.",
+    };
+  }
+  return {
+    label: "Pendiente",
+    tone: "text-yellow-300",
+    description: item?.maturesAt ? `Pendiente hasta ${new Date(item.maturesAt).toLocaleDateString()}` : "Reward pendiente de maduración.",
+  };
+}
+
 function formatUsdMoney(value: number, currency = 'USD') {
   return `${currency} ${Number(value || 0).toFixed(2)}`;
 }
@@ -180,7 +217,7 @@ export default function MyTrades({ onNavigate }: Props) {
     return "Tus earnings y créditos de ventas están retenidos. Vuelve a Pro o superior para transferirlos o solicitar cash out.";
   }, [subscription]);
 
-  const usdMicrosPerCredit = Number(cashoutConfig?.usdMicrosPerCredit) || 4990;
+  const usdMicrosPerCredit = Number(cashoutConfig?.usdMicrosPerCredit) || 4505;
   const feeBps = Number(cashoutConfig?.feeBps) || 3700;
   const grossUsdPerCredit = usdMicrosPerCredit / 1_000_000;
   const netUsdPerCredit = grossUsdPerCredit * (1 - feeBps / 10000);
@@ -1013,10 +1050,15 @@ export default function MyTrades({ onNavigate }: Props) {
                 {refSummary ? (
                   <div className="rounded-2xl border border-white/10 bg-black/30 p-4 mb-4">
                     <div className="text-sm font-semibold">Resumen</div>
-                    <div className="mt-2 grid grid-cols-1 md:grid-cols-4 gap-3 text-sm">
+                    <div className="mt-2 text-xs text-white/55">El comprador recibe descuento en checkout. Tu reward entra a earnings y madura 30 días después de una compra válida.</div>
+                    <div className="mt-3 grid grid-cols-1 md:grid-cols-5 gap-3 text-sm">
                       <div className="rounded-xl bg-black/40 border border-white/10 p-3">
-                        <div className="text-white/60 text-xs">Referrals</div>
+                        <div className="text-white/60 text-xs">Referrals totales</div>
                         <div className="text-lg font-bold">{refSummary.totals?.count ?? 0}</div>
+                      </div>
+                      <div className="rounded-xl bg-black/40 border border-white/10 p-3">
+                        <div className="text-white/60 text-xs">Referrals activos</div>
+                        <div className="text-lg font-bold">{refSummary.totals?.activeCount ?? 0}</div>
                       </div>
                       <div className="rounded-xl bg-black/40 border border-white/10 p-3">
                         <div className="text-white/60 text-xs">Reward pending</div>
@@ -1027,8 +1069,8 @@ export default function MyTrades({ onNavigate }: Props) {
                         <div className="text-lg font-bold">{refSummary.totals?.maturedRewardCredits ?? 0}</div>
                       </div>
                       <div className="rounded-xl bg-black/40 border border-white/10 p-3">
-                        <div className="text-white/60 text-xs">Buyer bonuses</div>
-                        <div className="text-lg font-bold">{refSummary.totals?.totalBuyerBonusCredits ?? 0}</div>
+                        <div className="text-white/60 text-xs">Rewards revertidos</div>
+                        <div className="text-lg font-bold">{refSummary.totals?.reversedRewardCredits ?? 0}</div>
                       </div>
                     </div>
                   </div>
@@ -1043,7 +1085,7 @@ export default function MyTrades({ onNavigate }: Props) {
                         <div key={c.id} className="rounded-xl bg-black/40 border border-white/10 p-3">
                           <div className="text-xs text-white/60">Código {c.variant}</div>
                           <div className="text-sm font-mono mt-1">{c.code}</div>
-                          <div className="text-xs text-white/60 mt-2">Buyer BONUS: {c.buyerDiscountPct}% · Reward: {c.refRewardPct}%</div>
+                          <div className="text-xs text-white/60 mt-2">{c.offerLabel || referralOfferLabel(c)}</div>
                         </div>
                       ))}
                     </div>
@@ -1057,16 +1099,23 @@ export default function MyTrades({ onNavigate }: Props) {
 
                   {refSummary?.referrals?.length ? (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {refSummary.referrals.slice(0, 10).map((r: any) => (
-                        <div key={r.id} className="rounded-xl bg-black/40 border border-white/10 p-3">
-                          <div className="text-sm font-semibold">{r.referredUsername || "(sin username)"} · {r.planSlug || "-"}</div>
-                          <div className="text-xs text-white/60 mt-1">Reward: <b className="text-white/80">{r.referrerRewardCredits}</b> · Buyer bonus: <b className="text-white/80">{r.buyerBonusCredits}</b></div>
-                          <div className="text-[11px] text-white/50 mt-1">{new Date(r.createdAt).toLocaleString()}</div>
-                          <div className="text-[11px] mt-1">
-                            {r.isMatured ? <span className="text-green-300">Matured</span> : <span className="text-yellow-300">Pending until {new Date(r.maturesAt).toLocaleDateString()}</span>}
+                      {refSummary.referrals.slice(0, 10).map((r: any) => {
+                        const statusMeta = referralStatusMeta(r);
+                        return (
+                          <div key={r.id} className="rounded-xl bg-black/40 border border-white/10 p-3">
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <div className="text-sm font-semibold">{r.referredUsername || "(sin username)"} · {r.planSlug || "-"}</div>
+                                <div className="text-[11px] text-white/55 mt-1">{r.referralCode || "—"} · {r.offerLabel || referralOfferLabel(r)}</div>
+                              </div>
+                              <div className={`text-[11px] font-semibold ${statusMeta.tone}`}>{statusMeta.label}</div>
+                            </div>
+                            <div className="text-xs text-white/60 mt-2">Reward: <b className="text-white/80">{r.referrerRewardCredits}</b></div>
+                            <div className="text-[11px] text-white/50 mt-1">{r.createdAt ? new Date(r.createdAt).toLocaleString() : "—"}</div>
+                            <div className={`text-[11px] mt-1 ${statusMeta.tone}`}>{statusMeta.description}</div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   ) : (
                     <div className="text-white/60">Aún no tienes actividad de referidos. Comparte tus códigos y cuando alguien compre un plan con tu código, aparecerá aquí.</div>

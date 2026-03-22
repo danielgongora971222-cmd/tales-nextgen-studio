@@ -187,6 +187,59 @@ export function createBillingRouter(ctx) {
     return `${price}|${credits}|${name}`;
   }
 
+  function isMissingTableError(error) {
+    const code = String(error?.code || "");
+    const msg = String(error?.message || "").toLowerCase();
+    return code === "42P01" || msg.includes("does not exist") || msg.includes("relation");
+  }
+
+  function isMissingColumnError(error, columnName = "") {
+    const code = String(error?.code || "");
+    const msg = String(error?.message || "").toLowerCase();
+    const cleanColumn = String(columnName || "").toLowerCase();
+    return code === "42703" || (cleanColumn ? msg.includes(cleanColumn) : false) || msg.includes("column");
+  }
+
+  async function getExistingBuyerReferralGrant(userId) {
+    const cleanUserId = normalizeString(userId);
+    if (!cleanUserId) return null;
+
+    const primary = await supabaseAdmin
+      .from("billing_referrals")
+      .select("id, status, created_at")
+      .eq("referred_user_id", cleanUserId)
+      .in("status", ["pending", "matured"])
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!primary.error) return primary.data || null;
+    if (isMissingTableError(primary.error)) return null;
+    if (!isMissingColumnError(primary.error, "status")) {
+      throw Object.assign(new Error(primary.error.message), { code: "DB_QUERY_FAILED", status: 500 });
+    }
+
+    const fallback = await supabaseAdmin
+      .from("billing_referrals")
+      .select("id, is_matured, created_at")
+      .eq("referred_user_id", cleanUserId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (fallback.error) {
+      if (isMissingTableError(fallback.error)) return null;
+      throw Object.assign(new Error(fallback.error.message), { code: "DB_QUERY_FAILED", status: 500 });
+    }
+
+    if (!fallback.data?.id) return null;
+    return {
+      id: fallback.data.id,
+      status: fallback.data.is_matured ? "matured" : "pending",
+      created_at: fallback.data.created_at,
+    };
+  }
+
   async function assertLegalAccepted(userId) {
     const REQUIRED_TERMS = process.env.LEGAL_TERMS_VERSION || "2026-03-03";
     const REQUIRED_PRIVACY = process.env.LEGAL_PRIVACY_VERSION || "2026-03-03";
@@ -238,6 +291,18 @@ export function createBillingRouter(ctx) {
         ownerPlanSlug: null,
         ownerPlanName: null,
       };
+    }
+
+    const existingGrant = await getExistingBuyerReferralGrant(userId);
+    if (existingGrant?.id) {
+      throw Object.assign(
+        new Error("Esta cuenta ya usó un código de referido válido anteriormente. Los códigos de referido solo aplican a la compra inicial de plan."),
+        {
+          code: "REFERRAL_ALREADY_USED",
+          status: 409,
+          details: { referralId: existingGrant.id, status: existingGrant.status || null },
+        }
+      );
     }
 
     const { data: rc, error: rcErr } = await supabaseAdmin
@@ -475,9 +540,20 @@ export function createBillingRouter(ctx) {
         );
       }
 
+      const rawReferralCode = req.body?.referralCode ? String(req.body.referralCode) : "";
+      if (normalizeString(rawReferralCode) && current.subscription?.subscriptionId) {
+        return err(
+          res,
+          409,
+          "REFERRAL_ONLY_INITIAL_PURCHASE",
+          "Los códigos de referido solo aplican a la compra inicial de un plan. No se pueden usar en upgrades, renovaciones ni compras con un plan ya activo.",
+          { currentPlanSlug: currentPlan?.slug || current.subscription?.planSlug || null }
+        );
+      }
+
       const referralMeta = await validateReferralForPlan({
         userId: user.id,
-        referralCode: req.body?.referralCode ? String(req.body.referralCode) : "",
+        referralCode: rawReferralCode,
       });
 
       const result = await activateManualPlanForUser({
@@ -624,9 +700,20 @@ export function createBillingRouter(ctx) {
         );
       }
 
+      const rawReferralCode = req.body?.referralCode ? String(req.body.referralCode) : "";
+      if (normalizeString(rawReferralCode) && current.subscription?.subscriptionId) {
+        return err(
+          res,
+          409,
+          "REFERRAL_ONLY_INITIAL_PURCHASE",
+          "Los códigos de referido solo aplican a la compra inicial de un plan. No se pueden usar en upgrades, renovaciones ni compras con un plan ya activo.",
+          { currentPlanSlug: currentPlan?.slug || current.subscription?.planSlug || null }
+        );
+      }
+
       const referralMeta = await validateReferralForPlan({
         userId: user.id,
-        referralCode: req.body?.referralCode ? String(req.body.referralCode) : "",
+        referralCode: rawReferralCode,
       });
 
       const session = await stripeBilling.createSubscriptionCheckoutSession({

@@ -18,6 +18,27 @@ function asNumber(value) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function isMissingTableError(error) {
+  const code = String(error?.code || "");
+  const msg = String(error?.message || "").toLowerCase();
+  return code === "42P01" || msg.includes("does not exist") || msg.includes("relation");
+}
+
+function isMissingColumnError(error, columnName = "") {
+  const code = String(error?.code || "");
+  const msg = String(error?.message || "").toLowerCase();
+  const cleanColumn = String(columnName || "").toLowerCase();
+  return code === "42703" || (cleanColumn ? msg.includes(cleanColumn) : false) || msg.includes("column");
+}
+
+function normalizeBillingReferralStatus(row) {
+  const explicit = String(row?.status || "").toLowerCase();
+  if (explicit === "reversed") return "reversed";
+  if (explicit === "matured") return "matured";
+  if (explicit === "pending") return "pending";
+  return row?.is_matured ? "matured" : "pending";
+}
+
 function normalizeRange(raw, fallback = "30d") {
   const value = String(raw || fallback).toLowerCase();
   return ["7d", "30d", "90d", "all"].includes(value) ? value : fallback;
@@ -434,7 +455,14 @@ export function createTradesRouter(ctx) {
       commentsRows = Array.isArray(commentsResp.data) ? commentsResp.data : [];
     }
 
-    const [marketResp, planResp] = await Promise.all([
+    const planRespPrimary = supabaseAdmin
+      .from("billing_referrals")
+      .select("id, referrer_reward_credits, created_at, matures_at, is_matured, status")
+      .eq("referrer_id", user.id)
+      .order("created_at", { ascending: false })
+      .range(0, 4999);
+
+    const [marketResp, planRespCandidate] = await Promise.all([
       supabaseAdmin
         .from("community_purchases")
         .select("id, listing_id, paid_credits, referral_reward_credits, created_at, matures_at, is_matured")
@@ -442,21 +470,23 @@ export function createTradesRouter(ctx) {
         .eq("status", "completed")
         .order("created_at", { ascending: false })
         .range(0, 4999),
-      supabaseAdmin
-        .from("billing_referrals")
-        .select("id, referrer_reward_credits, created_at, matures_at, is_matured")
-        .eq("referrer_id", user.id)
-        .order("created_at", { ascending: false })
-        .range(0, 4999),
+      planRespPrimary,
     ]);
 
     if (marketResp.error) return err(res, 500, "DB_QUERY_FAILED", marketResp.error.message);
 
+    let planResp = planRespCandidate;
+    if (planRespCandidate.error && !isMissingTableError(planRespCandidate.error) && isMissingColumnError(planRespCandidate.error, "status")) {
+      planResp = await supabaseAdmin
+        .from("billing_referrals")
+        .select("id, referrer_reward_credits, created_at, matures_at, is_matured")
+        .eq("referrer_id", user.id)
+        .order("created_at", { ascending: false })
+        .range(0, 4999);
+    }
+
     if (planResp.error) {
-      const msg = String(planResp.error.message || "").toLowerCase();
-      const code = String(planResp.error.code || "");
-      const missing = code === "42P01" || msg.includes("does not exist") || msg.includes("relation");
-      if (!missing) return err(res, 500, "DB_QUERY_FAILED", planResp.error.message);
+      if (!isMissingTableError(planResp.error)) return err(res, 500, "DB_QUERY_FAILED", planResp.error.message);
     }
 
     marketplaceReferralRows = Array.isArray(marketResp.data) ? marketResp.data : [];
@@ -570,6 +600,9 @@ export function createTradesRouter(ctx) {
     }
 
     for (const row of planReferralRows) {
+      const referralStatus = normalizeBillingReferralStatus(row);
+      if (referralStatus === "reversed") continue;
+
       const ts = toMillis(row.created_at);
       const credits = asNumber(row.referrer_reward_credits);
 

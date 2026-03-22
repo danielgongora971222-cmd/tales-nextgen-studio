@@ -6,6 +6,35 @@ function makeCode(prefix) {
   return `${prefix}${raw}`;
 }
 
+function normalizeString(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function isMissingTableError(error) {
+  const code = String(error?.code || "");
+  const msg = String(error?.message || "").toLowerCase();
+  return code === "42P01" || msg.includes("does not exist") || msg.includes("relation");
+}
+
+function isMissingColumnError(error, columnName = "") {
+  const code = String(error?.code || "");
+  const msg = String(error?.message || "").toLowerCase();
+  const cleanColumn = String(columnName || "").toLowerCase();
+  return code === "42703" || (cleanColumn ? msg.includes(cleanColumn) : false) || msg.includes("column");
+}
+
+function mapOfferMeta(buyerDiscountPct, refRewardPct) {
+  const buyer = Math.max(0, Math.trunc(Number(buyerDiscountPct) || 0));
+  const reward = Math.max(0, Math.trunc(Number(refRewardPct) || 0));
+
+  return {
+    buyerDiscountPct: buyer,
+    refRewardPct: reward,
+    offerLabel: `Cliente -${buyer}% · Partner +${reward}%`,
+    offerKey: `${buyer}_${reward}`,
+  };
+}
+
 async function ensureOneCode(supabaseAdmin, ownerId, variant, buyerDiscountPct, refRewardPct, prefix) {
   const { data: existing } = await supabaseAdmin
     .from("community_referral_codes")
@@ -58,7 +87,6 @@ async function ensureOneCode(supabaseAdmin, ownerId, variant, buyerDiscountPct, 
 
     if (!error && ins?.[0]) return ins[0];
 
-    // retry si colision de UNIQUE(code)
     if (!error) break;
     if (String(error.code) !== "23505") break;
   }
@@ -74,8 +102,119 @@ export function createReferralsRouter(ctx) {
     return res.status(status).json({ ok: false, error: { code, message, details: details || null } });
   }
 
+  async function getExistingBuyerReferralGrant(userId) {
+    const normalizedUserId = normalizeString(userId);
+    if (!normalizedUserId) return null;
+
+    const primary = await supabaseAdmin
+      .from("billing_referrals")
+      .select("id, status, created_at, referral_code_snapshot, referred_user_id")
+      .eq("referred_user_id", normalizedUserId)
+      .in("status", ["pending", "matured"])
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!primary.error) return primary.data || null;
+    if (isMissingTableError(primary.error)) return null;
+
+    if (!isMissingColumnError(primary.error, "status")) {
+      throw primary.error;
+    }
+
+    const fallback = await supabaseAdmin
+      .from("billing_referrals")
+      .select("id, is_matured, created_at, referral_code_snapshot, referred_user_id")
+      .eq("referred_user_id", normalizedUserId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (fallback.error) {
+      if (isMissingTableError(fallback.error)) return null;
+      throw fallback.error;
+    }
+
+    if (!fallback.data?.id) return null;
+
+    return {
+      id: fallback.data.id,
+      status: fallback.data.is_matured ? "matured" : "pending",
+      created_at: fallback.data.created_at,
+      referral_code_snapshot: fallback.data.referral_code_snapshot || null,
+      referred_user_id: fallback.data.referred_user_id || normalizedUserId,
+    };
+  }
+
+  async function getReferralSummaryRows(userId) {
+    const primary = await supabaseAdmin
+      .from("billing_referrals")
+      .select(
+        "id, referred_user_id, referred_username_snapshot, plan_slug_snapshot, buyer_bonus_credits, referrer_reward_credits, buyer_discount_pct_snapshot, ref_reward_pct_snapshot, created_at, matures_at, is_matured, status, reversed_at, reverse_reason, referral_code_id, referral_code_snapshot"
+      )
+      .eq("referrer_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(100);
+
+    if (!primary.error) {
+      return { rows: Array.isArray(primary.data) ? primary.data : [], isConfigured: true };
+    }
+
+    if (isMissingTableError(primary.error)) {
+      return { rows: [], isConfigured: false };
+    }
+
+    if (!isMissingColumnError(primary.error, "status") && !isMissingColumnError(primary.error, "buyer_discount_pct_snapshot")) {
+      throw primary.error;
+    }
+
+    const fallback = await supabaseAdmin
+      .from("billing_referrals")
+      .select(
+        "id, referred_user_id, referred_username_snapshot, plan_slug_snapshot, buyer_bonus_credits, referrer_reward_credits, created_at, matures_at, is_matured, referral_code_id, referral_code_snapshot"
+      )
+      .eq("referrer_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(100);
+
+    if (fallback.error) {
+      if (isMissingTableError(fallback.error)) return { rows: [], isConfigured: false };
+      throw fallback.error;
+    }
+
+    const fallbackRows = Array.isArray(fallback.data) ? fallback.data : [];
+    const referralCodeIds = [...new Set(fallbackRows.map((row) => row.referral_code_id).filter(Boolean))];
+
+    let referralCodeMap = new Map();
+    if (referralCodeIds.length) {
+      const codesResp = await supabaseAdmin
+        .from("community_referral_codes")
+        .select("id, buyer_discount_pct, ref_reward_pct")
+        .in("id", referralCodeIds);
+
+      if (!codesResp.error && Array.isArray(codesResp.data)) {
+        referralCodeMap = new Map(
+          codesResp.data.map((row) => [row.id, { buyer_discount_pct: row.buyer_discount_pct, ref_reward_pct: row.ref_reward_pct }])
+        );
+      }
+    }
+
+    const rows = fallbackRows.map((row) => {
+      const codeMeta = referralCodeMap.get(row.referral_code_id) || null;
+      return {
+        ...row,
+        buyer_discount_pct_snapshot: Number(codeMeta?.buyer_discount_pct) || 0,
+        ref_reward_pct_snapshot: Number(codeMeta?.ref_reward_pct) || 0,
+        status: row.is_matured ? "matured" : "pending",
+        reversed_at: null,
+        reverse_reason: null,
+      };
+    });
+
+    return { rows, isConfigured: true };
+  }
+
   async function requireReferralAccess(userId) {
-    // Safety: si por error no pasamos billing al router, fallamos con mensaje claro
     if (!billing?.requireActiveSubscription) {
       return {
         ok: false,
@@ -90,7 +229,6 @@ export function createReferralsRouter(ctx) {
 
     const active = await billing.requireActiveSubscription(userId);
 
-    // Si no tiene plan activo, transformamos a un error que empuje al upgrade
     if (active?.error) {
       if (active.error.code === "NO_ACTIVE_PLAN") {
         return {
@@ -108,9 +246,6 @@ export function createReferralsRouter(ctx) {
     }
 
     const sub = active?.subscription || null;
-
-    // NOTA: en tu repo actual el plan sólo expone canSell (no existe canReferrals aún),
-    // así que usamos canSell como “feature gate” para referidos.
     if (!sub?.canReferrals) {
       return {
         ok: false,
@@ -127,9 +262,6 @@ export function createReferralsRouter(ctx) {
     return { ok: true, subscription: sub, error: null };
   }
 
-    // GET /api/referrals/validate?code=XXXX
-  // - valid: existe + activo + no-self
-  // - eligible: el dueño del código tiene un plan activo con can_referrals=true
   router.get("/referrals/validate", async (req, res) => {
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
@@ -176,6 +308,9 @@ export function createReferralsRouter(ctx) {
       });
     }
 
+    const buyerDiscountPct = Number(rc.buyer_discount_pct) || 0;
+    const refRewardPct = Number(rc.ref_reward_pct) || 0;
+
     if (rc.owner_id === user.id) {
       return res.json({
         ok: true,
@@ -184,14 +319,53 @@ export function createReferralsRouter(ctx) {
         reason: "SELF",
         code: rc.code,
         variant: rc.variant,
-        buyerDiscountPct: Number(rc.buyer_discount_pct) || 0,
-        refRewardPct: Number(rc.ref_reward_pct) || 0,
+        buyerDiscountPct,
+        refRewardPct,
         ownerPlanSlug: null,
         ownerPlanName: null,
       });
     }
 
-    // ✅ Elegibilidad: el dueño del código debe tener un plan Partner/Business activo (canReferrals=true)
+    try {
+      const buyerActive = await billing.getActiveSubscription(user.id);
+      if (buyerActive?.subscription?.subscriptionId) {
+        return res.json({
+          ok: true,
+          valid: true,
+          eligible: false,
+          reason: "BUYER_HAS_ACTIVE_PLAN",
+          code: rc.code,
+          variant: rc.variant,
+          buyerDiscountPct,
+          refRewardPct,
+          ownerPlanSlug: null,
+          ownerPlanName: null,
+        });
+      }
+    } catch {
+      // noop: si falla la comprobación, dejamos que backend de checkout vuelva a validar.
+    }
+
+    try {
+      const existingGrant = await getExistingBuyerReferralGrant(user.id);
+      if (existingGrant?.id) {
+        return res.json({
+          ok: true,
+          valid: true,
+          eligible: false,
+          reason: "BUYER_ALREADY_REFERRED",
+          code: rc.code,
+          variant: rc.variant,
+          buyerDiscountPct,
+          refRewardPct,
+          ownerPlanSlug: null,
+          ownerPlanName: null,
+        });
+      }
+    } catch (lookupError) {
+      return err(res, 500, "DB_QUERY_FAILED", lookupError?.message || "No se pudo validar el estado del referido.");
+    }
+
     let eligible = false;
     let ownerPlanSlug = null;
     let ownerPlanName = null;
@@ -212,8 +386,8 @@ export function createReferralsRouter(ctx) {
       reason: eligible ? null : "OWNER_NOT_ELIGIBLE",
       code: rc.code,
       variant: rc.variant,
-      buyerDiscountPct: Number(rc.buyer_discount_pct) || 0,
-      refRewardPct: Number(rc.ref_reward_pct) || 0,
+      buyerDiscountPct,
+      refRewardPct,
       ownerPlanSlug,
       ownerPlanName,
     });
@@ -232,110 +406,97 @@ export function createReferralsRouter(ctx) {
 
     if (!a || !b || !c) return err(res, 500, "CODES_CREATE_FAILED", "No se pudieron asegurar tus 3 códigos.");
 
-    return res.json({
-      ok: true,
-      codes: [
-        {
-          id: a.id,
-          code: a.code,
-          variant: "A",
-          buyerDiscountPct: Number(a.buyer_discount_pct) || 0,
-          refRewardPct: Number(a.ref_reward_pct) || 0,
-          isActive: Boolean(a.is_active),
-        },
-        {
-          id: b.id,
-          code: b.code,
-          variant: "B",
-          buyerDiscountPct: Number(b.buyer_discount_pct) || 0,
-          refRewardPct: Number(b.ref_reward_pct) || 0,
-          isActive: Boolean(b.is_active),
-        },
-        {
-          id: c.id,
-          code: c.code,
-          variant: "C",
-          buyerDiscountPct: Number(c.buyer_discount_pct) || 0,
-          refRewardPct: Number(c.ref_reward_pct) || 0,
-          isActive: Boolean(c.is_active),
-        },
-      ],
-    });
+    const ordered = [b, a, c].map((row) => ({
+      id: row.id,
+      code: row.code,
+      variant: row.variant,
+      isActive: Boolean(row.is_active),
+      ...mapOfferMeta(row.buyer_discount_pct, row.ref_reward_pct),
+    }));
+
+    return res.json({ ok: true, codes: ordered });
   });
 
-    router.get("/referrals/summary", async (req, res) => {
+  router.get("/referrals/summary", async (req, res) => {
     const { user, error } = await requireUser(req);
     if (error) return res.status(401).json({ ok: false, error });
 
     const access = await requireReferralAccess(user.id);
     if (!access.ok) return res.status(403).json({ ok: false, error: access.error });
 
-    const { data: rows, error: qErr } = await supabaseAdmin
-      .from("billing_referrals")
-      .select(
-        "id, referred_user_id, referred_username_snapshot, plan_slug_snapshot, buyer_bonus_credits, referrer_reward_credits, created_at, matures_at, is_matured"
-      )
-      .eq("referrer_id", user.id)
-      .order("created_at", { ascending: false })
-      .limit(100);
-
-    // Si todavía no has aplicado el patch SQL que crea billing_referrals, NO rompas el UI:
-    // devuelve vacío y una flag isConfigured=false.
-    if (qErr) {
-      const msg = String(qErr.message || "");
-      const code = String(qErr.code || "");
-      const missingTable =
-        code === "42P01" || msg.toLowerCase().includes("does not exist") || msg.toLowerCase().includes("relation");
-
-      if (missingTable) {
+    try {
+      const summary = await getReferralSummaryRows(user.id);
+      if (!summary.isConfigured) {
         return res.json({
           ok: true,
           isConfigured: false,
           referrals: [],
           totals: {
             count: 0,
+            activeCount: 0,
+            reversedCount: 0,
             totalRewardCredits: 0,
-            totalBuyerBonusCredits: 0,
             pendingRewardCredits: 0,
             maturedRewardCredits: 0,
+            reversedRewardCredits: 0,
+            totalBuyerBonusCredits: 0,
           },
         });
       }
 
-      return err(res, 500, "DB_QUERY_FAILED", qErr.message);
+      const referrals = (summary.rows || []).map((row) => {
+        const status = String(row.status || (row.is_matured ? "matured" : "pending")).toLowerCase();
+        return {
+          id: row.id,
+          referredUserId: row.referred_user_id,
+          referredUsername: row.referred_username_snapshot || null,
+          planSlug: row.plan_slug_snapshot || null,
+          referralCode: row.referral_code_snapshot || null,
+          buyerBonusCredits: Number(row.buyer_bonus_credits) || 0,
+          referrerRewardCredits: Number(row.referrer_reward_credits) || 0,
+          buyerDiscountPct: Number(row.buyer_discount_pct_snapshot) || 0,
+          refRewardPct: Number(row.ref_reward_pct_snapshot) || 0,
+          status,
+          createdAt: row.created_at,
+          maturesAt: row.matures_at,
+          isMatured: status === "matured",
+          reversedAt: row.reversed_at || null,
+          reverseReason: row.reverse_reason || null,
+          ...mapOfferMeta(row.buyer_discount_pct_snapshot, row.ref_reward_pct_snapshot),
+        };
+      });
+
+      const totals = referrals.reduce(
+        (acc, r) => {
+          acc.count += 1;
+          if (r.status === "reversed") {
+            acc.reversedCount += 1;
+            acc.reversedRewardCredits += r.referrerRewardCredits;
+          } else {
+            acc.activeCount += 1;
+            acc.totalRewardCredits += r.referrerRewardCredits;
+            if (r.status === "matured") acc.maturedRewardCredits += r.referrerRewardCredits;
+            else acc.pendingRewardCredits += r.referrerRewardCredits;
+          }
+          acc.totalBuyerBonusCredits += r.buyerBonusCredits;
+          return acc;
+        },
+        {
+          count: 0,
+          activeCount: 0,
+          reversedCount: 0,
+          totalRewardCredits: 0,
+          pendingRewardCredits: 0,
+          maturedRewardCredits: 0,
+          reversedRewardCredits: 0,
+          totalBuyerBonusCredits: 0,
+        }
+      );
+
+      return res.json({ ok: true, isConfigured: true, referrals, totals });
+    } catch (qErr) {
+      return err(res, 500, "DB_QUERY_FAILED", qErr?.message || "No se pudieron cargar los referidos.");
     }
-
-    const referrals = (rows || []).map((r) => ({
-      id: r.id,
-      referredUserId: r.referred_user_id,
-      referredUsername: r.referred_username_snapshot || null,
-      planSlug: r.plan_slug_snapshot || null,
-      buyerBonusCredits: Number(r.buyer_bonus_credits) || 0,
-      referrerRewardCredits: Number(r.referrer_reward_credits) || 0,
-      createdAt: r.created_at,
-      maturesAt: r.matures_at,
-      isMatured: Boolean(r.is_matured),
-    }));
-
-    const totals = referrals.reduce(
-      (acc, r) => {
-        acc.count += 1;
-        acc.totalRewardCredits += r.referrerRewardCredits;
-        acc.totalBuyerBonusCredits += r.buyerBonusCredits;
-        if (r.isMatured) acc.maturedRewardCredits += r.referrerRewardCredits;
-        else acc.pendingRewardCredits += r.referrerRewardCredits;
-        return acc;
-      },
-      {
-        count: 0,
-        totalRewardCredits: 0,
-        totalBuyerBonusCredits: 0,
-        pendingRewardCredits: 0,
-        maturedRewardCredits: 0,
-      }
-    );
-
-    return res.json({ ok: true, isConfigured: true, referrals, totals });
   });
 
   return router;

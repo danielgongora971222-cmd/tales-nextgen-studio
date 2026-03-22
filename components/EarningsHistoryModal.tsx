@@ -46,7 +46,7 @@ export default function EarningsHistoryModal({
   error,
   hasMore,
   displayUnit = "credits",
-  usdMicrosPerCredit = 4990,
+  usdMicrosPerCredit = 4505,
   feeBps = 3700,
   onClose,
   onLoadMore,

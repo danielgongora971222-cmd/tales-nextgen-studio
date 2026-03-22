@@ -59,7 +59,7 @@ export default function EarningsActionsModal({
   }, [open, availableCredits]);
 
   const maxAmount = Math.max(0, Math.trunc(availableCredits || 0));
-  const cfg = cashoutConfig || { usdMicrosPerCredit: 4990, feeBps: 3700, minCashoutCredits: 1 };
+  const cfg = cashoutConfig || { usdMicrosPerCredit: 4505, feeBps: 3700, minCashoutCredits: 1 };
   const feePct = (cfg.feeBps || 0) / 100;
 
   const cashoutPreview = useMemo(() => {

@@ -1,6 +1,60 @@
 import { supabase } from "./supabaseClient";
 import { apiUrl } from "./apiBase";
 
+export type ReferralCodeItem = {
+  id: string;
+  code: string;
+  variant: string;
+  isActive: boolean;
+  buyerDiscountPct: number;
+  refRewardPct: number;
+  offerLabel: string;
+  offerKey: string;
+};
+
+export type ReferralSummaryItem = {
+  id: string;
+  referredUserId: string | null;
+  referredUsername: string | null;
+  planSlug: string | null;
+  referralCode: string | null;
+  buyerBonusCredits: number;
+  referrerRewardCredits: number;
+  buyerDiscountPct: number;
+  refRewardPct: number;
+  offerLabel: string;
+  offerKey: string;
+  status: "pending" | "matured" | "reversed";
+  createdAt: string | null;
+  maturesAt: string | null;
+  isMatured: boolean;
+  reversedAt: string | null;
+  reverseReason: string | null;
+};
+
+export type ReferralSummaryTotals = {
+  count: number;
+  activeCount: number;
+  reversedCount: number;
+  totalRewardCredits: number;
+  pendingRewardCredits: number;
+  maturedRewardCredits: number;
+  reversedRewardCredits: number;
+  totalBuyerBonusCredits: number;
+};
+
+export type ReferralValidationResult = {
+  valid: boolean;
+  eligible: boolean;
+  reason: string | null;
+  code: string | null;
+  variant: string | null;
+  buyerDiscountPct: number;
+  refRewardPct: number;
+  ownerPlanSlug: string | null;
+  ownerPlanName: string | null;
+};
+
 async function authHeaders(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
@@ -35,7 +89,7 @@ async function request(path: string, init?: RequestInit) {
   return data;
 }
 
-export async function getMyReferralCodes() {
+export async function getMyReferralCodes(): Promise<ReferralCodeItem[]> {
   const headers = await authHeaders();
   const data = await request(`/api/referrals/me`, { method: "GET", headers });
   return Array.isArray(data.codes) ? data.codes : [];
@@ -43,8 +97,8 @@ export async function getMyReferralCodes() {
 
 export async function getMyReferralSummary(): Promise<{
   isConfigured: boolean;
-  referrals: any[];
-  totals: any;
+  referrals: ReferralSummaryItem[];
+  totals: ReferralSummaryTotals;
 }> {
   const headers = await authHeaders();
   const data = await request(`/api/referrals/summary`, { method: "GET", headers });
@@ -54,25 +108,18 @@ export async function getMyReferralSummary(): Promise<{
     referrals: Array.isArray(data.referrals) ? data.referrals : [],
     totals: data.totals || {
       count: 0,
+      activeCount: 0,
+      reversedCount: 0,
       totalRewardCredits: 0,
-      totalBuyerBonusCredits: 0,
       pendingRewardCredits: 0,
       maturedRewardCredits: 0,
+      reversedRewardCredits: 0,
+      totalBuyerBonusCredits: 0,
     },
   };
 }
 
-export async function validateReferralCode(code: string): Promise<{
-  valid: boolean;
-  eligible: boolean;
-  reason: string | null;
-  code: string | null;
-  variant: string | null;
-  buyerDiscountPct: number;
-  refRewardPct: number;
-  ownerPlanSlug: string | null;
-  ownerPlanName: string | null;
-}> {
+export async function validateReferralCode(code: string): Promise<ReferralValidationResult> {
   const headers = await authHeaders();
   const clean = code ? code.trim().toUpperCase() : "";
 

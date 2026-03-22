@@ -96,6 +96,26 @@ function applyPercentDiscount(priceCents: number, pct: number) {
   return { base, pct: p, discountCents: discount, discountedCents: discounted };
 }
 
+function referralOfferInline(data: any) {
+  const buyer = clampPct(data?.buyerDiscountPct);
+  const reward = clampPct(data?.refRewardPct);
+  return `Cliente -${buyer}% · Partner +${reward}%`;
+}
+
+function referralIneligibleMessage(result: any) {
+  const reason = String(result?.reason || "");
+  if (reason === "BUYER_HAS_ACTIVE_PLAN") {
+    return "Ya tienes un plan activo. Los códigos de referido solo aplican a la compra inicial de un plan.";
+  }
+  if (reason === "BUYER_ALREADY_REFERRED") {
+    return "Esta cuenta ya usó un código de referido válido anteriormente.";
+  }
+  if (reason === "OWNER_NOT_ELIGIBLE") {
+    return "El dueño del código no tiene un plan Partner/Business activo.";
+  }
+  return "Código no elegible.";
+}
+
 function planPalette(slug: string): [string, string] {
   // Psicología del color:
   // - Azul/Teal: confianza + fluidez (entrada)
@@ -257,7 +277,7 @@ export default function Paywall({
         if (!r.eligible) {
           setReferralCheck({
             state: "ineligible",
-            message: "El dueño del código no tiene un plan Partner/Business activo.",
+            message: referralIneligibleMessage(r),
             data: r,
           });
           return;
@@ -575,7 +595,7 @@ export default function Paywall({
 
                 <div className="text-lg font-extrabold mt-3">Desbloquea tu descuento (si aplica)</div>
                 <div className="text-sm text-white/60 mt-1">
-                  El botón <span className="font-semibold text-white/80">Aplicar</span> se habilita solo si el código existe y el dueño tiene un plan Partner/Business activo.
+                  El botón <span className="font-semibold text-white/80">Aplicar</span> se habilita solo si el código existe, el dueño mantiene Partner/Business activo y tú todavía no has usado un referido en una compra inicial de plan.
                 </div>
               </div>
 
@@ -585,13 +605,12 @@ export default function Paywall({
                     <div className="text-[11px] text-white/60">Código activo</div>
                     <div className="text-sm font-extrabold tracking-wide">{String(appliedReferral.code)}</div>
                     <div className="text-[11px] text-white/70 mt-1">
-                      Descuento: <span className="text-white/90 font-semibold">{clampPct(appliedReferral.buyerDiscountPct)}%</span> · Reward partner:{" "}
-                      <span className="text-white/90 font-semibold">{clampPct(appliedReferral.refRewardPct)}%</span>
+                      Oferta: <span className="text-white/90 font-semibold">{referralOfferInline(appliedReferral)}</span>
                     </div>
                   </div>
                 ) : (
                   <div className="text-[12px] text-white/55 text-right">
-                    Tip: si tu código es válido verás “Listo para aplicar”.
+                    Tip: si tu código es válido verás “Listo para aplicar”. El descuento no aplica en upgrades ni renovaciones.
                   </div>
                 )}
 
@@ -666,7 +685,7 @@ export default function Paywall({
             {/* Status */}
             <div className="mt-3">
               {referralCheck?.state === "idle" ? (
-                <div className="text-[12px] text-white/55">Ingresa un código para verificar si tiene descuento y está habilitado.</div>
+                <div className="text-[12px] text-white/55">Ingresa un código para verificar si tiene descuento y si todavía puede usarse en tu compra inicial de plan.</div>
               ) : referralCheck?.state === "typing" ? (
                 <div className="text-[12px] text-white/55">Sigue escribiendo…</div>
               ) : referralCheck?.state === "checking" ? (
@@ -685,9 +704,7 @@ export default function Paywall({
               ) : referralCheck?.state === "valid" ? (
                 <div className="text-[12px] text-emerald-200/90">
                   Listo para aplicar:{" "}
-                  <span className="font-semibold text-white/90">{String(referralCheck?.data?.code || "")}</span> · Descuento{" "}
-                  <span className="font-semibold text-white/90">{clampPct(referralCheck?.data?.buyerDiscountPct)}%</span> · Reward partner{" "}
-                  <span className="font-semibold text-white/90">{clampPct(referralCheck?.data?.refRewardPct)}%</span>
+                  <span className="font-semibold text-white/90">{String(referralCheck?.data?.code || "")}</span> · <span className="font-semibold text-white/90">{referralOfferInline(referralCheck?.data)}</span>
                 </div>
               ) : null}
             </div>
@@ -699,7 +716,7 @@ export default function Paywall({
                   <div>
                     <div className="text-sm font-extrabold">Descuento activo</div>
                     <div className="text-[12px] text-white/65 mt-1">
-                      Tus planes se muestran con el <span className="font-semibold text-white/90">{clampPct(appliedReferral.buyerDiscountPct)}%</span> aplicado.
+                      Tus planes se muestran con el <span className="font-semibold text-white/90">{clampPct(appliedReferral.buyerDiscountPct)}%</span> aplicado. El partner recibirá su reward cuando la compra se confirme y madure.
                     </div>
                   </div>
 
@@ -902,7 +919,7 @@ export default function Paywall({
                         const noteParts: string[] = ["Suscripción recurrente hasta cancelación."];
                         if (appliedReferral?.code) {
                           const pct = clampPct(appliedReferral?.buyerDiscountPct);
-                          noteParts.push(`Código: ${String(appliedReferral.code)} · Descuento: ${pct}% · Reward partner: ${clampPct(appliedReferral?.refRewardPct)}%`);
+                          noteParts.push(`Código: ${String(appliedReferral.code)} · Cliente -${pct}% · Partner +${clampPct(appliedReferral?.refRewardPct)}% · Solo aplica a compra inicial de plan.`);
                         }
                         if (isHigher) {
                           noteParts.push("El upgrade se cobra como una nueva compra del plan superior. Cuando el pago se confirme, tu suscripción anterior se cancelará automáticamente para evitar una doble factura futura.");
