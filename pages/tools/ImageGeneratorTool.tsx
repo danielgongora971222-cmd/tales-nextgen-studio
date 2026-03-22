@@ -872,6 +872,7 @@ const ImageGeneratorTool: React.FC = () => {
   const [isCreatingElement, setIsCreatingElement] = useState(false);
   const elementPickerRef = useRef<HTMLDivElement | null>(null);
   const elementPickerAreaRef = useRef<HTMLDivElement | null>(null);
+  const elementCreateBodyRef = useRef<HTMLDivElement | null>(null);
 
   const [elementAllQuery, setElementAllQuery] = useState("");
   const [deletingElementId, setDeletingElementId] = useState<string | null>(null);
@@ -910,10 +911,21 @@ useEffect(() => {
   useEffect(() => {
     if (elementCreatePickerSlot === null) return;
 
-    requestAnimationFrame(() => {
-      elementPickerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    const frame = window.requestAnimationFrame(() => {
+      const bodyEl = elementCreateBodyRef.current;
+      const pickerEl = elementPickerRef.current;
+
+      if (bodyEl && pickerEl) {
+        const bodyRect = bodyEl.getBoundingClientRect();
+        const pickerRect = pickerEl.getBoundingClientRect();
+        const nextTop = bodyEl.scrollTop + (pickerRect.top - bodyRect.top) - 12;
+        bodyEl.scrollTo({ top: Math.max(0, nextTop), behavior: "smooth" });
+      }
+
       elementPickerAreaRef.current?.scrollTo({ top: 0, behavior: "smooth" });
     });
+
+    return () => window.cancelAnimationFrame(frame);
   }, [elementCreatePickerSlot]);
 
   useEffect(() => {
@@ -3767,7 +3779,7 @@ const promptReferences: PromptReference[] = useMemo(() => {
               </button>
             </div>
 
-            <div className={styles.elementBody}>
+            <div ref={elementCreateBodyRef} className={`${styles.elementBody} ${styles.elementCreateBody}`}>
               <div className={styles.elementFormRow}>
                 <div className={styles.elementField}>
                   <div className={styles.elementLabel}>Name *</div>
@@ -3959,21 +3971,22 @@ const promptReferences: PromptReference[] = useMemo(() => {
               </button>
             </div>
 
-            <div className={styles.elementBody}>
-              <div className={styles.elementAllTop}>
-                <div className={styles.elementAllMeta}>
+            <div className={`${styles.elementBody} ${styles.elementAllBody}`}>
+              <div className={`${styles.elementAllTop} ${styles.elementAllToolbar}`}>
+                <div className={`${styles.elementAllMeta} ${styles.elementAllMetaBadge}`}>
                   Selected: <b>{selectedElementAssetIds.length}</b>/5
                 </div>
 
                 <input
-                  className={styles.search}
+                  className={`${styles.search} ${styles.elementAllSearch}`}
                   value={elementAllQuery}
                   onChange={(e) => setElementAllQuery(e.target.value)}
                   placeholder="Search elements..."
                 />
               </div>
 
-              <div className={styles.elementAllGrid}>
+              <div className={styles.elementAllGridWrap}>
+                <div className={styles.elementAllGrid}>
                 {elements
                   .filter((el) => {
                     const q = (elementAllQuery || "").trim().toLowerCase();
@@ -4061,11 +4074,12 @@ const promptReferences: PromptReference[] = useMemo(() => {
                       </div>
                     );
                   })}
+                </div>
+
+                {elements.length === 0 && <div className={styles.elementPickerEmpty}>No elements yet</div>}
               </div>
 
-              {elements.length === 0 && <div className={styles.elementPickerEmpty}>No elements yet</div>}
-
-              <div className={styles.elementFooter}>
+              <div className={`${styles.elementFooter} ${styles.elementAllFooter}`}>
                 <button
                   type="button"
                   className={styles.smallBtnGhost}

@@ -3281,3 +3281,115 @@
 .cookPromptCard {
   overflow: visible;
 }
+
+/* --- Final stability overrides for Elements modals --- */
+.elementCreateBody{
+  overscroll-behavior: contain;
+  scroll-padding-top: 12px;
+}
+
+.elementAllBody{
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.elementAllToolbar{
+  display: grid;
+  grid-template-columns: auto minmax(0, 220px);
+  align-items: center;
+  gap: 12px;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+}
+
+.elementAllMetaBadge{
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(241,225,148,0.18);
+  background: rgba(255,255,255,0.04);
+}
+
+.elementAllSearch{
+  width: 100%;
+  max-width: 220px;
+  min-width: 0;
+  margin-left: auto;
+  justify-self: end;
+}
+
+.elementAllGridWrap{
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  padding-right: 2px;
+}
+
+.elementAllGrid{
+  align-content: start;
+}
+
+.elementAllFooter{
+  flex-shrink: 0;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(241,225,148,0.08);
+}
+
+@media (max-width: 700px) {
+  .elementAllToolbar{
+    grid-template-columns: minmax(0, 1fr) minmax(0, 184px);
+    gap: 10px;
+  }
+
+  .elementAllSearch{
+    max-width: 184px;
+  }
+}
+
+@media (max-width: 560px) {
+  .elementAllBody{
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+
+  .elementAllToolbar{
+    grid-template-columns: minmax(0, 1fr) minmax(0, 168px);
+    align-items: start;
+    gap: 8px;
+  }
+
+  .elementAllMetaBadge{
+    min-height: 34px;
+    padding: 0 10px;
+    font-size: 11px;
+  }
+
+  .elementAllSearch{
+    max-width: 168px;
+    padding: 9px 11px;
+    font-size: 11px;
+  }
+
+  .elementAllGridWrap{
+    padding-right: 0;
+  }
+}
+
+@media (max-width: 420px) {
+  .elementAllToolbar{
+    grid-template-columns: minmax(0, 1fr) minmax(132px, 44vw);
+  }
+
+  .elementAllSearch{
+    max-width: none;
+  }
+}
