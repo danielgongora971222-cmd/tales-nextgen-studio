@@ -3357,26 +3357,45 @@
 
 @media (max-width: 560px) {
   .elementAllBody{
+    gap: 8px;
     padding-top: 10px;
     padding-bottom: 10px;
   }
 
   .elementAllToolbar{
-    grid-template-columns: minmax(0, 1fr) minmax(0, 168px);
-    align-items: start;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
     gap: 8px;
   }
 
   .elementAllMetaBadge{
-    min-height: 34px;
-    padding: 0 10px;
-    font-size: 11px;
+    min-height: 32px;
+    padding: 0 9px;
+    font-size: 10px;
+    white-space: nowrap;
   }
 
   .elementAllSearch{
-    max-width: 168px;
-    padding: 9px 11px;
-    font-size: 11px;
+    width: clamp(116px, 36vw, 148px);
+    min-width: 116px;
+    max-width: clamp(116px, 36vw, 148px);
+    height: 34px;
+    min-height: 34px;
+    padding: 0 10px;
+    border-radius: 10px;
+    font-size: 15px !important;
+    line-height: 1;
+    box-shadow:
+      0 8px 18px rgba(0,0,0,0.42),
+      inset 0 1px 0 rgba(255,255,255,0.05),
+      inset 0 -8px 14px rgba(0,0,0,0.42);
+  }
+
+  .elementAllSearch:focus{
+    box-shadow:
+      0 10px 22px rgba(0,0,0,0.46),
+      inset 0 1px 0 rgba(255,255,255,0.07),
+      inset 0 -8px 14px rgba(0,0,0,0.5);
   }
 
   .elementAllGridWrap{
@@ -3386,10 +3405,23 @@
 
 @media (max-width: 420px) {
   .elementAllToolbar{
-    grid-template-columns: minmax(0, 1fr) minmax(132px, 44vw);
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .elementAllMetaBadge{
+    min-height: 30px;
+    padding: 0 8px;
+    font-size: 10px;
   }
 
   .elementAllSearch{
-    max-width: none;
+    width: clamp(108px, 34vw, 132px);
+    min-width: 108px;
+    max-width: clamp(108px, 34vw, 132px);
+    height: 32px;
+    min-height: 32px;
+    padding: 0 9px;
+    border-radius: 9px;
+    font-size: 14px !important;
   }
 }
