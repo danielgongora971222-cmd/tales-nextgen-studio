@@ -13,6 +13,8 @@ type Props = {
   isLoading?: boolean;
   onUpload: (file: File) => Promise<Asset>;
   getAssetUrl: (a: Asset) => string | null;
+  title?: string;
+  note?: React.ReactNode;
 };
 
 type TabKey = "history" | "elements";
@@ -39,6 +41,8 @@ export function SeedanceRefsPickerModal({
   isLoading,
   onUpload,
   getAssetUrl,
+  title,
+  note,
 }: Props) {
   const [tab, setTab] = useState<TabKey>("history");
   const [query, setQuery] = useState("");
@@ -83,7 +87,7 @@ export function SeedanceRefsPickerModal({
     <div className={styles.modalOverlay} role="dialog" aria-modal="true">
       <div className={styles.modal}>
         <div className={styles.modalHeader}>
-          <div className={styles.modalTitle}>Seedance Refs</div>
+          <div className={styles.modalTitle}>{title || "Seedance Refs"}</div>
           <button className={styles.modalClose} onClick={onClose} type="button" title="Cerrar">
             ×
           </button>
@@ -152,7 +156,11 @@ export function SeedanceRefsPickerModal({
         </div>
 
         <div className={styles.noteSmall} style={{ padding: "0 14px 10px" }}>
-          Seleccionadas: <b>{selectedIds.length}</b> / {max}. Seedance admite hasta 9 imágenes totales contando Start y End frame.
+          {note ?? (
+            <>
+              Seleccionadas: <b>{selectedIds.length}</b> / {max}. Seedance admite hasta 9 imágenes totales contando Start y End frame.
+            </>
+          )}
         </div>
 
         <div className={styles.pickerGrid}>

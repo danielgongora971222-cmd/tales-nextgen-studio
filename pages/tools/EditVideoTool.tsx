@@ -18,7 +18,7 @@ import { Icon } from "./video/icon";
 import { KlingElementsModal } from "./video/KlingElementsModal";
 import { listKlingElements, type KlingElement } from "../../services/klingElementsService";
 import { AssetPickerModal } from "./video/AssetPickerModal";
-import { MultiImagePickerModal } from "./video/MultiImagePickerModal";
+import { SeedanceRefsPickerModal } from "./video/SeedanceRefsPickerModal";
 import {
   O3MultishotModal,
   O3_SHOT_PROMPT_LIMIT,
@@ -120,6 +120,11 @@ function getMetaSource(a: Asset): string | null {
 function getMetaCategory(a: Asset): string | null {
   const meta: any = (a as any)?.meta || {};
   return meta?.category ?? null;
+}
+
+function isElementAsset(a: Asset | null | undefined) {
+  const meta: any = (a as any)?.meta || {};
+  return meta?.tool === "element-library" || meta?.isElement === true || meta?.category === "element";
 }
 
 function getAssetUrl(a: Asset): string | null {
@@ -398,24 +403,26 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     return s;
   }, [startImage?.id, endImage?.id]);
 
+  const referenceHistoryImages = useMemo(
+    () => (imageAssets || []).filter((asset) => !isElementAsset(asset)),
+    [imageAssets]
+  );
+  const referenceElementImages = useMemo(
+    () => (imageAssets || []).filter((asset) => isElementAsset(asset)),
+    [imageAssets]
+  );
+
   const mentionableRefImages = useMemo(() => {
-  return (imageAssets || [])
-    .filter((a) => !!getAssetUrl(a))
-    .filter((a) => !excludeIdsFromMentions.has(a.id))
-    .filter((a) => getMetaTool(a) !== FRAME_UPLOAD_TOOL)
-
-    // ✅ Solo referencias subidas por el usuario (NO imágenes generadas)
-    
-    // ✅ Excluye elementos de Image Gen (element-library)
-    .filter((a) => getMetaTool(a) !== "element-library")
-    .filter((a) => getMetaCategory(a) !== "element")
-
-    .sort((a: any, b: any) => {
-      const ta = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
-      const tb = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
-      return tb - ta;
-    });
-}, [imageAssets, excludeIdsFromMentions]);
+    return (imageAssets || [])
+      .filter((a) => !!getAssetUrl(a))
+      .filter((a) => !excludeIdsFromMentions.has(a.id))
+      .filter((a) => getMetaTool(a) !== FRAME_UPLOAD_TOOL)
+      .sort((a: any, b: any) => {
+        const ta = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const tb = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return tb - ta;
+      });
+  }, [imageAssets, excludeIdsFromMentions]);
 
   const refImageTokenById = useMemo(() => {
     const reserved = new Set<string>([
@@ -2326,15 +2333,21 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
         getAssetUrl={getAssetUrl}
       />
 
-      <MultiImagePickerModal
+      <SeedanceRefsPickerModal
         open={refPickerOpen}
+        onClose={() => setRefPickerOpen(false)}
         title="Imágenes de referencia"
-        assets={imageAssets}
-        isLoading={isLoadingImages}
+        note={
+          <>
+            Seleccionadas: <b>{referenceImageIds.length}</b> / {maxRefImages}. Puedes elegir imágenes normales o Elements de imagen como refs.
+          </>
+        }
         selectedIds={referenceImageIds}
         setSelectedIds={setReferenceImageIds}
+        historyAssets={referenceHistoryImages}
+        elementAssets={referenceElementImages}
         max={maxRefImages}
-        onClose={() => setRefPickerOpen(false)}
+        isLoading={isLoadingImages}
         onUpload={uploadImage}
         getAssetUrl={getAssetUrl}
       />
