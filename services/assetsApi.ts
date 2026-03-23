@@ -909,7 +909,7 @@ export async function listMyAssetsPickerLibrary(opts?: { type?: "image" | "video
   const safeLimit = (() => {
     const raw = Number(opts?.limit || 0);
     if (!Number.isFinite(raw) || raw <= 0) return 200;
-    return Math.min(Math.max(Math.trunc(raw), 1), 200);
+    return Math.min(Math.max(Math.trunc(raw), 1), 500);
   })();
 
   if (!type) {

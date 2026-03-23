@@ -89,13 +89,21 @@ function makeImageTag(name: string) {
 }
 
 function getMetaTool(a: Asset | null | undefined): string | null {
-  const meta: any = (a as any)?.meta || {};
-  return meta?.tool ?? null;
+  const asset: any = a || {};
+  const meta: any = asset?.meta || {};
+  return asset?.tool ?? meta?.tool ?? null;
 }
 
 function isElementAsset(a: Asset | null | undefined) {
-  const meta: any = (a as any)?.meta || {};
-  return meta?.tool === "element-library" || meta?.isElement === true || meta?.category === "element";
+  const asset: any = a || {};
+  const meta: any = asset?.meta || {};
+  const assetTool = typeof asset?.tool === "string" ? asset.tool : null;
+  return (
+    assetTool === "element-library" ||
+    meta?.tool === "element-library" ||
+    meta?.isElement === true ||
+    meta?.category === "element"
+  );
 }
 
 function buildElementTokenMap(elements: KlingElement[]) {
