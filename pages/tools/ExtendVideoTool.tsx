@@ -109,9 +109,8 @@ function coerceModelId(value: unknown): EditModelId {
 }
 
 function getMetaTool(a: Asset): string | null {
-  const asset: any = a || {};
-  const meta: any = asset?.meta || {};
-  return asset?.tool ?? meta?.tool ?? null;
+  const meta: any = (a as any)?.meta || {};
+  return meta?.tool ?? null;
 }
 
 function getMetaSource(a: Asset): string | null {
@@ -125,11 +124,9 @@ function getMetaCategory(a: Asset): string | null {
 }
 
 function isElementAsset(a: Asset | null | undefined) {
-  const asset: any = a || {};
-  const meta: any = asset?.meta || {};
-  const assetTool = typeof asset?.tool === "string" ? asset.tool : null;
+  const meta: any = (a as any)?.meta || {};
   return (
-    assetTool === "element-library" ||
+    (a as any)?.tool === "element-library" ||
     meta?.tool === "element-library" ||
     meta?.isElement === true ||
     meta?.category === "element"

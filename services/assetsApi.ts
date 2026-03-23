@@ -12,6 +12,28 @@ function normalizeClientAssetMeta(raw: any) {
   return next;
 }
 
+function enrichClientAssetMeta(raw: any, row: any) {
+  const normalized = normalizeClientAssetMeta(raw);
+  const next =
+    normalized && typeof normalized === "object" && !Array.isArray(normalized)
+      ? { ...normalized }
+      : {};
+
+  const rowTool = typeof row?.tool === "string" ? row.tool.trim() : "";
+  const effectiveTool = rowTool || (typeof next.tool === "string" ? next.tool.trim() : "");
+
+  if (effectiveTool && !next.tool) next.tool = effectiveTool;
+
+  if (effectiveTool === "element-library") {
+    next.isElement = true;
+    if (typeof next.category !== "string" || !next.category.trim()) {
+      next.category = "element";
+    }
+  }
+
+  return Object.keys(next).length > 0 ? next : undefined;
+}
+
 function assetApiUrl(path: string): string {
   const p = String(path || "");
   if (/^https?:\/\//i.test(p)) return p;
@@ -42,7 +64,7 @@ function mapRowToAsset(row: any): Asset {
   const ownerId = String(row.ownerId ?? row.owner_id ?? row.userId ?? row.user_id ?? "");
 
   const isPublic = !!(row.isPublic ?? row.is_public ?? row.public ?? row.is_public_asset);
-  const meta = normalizeClientAssetMeta((row as any).meta ?? (row as any).metadata ?? undefined);
+  const meta = enrichClientAssetMeta((row as any).meta ?? (row as any).metadata ?? undefined, row);
 
   // Normaliza el type a "image" | "video"
   const rawType = String(row.type ?? row.assetType ?? row.mimeType ?? "");
@@ -908,7 +930,7 @@ export async function listMyAssetsPickerLibrary(opts?: { type?: "image" | "video
   const type = opts?.type;
   const safeLimit = (() => {
     const raw = Number(opts?.limit || 0);
-    if (!Number.isFinite(raw) || raw <= 0) return 200;
+    if (!Number.isFinite(raw) || raw <= 0) return 500;
     return Math.min(Math.max(Math.trunc(raw), 1), 500);
   })();
 
