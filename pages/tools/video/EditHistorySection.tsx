@@ -12,7 +12,6 @@ import {
   startVideoHoverPreview,
 } from "./videoPreview";
 
-
 type Props = {
   isLoading: boolean;
   isCookOpen?: boolean;
@@ -56,6 +55,8 @@ export function EditHistorySection({
   hoverVideoEls,
   onBeforeNavigate,
 }: Props) {
+  void onShowError;
+
   return (
     <div className={`${styles.stage} ${isCookOpen ? styles.stageCookOpen : ""}`}>
       <div className={`${styles.historyHeader} ${isCookOpen ? styles.historyHeaderCookOpen : ""}`}>
@@ -117,13 +118,17 @@ export function EditHistorySection({
             ))}
 
             {visibleHistory.map((asset) => {
-              const meta: any = (asset as any).meta || {};
-              const isPublished = Boolean(meta?.published);
+              const caption = shortText((asset.prompt || asset.name || "—").trim(), 70);
+              const meta: any = (asset as any)?.meta || {};
+              const isPublished = Boolean(asset.isPublic || meta?.published || meta?.listing?.published);
 
               return (
-                <div
+                <button
                   key={asset.id}
+                  type="button"
                   className={styles.tile}
+                  onClick={() => onOpenViewer(asset)}
+                  title="Click para ver detalles"
                   onMouseEnter={() => {
                     startVideoHoverPreview(hoverVideoEls.current[asset.id]);
                   }}
@@ -131,85 +136,80 @@ export function EditHistorySection({
                     resetVideoStill(hoverVideoEls.current[asset.id]);
                   }}
                 >
-                  <button className={styles.tileMediaBtn} type="button" onClick={() => onOpenViewer(asset)} title="Open">
-                    <video
-                      ref={(el) => {
-                        hoverVideoEls.current[asset.id] = el;
-                        if (el) {
-                          prepareVideoPreview(el);
-                        }
-                      }}
-                      className={styles.tileMedia}
-                      src={asset.url}
-                      muted
-                      playsInline
-                      loop
-                      preload="metadata"
-                      onLoadedMetadata={(e) => {
-                        prepareVideoPreview(e.currentTarget);
-                        primeVideoStill(e.currentTarget);
-                      }}
-                      onLoadedData={(e) => primeVideoStill(e.currentTarget)}
-                      onCanPlay={(e) => primeVideoStill(e.currentTarget)}
-                      onCanPlayThrough={(e) => primeVideoStill(e.currentTarget)}
-                      onSeeked={(e) => finalizeVideoStill(e.currentTarget)}
-                    />
-                    <div className={styles.playOverlay} />
-                  </button>
+                  <video
+                    ref={(el) => {
+                      hoverVideoEls.current[asset.id] = el;
+                      if (el) {
+                        prepareVideoPreview(el);
+                      }
+                    }}
+                    className={styles.tileVideo}
+                    src={asset.url}
+                    muted
+                    playsInline
+                    loop
+                    preload="metadata"
+                    onLoadedMetadata={(e) => {
+                      prepareVideoPreview(e.currentTarget);
+                      primeVideoStill(e.currentTarget);
+                    }}
+                    onLoadedData={(e) => primeVideoStill(e.currentTarget)}
+                    onCanPlay={(e) => primeVideoStill(e.currentTarget)}
+                    onCanPlayThrough={(e) => primeVideoStill(e.currentTarget)}
+                    onSeeked={(e) => finalizeVideoStill(e.currentTarget)}
+                  />
 
                   <div className={styles.tileMeta}>
-                    <div className={styles.tileTitle} title={String((asset as any).name || asset.id)}>
-                      {shortText(String((asset as any).name || "Untitled"), 42)}
-                    </div>
-                    <div className={styles.tileSub}>
-                      {meta?.model ? shortText(String(meta.model), 32) : "—"}
-                      {meta?.durationSeconds != null ? ` · ${meta.durationSeconds}s` : ""}
-                    </div>
-
-                    <div className={styles.tileActions}>
-                      {onToggleLike ? (
-                        <button
-                          type="button"
-                          className={`${styles.iconBtn} ${styles.iconBtnHeart} ${asset.likedByMe ? styles.iconBtnHeartActive : ""}`}
-                          title={asset.likedByMe ? "Quitar Like" : "Dar Like"}
-                          disabled={Boolean(likeBusyById[asset.id])}
-                          onClick={() => onToggleLike(asset)}
-                        >
-                          <Icon name="heart" />
-                        </button>
-                      ) : null}
-
-                      {onTogglePublish ? (
-                        <button
-                          type="button"
-                          className={`${styles.iconBtn} ${styles.iconBtnMoney} ${isPublished ? styles.iconBtnOn : ""}`}
-                          title="Vender / Administrar listing"
-                          onClick={() => onTogglePublish(asset)}
-                        >
-                          <Icon name="money" />
-                        </button>
-                      ) : null}
-
-                      <button type="button" className={styles.iconBtn} title="Download" onClick={() => onDownload(asset)}>
-                        <Icon name="download" />
-                      </button>
-
-                      <button type="button" className={styles.iconBtnDanger} title="Delete" onClick={() => onDelete(asset)}>
-                        <Icon name="trash" />
-                      </button>
-                    </div>
+                    <span className={styles.tileCaption}>{caption}</span>
+                    {asset.isPublic && <span className={styles.publicTag}>PUBLIC</span>}
                   </div>
-                </div>
+
+                  <div className={styles.tileActions} onClick={(e) => e.stopPropagation()}>
+                    {onToggleLike ? (
+                      <button
+                        type="button"
+                        className={`${styles.iconBtn} ${styles.iconBtnHeart} ${asset.likedByMe ? styles.iconBtnHeartActive : ""}`}
+                        title={asset.likedByMe ? "Quitar Like" : "Dar Like"}
+                        disabled={Boolean(likeBusyById[asset.id])}
+                        onClick={() => onToggleLike(asset)}
+                      >
+                        <Icon name="heart" />
+                      </button>
+                    ) : null}
+
+                    {onTogglePublish ? (
+                      <button
+                        type="button"
+                        className={`${styles.iconBtn} ${styles.iconBtnMoney} ${isPublished ? styles.iconBtnOn : ""}`}
+                        title="Vender / Administrar listing"
+                        onClick={() => onTogglePublish(asset)}
+                      >
+                        <Icon name="money" />
+                      </button>
+                    ) : null}
+
+                    <button type="button" className={styles.iconBtn} title="Descargar" onClick={() => onDownload(asset)}>
+                      <Icon name="download" />
+                    </button>
+
+                    <button type="button" className={styles.iconBtnDanger} title="Eliminar" onClick={() => onDelete(asset)}>
+                      <Icon name="trash" />
+                    </button>
+                  </div>
+                </button>
               );
             })}
           </div>
         )}
 
         {hasMore && (
-          <div className={styles.loadMore}>
-            <button className={styles.ghostBtn} type="button" onClick={onLoadMore} disabled={isLoadingMore} title="Load more">
-              {isLoadingMore ? "Loading…" : "Load more"}
+          <div className={styles.historyLoadMoreWrap}>
+            <button type="button" className={styles.loadMoreBtn} onClick={onLoadMore} disabled={isLoadingMore}>
+              {isLoadingMore ? "Cargando..." : "Cargar más"}
             </button>
+            <div className={styles.loadMoreHint}>
+              Mostrando {visibleHistory.length} de {totalCount}
+            </div>
           </div>
         )}
       </div>

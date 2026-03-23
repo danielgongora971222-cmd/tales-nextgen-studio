@@ -12,28 +12,6 @@ function normalizeClientAssetMeta(raw: any) {
   return next;
 }
 
-function enrichClientAssetMeta(raw: any, row: any) {
-  const normalized = normalizeClientAssetMeta(raw);
-  const next =
-    normalized && typeof normalized === "object" && !Array.isArray(normalized)
-      ? { ...normalized }
-      : {};
-
-  const rowTool = typeof row?.tool === "string" ? row.tool.trim() : "";
-  const effectiveTool = rowTool || (typeof next.tool === "string" ? next.tool.trim() : "");
-
-  if (effectiveTool && !next.tool) next.tool = effectiveTool;
-
-  if (effectiveTool === "element-library") {
-    next.isElement = true;
-    if (typeof next.category !== "string" || !next.category.trim()) {
-      next.category = "element";
-    }
-  }
-
-  return Object.keys(next).length > 0 ? next : undefined;
-}
-
 function assetApiUrl(path: string): string {
   const p = String(path || "");
   if (/^https?:\/\//i.test(p)) return p;
@@ -64,7 +42,7 @@ function mapRowToAsset(row: any): Asset {
   const ownerId = String(row.ownerId ?? row.owner_id ?? row.userId ?? row.user_id ?? "");
 
   const isPublic = !!(row.isPublic ?? row.is_public ?? row.public ?? row.is_public_asset);
-  const meta = enrichClientAssetMeta((row as any).meta ?? (row as any).metadata ?? undefined, row);
+  const meta = normalizeClientAssetMeta((row as any).meta ?? (row as any).metadata ?? undefined);
 
   // Normaliza el type a "image" | "video"
   const rawType = String(row.type ?? row.assetType ?? row.mimeType ?? "");
@@ -926,12 +904,23 @@ export async function listMyAssetsRobust(opts?: { type?: "image" | "video"; limi
   throw typedRes.reason || allRes.reason || new Error("No se pudieron cargar los assets.");
 }
 
+
+function isElementLibraryAssetClient(asset: Asset): boolean {
+  const meta: any = (asset as any)?.meta || {};
+  return (
+    (asset as any)?.tool === "element-library" ||
+    meta?.tool === "element-library" ||
+    meta?.isElement === true ||
+    meta?.category === "element"
+  );
+}
+
 export async function listMyAssetsPickerLibrary(opts?: { type?: "image" | "video"; limit?: number; fresh?: boolean }): Promise<Asset[]> {
   const type = opts?.type;
   const safeLimit = (() => {
     const raw = Number(opts?.limit || 0);
-    if (!Number.isFinite(raw) || raw <= 0) return 500;
-    return Math.min(Math.max(Math.trunc(raw), 1), 500);
+    if (!Number.isFinite(raw) || raw <= 0) return 200;
+    return Math.min(Math.max(Math.trunc(raw), 1), 200);
   })();
 
   if (!type) {
@@ -959,6 +948,15 @@ export async function listMyAssetsPickerLibrary(opts?: { type?: "image" | "video
 
   const fallbackItems = await listMyAssetsRobust({ type, limit: safeLimit, fresh: opts?.fresh });
   return normalize(fallbackItems);
+}
+
+
+export async function listMyElementLibraryAssets(opts?: { limit?: number; fresh?: boolean }): Promise<Asset[]> {
+  const raw = Number(opts?.limit || 0);
+  const safeLimit = !Number.isFinite(raw) || raw <= 0 ? 300 : Math.min(Math.max(Math.trunc(raw), 1), 300);
+  const images = await listMyAssetsRobust({ type: "image", limit: safeLimit, fresh: opts?.fresh });
+  const onlyElements = images.filter((asset) => isElementLibraryAssetClient(asset));
+  return sliceByLimit(sortAssetsNewestFirst(onlyElements), safeLimit);
 }
 
 export async function listPurchasedAssetsRobust(opts?: { type?: "image" | "video"; limit?: number; fresh?: boolean }): Promise<Asset[]> {

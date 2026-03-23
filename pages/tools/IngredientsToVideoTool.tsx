@@ -6,8 +6,10 @@ import { MentionTextarea, type MentionItem } from "../../components/MentionTexta
 import { useAuth } from "../../contexts/AuthContext";
 import {
   deleteAsset,
+  downloadAssetToDisk,
   listMyAssetsPickerLibrary,
   listMyAssetsRobust,
+  listMyElementLibraryAssets,
   uploadUserAsset,
 } from "../../services/assetsApi";
 import { apiPostJson, formatErr } from "../../services/videoGenApi";
@@ -134,15 +136,6 @@ function getAssetUrl(a: Asset): string | null {
   return typeof u === "string" && u.length > 0 ? u : null;
 }
 
-function downloadFromUrl(url: string, filename: string) {
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-}
-
 function mergeAssetsById(base: Asset[], incoming: Asset[]) {
   const map = new Map<string, Asset>();
   for (const asset of [...base, ...incoming]) {
@@ -241,8 +234,10 @@ export default function IngredientsToVideoTool() {
   const [isLoadingMore, setIsLoadingMore] = useState(false);
 
   const [imageAssets, setImageAssets] = useState<Asset[]>([]);
+  const [elementLibraryAssets, setElementLibraryAssets] = useState<Asset[]>([]);
   const [videoAssets, setVideoAssets] = useState<Asset[]>([]);
   const [isLoadingImages, setIsLoadingImages] = useState(false);
+  const [isLoadingElementLibrary, setIsLoadingElementLibrary] = useState(false);
   const [isLoadingVideos, setIsLoadingVideos] = useState(false);
 
   // ===== UI state =====
@@ -369,17 +364,22 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     return s;
   }, [startImage?.id, endImage?.id]);
 
+  const allReferenceImageAssets = useMemo(
+    () => mergeAssetsById(imageAssets, elementLibraryAssets),
+    [imageAssets, elementLibraryAssets]
+  );
+
   const referenceHistoryImages = useMemo(
-    () => (imageAssets || []).filter((asset) => !isElementAsset(asset)),
-    [imageAssets]
+    () => allReferenceImageAssets.filter((asset) => !isElementAsset(asset)),
+    [allReferenceImageAssets]
   );
   const referenceElementImages = useMemo(
-    () => (imageAssets || []).filter((asset) => isElementAsset(asset)),
-    [imageAssets]
+    () => allReferenceImageAssets.filter((asset) => isElementAsset(asset)),
+    [allReferenceImageAssets]
   );
 
   const mentionableRefImages = useMemo(() => {
-    return (imageAssets || [])
+    return allReferenceImageAssets
       .filter((a) => !!getAssetUrl(a))
       .filter((a) => !excludeIdsFromMentions.has(a.id))
       .filter((a) => getMetaTool(a) !== FRAME_UPLOAD_TOOL)
@@ -388,7 +388,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
         const tb = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
         return tb - ta;
       });
-  }, [imageAssets, excludeIdsFromMentions]);
+  }, [allReferenceImageAssets, excludeIdsFromMentions]);
 
   const refImageTokenById = useMemo(() => {
     const reserved = new Set<string>([
@@ -580,8 +580,8 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
   }, [isStoryboardMode, shotsWithPrompt, multishotTotalSeconds]);
 
   const referencePreviewAssets = useMemo(
-    () => referenceImageIds.map((id) => imageAssets.find((asset) => asset.id === id) || null).filter((asset): asset is Asset => Boolean(asset)),
-    [referenceImageIds, imageAssets]
+    () => referenceImageIds.map((id) => allReferenceImageAssets.find((asset) => asset.id === id) || null).filter((asset): asset is Asset => Boolean(asset)),
+    [referenceImageIds, allReferenceImageAssets]
   );
   const visibleReferencePreviewAssets = referencePreviewAssets.slice(0, 3);
   const hiddenReferencePreviewCount = Math.max(0, referencePreviewAssets.length - visibleReferencePreviewAssets.length);
@@ -608,8 +608,8 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     const firstId = typeof meta.firstFrameAssetId === "string" ? meta.firstFrameAssetId : null;
     const lastId = typeof meta.lastFrameAssetId === "string" ? meta.lastFrameAssetId : null;
 
-    const first = firstId ? imageAssets.find((a) => a.id === firstId) || null : null;
-    const last = lastId ? imageAssets.find((a) => a.id === lastId) || null : null;
+    const first = firstId ? allReferenceImageAssets.find((a) => a.id === firstId) || null : null;
+    const last = lastId ? allReferenceImageAssets.find((a) => a.id === lastId) || null : null;
 
     const editRaw = meta.editVideo && typeof meta.editVideo === "object" ? meta.editVideo : null;
 
@@ -622,7 +622,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
       : [];
 
     const referenceImages = referenceImageAssetIds
-      .map((id) => imageAssets.find((a) => a.id === id) || null)
+      .map((id) => allReferenceImageAssets.find((a) => a.id === id) || null)
       .filter(Boolean) as Asset[];
 
     const elements = klingElementIds
@@ -631,12 +631,12 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
 
     const startImage =
       typeof editRaw?.startImageAssetId === "string"
-        ? imageAssets.find((a) => a.id === editRaw.startImageAssetId) || null
+        ? allReferenceImageAssets.find((a) => a.id === editRaw.startImageAssetId) || null
         : null;
 
     const endImage =
       typeof editRaw?.endImageAssetId === "string"
-        ? imageAssets.find((a) => a.id === editRaw.endImageAssetId) || null
+        ? allReferenceImageAssets.find((a) => a.id === editRaw.endImageAssetId) || null
         : null;
 
     const inputVideoResolved =
@@ -667,7 +667,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
       klingSound: typeof meta.klingSound === "boolean" ? meta.klingSound : null,
       editVideo,
     };
-  }, [viewer, imageAssets, videoAssets, klingElements]);
+  }, [viewer, allReferenceImageAssets, videoAssets, klingElements]);
 
   // ===== Local storage (pending) =====
   const loadPending = useCallback((): PendingVideoEditJob | null => {
@@ -708,6 +708,21 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
       return [] as Asset[];
     } finally {
       setIsLoadingImages(false);
+    }
+  }, [user]);
+
+  const reloadElementLibrary = useCallback(async () => {
+    if (!user) return [] as Asset[];
+    setIsLoadingElementLibrary(true);
+    try {
+      const elements = await listMyElementLibraryAssets({ limit: 300, fresh: true });
+      setElementLibraryAssets(Array.isArray(elements) ? elements : []);
+      return Array.isArray(elements) ? elements : [];
+    } catch (err: any) {
+      console.warn(err);
+      return [] as Asset[];
+    } finally {
+      setIsLoadingElementLibrary(false);
     }
   }, [user]);
 
@@ -771,6 +786,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
   useEffect(() => {
     if (!user) {
       setImageAssets([]);
+      setElementLibraryAssets([]);
       setVideoAssets([]);
       setHistory([]);
       return;
@@ -779,12 +795,13 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     void (async () => {
       await Promise.all([
         reloadImages(),
+        reloadElementLibrary(),
         reloadVideos(),
         reloadHistory(),
         VIDEO_ELEMENTS_UI_ENABLED ? reloadKlingElements() : Promise.resolve([]),
       ]);
     })();
-  }, [user?.id, reloadImages, reloadVideos, reloadHistory, reloadKlingElements]);
+  }, [user?.id, reloadImages, reloadElementLibrary, reloadVideos, reloadHistory, reloadKlingElements]);
 
   useEffect(() => {
     if (!pickerOpen && !refPickerOpen) return;
@@ -793,9 +810,10 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
       const tasks: Promise<any>[] = [];
       if (pickerOpen === "video") tasks.push(reloadVideos());
       if (pickerOpen === "start" || pickerOpen === "end" || refPickerOpen) tasks.push(reloadImages());
+      if (refPickerOpen) tasks.push(reloadElementLibrary());
       await Promise.all(tasks);
     })();
-  }, [pickerOpen, refPickerOpen, reloadImages, reloadVideos]);
+  }, [pickerOpen, refPickerOpen, reloadElementLibrary, reloadImages, reloadVideos]);
 
   useEffect(() => {
     if (!(ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode)) return;
@@ -899,11 +917,12 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     []
   );
 
-  const onDownload = useCallback((asset: Asset) => {
-    const url = getAssetUrl(asset);
-    if (!url) return;
-    const name = String((asset as any).name || "video").replaceAll(" ", "_");
-    downloadFromUrl(url, `${name}.mp4`);
+  const onDownload = useCallback(async (asset: Asset) => {
+    try {
+      await downloadAssetToDisk(asset.id, asset.name || "video");
+    } catch (err: any) {
+      setError(formatErr(err));
+    }
   }, []);
 
   const onDelete = useCallback(
@@ -962,7 +981,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
 
       const resolveImage = (id: any) => {
         if (typeof id !== "string" || !id) return null;
-        const existing = imageAssets.find((entry) => entry.id === id) || null;
+        const existing = allReferenceImageAssets.find((entry) => entry.id === id) || null;
         if (existing) return existing;
         const temp = makeResolvedAsset(byId.get(id), "image");
         if (temp) incomingImages.push(temp);
@@ -2304,7 +2323,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
         historyAssets={referenceHistoryImages}
         elementAssets={referenceElementImages}
         max={maxRefImages}
-        isLoading={isLoadingImages}
+        isLoading={isLoadingImages || isLoadingElementLibrary}
         onUpload={uploadImage}
         getAssetUrl={getAssetUrl}
       />

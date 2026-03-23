@@ -2368,6 +2368,71 @@
   font-size: 16px;
   line-height: 1;
 }
+
+.motionBottomActions {
+  position: absolute;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  z-index: 360;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: min(calc(100% - 24px), 560px);
+}
+
+.motionCookToggle {
+  position: relative;
+  left: auto;
+  bottom: auto;
+  transform: none;
+  flex: 0 1 196px;
+  min-width: 170px;
+}
+
+.motionCookToggle:hover {
+  transform: translateY(-2px);
+}
+
+.motionGenerateDockBtn {
+  flex: 1 1 0;
+  min-width: 170px;
+  max-width: 340px;
+  min-height: 54px;
+  border-radius: 999px;
+  padding: 0 18px;
+}
+
+.motionGenerateDockBtn .motionGenerateLabel,
+.motionGenerateDockBtn .motionGenerateCost {
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .motionBottomActions {
+    width: calc(100% - 24px);
+    gap: 10px;
+  }
+
+  .motionCookToggle {
+    min-width: 152px;
+    flex: 0 1 47%;
+  }
+
+  .motionGenerateDockBtn {
+    min-width: 0;
+    flex: 1 1 53%;
+    padding: 0 14px;
+  }
+
+  .motionGenerateDockBtn .motionGenerateLabel,
+  .motionGenerateDockBtn .motionGenerateCost {
+    font-size: 12px;
+    letter-spacing: 0.08em;
+  }
+}
+
 @keyframes cookTogglePulse {
   0%, 100% { box-shadow: 0 18px 44px rgba(0,0,0,0.6), 0 0 0 0 rgba(241,225,148,0), inset 0 1px 0 rgba(255,255,255,0.08); }
   50% { box-shadow: 0 20px 52px rgba(0,0,0,0.66), 0 0 0 10px rgba(241,225,148,0.05), inset 0 1px 0 rgba(255,255,255,0.08); }

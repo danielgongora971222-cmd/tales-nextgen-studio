@@ -878,22 +878,41 @@ export default function MotionControlTool() {
       )}
 
       {panel === null && (
-        <button
-          type="button"
-          className={`${styles.cookToggle} ${isCookSidebarVisible ? styles.cookToggleOpen : styles.cookTogglePulse}`}
-          onClick={() => {
-            if (isCookSidebarVisible) closeCook();
-            else openCook();
-          }}
-          aria-expanded={isCookSidebarVisible}
-          aria-controls="motion-control-start-create"
-          aria-label={isCookSidebarVisible ? "Close Start Create" : "Open Start Create"}
-        >
-          <span className={styles.cookToggleLabel}>Start Create</span>
-          <span className={styles.cookToggleGlyph} aria-hidden="true">
-            {isCookSidebarVisible ? "×" : "+"}
-          </span>
-        </button>
+        <div className={styles.motionBottomActions}>
+          <button
+            type="button"
+            className={`${styles.cookToggle} ${styles.motionCookToggle} ${isCookSidebarVisible ? styles.cookToggleOpen : styles.cookTogglePulse}`}
+            onClick={() => {
+              if (isCookSidebarVisible) closeCook();
+              else openCook();
+            }}
+            aria-expanded={isCookSidebarVisible}
+            aria-controls="motion-control-start-create"
+            aria-label={isCookSidebarVisible ? "Close Start Create" : "Open Start Create"}
+          >
+            <span className={styles.cookToggleLabel}>Start Create</span>
+            <span className={styles.cookToggleGlyph} aria-hidden="true">
+              {isCookSidebarVisible ? "×" : "+"}
+            </span>
+          </button>
+
+          {isCookSidebarVisible && (
+            <button
+              type="button"
+              className={`${styles.motionGenerateBtn} ${styles.motionGenerateDockBtn}`}
+              onClick={() => {
+                if (isGenerating) return;
+                void handleGenerate();
+              }}
+              disabled={!canGenerate}
+              data-loading={isGenerating ? "true" : "false"}
+            >
+              <span className={styles.motionGenerateLabel}>{generateButtonLabel}</span>
+              {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
+              <span className={styles.motionGenerateCost}>✦ {estimatedCostCredits}</span>
+            </button>
+          )}
+        </div>
       )}
 
       {isCookLayerVisible && (
@@ -1136,25 +1155,9 @@ export default function MotionControlTool() {
                   </div>
 
                   <div className={styles.motionCookFooter}>
-                    <button
-                      type="button"
-                      className={styles.motionGenerateBtn}
-                      onClick={() => {
-                        if (isGenerating) return;
-                        void handleGenerate();
-                      }}
-                      disabled={!canGenerate}
-                      data-loading={isGenerating ? "true" : "false"}
-                    >
-                      <span className={styles.motionGenerateLabel}>{generateButtonLabel}</span>
-                      {isGenerating && <span className={styles.generateSpinner} aria-hidden="true" />}
-                      <span className={styles.motionGenerateCost}>✦ {estimatedCostCredits}</span>
-                    </button>
-
                     {refVideo && (
                       <div
                         style={{
-                          marginTop: 8,
                           fontSize: 12,
                           color: "rgba(255,255,255,0.65)",
                           textAlign: "center",
