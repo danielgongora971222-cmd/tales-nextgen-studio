@@ -71,7 +71,8 @@ function normalizeVideoProvider(params) {
   if (provider) return provider;
   const model = String(params?.model || "").trim().toLowerCase();
   if (model.startsWith("kling")) return "kling";
-  if (model.startsWith("veo") || model.startsWith("fal")) return "fal";
+  if (model.startsWith("veo")) return "google";
+  if (model.startsWith("fal")) return "fal";
   return "unknown";
 }
 

@@ -1,7 +1,7 @@
 /**
  * jobsWorker.js
  *
- * Background worker para procesar filas en public.jobs (Supabase) con provider = "fal".
+ * Background worker para procesar filas en public.jobs (Supabase) con provider = "fal", "google", "kling" o "piapi".
  *
  * Se ejecuta en Render como "Background Worker".
  *
@@ -9,7 +9,8 @@
  * - SUPABASE_URL
  * - SUPABASE_SERVICE_ROLE_KEY
  * - SUPABASE_BUCKET
- * - FAL_KEY
+ * - FAL_KEY (solo para jobs Fal)
+ * - GEMINI_API_KEY (solo para jobs Google/Veo)
  *
  * Opcionales:
  * - WORKER_ID (si no, se genera)
@@ -33,6 +34,8 @@ const SUPABASE_BUCKET = process.env.SUPABASE_BUCKET;
 const FAL_KEY = process.env.FAL_KEY;
 const PIAPI_API_KEY = process.env.PIAPI_API_KEY || process.env.PIAPI_KEY;
 const PIAPI_BASE_URL = String(process.env.PIAPI_BASE_URL || "https://api.piapi.ai/api/v1").replace(/\/+$|\/$/g, "");
+const GOOGLE_API_KEY = String(process.env.GEMINI_API_KEY || "").trim();
+const GOOGLE_API_BASE_URL = String(process.env.GOOGLE_API_BASE_URL || process.env.GEMINI_API_BASE_URL || "https://generativelanguage.googleapis.com/v1beta").replace(/\/+$/g, "");
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   throw new Error("Faltan SUPABASE_URL o SUPABASE_SERVICE_ROLE_KEY");
@@ -59,6 +62,82 @@ function falHeaders() {
     Authorization: `Key ${FAL_KEY}`,
     "Content-Type": "application/json",
   };
+}
+
+
+function googleHeaders({ json = true } = {}) {
+  if (!GOOGLE_API_KEY) {
+    throw new Error("GOOGLE_AI_NOT_CONFIGURED: falta GEMINI_API_KEY en el worker.");
+  }
+  return {
+    "x-goog-api-key": GOOGLE_API_KEY,
+    ...(json ? { "Content-Type": "application/json" } : {}),
+  };
+}
+
+function normalizeGoogleOperationName(value) {
+  return String(value || "").trim().replace(/^\/+/, "");
+}
+
+function extractGoogleProviderStatus(operationJson) {
+  if (!operationJson) return "UNKNOWN";
+  if (operationJson.done === true) return operationJson.error ? "FAILED" : "COMPLETED";
+  const metadataState = String(
+    operationJson?.metadata?.state ||
+    operationJson?.metadata?.status ||
+    operationJson?.metadata?.["@type"] ||
+    "RUNNING"
+  ).trim();
+  return metadataState || "RUNNING";
+}
+
+function computeNextCheckMsGoogle(operationJson) {
+  const providerStatus = String(extractGoogleProviderStatus(operationJson) || "").toUpperCase();
+  if (providerStatus.includes("QUEUE") || providerStatus.includes("PENDING")) return 20_000;
+  if (providerStatus.includes("RUN") || providerStatus.includes("PROGRESS")) return 12_000;
+  return 15_000;
+}
+
+function extractGoogleOperationErrorMessage(payload, fallback = "Google Veo request failed.") {
+  return String(
+    payload?.error?.message ||
+    payload?.error?.status ||
+    payload?.message ||
+    payload?.details?.message ||
+    fallback
+  ).trim();
+}
+
+function pickGoogleVideoUrl(operationJson) {
+  return (
+    operationJson?.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri ||
+    operationJson?.response?.generatedVideos?.[0]?.video?.uri ||
+    operationJson?.response?.generatedVideos?.[0]?.video?.url ||
+    operationJson?.response?.videos?.[0]?.uri ||
+    operationJson?.response?.videos?.[0]?.url ||
+    null
+  );
+}
+
+async function googleGetOperation(operationName) {
+  const normalized = normalizeGoogleOperationName(operationName);
+  const r = await fetch(`${GOOGLE_API_BASE_URL}/${normalized}`, {
+    method: "GET",
+    headers: googleHeaders({ json: false }),
+  });
+
+  const text = await r.text();
+  let data;
+  try { data = JSON.parse(text); } catch { data = { raw: text }; }
+
+  if (!r.ok) {
+    const msg = extractGoogleOperationErrorMessage(data, `Google operation error (${r.status})`);
+    const err = new Error(msg);
+    err.status = r.status;
+    err.data = data;
+    throw err;
+  }
+  return data;
 }
 
 const WORKER_ID = process.env.WORKER_ID || `wrk_${crypto.randomUUID()}`;
@@ -163,8 +242,8 @@ function pickPiapiVideoUrl(rawJson) {
   return output?.video || output?.video_url || output?.videoUrl || output?.videos?.[0]?.url || output?.videos?.[0] || null;
 }
 
-async function downloadToStream(url) {
-  const r = await fetch(url, { method: "GET" });
+async function downloadToStream(url, { headers = undefined } = {}) {
+  const r = await fetch(url, { method: "GET", ...(headers ? { headers } : {}) });
   if (!r.ok) throw new Error(`No se pudo descargar el archivo (${r.status})`);
 
   const ct = r.headers.get("content-type") || "video/mp4";
@@ -789,6 +868,203 @@ const taskStatusRaw = extractKlingTaskStatus(taskData, rawJson);
       params: {
         ...params,
         providerStatus: taskStatusRaw || "completed",
+        providerPollCount: pollCount,
+        resultUrl: signedUrl,
+      },
+    });
+
+    return;
+  }
+
+  // ===============================
+  // Provider: Google (Veo directo)
+  // ===============================
+  if (provider === "google") {
+    const operationName = normalizeGoogleOperationName(params.operationName || params.googleOperationName || "");
+    const modelName = params.model ? String(params.model) : null;
+    const pollCount = Math.max(0, Number(params.providerPollCount || 0)) + 1;
+
+    if (!operationName) {
+      await releaseAndReschedule(jobId, {
+        status: "failed",
+        error: "Job Google/Veo inválido: falta operationName en params.",
+        finished_at: new Date().toISOString(),
+        next_check_at: null,
+        params: { ...params, providerStatus: "MISSING_OPERATION_NAME", providerPollCount: pollCount },
+      });
+      return;
+    }
+
+    if (pollCount > 240) {
+      await releaseAndReschedule(jobId, {
+        status: "failed",
+        error: "Google/Veo job aborted: demasiados polls (240).",
+        finished_at: new Date().toISOString(),
+        next_check_at: null,
+        params: { ...params, providerStatus: "TOO_MANY_POLLS", providerPollCount: pollCount },
+      });
+      return;
+    }
+
+    let operationJson = null;
+    try {
+      operationJson = await googleGetOperation(operationName);
+    } catch (e) {
+      const status = Number(e?.status || 0);
+      const message = String(e?.message || e || "Google Veo status error");
+      const retriable = !status || status === 408 || status === 425 || status === 429 || status >= 500;
+
+      if (!retriable || /GOOGLE_AI_NOT_CONFIGURED/i.test(message)) {
+        await releaseAndReschedule(jobId, {
+          status: "failed",
+          error: message,
+          finished_at: new Date().toISOString(),
+          next_check_at: null,
+          params: {
+            ...params,
+            providerStatus: "STATUS_ERROR",
+            providerStatusDetail: message,
+            providerPollCount: pollCount,
+          },
+        });
+        return;
+      }
+
+      const next = new Date(Date.now() + 20_000).toISOString();
+      await releaseAndReschedule(jobId, {
+        status: "running",
+        next_check_at: next,
+        params: {
+          ...params,
+          providerStatus: "STATUS_ERROR",
+          providerStatusDetail: message,
+          providerPollCount: pollCount,
+        },
+      });
+      return;
+    }
+
+    const providerStatus = extractGoogleProviderStatus(operationJson);
+
+    if (operationJson?.done === true && operationJson?.error) {
+      const errMsg = extractGoogleOperationErrorMessage(operationJson, "Google Veo reportó un error.");
+      await releaseAndReschedule(jobId, {
+        status: "failed",
+        error: String(errMsg),
+        finished_at: new Date().toISOString(),
+        next_check_at: null,
+        params: {
+          ...params,
+          providerStatus,
+          providerPollCount: pollCount,
+          providerRawError: operationJson.error || null,
+        },
+      });
+      return;
+    }
+
+    if (operationJson?.done !== true) {
+      const next = new Date(Date.now() + computeNextCheckMsGoogle(operationJson)).toISOString();
+      await releaseAndReschedule(jobId, {
+        status: "running",
+        next_check_at: next,
+        params: {
+          ...params,
+          providerStatus,
+          providerPollCount: pollCount,
+        },
+      });
+      return;
+    }
+
+    const videoUrl = pickGoogleVideoUrl(operationJson);
+    if (!videoUrl) {
+      await releaseAndReschedule(jobId, {
+        status: "failed",
+        error: "Google/Veo completó la operación pero no devolvió URL de video.",
+        finished_at: new Date().toISOString(),
+        next_check_at: null,
+        params: {
+          ...params,
+          providerStatus: providerStatus || "COMPLETED",
+          providerPollCount: pollCount,
+          providerRaw: operationJson,
+        },
+      });
+      return;
+    }
+
+    const { stream, contentType, sizeBytes } = await downloadToStream(videoUrl, {
+      headers: googleHeaders({ json: false }),
+    });
+
+    const toolName = params.toolName || "video";
+    const nameHint = params.hint || "video";
+    const prompt = params.prompt || null;
+
+    let storagePath;
+
+    if (typeof uploadStreamToStorage === "function") {
+      const up = await uploadStreamToStorage({
+        userId: ownerId,
+        tool: toolName,
+        stream,
+        mimeType: contentType,
+        nameHint,
+        sizeBytes,
+      });
+      storagePath = up.storagePath;
+    } else {
+      const ab = await (await fetch(videoUrl, { method: "GET", headers: googleHeaders({ json: false }) })).arrayBuffer();
+      const buf = Buffer.from(ab);
+      const up = await uploadBufferToStorage({
+        userId: ownerId,
+        tool: toolName,
+        buffer: buf,
+        mimeType: contentType,
+        nameHint,
+      });
+      storagePath = up.storagePath;
+    }
+
+    const meta = {
+      ...(params.meta || {}),
+      tool: toolName,
+      category: toolName,
+      provider: "google",
+      model: modelName || null,
+      googleOperationName: operationName,
+      providerStatus: providerStatus || "COMPLETED",
+      providerVideoUrl: videoUrl,
+    };
+
+    const assetId = await insertAssetRow({
+      ownerId,
+      type: "video",
+      tool: toolName,
+      name: nameHint,
+      prompt,
+      storagePath,
+      isPublic: false,
+      meta,
+    });
+
+    let signedUrl = null;
+    try {
+      signedUrl = await signStoragePath(storagePath, 60 * 30);
+    } catch {
+      signedUrl = null;
+    }
+
+    await releaseAndReschedule(jobId, {
+      status: "succeeded",
+      result_asset_id: assetId,
+      finished_at: new Date().toISOString(),
+      error: null,
+      next_check_at: null,
+      params: {
+        ...params,
+        providerStatus: providerStatus || "COMPLETED",
         providerPollCount: pollCount,
         resultUrl: signedUrl,
       },

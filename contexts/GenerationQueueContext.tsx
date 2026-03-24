@@ -248,7 +248,7 @@ export const GenerationQueueProvider: React.FC<{ children: React.ReactNode }> = 
       recovered.push({
         id,
         type: "video_generate",
-        label: `Recovered video job (${p.modelNorm || "Fal"})`,
+        label: `Recovered video job (${p.modelNorm || "Veo"})`,
         status: "queued",
         createdAt: typeof p.createdAt === "number" ? p.createdAt : now(),
         updatedAt: now(),
@@ -642,7 +642,7 @@ const row = await waitJobCompletion(supabaseJobId, { signal, onProgress, pollMs:
         }
 
         // Fallback raro: el job terminó pero no dejó assetId
-        onProgress("Finalizando (Fal)…");
+        onProgress("Finalizando (Veo)…");
         const out = await apiPostJson<any>(
           "/api/ai/video/fal/finalize",
           { jobToken: existingToken, prompt },
@@ -655,9 +655,9 @@ const row = await waitJobCompletion(supabaseJobId, { signal, onProgress, pollMs:
       }
 
       // ✅ Fallback (compat): sin jobId, volvemos al polling clásico a Fal.
-      onProgress("Reanudando (Fal)…");
+      onProgress("Reanudando (Veo)…");
       await waitFalJob(existingToken, { signal, maxWaitMs: 6 * 60 * 60 * 1000, onProgress });
-      onProgress("Finalizando (Fal)…");
+      onProgress("Finalizando (Veo)…");
       const out = await apiPostJson<any>(
         "/api/ai/video/fal/finalize",
         { jobToken: existingToken, prompt },
@@ -670,7 +670,7 @@ const row = await waitJobCompletion(supabaseJobId, { signal, onProgress, pollMs:
     }
 
     // 2) Submit async
-    onProgress("Enviando solicitud (Fal)…");
+    onProgress("Enviando solicitud (Veo)…");
 
     const body = payload?.planBody || {};
     const submit = await apiPostJson<any>(
@@ -714,7 +714,7 @@ const row = await waitJobCompletion(supabaseJobId, { signal, onProgress, pollMs:
       }
 
       // Fallback raro: el job terminó pero no dejó assetId
-      onProgress("Finalizando (Fal)…");
+      onProgress("Finalizando (Veo)…");
       const out = await apiPostJson<any>(
         "/api/ai/video/fal/finalize",
         { jobToken, prompt },
@@ -727,9 +727,9 @@ const row = await waitJobCompletion(supabaseJobId, { signal, onProgress, pollMs:
     }
 
     // Fallback compat: backend no devolvió jobId
-    onProgress("Procesando (Fal)…");
+    onProgress("Procesando (Veo)…");
     await waitFalJob(jobToken, { signal, maxWaitMs: 6 * 60 * 60 * 1000, onProgress });
-    onProgress("Finalizando (Fal)…");
+    onProgress("Finalizando (Veo)…");
 
     const out = await apiPostJson<any>(
       "/api/ai/video/fal/finalize",

@@ -119,6 +119,241 @@ export function createAiVideoRouter(ctx) {
     );
 
   const PIAPI_BASE_URL = String(process.env.PIAPI_BASE_URL || "https://api.piapi.ai/api/v1").replace(/\/+$/, "");
+  const GOOGLE_API_BASE_URL = String(
+    process.env.GOOGLE_API_BASE_URL ||
+    process.env.GEMINI_API_BASE_URL ||
+    "https://generativelanguage.googleapis.com/v1beta"
+  ).replace(/\/+$/, "");
+
+  function isVeoModelId(value) {
+    return String(value || "").trim().toLowerCase().startsWith("veo-");
+  }
+
+  function normalizeGoogleOperationName(value) {
+    return String(value || "").trim().replace(/^\/+/, "");
+  }
+
+  function googleHeaders() {
+    const key = String(process.env.GEMINI_API_KEY || "").trim();
+    if (!key) {
+      throw httpError(500, "AI_NOT_CONFIGURED", "Falta GEMINI_API_KEY en el backend.");
+    }
+    return {
+      "x-goog-api-key": key,
+      "Content-Type": "application/json",
+    };
+  }
+
+  function buildGoogleInlineImage(imageObj) {
+    const mimeType = String(imageObj?.mimeType || "image/png").trim() || "image/png";
+    const data = String(imageObj?.imageBytes || imageObj?.data || "").trim();
+    if (!data) {
+      throw httpError(400, "ASSET_IMAGE_EMPTY", "No pude preparar la imagen para Google Veo.");
+    }
+    return { inlineData: { mimeType, data } };
+  }
+
+  function pickGoogleVideoUrl(payload) {
+    return (
+      payload?.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri ||
+      payload?.response?.generatedVideos?.[0]?.video?.uri ||
+      payload?.response?.generatedVideos?.[0]?.video?.url ||
+      payload?.response?.videos?.[0]?.uri ||
+      payload?.response?.videos?.[0]?.url ||
+      null
+    );
+  }
+
+  function getGoogleOperationErrorMessage(payload, fallback = "Google Veo request failed.") {
+    return String(
+      payload?.error?.message ||
+      payload?.error?.status ||
+      payload?.message ||
+      payload?.details?.message ||
+      fallback
+    ).trim();
+  }
+
+  function classifyGoogleVeoError(err, { defaultMessage = "Google Veo request failed.", fallbackStatus = 502 } = {}) {
+    const status = Number(err?.status || 0);
+    const data = err?.data || null;
+    const providerMessage = getGoogleOperationErrorMessage(data, String(err?.message || defaultMessage));
+    const details = {
+      provider: "google",
+      upstreamStatus: status || null,
+      response: data,
+    };
+
+    if (status === 400) {
+      return httpError(400, "GOOGLE_VEO_BAD_REQUEST", `Google Veo rechazó la solicitud: ${providerMessage}`, details);
+    }
+    if (status === 401 || status === 403) {
+      return httpError(502, "GOOGLE_VEO_AUTH_ERROR", `Google rechazó la autenticación o el acceso a Veo: ${providerMessage}`, details);
+    }
+    if (status === 408 || err?.name === "AbortError") {
+      return httpError(504, "GOOGLE_VEO_TIMEOUT", `Google Veo tardó demasiado en aceptar o resolver la operación: ${providerMessage}`, details);
+    }
+    if (status === 409 || status === 425 || status === 429) {
+      return httpError(503, "GOOGLE_VEO_BUSY", `Google Veo está saturado temporalmente: ${providerMessage}`, details);
+    }
+    if (status === 500 || status === 502 || status === 503 || status === 504) {
+      return httpError(503, "GOOGLE_VEO_UPSTREAM_ERROR", `Google Veo devolvió un error temporal: ${providerMessage}`, details);
+    }
+    if (!status) {
+      const message = String(err?.message || defaultMessage || "Google Veo request failed.").trim();
+      if (/aborted|timeout/i.test(message)) {
+        return httpError(504, "GOOGLE_VEO_TIMEOUT", `Google Veo tardó demasiado en aceptar o resolver la operación: ${message}`, details);
+      }
+      return httpError(503, "GOOGLE_VEO_NETWORK_ERROR", `No se pudo conectar con Google Veo: ${message}`, details);
+    }
+
+    return httpError(fallbackStatus, "GOOGLE_VEO_REQUEST_FAILED", providerMessage || defaultMessage, details);
+  }
+
+  async function googleVeoStartOperation({ model, instance, parameters }) {
+    let response;
+    let rawText = "";
+    let data = null;
+    try {
+      response = await fetch(`${GOOGLE_API_BASE_URL}/models/${encodeURIComponent(model)}:predictLongRunning`, {
+        method: "POST",
+        headers: googleHeaders(),
+        body: JSON.stringify({
+          instances: [instance],
+          ...(parameters && Object.keys(parameters).length ? { parameters } : {}),
+        }),
+      });
+
+      rawText = await response.text();
+      try {
+        data = rawText ? JSON.parse(rawText) : null;
+      } catch {
+        data = rawText ? { raw: rawText } : null;
+      }
+    } catch (err) {
+      throw classifyGoogleVeoError(err, { defaultMessage: "Google Veo request failed." });
+    }
+
+    if (!response.ok) {
+      const error = new Error(getGoogleOperationErrorMessage(data, `Google Veo error (${response.status})`));
+      error.status = response.status;
+      error.data = data;
+      throw classifyGoogleVeoError(error, { defaultMessage: "Google Veo request failed." });
+    }
+
+    const operationName = normalizeGoogleOperationName(data?.name);
+    if (!operationName) {
+      throw httpError(502, "GOOGLE_VEO_BAD_RESPONSE", "Google Veo no devolvió operation.name.", { response: data });
+    }
+
+    return { operationName, raw: data };
+  }
+
+  async function googleVeoGetOperation(operationName) {
+    const normalized = normalizeGoogleOperationName(operationName);
+    let response;
+    let rawText = "";
+    let data = null;
+    try {
+      response = await fetch(`${GOOGLE_API_BASE_URL}/${normalized}`, {
+        method: "GET",
+        headers: {
+          "x-goog-api-key": String(process.env.GEMINI_API_KEY || "").trim(),
+        },
+      });
+
+      rawText = await response.text();
+      try {
+        data = rawText ? JSON.parse(rawText) : null;
+      } catch {
+        data = rawText ? { raw: rawText } : null;
+      }
+    } catch (err) {
+      throw classifyGoogleVeoError(err, { defaultMessage: "Google Veo get operation failed." });
+    }
+
+    if (!response.ok) {
+      const error = new Error(getGoogleOperationErrorMessage(data, `Google Veo operation error (${response.status})`));
+      error.status = response.status;
+      error.data = data;
+      throw classifyGoogleVeoError(error, { defaultMessage: "Google Veo get operation failed." });
+    }
+
+    return data;
+  }
+
+  async function pollGoogleVeoUntilDone(operationName, { timeoutMs = 10 * 60 * 1000, intervalMs = 10_000 } = {}) {
+    const startedAt = Date.now();
+    let lastPayload = null;
+
+    while (Date.now() - startedAt <= timeoutMs) {
+      lastPayload = await googleVeoGetOperation(operationName);
+      if (lastPayload?.done === true) return lastPayload;
+      await sleep(intervalMs);
+    }
+
+    throw httpError(504, "GOOGLE_VEO_TIMEOUT", "Google Veo excedió el tiempo máximo de espera en modo sync.", {
+      operationName,
+      response: lastPayload,
+    });
+  }
+
+  async function upsertGoogleVideoJobRow({
+    ownerId,
+    kind = "video",
+    operationName,
+    jobToken,
+    toolName,
+    hint,
+    model,
+    prompt,
+    extra,
+  }) {
+    if (!supabaseAdmin) {
+      throw httpError(
+        500,
+        "SUPABASE_NOT_CONFIGURED",
+        "Supabase admin no está configurado en el backend."
+      );
+    }
+
+    const params = {
+      provider: "google",
+      operationName: operationName || null,
+      googleOperationName: operationName || null,
+      jobToken: jobToken || null,
+      toolName: toolName || null,
+      hint: hint || null,
+      model: model || null,
+      prompt: prompt || null,
+      ...(extra || {}),
+    };
+
+    await assertJobLimits({ supabaseAdmin, httpError, ownerId, kind });
+
+    const ins = await supabaseAdmin
+      .from("jobs")
+      .insert({
+        owner_id: ownerId,
+        kind,
+        status: "running",
+        params,
+        next_check_at: new Date().toISOString(),
+      })
+      .select("id")
+      .single();
+
+    if (!ins.error && ins.data?.id) return ins.data.id;
+
+    throw httpError(500, "JOB_INSERT_FAILED", "No pude crear el job async de Google Veo en la tabla jobs.", {
+      supabase: {
+        message: ins.error?.message,
+        code: ins.error?.code,
+        details: ins.error?.details,
+        hint: ins.error?.hint,
+      },
+    });
+  }
 
   function isSeedanceModelId(value) {
     const v = String(value || "").trim();
@@ -905,6 +1140,7 @@ if (/^kling-v2\.6$/i.test(selectedModelNorm)) {
 
 const isKling = selectedModelNorm.startsWith("kling-");
 const isSeedance = isSeedanceModelId(selectedModelNorm);
+const isVeo = isVeoModelId(selectedModelNorm);
 
     const clientJobIdNorm = clientJobId ? String(clientJobId || "").trim() : "";
 
@@ -934,18 +1170,20 @@ const isSeedance = isSeedanceModelId(selectedModelNorm);
       }
     }
 
-    if (isSeedance && clientJobIdNorm) {
+    if ((isSeedance || isVeo) && asyncMode && clientJobIdNorm) {
       const existing = await findVideoJobByClientJobId({
         ownerId: user.id,
         clientJobId: clientJobIdNorm,
       });
 
       if (existing?.id) {
+        const existingJobToken = existing?.params?.jobToken ? String(existing.params.jobToken) : "";
         return res.json({
           ok: true,
           mode: "async",
           jobId: existing.id,
           deduped: true,
+          ...(existingJobToken ? { jobToken: existingJobToken } : {}),
         });
       }
     }
@@ -2139,36 +2377,45 @@ const isSeedance = isSeedanceModelId(selectedModelNorm);
     }
 
     // =========================
-    // ✅ VEO via FAL (sin Gemini)
+    // ✅ VEO directo a Google Gemini API (sin Fal)
     // =========================
+
+    await ensureAI();
 
     // Si usan last frame, forzamos Veo 3.1 (first/last frame es feature de 3.1)
     let veoModel = selectedModelNorm;
-    const isVeo31 = veoModel.startsWith("veo-3.1");
+    let isVeo31 = veoModel.startsWith("veo-3.1");
+    const wantsFast = veoModel.includes("-fast-");
     if (hasLast && !isVeo31) {
-      veoModel = "veo-3.1-generate-preview";
+      veoModel = wantsFast ? "veo-3.1-fast-generate-preview" : "veo-3.1-generate-preview";
+      isVeo31 = true;
     }
 
-    const isFast = veoModel.includes("-fast-");
-    const baseEndpoint = isVeo31
-      ? `fal-ai/veo3.1${isFast ? "/fast" : ""}`
-      : `fal-ai/veo3${isFast ? "/fast" : ""}`;
-
-    // Elegimos el endpoint según frames
-    let endpointId = baseEndpoint;
-    if (hasFirst && hasLast) {
-      // Solo 3.1 tiene first/last
-      endpointId = `${baseEndpoint}/first-last-frame-to-video`;
-    } else if (hasFirst) {
-      endpointId = `${baseEndpoint}/image-to-video`;
-    }
-
-    // Fal: Veo retorna 1 video por request. Para no romper UI, forzamos 1.
     const requestedCount = 1;
+    const veoReferenceImageAssetIds = Array.isArray(referenceImageAssetIds)
+      ? referenceImageAssetIds.filter(Boolean).slice(0, 3)
+      : [];
 
-    // Aspect ratio
+    if (veoReferenceImageAssetIds.length && (hasFirst || hasLast)) {
+      throw httpError(
+        400,
+        "VEO_REFERENCE_MODE_CONFLICT",
+        "Google Veo no admite mezclar referenceImageAssetIds con firstFrame/lastFrame en la misma solicitud."
+      );
+    }
+
+    if (veoReferenceImageAssetIds.length && !isVeo31) {
+      throw httpError(
+        400,
+        "VEO_REFERENCE_REQUIRES_31",
+        "referenceImageAssetIds solo está disponible en Veo 3.1."
+      );
+    }
+
+    // Aspect ratio (Google Veo 3/3.1 soporta 16:9 o 9:16)
     let ar = aspectRatio || "16:9";
-    if (ar === "1:1") ar = "16:9";
+    if (ar === "1:1" || ar === "4:3") ar = "16:9";
+    if (ar === "3:4") ar = "9:16";
     // Parche conocido (también existe en el front): veo-3.0 + 1080p + 9:16
     if (veoModel.startsWith("veo-3.0") && !hasFirst && resolution === "1080p" && ar === "9:16") {
       ar = "16:9";
@@ -2178,103 +2425,106 @@ const isSeedance = isSeedanceModelId(selectedModelNorm);
     let reso = resolution || "720p";
     if (!isVeo31 && reso === "4k") reso = "1080p";
 
-    // Duration (Fal usa "4s"/"6s"/"8s")
+    // Duration (Google usa 4/6/8; 8s obligatorio para 1080p/4k, refs y first/last)
     let dur = durationSeconds != null ? Number(durationSeconds) : 8;
     dur = Math.trunc(dur);
     if (![4, 6, 8].includes(dur)) dur = 8;
-    if ((reso && reso !== "720p") || hasFirst || hasLast) dur = 8;
-    const duration = `${dur}s`;
+    if ((reso && reso !== "720p") || hasFirst || hasLast || veoReferenceImageAssetIds.length) dur = 8;
 
-    // Input base Fal
-    const falInput = {
-      prompt,
-      aspect_ratio: hasFirst ? "auto" : ar,
-      duration,
-      resolution: reso,
+    let firstImageObj = null;
+    let lastImageObj = null;
+    let referenceImageObjects = [];
 
-      // Igualamos el comportamiento anterior (Gemini): sin audio.
-      // Si luego quieres habilitar sonido para Veo, lo añadimos como toggle en la UI.
-      generate_audio: false,
-
-      auto_fix: true,
-      ...(negativePrompt ? { negative_prompt: negativePrompt } : {}),
-    };
-
-    // Frames: Fal necesita URLs accesibles
-    // Si el job queda en cola, URLs firmadas muy cortas pueden expirar.
-    const INPUT_URL_TTL_SECONDS = 60 * 60 * 6; // 6 horas
-
-    if (hasFirst && hasLast) {
-      falInput.first_frame_url = await assetIdToSignedUrl(
-        firstFrameAssetId,
-        user.id,
-        INPUT_URL_TTL_SECONDS
-      );
-      falInput.last_frame_url = await assetIdToSignedUrl(
-        lastFrameAssetId,
-        user.id,
-        INPUT_URL_TTL_SECONDS
-      );
-    } else if (hasFirst) {
-      falInput.image_url = await assetIdToSignedUrl(
-        firstFrameAssetId,
-        user.id,
-        INPUT_URL_TTL_SECONDS
+    if (hasFirst) {
+      firstImageObj = await assetIdToImageObject(firstFrameAssetId, user.id);
+    }
+    if (hasLast) {
+      lastImageObj = await assetIdToImageObject(lastFrameAssetId, user.id);
+    }
+    if (veoReferenceImageAssetIds.length) {
+      referenceImageObjects = await Promise.all(
+        veoReferenceImageAssetIds.map((assetId) => assetIdToImageObject(assetId, user.id))
       );
     }
 
-    // ✅ ASYNC real para Veo (jobs + background worker).
-    // Evita que /api/ai/video se quede esperando el poll de Fal dentro del request HTTP.
+    const instance = {
+      prompt,
+      ...(firstImageObj ? { image: buildGoogleInlineImage(firstImageObj) } : {}),
+      ...(lastImageObj ? { lastFrame: buildGoogleInlineImage(lastImageObj) } : {}),
+      ...(referenceImageObjects.length
+        ? {
+            referenceImages: referenceImageObjects.map((img) => ({
+              image: buildGoogleInlineImage(img),
+              referenceType: "asset",
+            })),
+          }
+        : {}),
+    };
+
+    const googleParameters = {
+      resolution: reso,
+      durationSeconds: dur,
+      ...(!hasFirst ? { aspectRatio: ar } : {}),
+      ...(negativePrompt ? { negativePrompt } : {}),
+    };
+
     if (asyncMode) {
-      const submit = await falQueueSubmit(endpointId, falInput);
+      const submit = await googleVeoStartOperation({
+        model: veoModel,
+        instance,
+        parameters: googleParameters,
+      });
 
       const jobToken = signJobToken({
         uid: user.id,
-        requestId: submit.requestId,
-        statusUrl: submit.statusUrl,
-        responseUrl: submit.responseUrl,
-        endpointId,
+        provider: "google",
+        operationName: submit.operationName,
         toolName,
         hint,
         model: veoModel,
-
-        // metadata útil (opcional, pero ayuda a debug/receta)
-        ar: hasFirst ? null : ar,
-        totalDur: dur,
-        firstFrameAssetId: firstFrameAssetId || null,
-        lastFrameAssetId: lastFrameAssetId || null,
       });
 
-      // Creamos job row para que el worker lo procese (provider="fal")
-      const jobId = await upsertFalJobRow({
+      const jobId = await upsertGoogleVideoJobRow({
         ownerId: user.id,
         kind: "video",
-        requestId: submit.requestId,
+        operationName: submit.operationName,
         jobToken,
-        statusUrl: submit.statusUrl,
-        responseUrl: submit.responseUrl,
-        endpointId,
         toolName,
         hint,
         model: veoModel,
         prompt,
         extra: {
-          ar: hasFirst ? null : ar,
+          clientJobId: clientJobIdNorm || null,
+          aspectRatio: hasFirst ? null : ar,
           resolution: reso,
           durationSeconds: dur,
           firstFrameAssetId: firstFrameAssetId || null,
           lastFrameAssetId: lastFrameAssetId || null,
+          referenceImageAssetIds: veoReferenceImageAssetIds,
+          meta: {
+            tool: toolName,
+            category: toolName,
+            provider: "google",
+            model: veoModel,
+            aspectRatio: hasFirst ? null : ar,
+            resolution: reso,
+            durationSeconds: dur,
+            count: requestedCount,
+            firstFrameAssetId: firstFrameAssetId || null,
+            lastFrameAssetId: lastFrameAssetId || null,
+            referenceImageAssetIds: veoReferenceImageAssetIds,
+            negativePrompt: negativePrompt || null,
+            googleOperationName: submit.operationName,
+          },
         },
       });
 
-      // ✅ Spend de créditos ANTES de aceptar el job (idempotente)
       const spend = await spendVideoCreditsOrReject({
         userId: user.id,
         req,
         modelNorm: veoModel,
         durationSeconds: dur,
         resolution: reso,
-        generateAudio: false,
         count: requestedCount,
         entryType: "ai_video_generate",
         refType: "job",
@@ -2282,7 +2532,6 @@ const isSeedance = isSeedanceModelId(selectedModelNorm);
       });
 
       if (!spend.ok) {
-        // rollback best-effort: borrar el job para que el worker no lo procese gratis
         try {
           await supabaseAdmin.from("jobs").delete().eq("id", jobId);
         } catch {}
@@ -2299,14 +2548,12 @@ const isSeedance = isSeedanceModelId(selectedModelNorm);
     }
 
     // ======= SYNC (solo si lo fuerzas con sync=true en dev) =======
-    // ✅ Spend de créditos ANTES de ejecutar generación (idempotente vía x-idempotency-key)
     const spend = await spendVideoCreditsOrReject({
       userId: user.id,
       req,
       modelNorm: veoModel,
       durationSeconds: dur,
       resolution: reso,
-      generateAudio: false,
       count: requestedCount,
       entryType: "ai_video_generate",
       refType: "ai_video",
@@ -2317,30 +2564,41 @@ const isSeedance = isSeedanceModelId(selectedModelNorm);
       return res.status(402).json({ ok: false, error: spend.error });
     }
 
-    const falJson = await falQueueRun(endpointId, falInput);
+    const submit = await googleVeoStartOperation({
+      model: veoModel,
+      instance,
+      parameters: googleParameters,
+    });
+    const operation = await pollGoogleVeoUntilDone(submit.operationName, {
+      timeoutMs: 12 * 60 * 1000,
+      intervalMs: 10_000,
+    });
 
-    const videoUrl =
-      falJson?.video?.url ||
-      falJson?.data?.video?.url ||
-      falJson?.videos?.[0]?.url ||
-      falJson?.output?.video?.url;
-
-    if (!videoUrl) {
-      throw httpError(502, "FAL_VEO_NO_VIDEO", "Fal/Veo no devolvió video.", {
-        endpointId,
-        response: falJson,
+    if (operation?.error) {
+      throw httpError(502, "GOOGLE_VEO_OPERATION_FAILED", getGoogleOperationErrorMessage(operation, "Google Veo reportó un error."), {
+        operationName: submit.operationName,
+        response: operation,
       });
     }
 
-    // Descargar mp4, subir a Supabase Storage, crear asset row
+    const videoUrl = pickGoogleVideoUrl(operation);
+    if (!videoUrl) {
+      throw httpError(502, "GOOGLE_VEO_NO_VIDEO", "Google Veo no devolvió video.", {
+        operationName: submit.operationName,
+        response: operation,
+      });
+    }
+
     const urlExpiresInSeconds = 60 * 60;
 
-    const videoResp = await fetch(videoUrl);
+    const videoResp = await fetch(videoUrl, {
+      headers: { "x-goog-api-key": String(process.env.GEMINI_API_KEY || "").trim() },
+    });
     if (!videoResp.ok) {
       throw httpError(
         502,
-        "FAL_VEO_VIDEO_DOWNLOAD_FAILED",
-        `No pude descargar el video de Fal (${videoResp.status}).`
+        "GOOGLE_VEO_VIDEO_DOWNLOAD_FAILED",
+        `No pude descargar el video de Google Veo (${videoResp.status}).`
       );
     }
 
@@ -2359,16 +2617,16 @@ const isSeedance = isSeedanceModelId(selectedModelNorm);
 
     const meta = {
       tool: toolName,
-      provider: "fal",
+      provider: "google",
       model: veoModel,
-      endpointId,
+      googleOperationName: submit.operationName,
       aspectRatio: hasFirst ? null : ar,
       resolution: reso,
       durationSeconds: dur,
       count: requestedCount,
       firstFrameAssetId: firstFrameAssetId || null,
       lastFrameAssetId: lastFrameAssetId || null,
-      generateAudio: false,
+      referenceImageAssetIds: veoReferenceImageAssetIds,
       negativePrompt: negativePrompt || null,
     };
 

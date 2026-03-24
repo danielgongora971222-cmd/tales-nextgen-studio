@@ -1543,6 +1543,104 @@ async function falQueueResult(responseUrl) {
   return falJson;
 }
 
+const GOOGLE_API_BASE_URL = String(
+  process.env.GOOGLE_API_BASE_URL ||
+  process.env.GEMINI_API_BASE_URL ||
+  "https://generativelanguage.googleapis.com/v1beta"
+).replace(/\/+$/, "");
+
+function normalizeGoogleOperationName(value) {
+  return String(value || "").trim().replace(/^\/+/, "");
+}
+
+function getGoogleOperationErrorMessage(payload, fallback = "Google Veo request failed.") {
+  return String(
+    payload?.error?.message ||
+    payload?.error?.status ||
+    payload?.message ||
+    payload?.details?.message ||
+    fallback
+  ).trim();
+}
+
+function pickGoogleVideoUrl(payload) {
+  return (
+    payload?.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri ||
+    payload?.response?.generatedVideos?.[0]?.video?.uri ||
+    payload?.response?.generatedVideos?.[0]?.video?.url ||
+    payload?.response?.videos?.[0]?.uri ||
+    payload?.response?.videos?.[0]?.url ||
+    null
+  );
+}
+
+async function googleVeoGetOperation(operationName) {
+  const normalized = normalizeGoogleOperationName(operationName);
+  if (!normalized) {
+    throw httpError(400, "GOOGLE_VEO_OPERATION_MISSING", "Falta operationName para consultar Google Veo.");
+  }
+  if (!GEMINI_API_KEY) {
+    throw httpError(500, "AI_NOT_CONFIGURED", "Falta GEMINI_API_KEY en el backend.");
+  }
+
+  const response = await fetch(`${GOOGLE_API_BASE_URL}/${normalized}`, {
+    method: "GET",
+    headers: { "x-goog-api-key": GEMINI_API_KEY },
+  });
+
+  const rawText = await response.text();
+  let data = null;
+  try {
+    data = rawText ? JSON.parse(rawText) : null;
+  } catch {
+    data = rawText ? { raw: rawText } : null;
+  }
+
+  if (!response.ok) {
+    throw httpError(
+      response.status >= 400 && response.status < 500 ? 400 : 502,
+      "GOOGLE_VEO_OPERATION_ERROR",
+      getGoogleOperationErrorMessage(data, `Google Veo operation error (${response.status})`),
+      { upstreamStatus: response.status, response: data }
+    );
+  }
+
+  return data;
+}
+
+async function findVideoJobByJobToken({ ownerId, jobToken, operationName = null }) {
+  if (!supabaseAdmin) return null;
+
+  let query = supabaseAdmin
+    .from("jobs")
+    .select("id,status,error,result_asset_id,params")
+    .eq("owner_id", ownerId)
+    .eq("kind", "video")
+    .order("created_at", { ascending: false })
+    .limit(1);
+
+  if (jobToken) {
+    query = query.filter("params->>jobToken", "eq", String(jobToken));
+  } else if (operationName) {
+    query = query.filter("params->>operationName", "eq", String(operationName));
+  } else {
+    return null;
+  }
+
+  const r = await query.maybeSingle();
+  if (r.error && r.error.code !== "PGRST116") {
+    throw httpError(500, "DB_ERROR", "No pude leer el job async de video.", {
+      supabase: {
+        message: r.error?.message,
+        code: r.error?.code,
+        details: r.error?.details,
+        hint: r.error?.hint,
+      },
+    });
+  }
+  return r.data || null;
+}
+
 async function falQueueRun(endpointId, input) {
   const auth = falAuthHeader();
   if (!auth) {
@@ -3914,6 +4012,48 @@ app.post("/api/ai/video/fal/status", async (req, res, next) => {
     const t = verifyJobToken(jobToken);
     if (t.uid !== user.id) throw httpError(403, "JOB_NOT_YOURS", "Este job no pertenece a tu usuario.");
 
+    if (String(t.provider || "").toLowerCase() === "google") {
+      const operationName = normalizeGoogleOperationName(t.operationName || t.googleOperationName || "");
+      const jobRow = await findVideoJobByJobToken({ ownerId: user.id, jobToken, operationName });
+
+      if (jobRow?.status === "succeeded" && jobRow.result_asset_id) {
+        return res.json({ ok: true, status: "COMPLETED" });
+      }
+      if (jobRow?.status === "failed") {
+        return res.json({
+          ok: true,
+          status: "FAILED",
+          error: jobRow.error || jobRow?.params?.providerStatusDetail || "Google Veo job failed",
+        });
+      }
+
+      if (!operationName) {
+        return res.json({ ok: true, status: "RUNNING" });
+      }
+
+      try {
+        const op = await googleVeoGetOperation(operationName);
+        if (op?.done === true && op?.error) {
+          return res.json({
+            ok: true,
+            status: "FAILED",
+            error: getGoogleOperationErrorMessage(op, "Google Veo job failed"),
+          });
+        }
+        if (op?.done === true) {
+          return res.json({ ok: true, status: "COMPLETED" });
+        }
+      } catch (e) {
+        const message = String(e?.message || e || "Google Veo status error");
+        const status = Number(e?.status || 0);
+        if ((status >= 400 && status < 500) || /AI_NOT_CONFIGURED/i.test(message)) {
+          return res.json({ ok: true, status: "FAILED", error: message });
+        }
+      }
+
+      return res.json({ ok: true, status: "RUNNING" });
+    }
+
     const st = await falQueueStatus(t.statusUrl);
     const status = st?.status || "UNKNOWN";
 
@@ -3936,6 +4076,119 @@ app.post("/api/ai/video/fal/finalize", async (req, res, next) => {
 
     const t = verifyJobToken(jobToken);
     if (t.uid !== user.id) throw httpError(403, "JOB_NOT_YOURS", "Este job no pertenece a tu usuario.");
+
+    if (String(t.provider || "").toLowerCase() === "google") {
+      const operationName = normalizeGoogleOperationName(t.operationName || t.googleOperationName || "");
+      const toolName = t.toolName || "VideoGeneratorTool";
+      const hint = t.hint || "veo";
+      const selectedModelNorm = t.model || "veo-3.1-generate-preview";
+
+      const jobRow = await findVideoJobByJobToken({ ownerId: user.id, jobToken, operationName });
+      if (jobRow?.status === "succeeded" && jobRow.result_asset_id) {
+        const urlExpiresInSeconds = 60 * 60;
+        const url = await assetIdToSignedUrl(jobRow.result_asset_id, user.id, urlExpiresInSeconds);
+        return res.json({
+          ok: true,
+          items: [{ url, assetId: jobRow.result_asset_id }],
+          url,
+          assetId: jobRow.result_asset_id,
+          urlExpiresInSeconds,
+        });
+      }
+      if (jobRow?.status === "failed") {
+        throw httpError(502, "GOOGLE_VEO_JOB_FAILED", jobRow.error || "Google Veo job failed.");
+      }
+
+      const op = await googleVeoGetOperation(operationName);
+      if (op?.done !== true) {
+        return res.status(202).json({ ok: true, status: "RUNNING" });
+      }
+      if (op?.error) {
+        throw httpError(502, "GOOGLE_VEO_OPERATION_FAILED", getGoogleOperationErrorMessage(op, "Google Veo reportó un error."), {
+          operationName,
+          response: op,
+        });
+      }
+
+      const videoUrl = pickGoogleVideoUrl(op);
+      if (!videoUrl) {
+        throw httpError(502, "GOOGLE_VEO_NO_VIDEO", "Google Veo no devolvió video.", {
+          operationName,
+          response: op,
+        });
+      }
+
+      const videoResp = await fetch(videoUrl, {
+        headers: { "x-goog-api-key": GEMINI_API_KEY },
+      });
+      if (!videoResp.ok) {
+        throw httpError(
+          502,
+          "GOOGLE_VEO_VIDEO_DOWNLOAD_FAILED",
+          `No pude descargar el video de Google Veo (${videoResp.status}).`
+        );
+      }
+
+      const bytes = Buffer.from(await videoResp.arrayBuffer());
+      const mimeType = videoResp.headers.get("content-type") || "video/mp4";
+
+      const uploaded = await uploadBufferToStorage({
+        userId: user.id,
+        tool: toolName,
+        buffer: bytes,
+        mimeType,
+        nameHint: hint,
+      });
+
+      const storagePath = uploaded.storagePath;
+      const meta = {
+        tool: toolName,
+        provider: "google",
+        model: selectedModelNorm,
+        googleOperationName: operationName || null,
+      };
+
+      const assetId = await insertAssetRow({
+        ownerId: user.id,
+        type: "video",
+        tool: toolName,
+        name: hint,
+        prompt,
+        storagePath,
+        isPublic: false,
+        meta,
+      });
+
+      const urlExpiresInSeconds = 60 * 60;
+      const url = await signStoragePath(storagePath, urlExpiresInSeconds);
+
+      if (jobRow?.id) {
+        const { error: upErr } = await supabaseAdmin
+          .from("jobs")
+          .update({
+            status: "succeeded",
+            result_asset_id: assetId,
+            finished_at: new Date().toISOString(),
+            error: null,
+            next_check_at: null,
+            locked_at: null,
+            locked_by: null,
+          })
+          .eq("id", jobRow.id)
+          .eq("owner_id", user.id)
+          .eq("kind", "video");
+
+        if (upErr) console.warn("[GOOGLE_VEO_FINALIZE][JOB_UPDATE_FAILED]", upErr);
+      }
+
+      return res.json({
+        ok: true,
+        items: [{ url, assetId }],
+        url,
+        assetId,
+        urlExpiresInSeconds,
+      });
+    }
 
     // Idempotencia: si el Background Worker ya finalizó este requestId, devolvemos el asset existente.
     let jobRow = null;

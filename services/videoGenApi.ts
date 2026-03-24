@@ -93,7 +93,7 @@ export async function resumeFalFinalize(
   job: PendingFalJob,
   opts?: { signal?: AbortSignal; onProgress?: (msg: string) => void; maxWaitMs?: number }
 ) {
-  opts?.onProgress?.("Reanudando (Fal)…");
+  opts?.onProgress?.("Reanudando (Veo)…");
 
   await waitFalJob(job.jobToken, {
     signal: opts?.signal,
@@ -102,7 +102,7 @@ export async function resumeFalFinalize(
     onProgress: opts?.onProgress,
   });
 
-  opts?.onProgress?.("Finalizando (Fal)…");
+  opts?.onProgress?.("Finalizando (Veo)…");
 
   return apiPostJson(
     "/api/ai/video/fal/finalize",
@@ -407,7 +407,7 @@ export async function waitFalJob(
     if (opts?.signal?.aborted) throw makeCanceledError();
 
     const elapsed = Math.round((Date.now() - t0) / 1000);
-    opts?.onProgress?.(`Procesando (Fal) · ${elapsed}s`);
+    opts?.onProgress?.(`Procesando (Veo) · ${elapsed}s`);
 
     let st: any;
     try {
@@ -446,11 +446,11 @@ export async function waitFalJob(
     }
 
     if (status === "FAILED") {
-      throw new Error(st?.error || "Fal job FAILED");
+      throw new Error(st?.error || "Veo job FAILED");
     }
 
     if (Date.now() - t0 > maxWaitMs) {
-      throw new Error("Timeout esperando Kling V3 (Fal).");
+      throw new Error("Timeout esperando Veo.");
     }
 
     // backoff suave (evita spamear backend)
