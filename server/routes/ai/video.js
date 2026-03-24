@@ -146,11 +146,21 @@ export function createAiVideoRouter(ctx) {
 
   function buildGoogleInlineImage(imageObj) {
     const mimeType = String(imageObj?.mimeType || "image/png").trim() || "image/png";
-    const data = String(imageObj?.imageBytes || imageObj?.data || "").trim();
+    const data = String(
+      imageObj?.bytesBase64Encoded ||
+      imageObj?.imageBytes ||
+      imageObj?.data ||
+      imageObj?.inlineData?.data ||
+      ""
+    ).trim();
     if (!data) {
       throw httpError(400, "ASSET_IMAGE_EMPTY", "No pude preparar la imagen para Google Veo.");
     }
-    return { inlineData: { mimeType, data } };
+
+    // Importante: el endpoint predictLongRunning de Veo usa el schema oficial
+    // VideoGenerationModelInstance/Image, que espera { mimeType, bytesBase64Encoded }
+    // (o gcsUri), no { inlineData }. inlineData dispara HTTP 400 en Veo 3.1.
+    return { mimeType, bytesBase64Encoded: data };
   }
 
   function pickGoogleVideoUrl(payload) {
