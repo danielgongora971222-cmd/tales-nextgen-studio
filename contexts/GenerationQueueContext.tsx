@@ -63,10 +63,10 @@ type Ctx = {
 const GenerationQueueContext = createContext<Ctx | undefined>(undefined);
 
 const QUEUE_VERSION = 1;
-const MAX_ACTIVE_JOBS = 5;        // total activos (queued + running)
+const MAX_ACTIVE_JOBS = 1;        // 1 video activo por usuario en el cliente
 const CONCURRENCY = 1;            // 1 a la vez (evita 429/Kling parallel limits)
-const SUBMIT_TIMEOUT_MS = 3 * 60 * 1000; // 3 min (cubre retries con Retry-After)
-const SUBMIT_RETRIES = 4;              // reintentos (429 con Retry-After)
+const SUBMIT_TIMEOUT_MS = 12 * 60 * 1000; // margen amplio para esperar Retry-After sin fallar al usuario
+const SUBMIT_RETRIES = 10;             // reintentos largos para saturación temporal / colas del proveedor
 const STORAGE_PREFIX = "tales_generation_queue_v";
 
 function storageKey(userId: string) {

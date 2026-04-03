@@ -14,6 +14,7 @@ import {
 } from "../../services/assetsApi";
 import { apiPostJson, formatErr } from "../../services/videoGenApi";
 import { waitJobCompletion } from "../../services/jobsApi";
+import { SEEDANCE_REPAIR_MESSAGE, useVideoGenerationLock } from "../../hooks/useVideoGenerationLock";
 import { EditHistorySection } from "./video/EditHistorySection";
 import { ViewerModal } from "./video/viewermodal";
 import { Icon } from "./video/icon";
@@ -299,6 +300,9 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
 
   // Pending resume
   const [pendingJob, setPendingJob] = useState<PendingVideoEditJob | null>(null);
+
+  const { hasActiveVideoJob, busyMessage: activeVideoBusyMessage } = useVideoGenerationLock();
+  const videoSlotBusy = hasActiveVideoJob && !isGenerating;
 
   const selectedModel = useMemo(() => MODEL_OPTIONS.find((m) => m.id === coerceModelId(model)) ?? MODEL_OPTIONS[0], [model]);
 
@@ -1588,6 +1592,16 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     if (isGenerating) return;
     setError(null);
 
+    if (isSeedanceModelId(model)) {
+      setError(SEEDANCE_REPAIR_MESSAGE);
+      return;
+    }
+
+    if (videoSlotBusy) {
+      setError(activeVideoBusyMessage || "Ya tienes un video en proceso. Espera a que termine antes de lanzar otro.");
+      return;
+    }
+
     const built = validateAndBuildRequest();
     if (!built.ok) {
       // Narrowing explícito para TS
@@ -1608,7 +1622,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
       const resp = await apiPostJson<any>(
         endpoint,
         body,
-        { signal: ctrl.signal, timeoutMs: 120_000, retries: 0 }
+        { signal: ctrl.signal, timeoutMs: 12 * 60 * 1000, retries: 10 }
       );
 
       if (!resp?.ok || resp?.mode !== "async" || !resp?.jobId) {
@@ -1638,7 +1652,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
       setIsGenerating(false);
       abortRef.current = null;
     }
-  }, [isGenerating, validateAndBuildRequest, model, savePending]);
+  }, [activeVideoBusyMessage, isGenerating, model, savePending, validateAndBuildRequest, videoSlotBusy]);
 
   const onResumePending = useCallback(async () => {
     const pj = loadPending();
@@ -2217,6 +2231,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
                   isGenerating ||
                   !user ||
                   combinedRefsCount > maxCombinedRefs ||
+                  videoSlotBusy ||
                   (isSeedanceModel
                     ? ((prompt || "").trim().length === 0 || (!inputVideo && referenceImageIds.length === 0))
                     : (model === "kling-o3-ref-to-video-pro"
@@ -2379,7 +2394,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
             setShots={setShots}
             totalSeconds={multishotTotalSeconds}
             mentionItems={promptMentionItems}
-            generateDisabled={isGenerating || !multishotReady || !user || combinedRefsCount > maxCombinedRefs}
+            generateDisabled={isGenerating || videoSlotBusy || !multishotReady || !user || combinedRefsCount > maxCombinedRefs}
             onGenerate={() => {
               setMultishotOpen(false);
               onGenerate();

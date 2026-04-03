@@ -13,6 +13,7 @@ import { apiPostJson, formatErr } from "../../services/videoGenApi";
 import { toggleLike } from "../../services/socialApi";
 import { syncFavoriteAssetState } from "../../services/favoriteAssets";
 import { waitJobCompletion } from "../../services/jobsApi";
+import { useVideoGenerationLock } from "../../hooks/useVideoGenerationLock";
 import { estimateVideoCostCredits } from "../../config/pricing.js";
 import { HistorySection } from "./video/HistorySection";
 import { AssetPickerModal } from "./video/AssetPickerModal";
@@ -312,6 +313,9 @@ export default function MotionControlTool() {
   const [progressMsg, setProgressMsg] = useState("");
   const [pendingJob, setPendingJob] = useState<PendingMotionControlJob | null>(null);
 
+  const { hasActiveVideoJob, busyMessage: activeVideoBusyMessage } = useVideoGenerationLock();
+  const videoSlotBusy = hasActiveVideoJob && !isGenerating;
+
   const hoverVideoEls = useRef<Record<string, HTMLVideoElement | null>>({});
   const abortRef = useRef<AbortController | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -333,7 +337,7 @@ export default function MotionControlTool() {
   const pickerLoading = pickerKind === "image" ? imageLibraryLoading : videoLibraryLoading;
   const pickerTitle = pickerKind === "image" ? "Choose your character" : "Choose motion to copy";
 
-  const canGenerate = Boolean(user && refImage && refVideo && !isGenerating);
+  const canGenerate = Boolean(user && refImage && refVideo && !isGenerating && !videoSlotBusy);
   const selectedModelLabel = getMotionControlModelLabel(model);
   const selectedQualityLabel = getMotionQualityLabel(mode);
   const selectedCreateFromLabel = characterOrientation === "image" ? "From image" : "From video";
@@ -610,8 +614,8 @@ export default function MotionControlTool() {
         async: true,
       },
       {
-        timeoutMs: 60_000,
-        retries: 3,
+        timeoutMs: 12 * 60 * 1000,
+        retries: 10,
         idempotencyKey: buildMotionIdempotencyKey(job.clientJobId),
       }
     );
@@ -675,7 +679,6 @@ export default function MotionControlTool() {
 
   const resumePendingJob = useCallback(async (job: PendingMotionControlJob) => {
     openCook();
-    setPanel("advanced");
     setPendingJob(job);
     setIsGenerating(true);
     setProgressMsg(
@@ -689,6 +692,11 @@ export default function MotionControlTool() {
   const handleGenerate = useCallback(async () => {
     if (!user) {
       setError("Necesitas iniciar sesión para usar esta herramienta.");
+      return;
+    }
+
+    if (videoSlotBusy) {
+      setError(activeVideoBusyMessage || "Ya tienes un video en proceso. Espera a que termine antes de lanzar otro.");
       return;
     }
 
@@ -724,7 +732,6 @@ export default function MotionControlTool() {
     setIsGenerating(true);
     setProgressMsg(`Queueing (${selectedModelLabel})…`);
     openCook();
-    setPanel("advanced");
 
     try {
       await runMotionControlJob(draftJob);
@@ -739,7 +746,7 @@ export default function MotionControlTool() {
       setIsGenerating(false);
       abortRef.current = null;
     }
-  }, [characterOrientation, mode, model, openCook, prompt, refImage, refVideo, runMotionControlJob, selectedModelLabel, user]);
+  }, [activeVideoBusyMessage, characterOrientation, mode, model, openCook, prompt, refImage, refVideo, runMotionControlJob, selectedModelLabel, user, videoSlotBusy]);
 
   const openViewer = useCallback(async (asset: Asset) => {
     setViewer(asset);
@@ -783,7 +790,6 @@ export default function MotionControlTool() {
     setCharacterOrientation(pending.characterOrientation === "image" ? "image" : "video");
     setMode(pending.mode === "pro" ? "pro" : "std");
     setModel(normalizeMotionControlModel(pending.model));
-    setPanel("advanced");
     openCook();
     void restorePendingAssets(pending);
     void resumePendingJob(pending);
@@ -905,6 +911,7 @@ export default function MotionControlTool() {
                 void handleGenerate();
               }}
               disabled={!canGenerate}
+              title={!canGenerate && videoSlotBusy ? activeVideoBusyMessage || undefined : undefined}
               data-loading={isGenerating ? "true" : "false"}
             >
               <span className={styles.motionGenerateLabel}>{generateButtonLabel}</span>
@@ -1173,6 +1180,10 @@ export default function MotionControlTool() {
                         <span className={styles.generateSpinner} aria-hidden="true" />
                         <span>{progressMsg}</span>
                       </div>
+                    )}
+
+                    {videoSlotBusy && !isGenerating && activeVideoBusyMessage && (
+                      <div className={styles.progressText}>{activeVideoBusyMessage}</div>
                     )}
 
                     {isGenerating ? (

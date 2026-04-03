@@ -370,6 +370,90 @@ export function createAiVideoRouter(ctx) {
     return v === "seedance-2-preview" || v === "seedance-2-fast-preview";
   }
 
+  const SEEDANCE_MODELS_ENABLED = String(process.env.SEEDANCE_MODELS_ENABLED || "").trim() === "1";
+
+  function ensureSeedanceEnabled() {
+    if (SEEDANCE_MODELS_ENABLED) return;
+    throw httpError(
+      409,
+      "SEEDANCE_TEMPORARILY_DISABLED",
+      "Seedance 2.0 está temporalmente en reparación. Usa Kling o Veo mientras terminamos el ajuste.",
+      { provider: "piapi", modelFamily: "seedance-2" }
+    );
+  }
+
+  async function findBlockingUserVideoJob({ ownerId, excludeClientJobId = null }) {
+    const activeWindowMin = Math.max(5, Number(process.env.USER_VIDEO_ACTIVE_WINDOW_MINUTES || 45));
+    const activeSinceIso = new Date(Date.now() - activeWindowMin * 60 * 1000).toISOString();
+
+    const r = await supabaseAdmin
+      .from("jobs")
+      .select("id, status, params, created_at, updated_at")
+      .eq("kind", "video")
+      .eq("owner_id", ownerId)
+      .in("status", ["queued", "running"])
+      .is("result_asset_id", null)
+      .gte("updated_at", activeSinceIso)
+      .order("created_at", { ascending: true });
+
+    if (r.error) {
+      throw httpError(500, "DB_ERROR", "No pude validar el estado de tus videos activos.", {
+        supabase: {
+          message: r.error?.message,
+          code: r.error?.code,
+          details: r.error?.details,
+          hint: r.error?.hint,
+        },
+      });
+    }
+
+    const rows = Array.isArray(r.data) ? r.data : [];
+    const exclude = String(excludeClientJobId || "").trim();
+
+    const filtered = exclude
+      ? rows.filter((row) => String(row?.params?.clientJobId || "").trim() !== exclude)
+      : rows;
+
+    return filtered[0] || null;
+  }
+
+  function respondUserVideoSlotBusy(res, blockingJob) {
+    const retryAfterSeconds = Math.max(
+      5,
+      Math.min(90, Number(process.env.USER_VIDEO_SLOT_RETRY_AFTER_SECONDS || 30))
+    );
+
+    res
+      .status(429)
+      .set("Retry-After", String(retryAfterSeconds))
+      .json({
+        ok: false,
+        error: {
+          code: "VIDEO_USER_SLOT_BUSY",
+          message: "Ya tienes un video en proceso. Espera a que termine y reintentamos automáticamente.",
+          details: {
+            retryAfterSeconds,
+            activeJobId: blockingJob?.id || null,
+            provider: blockingJob?.params?.provider || null,
+            model: blockingJob?.params?.model || null,
+            tool: blockingJob?.params?.toolName || blockingJob?.params?.tool || null,
+          },
+        },
+      });
+  }
+
+  async function enforceUserVideoSlot(res, ownerId, { clientJobId = null } = {}) {
+    const blockingJob = await findBlockingUserVideoJob({
+      ownerId,
+      excludeClientJobId: clientJobId || null,
+    });
+
+    if (!blockingJob) return false;
+
+    respondUserVideoSlotBusy(res, blockingJob);
+    return true;
+  }
+
   function getPiapiApiKey() {
     const key = String(process.env.PIAPI_API_KEY || process.env.PIAPI_KEY || "").trim();
     if (!key) {
@@ -1196,6 +1280,17 @@ const isVeo = isVeoModelId(selectedModelNorm);
           ...(existingJobToken ? { jobToken: existingJobToken } : {}),
         });
       }
+    }
+
+    if (isSeedance) {
+      ensureSeedanceEnabled();
+    }
+
+    if (asyncMode) {
+      const blockedByOwnSlot = await enforceUserVideoSlot(res, user.id, {
+        clientJobId: clientJobIdNorm || null,
+      });
+      if (blockedByOwnSlot) return;
     }
 
     // ✅ Kling (API oficial): si está al límite (global/per-user), devolvemos 429 con Retry-After
@@ -2681,23 +2776,6 @@ const isVeo = isVeoModelId(selectedModelNorm);
         const active = await ctx.billing.requireActiveSubscription(user.id);
         if (active.error) return res.status(403).json({ ok: false, error: active.error });
 
-        const rl = await checkUserRateLimit({
-          userId: user.id,
-          scope: "ai_video_edit",
-          windowMs: 60 * 1000,
-          max: 4,
-        });
-        if (!rl.ok) {
-          return res.status(429).json({
-            ok: false,
-            error: {
-              code: "RATE_LIMITED",
-              message: "Demasiadas ediciones de video por usuario. Espera un momento.",
-              details: { scope: "ai_video_edit_user", retryAfterSeconds: rl.retryAfterSeconds },
-            },
-          });
-        }
-
         const body = VideoEditRequestSchema.parse(req.body);
         const referenceVideoDurationSeconds = coerceReferenceVideoDurationSeconds(body.referenceVideoDurationSeconds);
 
@@ -2712,6 +2790,9 @@ const isVeo = isVeoModelId(selectedModelNorm);
             "Video Edit requiere modo async (Kling Tasks)."
           );
         }
+
+        const blockedByOwnSlot = await enforceUserVideoSlot(res, user.id);
+        if (blockedByOwnSlot) return;
 
         // ⚠️ Kling debe poder descargar inputs durante cola/ejecución.
         const INPUT_URL_TTL_SECONDS = 60 * 60 * 6; // 6 horas
@@ -3006,6 +3087,23 @@ const isVeo = isVeoModelId(selectedModelNorm);
         const blocked = await enforceKlingParallelLimit(res, user.id);
         if (blocked) return;
 
+        const rl = await checkUserRateLimit({
+          userId: user.id,
+          scope: "ai_video_edit",
+          windowMs: 60 * 1000,
+          max: 4,
+        });
+        if (!rl.ok) {
+          return res.status(429).json({
+            ok: false,
+            error: {
+              code: "RATE_LIMITED",
+              message: "Demasiadas ediciones de video por usuario. Espera un momento.",
+              details: { scope: "ai_video_edit_user", retryAfterSeconds: rl.retryAfterSeconds },
+            },
+          });
+        }
+
         // ✅ Spend de créditos ANTES de crear la tarea (idempotente vía x-idempotency-key)
         const pricingDurationSeconds =
           kind === "reference-to-video"
@@ -3148,7 +3246,12 @@ const isVeo = isVeoModelId(selectedModelNorm);
         const active = await ctx.billing.requireActiveSubscription(user.id);
         if (active.error) return res.status(403).json({ ok: false, error: active.error });
 
+        ensureSeedanceEnabled();
+
         const body = SeedanceVideoEditRequestSchema.parse(req.body || {});
+        const blockedByOwnSlot = await enforceUserVideoSlot(res, user.id);
+        if (blockedByOwnSlot) return;
+
         const visiblePrompt = normalizeSeedancePrompt(body.prompt);
         if (!visiblePrompt) {
           throw httpError(400, "SEEDANCE_PROMPT_REQUIRED", "Seedance 2.0 requiere un prompt.");
@@ -3304,23 +3407,6 @@ const isVeo = isVeoModelId(selectedModelNorm);
       const { user, error } = await requireUser(req);
       if (error) return res.status(401).json({ ok: false, error });
 
-      const rl = await checkUserRateLimit({
-        userId: user.id,
-        scope: "ai_motion_control",
-        windowMs: 60 * 1000,
-        max: 4,
-      });
-      if (!rl.ok) {
-        return res.status(429).json({
-          ok: false,
-          error: {
-            code: "RATE_LIMITED",
-            message: "Demasiadas solicitudes motion-control por usuario. Espera un momento.",
-            details: { scope: "ai_motion_control_user", retryAfterSeconds: rl.retryAfterSeconds },
-          },
-        });
-      }
-
       const body = MotionControlRequestSchema.parse(req.body);
       const referenceVideoDurationSeconds = coerceReferenceVideoDurationSeconds(body.referenceVideoDurationSeconds);
 
@@ -3352,8 +3438,30 @@ const isVeo = isVeoModelId(selectedModelNorm);
       }
 
       if (asyncMode) {
+        const blockedByOwnSlot = await enforceUserVideoSlot(res, user.id, {
+          clientJobId: clientJobIdNorm || null,
+        });
+        if (blockedByOwnSlot) return;
+
         const blocked = await enforceKlingParallelLimit(res, user.id);
         if (blocked) return;
+      }
+
+      const rl = await checkUserRateLimit({
+        userId: user.id,
+        scope: "ai_motion_control",
+        windowMs: 60 * 1000,
+        max: 4,
+      });
+      if (!rl.ok) {
+        return res.status(429).json({
+          ok: false,
+          error: {
+            code: "RATE_LIMITED",
+            message: "Demasiadas solicitudes motion-control por usuario. Espera un momento.",
+            details: { scope: "ai_motion_control_user", retryAfterSeconds: rl.retryAfterSeconds },
+          },
+        });
       }
 
       // ✅ Spend de créditos ANTES de encolar motion-control

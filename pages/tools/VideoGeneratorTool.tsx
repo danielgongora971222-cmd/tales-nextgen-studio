@@ -19,6 +19,7 @@ import {
 } from "../../services/klingElementsService";
 import { formatErr } from "../../services/videoGenApi";
 import { useGenerationQueue } from "../../contexts/GenerationQueueContext";
+import { SEEDANCE_REPAIR_MESSAGE, useVideoGenerationLock } from "../../hooks/useVideoGenerationLock";
 import { FramePickerModal } from "./video/FramePickerModal";
 import { LimitedTextarea, KLING_V3_SHOT_PROMPT_LIMIT } from "./video/LimitedTextarea";
 import { KlingElementsModal } from "./video/KlingElementsModal";
@@ -384,6 +385,7 @@ const VideoGeneratorTool: React.FC = () => {
     useGenerationQueue();
 
   const videoQueueJobs = useMemo(() => queueJobs.filter((j) => j.type === "video_generate"), [queueJobs]);
+  const { hasActiveVideoJob, busyMessage: activeVideoBusyMessage } = useVideoGenerationLock();
 
   const activeVideoQueueJobs = useMemo(
     () => videoQueueJobs.filter((j) => j.status === "queued" || j.status === "running"),
@@ -391,6 +393,7 @@ const VideoGeneratorTool: React.FC = () => {
   );
 
   const isGenerating = useMemo(() => activeVideoQueueJobs.some((j) => j.status === "running"), [activeVideoQueueJobs]);
+  const videoSlotBusy = hasActiveVideoJob && !isGenerating;
 
   const progressText = useMemo(() => {
     const running = activeVideoQueueJobs
@@ -1898,6 +1901,16 @@ const durationLabel = useMemo(() => {
   const handleGenerate = async () => {
     setError(null);
 
+    if (isSeedanceModel) {
+      setError(SEEDANCE_REPAIR_MESSAGE);
+      return;
+    }
+
+    if (videoSlotBusy) {
+      setError(activeVideoBusyMessage || "Ya tienes un video en proceso. Espera a que termine antes de lanzar otro.");
+      return;
+    }
+
     if (queueActiveCount >= queueMaxActive) {
       setError(
         `Tienes ${queueActiveCount}/${queueMaxActive} generaciones activas. Espera a que termine alguna o cancela.`
@@ -2179,6 +2192,7 @@ const clearModalSelectedIds = () => {
   const lastFramePreviewUrl = lastFrame ? getAssetUrl(lastFrame) : null;
   const generateDisabled =
     isGenerating ||
+    videoSlotBusy ||
     queueActiveCount >= queueMaxActive ||
     (supportsMultishotUi && multishotEnabled ? !multishotIsReady : !prompt.trim());
 
@@ -2683,6 +2697,7 @@ const clearModalSelectedIds = () => {
                     type="button"
                     className={`${styles.cookDockButton} ${styles.cookDockGenerateButton}`}
                     disabled={generateDisabled}
+                    title={generateDisabled && videoSlotBusy ? activeVideoBusyMessage || undefined : undefined}
                     onClick={handleGenerate}
                     data-loading={isGenerating ? "true" : "false"}
                   >

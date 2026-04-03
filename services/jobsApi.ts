@@ -64,6 +64,30 @@ export async function findRecentRunningKlingJob({
   return (data || null) as any;
 }
 
+export async function listMyActiveVideoJobs(opts?: {
+  limit?: number;
+  activeWindowMs?: number;
+}): Promise<JobRow[]> {
+  const limit = Math.max(1, Math.min(50, Number(opts?.limit || 20)));
+  const activeWindowMs = Math.max(60_000, Number(opts?.activeWindowMs || 45 * 60 * 1000));
+  const sinceIso = new Date(Date.now() - activeWindowMs).toISOString();
+
+  const { data, error } = await supabase
+    .from("jobs")
+    .select(
+      "id, owner_id, kind, status, params, result_asset_id, error, created_at, updated_at, finished_at, next_check_at, locked_at, locked_by"
+    )
+    .eq("kind", "video")
+    .in("status", ["queued", "running"])
+    .is("result_asset_id", null)
+    .gte("updated_at", sinceIso)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) throw error;
+  return Array.isArray(data) ? (data as any) : [];
+}
+
 export function subscribeJobById({
   jobId,
   onUpsert,
