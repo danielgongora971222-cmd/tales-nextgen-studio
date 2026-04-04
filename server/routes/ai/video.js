@@ -420,7 +420,34 @@ export function createAiVideoRouter(ctx) {
       ? rows.filter((row) => String(row?.params?.clientJobId || "").trim() !== exclude)
       : rows;
 
-    return filtered[0] || null;
+    for (const row of filtered) {
+      const provider = String(row?.params?.provider || "").trim().toLowerCase();
+      const taskId = String(row?.params?.taskId || row?.params?.piapiTaskId || "").trim();
+
+      if (provider === "piapi" && taskId) {
+        try {
+          const existingAsset = await findExistingPiapiAssetByTaskId({ ownerId, taskId });
+          if (existingAsset?.id) {
+            await markPiapiJobSucceededWithExistingAsset({
+              row,
+              assetId: existingAsset.id,
+              taskStatusRaw: row?.params?.providerStatus || "completed",
+              extraParams: {
+                providerRecoveredAt: new Date().toISOString(),
+                providerFinalizePath: "piapi-slot-recovery",
+              },
+            });
+            continue;
+          }
+        } catch (recoveryError) {
+          console.error("[piapi][slot_recovery_failed]", recoveryError?.message || recoveryError);
+        }
+      }
+
+      return row;
+    }
+
+    return null;
   }
 
   function respondUserVideoSlotBusy(res, blockingJob) {
@@ -466,6 +493,65 @@ export function createAiVideoRouter(ctx) {
       throw httpError(500, "PIAPI_NOT_CONFIGURED", "Falta PIAPI_API_KEY en el backend.");
     }
     return key;
+  }
+
+
+  async function findExistingPiapiAssetByTaskId({ ownerId, taskId }) {
+    const cleanTaskId = String(taskId || "").trim();
+    if (!ownerId || !cleanTaskId) return null;
+
+    const q = await supabaseAdmin
+      .from("assets")
+      .select("id, created_at, meta")
+      .eq("owner_id", ownerId)
+      .eq("type", "video")
+      .filter("meta->>piapiTaskId", "eq", cleanTaskId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (q.error && q.error.code !== "PGRST116") {
+      throw httpError(500, "DB_ERROR", "No pude buscar el asset PiAPI existente.", {
+        supabase: {
+          message: q.error?.message,
+          code: q.error?.code,
+          details: q.error?.details,
+          hint: q.error?.hint,
+        },
+      });
+    }
+
+    return q.data || null;
+  }
+
+  async function markPiapiJobSucceededWithExistingAsset({ row, assetId, taskStatusRaw = null, extraParams = null }) {
+    if (!row?.id || !assetId) return;
+    const nowIso = new Date().toISOString();
+    const mergedParams = {
+      ...(row.params || {}),
+      ...(extraParams || {}),
+      providerStatus: taskStatusRaw || row?.params?.providerStatus || "completed",
+      providerRecoveredAssetId: assetId,
+      providerFinalizePath: extraParams?.providerFinalizePath || row?.params?.providerFinalizePath || "piapi-asset-recovery",
+    };
+
+    const upd = await supabaseAdmin
+      .from("jobs")
+      .update({
+        status: "succeeded",
+        error: null,
+        finished_at: nowIso,
+        next_check_at: null,
+        locked_at: null,
+        locked_by: null,
+        result_asset_id: assetId,
+        params: mergedParams,
+      })
+      .eq("id", row.id);
+
+    if (upd.error) {
+      console.error("[piapi][asset_recovery_update_failed]", { jobId: row.id, error: upd.error });
+    }
   }
 
   function piapiHeaders() {
@@ -3453,66 +3539,85 @@ const isVeo = isVeoModelId(selectedModelNorm);
           const videoUrl = pickPiapiVideoUrl(payload);
           if (videoUrl) {
             try {
-              const { buffer, mimeType } = await downloadPiapiVideoToBuffer(videoUrl);
-              const toolName = row?.params?.toolName || row?.params?.meta?.tool || "video";
-              const hint = row?.params?.hint || taskId || `seedance_${Date.now()}`;
-              const prompt = row?.params?.prompt || null;
+              const existingAsset = await findExistingPiapiAssetByTaskId({ ownerId: row.owner_id, taskId });
+              if (existingAsset?.id) {
+                patch = {
+                  ...patch,
+                  status: "succeeded",
+                  error: null,
+                  finished_at: nowIso,
+                  next_check_at: null,
+                  result_asset_id: existingAsset.id,
+                  params: {
+                    ...nextParams,
+                    providerVideoUrl: videoUrl,
+                    providerWebhookFinalizedAt: nowIso,
+                    providerFinalizePath: "piapi-webhook-reused-asset",
+                    providerRecoveredAssetId: existingAsset.id,
+                  },
+                };
+              } else {
+                const { buffer, mimeType } = await downloadPiapiVideoToBuffer(videoUrl);
+                const toolName = row?.params?.toolName || row?.params?.meta?.tool || "video";
+                const hint = row?.params?.hint || taskId || `seedance_${Date.now()}`;
+                const prompt = row?.params?.prompt || null;
 
-              const uploaded = await uploadBufferToStorage({
-                userId: row.owner_id,
-                tool: toolName,
-                buffer,
-                mimeType,
-                nameHint: hint,
-              });
+                const uploaded = await uploadBufferToStorage({
+                  userId: row.owner_id,
+                  tool: toolName,
+                  buffer,
+                  mimeType,
+                  nameHint: hint,
+                });
 
-              const storagePath = uploaded.storagePath;
-              const assetMeta = {
-                ...(row?.params?.meta || {}),
-                tool: toolName,
-                category: toolName,
-                provider: "piapi",
-                model: row?.params?.model || row?.params?.taskType || null,
-                piapiTaskId: taskId,
-                piapiTaskType: row?.params?.taskType || row?.params?.piapiTaskType || null,
-                providerStatus: taskStatusRaw || "completed",
-                providerVideoUrl: videoUrl,
-                finalizedBy: "piapi-webhook",
-              };
-
-              const assetId = await insertAssetRow({
-                ownerId: row.owner_id,
-                type: "video",
-                tool: toolName,
-                name: hint,
-                prompt,
-                storagePath,
-                isPublic: false,
-                meta: assetMeta,
-              });
-
-              let signedUrl = null;
-              try {
-                signedUrl = await signStoragePath(storagePath, 60 * 30);
-              } catch {
-                signedUrl = null;
-              }
-
-              patch = {
-                ...patch,
-                status: "succeeded",
-                error: null,
-                finished_at: nowIso,
-                next_check_at: null,
-                result_asset_id: assetId,
-                result_url: signedUrl,
-                params: {
-                  ...nextParams,
+                const storagePath = uploaded.storagePath;
+                const assetMeta = {
+                  ...(row?.params?.meta || {}),
+                  tool: toolName,
+                  category: toolName,
+                  provider: "piapi",
+                  model: row?.params?.model || row?.params?.taskType || null,
+                  piapiTaskId: taskId,
+                  piapiTaskType: row?.params?.taskType || row?.params?.piapiTaskType || null,
+                  providerStatus: taskStatusRaw || "completed",
                   providerVideoUrl: videoUrl,
-                  providerWebhookFinalizedAt: nowIso,
-                  providerFinalizePath: "piapi-webhook",
-                },
-              };
+                  finalizedBy: "piapi-webhook",
+                };
+
+                const assetId = await insertAssetRow({
+                  ownerId: row.owner_id,
+                  type: "video",
+                  tool: toolName,
+                  name: hint,
+                  prompt,
+                  storagePath,
+                  isPublic: false,
+                  meta: assetMeta,
+                });
+
+                let signedUrl = null;
+                try {
+                  signedUrl = await signStoragePath(storagePath, 60 * 30);
+                } catch {
+                  signedUrl = null;
+                }
+
+                patch = {
+                  ...patch,
+                  status: "succeeded",
+                  error: null,
+                  finished_at: nowIso,
+                  next_check_at: null,
+                  result_asset_id: assetId,
+                  params: {
+                    ...nextParams,
+                    providerVideoUrl: videoUrl,
+                    providerWebhookFinalizedAt: nowIso,
+                    providerFinalizePath: "piapi-webhook",
+                    ...(signedUrl ? { resultUrl: signedUrl } : {}),
+                  },
+                };
+              }
             } catch (finalizeError) {
               console.error("[piapiWebhook][finalize_error]", finalizeError?.message || finalizeError);
               patch = {

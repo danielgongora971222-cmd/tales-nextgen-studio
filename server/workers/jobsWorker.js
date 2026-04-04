@@ -456,6 +456,30 @@ async function releaseAndReschedule(jobId, patch) {
   if (error) console.error("[jobsWorker][update_failed]", { jobId, error });
 }
 
+
+async function findExistingPiapiAssetByTaskId(ownerId, taskId) {
+  const cleanOwnerId = String(ownerId || "").trim();
+  const cleanTaskId = String(taskId || "").trim();
+  if (!cleanOwnerId || !cleanTaskId) return null;
+
+  const { data, error } = await supabaseAdmin
+    .from("assets")
+    .select("id, created_at")
+    .eq("owner_id", cleanOwnerId)
+    .eq("type", "video")
+    .filter("meta->>piapiTaskId", "eq", cleanTaskId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error && error.code !== "PGRST116") {
+    console.error("[jobsWorker][piapi_asset_lookup_failed]", { ownerId: cleanOwnerId, taskId: cleanTaskId, error });
+    return null;
+  }
+
+  return data || null;
+}
+
 async function claimJobsRpc() {
   const { data, error } = await supabaseAdmin.rpc("claim_jobs", {
     p_kind: JOB_KIND,
@@ -942,6 +966,25 @@ const taskStatusRaw = extractKlingTaskStatus(taskData, rawJson);
 
     const videoUrl = pickPiapiVideoUrl(rawJson);
     if (!videoUrl) {
+      const existingAsset = await findExistingPiapiAssetByTaskId(ownerId, taskId);
+      if (existingAsset?.id) {
+        await releaseAndReschedule(jobId, {
+          status: "succeeded",
+          result_asset_id: existingAsset.id,
+          finished_at: new Date().toISOString(),
+          error: null,
+          next_check_at: null,
+          params: {
+            ...params,
+            providerStatus: taskStatusRaw || "COMPLETED",
+            providerPollCount: pollCount,
+            providerRecoveredAssetId: existingAsset.id,
+            providerFinalizePath: "piapi-worker-reused-asset",
+          },
+        });
+        return;
+      }
+
       const missingOutputRetries = Math.max(0, Number(params.providerMissingOutputRetries || 0));
       if (missingOutputRetries < 3) {
         await releaseAndReschedule(jobId, {
@@ -963,6 +1006,26 @@ const taskStatusRaw = extractKlingTaskStatus(taskData, rawJson);
         finished_at: new Date().toISOString(),
         next_check_at: null,
         params: { ...params, providerStatus: taskStatusRaw || "COMPLETED", providerPollCount: pollCount },
+      });
+      return;
+    }
+
+    const existingAsset = await findExistingPiapiAssetByTaskId(ownerId, taskId);
+    if (existingAsset?.id) {
+      await releaseAndReschedule(jobId, {
+        status: "succeeded",
+        result_asset_id: existingAsset.id,
+        finished_at: new Date().toISOString(),
+        error: null,
+        next_check_at: null,
+        params: {
+          ...params,
+          providerStatus: taskStatusRaw || "completed",
+          providerPollCount: pollCount,
+          providerVideoUrl: videoUrl,
+          providerRecoveredAssetId: existingAsset.id,
+          providerFinalizePath: "piapi-worker-reused-asset",
+        },
       });
       return;
     }

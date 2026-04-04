@@ -18,6 +18,64 @@ export type JobRow = {
   locked_by?: string | null;
 };
 
+
+type PiapiRecoveredAsset = {
+  id: string;
+  url: string | null;
+  created_at: string;
+  meta: any;
+};
+
+function getPiapiTaskId(row: JobRow | null | undefined): string {
+  return String(row?.params?.taskId || row?.params?.piapiTaskId || "").trim();
+}
+
+function isRecoverablePiapiRow(row: JobRow | null | undefined): boolean {
+  if (!row) return false;
+  if (row.status !== "queued" && row.status !== "running") return false;
+  if (row.result_asset_id) return false;
+  return String(row?.params?.provider || "").trim().toLowerCase() === "piapi" && Boolean(getPiapiTaskId(row));
+}
+
+async function findOwnRecoveredPiapiAsset(taskId: string): Promise<PiapiRecoveredAsset | null> {
+  const cleanTaskId = String(taskId || "").trim();
+  if (!cleanTaskId) return null;
+
+  const { data, error } = await supabase
+    .from("assets")
+    .select("id, url, created_at, meta")
+    .eq("type", "video")
+    .filter("meta->>piapiTaskId", "eq", cleanTaskId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error && (error as any).code !== "PGRST116") throw error;
+  return (data || null) as any;
+}
+
+async function recoverPiapiRowIfPossible(row: JobRow | null): Promise<JobRow | null> {
+  if (!isRecoverablePiapiRow(row)) return row;
+
+  const taskId = getPiapiTaskId(row);
+  const asset = await findOwnRecoveredPiapiAsset(taskId);
+  if (!asset?.id) return row;
+
+  return {
+    ...row,
+    status: "succeeded",
+    result_asset_id: asset.id,
+    error: null,
+    finished_at: row.finished_at || asset.created_at,
+    params: {
+      ...(row.params || {}),
+      providerRecoveredAssetId: asset.id,
+      providerFinalizePath: row?.params?.providerFinalizePath || "piapi-client-recovery",
+      ...(asset?.url ? { resultUrl: asset.url } : {}),
+    },
+  } as JobRow;
+}
+
 export async function fetchJobById(jobId: string): Promise<JobRow | null> {
   const { data, error } = await supabase
     .from("jobs")
@@ -29,7 +87,7 @@ export async function fetchJobById(jobId: string): Promise<JobRow | null> {
 
   // PGRST116 = 0 rows con maybeSingle()
   if (error && (error as any).code !== "PGRST116") throw error;
-  return (data || null) as any;
+  return await recoverPiapiRowIfPossible((data || null) as any);
 }
 
 export async function findRecentRunningKlingJob({
@@ -85,7 +143,10 @@ export async function listMyActiveVideoJobs(opts?: {
     .limit(limit);
 
   if (error) throw error;
-  return Array.isArray(data) ? (data as any) : [];
+
+  const rows = Array.isArray(data) ? ((data as any) as JobRow[]) : [];
+  const recovered = await Promise.all(rows.map((row) => recoverPiapiRowIfPossible(row)));
+  return recovered.filter((row): row is JobRow => Boolean(row) && (row.status === "queued" || row.status === "running"));
 }
 
 export function subscribeJobById({
