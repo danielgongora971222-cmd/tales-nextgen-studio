@@ -383,7 +383,9 @@ function isKlingFailureStatus(status) {
     s === "error" ||
     s === "canceled" ||
     s === "cancelled" ||
-    s === "timeout"
+    s === "timeout" ||
+    s === "rejected" ||
+    s === "expired"
   );
 }
 

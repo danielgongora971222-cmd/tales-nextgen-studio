@@ -32,6 +32,39 @@ function coerceReferenceVideoDurationSeconds(value) {
   return seconds > 0 ? seconds : null;
 }
 
+function readAssetDurationSeconds(asset) {
+  const meta = asset?.meta || {};
+  const candidates = [meta?.durationSeconds, meta?.videoDurationSeconds, meta?.duration];
+
+  for (const candidate of candidates) {
+    const seconds = coerceReferenceVideoDurationSeconds(candidate);
+    if (seconds) return seconds;
+  }
+
+  return null;
+}
+
+function getMotionControlReferenceVideoLimitSeconds(characterOrientation) {
+  return characterOrientation === "image" ? 10 : 30;
+}
+
+function getMotionControlReferenceVideoDurationError(durationSeconds, characterOrientation) {
+  const duration = coerceReferenceVideoDurationSeconds(durationSeconds);
+  if (!duration) return null;
+
+  const maxSeconds = getMotionControlReferenceVideoLimitSeconds(characterOrientation);
+  if (duration < 3) {
+    return `Kling Motion Control requiere un video de referencia de al menos 3 segundos. El clip recibido dura ${duration.toFixed(2)}s.`;
+  }
+
+  if (duration > maxSeconds) {
+    const createFromLabel = characterOrientation === "image" ? "From image" : "From video";
+    return `Con Create from = ${createFromLabel}, Kling Motion Control solo admite videos de referencia de hasta ${maxSeconds}s. El clip recibido dura ${duration.toFixed(2)}s.`;
+  }
+
+  return null;
+}
+
 const DEFAULT_KLING_OMNI_MODEL_NAME = "kling-v3-omni";
 
 function coerceKlingOmniModelName(raw) {
@@ -3833,7 +3866,30 @@ const isVeo = isVeoModelId(selectedModelNorm);
       if (error) return res.status(401).json({ ok: false, error });
 
       const body = MotionControlRequestSchema.parse(req.body);
-      const referenceVideoDurationSeconds = coerceReferenceVideoDurationSeconds(body.referenceVideoDurationSeconds);
+      const characterOrientation = body.characterOrientation === "image" ? "image" : "video";
+
+      let sourceVideoAsset = null;
+      let referenceVideoDurationSeconds = coerceReferenceVideoDurationSeconds(body.referenceVideoDurationSeconds);
+      if (!referenceVideoDurationSeconds) {
+        sourceVideoAsset = await getOwnedAssetById(body.videoAssetId, user.id);
+        if (sourceVideoAsset?.type !== "video") {
+          throw httpError(404, "ASSET_NOT_FOUND", "No encontré el video de referencia indicado.");
+        }
+        referenceVideoDurationSeconds = readAssetDurationSeconds(sourceVideoAsset);
+      }
+
+      const motionDurationError = getMotionControlReferenceVideoDurationError(
+        referenceVideoDurationSeconds,
+        characterOrientation
+      );
+      if (motionDurationError) {
+        throw httpError(400, "INVALID_REFERENCE_VIDEO_DURATION", motionDurationError, {
+          characterOrientation,
+          referenceVideoDurationSeconds,
+          maxAllowedSeconds: getMotionControlReferenceVideoLimitSeconds(characterOrientation),
+          minAllowedSeconds: 3,
+        });
+      }
 
       // ✅ Requiere plan activo
       const active = await ctx.billing.requireActiveSubscription(user.id);
@@ -3926,7 +3982,6 @@ const isVeo = isVeoModelId(selectedModelNorm);
       const prompt = body.prompt && body.prompt.trim() ? body.prompt.trim() : null;
 
       const keepOriginalSound = body.keepOriginalSound !== false; // default true
-      const characterOrientation = body.characterOrientation === "image" ? "image" : "video";
 
       // signed URLs so provider can fetch them
       const INPUT_URL_TTL_SECONDS = 6 * 60 * 60;
