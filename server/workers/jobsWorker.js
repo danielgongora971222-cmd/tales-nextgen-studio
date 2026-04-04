@@ -205,6 +205,16 @@ function getPiapiErrorMessage(payload, fallback = "PiAPI request failed.") {
   ).trim();
 }
 
+function isPiapiAccountOwnershipMismatch(value) {
+  const msg = String(value || "").trim().toLowerCase();
+  if (!msg) return false;
+  return (
+    msg.includes("does not belong to the current account") ||
+    (msg.includes("task") && msg.includes("current account") && msg.includes("belong")) ||
+    (msg.includes("task") && msg.includes("another account"))
+  );
+}
+
 function isPiapiPayloadSuccess(payload) {
   const code = Number(payload?.code);
   if (!Number.isFinite(code)) return true;
@@ -821,7 +831,47 @@ const taskStatusRaw = extractKlingTaskStatus(taskData, rawJson);
     } catch (e) {
       const status = Number(e?.status || 0);
       const message = String(e?.message || e);
+      const webhookEnabled = params.providerWebhookEnabled === true || params.providerWebhookEnabled === "true" || params.providerWebhookEnabled === 1 || params.providerWebhookEnabled === "1";
+      const webhookSeenAtMs = params.providerWebhookSeenAt ? Date.parse(params.providerWebhookSeenAt) : null;
+      const createdAgeMs = createdAtMs ? Math.max(0, Date.now() - createdAtMs) : 0;
+      const accountMismatch = isPiapiAccountOwnershipMismatch(message);
       const shouldFail = [400, 401, 403, 404].includes(status) || /not found|invalid|forbidden|unauthor/i.test(message);
+
+      if (accountMismatch) {
+        const graceMs = webhookEnabled ? Math.max(10 * 60 * 1000, Number(process.env.PIAPI_ACCOUNT_MISMATCH_GRACE_MS || 90 * 60 * 1000)) : Math.max(2 * 60 * 1000, Number(process.env.PIAPI_ACCOUNT_MISMATCH_GRACE_MS_NO_WEBHOOK || 10 * 60 * 1000));
+        const shouldGiveUp = Boolean(webhookSeenAtMs) || createdAgeMs > graceMs;
+
+        if (shouldGiveUp) {
+          await releaseAndReschedule(jobId, {
+            status: "failed",
+            error: webhookEnabled
+              ? "PiAPI rechazó la consulta del task porque pertenece a otra cuenta. El task se creó con una API key/cuenta distinta a la que usa el worker en Render. Revisa y unifica PIAPI_API_KEY en el servicio web y en el worker."
+              : "PiAPI rechazó la consulta del task porque pertenece a otra cuenta. El task se creó con una API key/cuenta distinta a la que usa el worker en Render.",
+            finished_at: new Date().toISOString(),
+            next_check_at: null,
+            params: {
+              ...params,
+              providerStatus: "ACCOUNT_MISMATCH",
+              providerStatusDetail: message,
+              providerPollCount: pollCount,
+            },
+          });
+          return;
+        }
+
+        const next = new Date(Date.now() + 45_000).toISOString();
+        await releaseAndReschedule(jobId, {
+          status: "running",
+          next_check_at: next,
+          params: {
+            ...params,
+            providerStatus: "ACCOUNT_MISMATCH",
+            providerStatusDetail: message,
+            providerPollCount: pollCount,
+          },
+        });
+        return;
+      }
 
       if (shouldFail) {
         await releaseAndReschedule(jobId, {

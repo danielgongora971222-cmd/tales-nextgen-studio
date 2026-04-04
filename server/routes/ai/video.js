@@ -679,6 +679,36 @@ export function createAiVideoRouter(ctx) {
     ).trim();
   }
 
+  function pickPiapiVideoUrl(rawJson) {
+    const taskData = extractPiapiTaskData(rawJson);
+    const output = taskData?.output || rawJson?.output || {};
+    return (
+      output?.video?.url ||
+      output?.video ||
+      output?.video_url ||
+      output?.videoUrl ||
+      output?.videos?.[0]?.url ||
+      output?.videos?.[0] ||
+      null
+    );
+  }
+
+  async function downloadPiapiVideoToBuffer(videoUrl) {
+    const response = await fetch(videoUrl, { method: "GET" });
+    if (!response.ok) {
+      throw httpError(
+        502,
+        "PIAPI_VIDEO_DOWNLOAD_FAILED",
+        `No pude descargar el video de PiAPI (${response.status}).`,
+        { videoUrl }
+      );
+    }
+
+    const mimeType = response.headers.get("content-type") || "video/mp4";
+    const buffer = Buffer.from(await response.arrayBuffer());
+    return { buffer, mimeType };
+  }
+
   function coerceSeedanceDuration(value) {
     const n = Number(value);
     if (n === 15) return 15;
@@ -1510,10 +1540,11 @@ const isVeo = isVeoModelId(selectedModelNorm);
         return res.status(402).json({ ok: false, error: spend.error });
       }
 
+      const webhookConfig = buildPiapiWebhookConfig(req);
       const taskResponse = await createPiapiSeedanceTask({
         taskType: selectedModelNorm,
         input,
-        webhookConfig: buildPiapiWebhookConfig(req),
+        webhookConfig,
       });
 
       const taskId = extractPiapiTaskId(taskResponse);
@@ -1555,6 +1586,8 @@ const isVeo = isVeoModelId(selectedModelNorm);
           durationSeconds: dur,
           firstFrameAssetId: firstFrameAssetId || null,
           lastFrameAssetId: lastFrameAssetId || null,
+          providerWebhookEnabled: Boolean(webhookConfig?.endpoint),
+          providerWebhookEndpoint: webhookConfig?.endpoint || null,
         },
       });
 
@@ -3371,7 +3404,7 @@ const isVeo = isVeoModelId(selectedModelNorm);
 
         const lookup = await supabaseAdmin
           .from("jobs")
-          .select("id, status, params")
+          .select("id, owner_id, status, params, result_asset_id, error")
           .eq("kind", "video")
           .contains("params", { provider: "piapi", taskId })
           .order("created_at", { ascending: false })
@@ -3392,7 +3425,7 @@ const isVeo = isVeoModelId(selectedModelNorm);
           ...(row.params || {}),
           providerStatus: taskStatusRaw || taskStatus || null,
           providerStatusNormalized: taskStatus || null,
-          providerStatusMsg: extractPiapiTaskErrorMessage(taskData, payload, "" ) || null,
+          providerStatusMsg: extractPiapiTaskErrorMessage(taskData, payload, "") || null,
           providerWebhookSeenAt: nowIso,
           providerWebhookTimestamp: payload?.timestamp || null,
         };
@@ -3414,6 +3447,84 @@ const isVeo = isVeoModelId(selectedModelNorm);
             finished_at: nowIso,
             next_check_at: null,
           };
+        }
+
+        if (isPiapiSuccessStatus(taskStatus) && !row.result_asset_id) {
+          const videoUrl = pickPiapiVideoUrl(payload);
+          if (videoUrl) {
+            try {
+              const { buffer, mimeType } = await downloadPiapiVideoToBuffer(videoUrl);
+              const toolName = row?.params?.toolName || row?.params?.meta?.tool || "video";
+              const hint = row?.params?.hint || taskId || `seedance_${Date.now()}`;
+              const prompt = row?.params?.prompt || null;
+
+              const uploaded = await uploadBufferToStorage({
+                userId: row.owner_id,
+                tool: toolName,
+                buffer,
+                mimeType,
+                nameHint: hint,
+              });
+
+              const storagePath = uploaded.storagePath;
+              const assetMeta = {
+                ...(row?.params?.meta || {}),
+                tool: toolName,
+                category: toolName,
+                provider: "piapi",
+                model: row?.params?.model || row?.params?.taskType || null,
+                piapiTaskId: taskId,
+                piapiTaskType: row?.params?.taskType || row?.params?.piapiTaskType || null,
+                providerStatus: taskStatusRaw || "completed",
+                providerVideoUrl: videoUrl,
+                finalizedBy: "piapi-webhook",
+              };
+
+              const assetId = await insertAssetRow({
+                ownerId: row.owner_id,
+                type: "video",
+                tool: toolName,
+                name: hint,
+                prompt,
+                storagePath,
+                isPublic: false,
+                meta: assetMeta,
+              });
+
+              let signedUrl = null;
+              try {
+                signedUrl = await signStoragePath(storagePath, 60 * 30);
+              } catch {
+                signedUrl = null;
+              }
+
+              patch = {
+                ...patch,
+                status: "succeeded",
+                error: null,
+                finished_at: nowIso,
+                next_check_at: null,
+                result_asset_id: assetId,
+                result_url: signedUrl,
+                params: {
+                  ...nextParams,
+                  providerVideoUrl: videoUrl,
+                  providerWebhookFinalizedAt: nowIso,
+                  providerFinalizePath: "piapi-webhook",
+                },
+              };
+            } catch (finalizeError) {
+              console.error("[piapiWebhook][finalize_error]", finalizeError?.message || finalizeError);
+              patch = {
+                ...patch,
+                params: {
+                  ...nextParams,
+                  providerWebhookFinalizeError: String(finalizeError?.message || finalizeError),
+                },
+                next_check_at: nowIso,
+              };
+            }
+          }
         }
 
         const upd = await supabaseAdmin.from("jobs").update(patch).eq("id", row.id);
@@ -3539,10 +3650,11 @@ const isVeo = isVeoModelId(selectedModelNorm);
           return res.status(402).json({ ok: false, error: spend.error });
         }
 
+        const webhookConfig = buildPiapiWebhookConfig(req);
         const taskResponse = await createPiapiSeedanceTask({
           taskType: body.model,
           input,
-          webhookConfig: buildPiapiWebhookConfig(req),
+          webhookConfig,
         });
 
         const taskId = extractPiapiTaskId(taskResponse);
@@ -3592,6 +3704,8 @@ const isVeo = isVeoModelId(selectedModelNorm);
             videoAssetId: body.videoAssetId || null,
             referenceImageAssetIds,
             parentTaskId: parentTaskId ? String(parentTaskId) : null,
+            providerWebhookEnabled: Boolean(webhookConfig?.endpoint),
+            providerWebhookEndpoint: webhookConfig?.endpoint || null,
           },
         });
 
