@@ -191,6 +191,26 @@ async function falQueueResult(responseUrl) {
   return data;
 }
 
+function getPiapiErrorMessage(payload, fallback = "PiAPI request failed.") {
+  return String(
+    payload?.error?.message ||
+    payload?.error?.raw_message ||
+    payload?.data?.error?.message ||
+    payload?.data?.error?.raw_message ||
+    payload?.message ||
+    payload?.detail ||
+    payload?.data?.detail ||
+    payload?.raw ||
+    fallback
+  ).trim();
+}
+
+function isPiapiPayloadSuccess(payload) {
+  const code = Number(payload?.code);
+  if (!Number.isFinite(code)) return true;
+  return code === 0 || code === 200;
+}
+
 async function piapiGetTask(taskId) {
   const r = await fetch(`${PIAPI_BASE_URL}/task/${encodeURIComponent(taskId)}`, {
     method: "GET",
@@ -201,11 +221,17 @@ async function piapiGetTask(taskId) {
   let data;
   try { data = JSON.parse(text); } catch { data = { raw: text }; }
 
-  if (!r.ok) {
-    const msg = data?.message || data?.error?.message || `PiAPI get task error (${r.status})`;
+  if (!r.ok || !isPiapiPayloadSuccess(data)) {
+    const payloadCode = Number(data?.code);
+    const msg = getPiapiErrorMessage(data, `PiAPI get task error (${r.status})`);
     const err = new Error(msg);
-    err.status = r.status;
+    err.status = !r.ok
+      ? r.status
+      : Number.isFinite(payloadCode) && payloadCode >= 400 && payloadCode < 600
+        ? payloadCode
+        : 502;
     err.data = data;
+    err.piapiCode = Number.isFinite(payloadCode) ? payloadCode : null;
     throw err;
   }
   return data;
@@ -215,6 +241,24 @@ function normalizePiapiTaskStatus(raw) {
   return String(raw || "").trim().toLowerCase();
 }
 
+function extractPiapiTaskStatus(taskData, rawJson) {
+  const candidates = [
+    taskData?.status,
+    taskData?.task_status,
+    rawJson?.status,
+    rawJson?.task_status,
+    taskData?.output?.status,
+    rawJson?.output?.status,
+    taskData?.meta?.status,
+    rawJson?.meta?.status,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+  }
+  return null;
+}
+
 function isPiapiSuccessStatus(status) {
   const s = normalizePiapiTaskStatus(status);
   return s === "completed" || s === "succeeded" || s === "success" || s === "done" || s === "finished";
@@ -222,24 +266,48 @@ function isPiapiSuccessStatus(status) {
 
 function isPiapiFailureStatus(status) {
   const s = normalizePiapiTaskStatus(status);
-  return s === "failed" || s === "fail" || s === "error" || s === "canceled" || s === "cancelled" || s === "timeout" || s === "rejected";
+  return s === "failed" || s === "fail" || s === "error" || s === "canceled" || s === "cancelled" || s === "timeout" || s === "rejected" || s === "expired";
 }
 
 function computeNextCheckMsPiapi(status) {
   const s = normalizePiapiTaskStatus(status);
-  if (s.includes("pending") || s.includes("queue")) return 15_000;
-  if (s.includes("process") || s.includes("run")) return 10_000;
-  return 12_000;
+  if (!s) return 30_000;
+  if (s.includes("pending") || s.includes("queue") || s.includes("wait") || s.includes("submit")) return 45_000;
+  if (s.includes("process") || s.includes("run") || s.includes("progress")) return 20_000;
+  return 30_000;
 }
 
 function extractPiapiTaskData(rawJson) {
-  return rawJson?.data || rawJson || null;
+  if (rawJson?.data && typeof rawJson.data === "object") return rawJson.data;
+  if (rawJson?.task && typeof rawJson.task === "object") return rawJson.task;
+  return rawJson || null;
+}
+
+function extractPiapiTaskErrorMessage(taskData, rawJson, fallback = "PiAPI task failed.") {
+  return String(
+    taskData?.error?.message ||
+    taskData?.error?.raw_message ||
+    rawJson?.error?.message ||
+    rawJson?.error?.raw_message ||
+    taskData?.detail ||
+    rawJson?.detail ||
+    rawJson?.message ||
+    fallback
+  ).trim();
 }
 
 function pickPiapiVideoUrl(rawJson) {
   const taskData = extractPiapiTaskData(rawJson);
-  const output = taskData?.output || {};
-  return output?.video || output?.video_url || output?.videoUrl || output?.videos?.[0]?.url || output?.videos?.[0] || null;
+  const output = taskData?.output || rawJson?.output || {};
+  return (
+    output?.video?.url ||
+    output?.video ||
+    output?.video_url ||
+    output?.videoUrl ||
+    output?.videos?.[0]?.url ||
+    output?.videos?.[0] ||
+    null
+  );
 }
 
 async function downloadToStream(url, { headers = undefined } = {}) {
@@ -708,6 +776,9 @@ const taskStatusRaw = extractKlingTaskStatus(taskData, rawJson);
     const taskType = String(params.taskType || params.piapiTaskType || "seedance-2-preview").trim();
     const modelName = params.model ? String(params.model) : null;
     const pollCount = Math.max(0, Number(params.providerPollCount || 0)) + 1;
+    const createdAtMs = row.created_at ? Date.parse(row.created_at) : null;
+    const maxJobAgeMs = Math.max(30 * 60 * 1000, Number(process.env.PIAPI_MAX_JOB_AGE_MS || 8 * 60 * 60 * 1000));
+    const maxPolls = Math.max(60, Number(process.env.PIAPI_MAX_POLLS || 720));
 
     if (!taskId) {
       await releaseAndReschedule(jobId, {
@@ -720,10 +791,21 @@ const taskStatusRaw = extractKlingTaskStatus(taskData, rawJson);
       return;
     }
 
-    if (pollCount > 300) {
+    if (createdAtMs && Date.now() - createdAtMs > maxJobAgeMs) {
       await releaseAndReschedule(jobId, {
         status: "failed",
-        error: "PiAPI job aborted: demasiados polls (300).",
+        error: `PiAPI job timeout: excedió el tiempo máximo de espera (${Math.round(maxJobAgeMs / 60000)} min).`,
+        finished_at: new Date().toISOString(),
+        next_check_at: null,
+        params: { ...params, providerStatus: "TIMEOUT", providerPollCount: pollCount },
+      });
+      return;
+    }
+
+    if (pollCount > maxPolls) {
+      await releaseAndReschedule(jobId, {
+        status: "failed",
+        error: `PiAPI job aborted: demasiados polls (${maxPolls}).`,
         finished_at: new Date().toISOString(),
         next_check_at: null,
         params: { ...params, providerStatus: "TOO_MANY_POLLS", providerPollCount: pollCount },
@@ -737,28 +819,48 @@ const taskStatusRaw = extractKlingTaskStatus(taskData, rawJson);
       rawJson = await piapiGetTask(taskId);
       taskData = extractPiapiTaskData(rawJson);
     } catch (e) {
-      const next = new Date(Date.now() + 20_000).toISOString();
+      const status = Number(e?.status || 0);
+      const message = String(e?.message || e);
+      const shouldFail = [400, 401, 403, 404].includes(status) || /not found|invalid|forbidden|unauthor/i.test(message);
+
+      if (shouldFail) {
+        await releaseAndReschedule(jobId, {
+          status: "failed",
+          error: message || "PiAPI status fetch failed.",
+          finished_at: new Date().toISOString(),
+          next_check_at: null,
+          params: {
+            ...params,
+            providerStatus: "STATUS_ERROR",
+            providerStatusDetail: message,
+            providerPollCount: pollCount,
+          },
+        });
+        return;
+      }
+
+      const next = new Date(Date.now() + 30_000).toISOString();
       await releaseAndReschedule(jobId, {
         status: "running",
         next_check_at: next,
         params: {
           ...params,
           providerStatus: "STATUS_ERROR",
-          providerStatusDetail: String(e?.message || e),
+          providerStatusDetail: message,
           providerPollCount: pollCount,
         },
       });
       return;
     }
 
-    const taskStatusRaw = taskData?.status || rawJson?.status || null;
+    const taskStatusRaw = extractPiapiTaskStatus(taskData, rawJson);
     const taskStatus = normalizePiapiTaskStatus(taskStatusRaw);
+    const taskErrorMessage = extractPiapiTaskErrorMessage(taskData, rawJson, "PiAPI task failed.");
 
     if (isPiapiFailureStatus(taskStatus)) {
-      const errMsg = taskData?.error?.message || taskData?.error?.raw_message || taskData?.detail || "PiAPI task failed.";
       await releaseAndReschedule(jobId, {
         status: "failed",
-        error: String(errMsg),
+        error: String(taskErrorMessage),
         finished_at: new Date().toISOString(),
         next_check_at: null,
         params: {
@@ -766,6 +868,7 @@ const taskStatusRaw = extractKlingTaskStatus(taskData, rawJson);
           providerStatus: taskStatusRaw || taskStatus || "FAILED",
           providerStatusNormalized: taskStatus || null,
           providerPollCount: pollCount,
+          providerStatusMsg: taskErrorMessage || null,
         },
       });
       return;
@@ -781,6 +884,7 @@ const taskStatusRaw = extractKlingTaskStatus(taskData, rawJson);
           providerStatus: taskStatusRaw || taskStatus || "PENDING",
           providerStatusNormalized: taskStatus || null,
           providerPollCount: pollCount,
+          providerStatusMsg: taskErrorMessage || null,
         },
       });
       return;
@@ -788,6 +892,21 @@ const taskStatusRaw = extractKlingTaskStatus(taskData, rawJson);
 
     const videoUrl = pickPiapiVideoUrl(rawJson);
     if (!videoUrl) {
+      const missingOutputRetries = Math.max(0, Number(params.providerMissingOutputRetries || 0));
+      if (missingOutputRetries < 3) {
+        await releaseAndReschedule(jobId, {
+          status: "running",
+          next_check_at: new Date(Date.now() + 15_000).toISOString(),
+          params: {
+            ...params,
+            providerStatus: taskStatusRaw || "COMPLETED",
+            providerPollCount: pollCount,
+            providerMissingOutputRetries: missingOutputRetries + 1,
+          },
+        });
+        return;
+      }
+
       await releaseAndReschedule(jobId, {
         status: "failed",
         error: "PiAPI completó la tarea pero no devolvió URL de video.",

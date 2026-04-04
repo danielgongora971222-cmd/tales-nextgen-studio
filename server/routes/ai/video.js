@@ -370,14 +370,20 @@ export function createAiVideoRouter(ctx) {
     return v === "seedance-2-preview" || v === "seedance-2-fast-preview";
   }
 
-  const SEEDANCE_MODELS_ENABLED = String(process.env.SEEDANCE_MODELS_ENABLED || "").trim() === "1";
+  function isEnvExplicitFalse(value) {
+    const v = String(value || "").trim().toLowerCase();
+    return v === "0" || v === "false" || v === "off" || v === "no" || v === "disabled";
+  }
+
+  const SEEDANCE_MODELS_ENABLED = !isEnvExplicitFalse(process.env.SEEDANCE_MODELS_ENABLED);
+  const PIAPI_WEBHOOK_SECRET = String(process.env.PIAPI_WEBHOOK_SECRET || "").trim();
 
   function ensureSeedanceEnabled() {
     if (SEEDANCE_MODELS_ENABLED) return;
     throw httpError(
       409,
       "SEEDANCE_TEMPORARILY_DISABLED",
-      "Seedance 2.0 está temporalmente en reparación. Usa Kling o Veo mientras terminamos el ajuste.",
+      "Seedance 2.0 está desactivado por configuración del servidor.",
       { provider: "piapi", modelFamily: "seedance-2" }
     );
   }
@@ -471,13 +477,22 @@ export function createAiVideoRouter(ctx) {
 
   function getPiapiErrorMessage(payload, fallback = "PiAPI request failed.") {
     return String(
-      payload?.message ||
       payload?.error?.message ||
       payload?.error?.raw_message ||
+      payload?.data?.error?.message ||
+      payload?.data?.error?.raw_message ||
+      payload?.message ||
       payload?.detail ||
+      payload?.data?.detail ||
       payload?.raw ||
       fallback
     ).trim();
+  }
+
+  function isPiapiPayloadSuccess(payload) {
+    const code = Number(payload?.code);
+    if (!Number.isFinite(code)) return true;
+    return code === 0 || code === 200;
   }
 
   function classifyPiapiError(err, { defaultMessage = "PiAPI request failed.", fallbackStatus = 502 } = {}) {
@@ -561,6 +576,14 @@ export function createAiVideoRouter(ctx) {
           throw err;
         }
 
+        if (!isPiapiPayloadSuccess(data)) {
+          const payloadCode = Number(data?.code);
+          const err = new Error(getPiapiErrorMessage(data, "PiAPI devolvió una respuesta inválida al crear o consultar la tarea."));
+          err.status = Number.isFinite(payloadCode) && payloadCode >= 400 && payloadCode < 600 ? payloadCode : 502;
+          err.data = data;
+          throw err;
+        }
+
         return data;
       } catch (err) {
         lastErr = err;
@@ -587,7 +610,9 @@ export function createAiVideoRouter(ctx) {
   }
 
   function extractPiapiTaskData(raw) {
-    return raw?.data || raw?.task || raw || null;
+    if (raw?.data && typeof raw.data === "object") return raw.data;
+    if (raw?.task && typeof raw.task === "object") return raw.task;
+    return raw || null;
   }
 
   function extractPiapiTaskId(raw) {
@@ -599,6 +624,59 @@ export function createAiVideoRouter(ctx) {
       raw?.taskId ||
       null
     );
+  }
+
+  function normalizePiapiTaskStatus(raw) {
+    return String(raw || "").trim().toLowerCase();
+  }
+
+  function extractPiapiTaskStatus(taskData, rawJson) {
+    const candidates = [
+      taskData?.status,
+      taskData?.task_status,
+      rawJson?.status,
+      rawJson?.task_status,
+      taskData?.output?.status,
+      rawJson?.output?.status,
+      taskData?.meta?.status,
+      rawJson?.meta?.status,
+    ];
+
+    for (const candidate of candidates) {
+      if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+    }
+    return null;
+  }
+
+  function isPiapiSuccessStatus(status) {
+    const s = normalizePiapiTaskStatus(status);
+    return s === "completed" || s === "succeeded" || s === "success" || s === "done" || s === "finished";
+  }
+
+  function isPiapiFailureStatus(status) {
+    const s = normalizePiapiTaskStatus(status);
+    return s === "failed" || s === "fail" || s === "error" || s === "canceled" || s === "cancelled" || s === "timeout" || s === "rejected" || s === "expired";
+  }
+
+  function computeNextCheckMsPiapi(status) {
+    const s = normalizePiapiTaskStatus(status);
+    if (!s) return 30_000;
+    if (s.includes("pending") || s.includes("queue") || s.includes("wait") || s.includes("submit")) return 45_000;
+    if (s.includes("process") || s.includes("run") || s.includes("progress")) return 20_000;
+    return 30_000;
+  }
+
+  function extractPiapiTaskErrorMessage(taskData, rawJson, fallback = "PiAPI task failed.") {
+    return String(
+      taskData?.error?.message ||
+      taskData?.error?.raw_message ||
+      rawJson?.error?.message ||
+      rawJson?.error?.raw_message ||
+      taskData?.detail ||
+      rawJson?.detail ||
+      rawJson?.message ||
+      fallback
+    ).trim();
   }
 
   function coerceSeedanceDuration(value) {
@@ -638,16 +716,66 @@ export function createAiVideoRouter(ctx) {
     return [instructions.join(" "), visiblePrompt].filter(Boolean).join("\n").trim();
   }
 
-  async function createPiapiSeedanceTask({ taskType, input }) {
+  function isPublicHttpUrl(value) {
+    const v = String(value || "").trim();
+    if (!v) return false;
+    return /^https?:\/\//i.test(v) && !/localhost|127\.0\.0\.1|0\.0\.0\.0/i.test(v);
+  }
+
+  function deriveRequestOrigin(req) {
+    const proto = String(req.headers["x-forwarded-proto"] || req.protocol || "https").split(",")[0].trim() || "https";
+    const host = String(req.headers["x-forwarded-host"] || req.get?.("host") || "").split(",")[0].trim();
+    if (!host) return null;
+    return `${proto}://${host}`;
+  }
+
+  function resolvePiapiWebhookBaseUrl(req) {
+    const candidates = [
+      process.env.PIAPI_WEBHOOK_BASE_URL,
+      process.env.PUBLIC_API_BASE_URL,
+      process.env.API_BASE_URL,
+      process.env.RENDER_EXTERNAL_URL,
+      deriveRequestOrigin(req),
+    ];
+
+    for (const candidate of candidates) {
+      const base = String(candidate || "").trim().replace(/\/+$/, "");
+      if (!base || !isPublicHttpUrl(base)) continue;
+      return base;
+    }
+    return null;
+  }
+
+  function buildPiapiWebhookConfig(req) {
+    const baseUrl = resolvePiapiWebhookBaseUrl(req);
+    if (!baseUrl) return null;
+    return {
+      endpoint: `${baseUrl}/api/ai/video/piapi/webhook`,
+      secret: PIAPI_WEBHOOK_SECRET || "",
+    };
+  }
+
+  async function createPiapiSeedanceTask({ taskType, input, webhookConfig = null }) {
+    const body = {
+      model: "seedance",
+      task_type: taskType,
+      input,
+    };
+
+    if (webhookConfig?.endpoint) {
+      body.config = {
+        webhook_config: {
+          endpoint: webhookConfig.endpoint,
+          secret: webhookConfig.secret || "",
+        },
+      };
+    }
+
     return piapiRequest("/task", {
       method: "POST",
       timeoutMs: 60_000,
       retries: 2,
-      body: {
-        model: "seedance",
-        task_type: taskType,
-        input,
-      },
+      body,
     });
   }
 
@@ -1385,6 +1513,7 @@ const isVeo = isVeoModelId(selectedModelNorm);
       const taskResponse = await createPiapiSeedanceTask({
         taskType: selectedModelNorm,
         input,
+        webhookConfig: buildPiapiWebhookConfig(req),
       });
 
       const taskId = extractPiapiTaskId(taskResponse);
@@ -3223,6 +3352,82 @@ const isVeo = isVeoModelId(selectedModelNorm);
     });
 
 
+
+    router.post("/ai/video/piapi/webhook", async (req, res) => {
+      try {
+        const providedSecret = String(req.get("x-webhook-secret") || "").trim();
+        if (PIAPI_WEBHOOK_SECRET && providedSecret !== PIAPI_WEBHOOK_SECRET) {
+          return res.status(401).json({ ok: false, error: { code: "PIAPI_WEBHOOK_FORBIDDEN", message: "Firma de webhook inválida." } });
+        }
+
+        const payload = req.body || {};
+        const taskId = String(extractPiapiTaskId(payload) || "").trim();
+        if (!taskId) return res.status(202).json({ ok: true, ignored: true });
+
+        const taskData = extractPiapiTaskData(payload);
+        const taskStatusRaw = extractPiapiTaskStatus(taskData, payload);
+        const taskStatus = normalizePiapiTaskStatus(taskStatusRaw);
+        const nowIso = new Date().toISOString();
+
+        const lookup = await supabaseAdmin
+          .from("jobs")
+          .select("id, status, params")
+          .eq("kind", "video")
+          .contains("params", { provider: "piapi", taskId })
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (lookup.error && lookup.error.code !== "PGRST116") {
+          console.error("[piapiWebhook][lookup_error]", lookup.error);
+          return res.status(202).json({ ok: true, queued: false });
+        }
+
+        const row = lookup.data || null;
+        if (!row || row.status === "succeeded" || row.status === "failed" || row.status === "canceled") {
+          return res.json({ ok: true, ignored: true });
+        }
+
+        const nextParams = {
+          ...(row.params || {}),
+          providerStatus: taskStatusRaw || taskStatus || null,
+          providerStatusNormalized: taskStatus || null,
+          providerStatusMsg: extractPiapiTaskErrorMessage(taskData, payload, "" ) || null,
+          providerWebhookSeenAt: nowIso,
+          providerWebhookTimestamp: payload?.timestamp || null,
+        };
+
+        let patch = {
+          params: nextParams,
+          next_check_at: isPiapiSuccessStatus(taskStatus) || isPiapiFailureStatus(taskStatus)
+            ? nowIso
+            : new Date(Date.now() + computeNextCheckMsPiapi(taskStatus)).toISOString(),
+          locked_at: null,
+          locked_by: null,
+        };
+
+        if (isPiapiFailureStatus(taskStatus)) {
+          patch = {
+            ...patch,
+            status: "failed",
+            error: extractPiapiTaskErrorMessage(taskData, payload, "PiAPI task failed."),
+            finished_at: nowIso,
+            next_check_at: null,
+          };
+        }
+
+        const upd = await supabaseAdmin.from("jobs").update(patch).eq("id", row.id);
+        if (upd.error) {
+          console.error("[piapiWebhook][update_error]", upd.error);
+        }
+
+        return res.json({ ok: true });
+      } catch (error) {
+        console.error("[piapiWebhook][unhandled]", error?.message || error);
+        return res.status(202).json({ ok: true, queued: false });
+      }
+    });
+
     const SeedanceVideoEditRequestSchema = z.object({
       model: z.enum(["seedance-2-preview", "seedance-2-fast-preview"]),
       prompt: z.string().max(14000).optional(),
@@ -3337,6 +3542,7 @@ const isVeo = isVeoModelId(selectedModelNorm);
         const taskResponse = await createPiapiSeedanceTask({
           taskType: body.model,
           input,
+          webhookConfig: buildPiapiWebhookConfig(req),
         });
 
         const taskId = extractPiapiTaskId(taskResponse);

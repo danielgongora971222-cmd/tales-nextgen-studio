@@ -14,7 +14,7 @@ import {
 } from "../../services/assetsApi";
 import { apiPostJson, formatErr } from "../../services/videoGenApi";
 import { waitJobCompletion } from "../../services/jobsApi";
-import { SEEDANCE_REPAIR_MESSAGE, useVideoGenerationLock } from "../../hooks/useVideoGenerationLock";
+import { useVideoGenerationLock } from "../../hooks/useVideoGenerationLock";
 import { EditHistorySection } from "./video/EditHistorySection";
 import { ViewerModal } from "./video/viewermodal";
 import { Icon } from "./video/icon";
@@ -1634,11 +1634,6 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
   const onGenerate = useCallback(async () => {
     if (isGenerating) return;
     setError(null);
-
-    if (isSeedanceModelId(model)) {
-      setError(SEEDANCE_REPAIR_MESSAGE);
-      return;
-    }
 
     if (videoSlotBusy) {
       setError(activeVideoBusyMessage || "Ya tienes un video en proceso. Espera a que termine antes de lanzar otro.");

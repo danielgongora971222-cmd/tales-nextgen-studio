@@ -19,7 +19,7 @@ import {
 } from "../../services/klingElementsService";
 import { formatErr } from "../../services/videoGenApi";
 import { useGenerationQueue } from "../../contexts/GenerationQueueContext";
-import { SEEDANCE_REPAIR_MESSAGE, useVideoGenerationLock } from "../../hooks/useVideoGenerationLock";
+import { useVideoGenerationLock } from "../../hooks/useVideoGenerationLock";
 import { FramePickerModal } from "./video/FramePickerModal";
 import { LimitedTextarea, KLING_V3_SHOT_PROMPT_LIMIT } from "./video/LimitedTextarea";
 import { KlingElementsModal } from "./video/KlingElementsModal";
@@ -1900,11 +1900,6 @@ const durationLabel = useMemo(() => {
 
   const handleGenerate = async () => {
     setError(null);
-
-    if (isSeedanceModel) {
-      setError(SEEDANCE_REPAIR_MESSAGE);
-      return;
-    }
 
     if (videoSlotBusy) {
       setError(activeVideoBusyMessage || "Ya tienes un video en proceso. Espera a que termine antes de lanzar otro.");
