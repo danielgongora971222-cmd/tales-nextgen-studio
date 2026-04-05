@@ -55,32 +55,6 @@ const HISTORY_LOAD_MORE_COUNT = 9;
 const UPLOAD_TOOL = "motion-control-ref";
 const PENDING_MOTION_KEY = "tales_pending_motion_control_job_v2";
 const PENDING_MOTION_LEGACY_KEY = "tales_pending_motion_control_job_v1";
-const MOTION_CONTROL_MIN_REFERENCE_SECONDS = 3;
-
-function getMotionControlReferenceVideoLimitSeconds(orientation: Orientation) {
-  return orientation === "image" ? 10 : 30;
-}
-
-function validateMotionControlReferenceVideoDuration(
-  durationSeconds: number | null | undefined,
-  orientation: Orientation
-): string | null {
-  const duration = Number(durationSeconds);
-  if (!Number.isFinite(duration) || duration <= 0) return null;
-
-  const maxSeconds = getMotionControlReferenceVideoLimitSeconds(orientation);
-  const createFromLabel = orientation === "image" ? "From image" : "From video";
-
-  if (duration < MOTION_CONTROL_MIN_REFERENCE_SECONDS) {
-    return `Kling Motion Control requiere un video de referencia de al menos ${MOTION_CONTROL_MIN_REFERENCE_SECONDS}s. Tu video actual dura ${formatDurationLabel(duration) || `${duration.toFixed(1)}s`}.`;
-  }
-
-  if (duration > maxSeconds) {
-    return `Con Create from = ${createFromLabel}, Kling solo admite videos de referencia de hasta ${maxSeconds}s. Tu video actual dura ${formatDurationLabel(duration) || `${duration.toFixed(1)}s`}. Cambia la orientación o usa un clip más corto.`;
-  }
-
-  return null;
-}
 
 function normalizeMotionControlModel(value: unknown): MotionControlModel {
   return value === "kling-v3-motion-control" ? "kling-v3-motion-control" : "kling-2.6-motion-control";
@@ -739,15 +713,6 @@ export default function MotionControlTool() {
       setReferenceVideoDurationSeconds(resolvedReferenceVideoDurationSeconds);
     }
 
-    const durationValidationError = validateMotionControlReferenceVideoDuration(
-      resolvedReferenceVideoDurationSeconds,
-      characterOrientation
-    );
-    if (durationValidationError) {
-      setError(durationValidationError);
-      return;
-    }
-
     const draftJob: PendingMotionControlJob = {
       clientJobId: makeMotionClientJobId(),
       prompt: rawPrompt,
@@ -1209,16 +1174,6 @@ export default function MotionControlTool() {
                         {referenceDurationLabel ? ` · ${referenceDurationLabel}` : " · calculando duración..."}
                       </div>
                     )}
-
-                    <div
-                      style={{
-                        fontSize: 12,
-                        color: "rgba(255,255,255,0.56)",
-                        textAlign: "center",
-                      }}
-                    >
-                      Límite Kling Motion Control para el video guía: 3–{getMotionControlReferenceVideoLimitSeconds(characterOrientation)}s con {selectedCreateFromLabel}.
-                    </div>
 
                     {isGenerating && progressMsg && (
                       <div className={styles.motionGeneratingStatus}>

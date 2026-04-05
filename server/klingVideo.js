@@ -72,9 +72,7 @@ function isKlingFailureStatus(status) {
     s === "error" ||
     s === "canceled" ||
     s === "cancelled" ||
-    s === "timeout" ||
-    s === "rejected" ||
-    s === "expired"
+    s === "timeout"
   );
 }
 
@@ -152,14 +150,7 @@ function extractKlingErrorMessage(json, fallbackMessage) {
     json?.message ||
     json?.msg ||
     json?.error?.message ||
-    json?.error?.raw_message ||
     json?.error ||
-    json?.data?.message ||
-    json?.data?.msg ||
-    json?.data?.error?.message ||
-    json?.data?.error?.raw_message ||
-    json?.data?.detail ||
-    json?.detail ||
     fallbackMessage ||
     "Kling request failed."
   );
