@@ -12,7 +12,7 @@ import {
 import { apiPostJson, formatErr } from "../../services/videoGenApi";
 import { toggleLike } from "../../services/socialApi";
 import { syncFavoriteAssetState } from "../../services/favoriteAssets";
-import { waitJobCompletion } from "../../services/jobsApi";
+import { formatJobFailure, waitJobCompletion } from "../../services/jobsApi";
 import { useVideoGenerationLock } from "../../hooks/useVideoGenerationLock";
 import { estimateVideoCostCredits } from "../../config/pricing.js";
 import { HistorySection } from "./video/HistorySection";
@@ -652,7 +652,7 @@ export default function MotionControlTool() {
       });
 
       if (row.status === "failed") {
-        const terminalErr: any = new Error(row.error || "The job failed in background.");
+        const terminalErr: any = new Error(formatJobFailure(row, "The job failed in background."));
         terminalErr.clearPending = true;
         throw terminalErr;
       }

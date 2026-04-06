@@ -13,7 +13,7 @@ import {
   uploadUserAsset,
 } from "../../services/assetsApi";
 import { apiPostJson, formatErr } from "../../services/videoGenApi";
-import { waitJobCompletion } from "../../services/jobsApi";
+import { formatJobFailure, waitJobCompletion } from "../../services/jobsApi";
 import { useVideoGenerationLock } from "../../hooks/useVideoGenerationLock";
 import { EditHistorySection } from "./video/EditHistorySection";
 import { ViewerModal } from "./video/viewermodal";
@@ -302,6 +302,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
 
   // Pending resume
   const [pendingJob, setPendingJob] = useState<PendingVideoEditJob | null>(null);
+  const autoResumeAttemptedJobIdRef = useRef<string | null>(null);
 
   const { hasActiveVideoJob, busyMessage: activeVideoBusyMessage } = useVideoGenerationLock();
   const videoSlotBusy = hasActiveVideoJob && !isGenerating;
@@ -872,7 +873,13 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
       const pj = loadPending();
       setPendingJob(pj);
 
-      if (!pj || isGenerating) return;
+      if (!pj) {
+        autoResumeAttemptedJobIdRef.current = null;
+        return;
+      }
+
+      if (autoResumeAttemptedJobIdRef.current === pj.supabaseJobId) return;
+      autoResumeAttemptedJobIdRef.current = pj.supabaseJobId;
 
       setIsGenerating(true);
       const ctrl = new AbortController();
@@ -881,6 +888,11 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
       try {
         await runWaitFlow(pj.supabaseJobId);
       } catch (err: any) {
+        if (err?.clearPending) {
+          clearPending();
+          setPendingJob(null);
+          autoResumeAttemptedJobIdRef.current = null;
+        }
         setError(formatErr(err));
         setProgressText("");
       } finally {
@@ -890,7 +902,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     };
 
     void run();
-  }, [user, reloadImages, reloadVideos, reloadHistory, reloadKlingElements, loadPending, isGenerating]);
+  }, [user, reloadImages, reloadVideos, reloadHistory, reloadKlingElements, loadPending, clearPending]);
 
 
   useEffect(() => {
@@ -1620,11 +1632,20 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     });
 
     if (row.status === "failed") {
-      throw new Error(row.error || "Falló el job en background.");
+      clearPending();
+      setPendingJob(null);
+      autoResumeAttemptedJobIdRef.current = null;
+
+      const terminalErr: any = new Error(formatJobFailure(row, "Falló el job en background."));
+      terminalErr.clearPending = true;
+      terminalErr.jobId = row.id;
+      terminalErr.jobStatus = row.status;
+      throw terminalErr;
     }
 
     clearPending();
     setPendingJob(null);
+    autoResumeAttemptedJobIdRef.current = null;
     setProgressText("");
 
     await reloadVideos();
@@ -1693,6 +1714,11 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
       if (err?.name === "AbortError" || err?.isCanceled) {
         setProgressText("Cancelado.");
       } else {
+        if (err?.clearPending) {
+          clearPending();
+          setPendingJob(null);
+          autoResumeAttemptedJobIdRef.current = null;
+        }
         setError(formatErr(err));
         setProgressText("");
       }
@@ -1717,6 +1743,11 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     try {
       await runWaitFlow(pj.supabaseJobId);
     } catch (err: any) {
+      if (err?.clearPending) {
+        clearPending();
+        setPendingJob(null);
+        autoResumeAttemptedJobIdRef.current = null;
+      }
       setError(formatErr(err));
       setProgressText("");
     } finally {
@@ -1728,6 +1759,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
   const onDiscardPending = useCallback(() => {
     clearPending();
     setPendingJob(null);
+    autoResumeAttemptedJobIdRef.current = null;
   }, [clearPending]);
 
   const onCancel = useCallback(() => {

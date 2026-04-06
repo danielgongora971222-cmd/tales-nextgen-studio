@@ -4,18 +4,11 @@ import { backend } from "./backendService";
 import { supabase } from "./supabaseClient";
 import { apiUrl } from "./apiBase";
 import { invalidateMyAssetsCache } from "./assetsApi";
-import { waitJobCompletion, JobRow, fetchJobById } from "./jobsApi";
+import { waitJobCompletion, JobRow, fetchJobById, formatJobFailure } from "./jobsApi";
 import { emitInsufficientCredits, emitPlanRequired, emitWalletRefresh } from "./appEvents";
 
 type ApiResponse<T> = { ok: true; dataUrl?: string; videoUrl?: string } | { ok: false; error: string };
 
-function formatJobFailure(row: JobRow): string {
-  const p: any = (row as any)?.params || {};
-  const code = p?.errorCode ? `${p.errorCode}: ` : "";
-  const details =
-    p?.errorDetails ? `\n\nDetalles:\n${JSON.stringify(p.errorDetails, null, 2)}` : "";
-  return `${code}${row.error || "Job failed."}${details}`;
-}
 
 function jobRowToItems(row: JobRow): ImageGenItem[] {
   const p: any = (row as any)?.params || {};

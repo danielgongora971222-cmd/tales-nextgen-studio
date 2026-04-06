@@ -18,6 +18,39 @@ export type JobRow = {
   locked_by?: string | null;
 };
 
+export function formatJobFailure(
+  row: Partial<JobRow> | null | undefined,
+  fallback = "Falló el job en background."
+): string {
+  const params: any = row?.params || {};
+  const code = params?.errorCode ? `${params.errorCode}: ` : "";
+
+  const mainMessage = String(
+    row?.error ||
+      params?.providerStatusMsg ||
+      params?.providerStatusDetail ||
+      fallback
+  ).trim();
+
+  const extra: string[] = [];
+
+  const providerStatus = String(
+    params?.providerStatusNormalized || params?.providerStatus || ""
+  ).trim();
+  if (providerStatus) {
+    extra.push(`Estado proveedor: ${providerStatus}`);
+  }
+
+  if (params?.errorDetails) {
+    try {
+      extra.push(`Detalles:\n${JSON.stringify(params.errorDetails, null, 2)}`);
+    } catch {
+      extra.push(`Detalles:\n${String(params.errorDetails)}`);
+    }
+  }
+
+  return `${code}${mainMessage}${extra.length ? `\n\n${extra.join("\n")}` : ""}`.trim();
+}
 
 type PiapiRecoveredAsset = {
   id: string;

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invalidateMyAssetsCache } from "../services/assetsApi";
-import { waitJobCompletion } from "../services/jobsApi";
+import { formatJobFailure, waitJobCompletion } from "../services/jobsApi";
 import type { AsyncImageJobHooks } from "../services/geminiService";
 
 type PendingImageToolJob = {
@@ -62,15 +62,6 @@ function removePendingJob(userId: string, jobId: string) {
   writePendingJobs(userId, next);
 }
 
-function formatImageJobFailure(row: any): string {
-  const params = row?.params || {};
-  const code = params?.errorCode ? `${params.errorCode}: ` : "";
-  const details = params?.errorDetails
-    ? `\n\nDetalles:\n${JSON.stringify(params.errorDetails, null, 2)}`
-    : "";
-
-  return `${code}${row?.error || "Falló el job de imagen."}${details}`;
-}
 
 function buildSlots(jobs: PendingImageToolJob[], localPendingCount: number) {
   const storageSlots = jobs.flatMap((job) =>
@@ -173,7 +164,7 @@ export function usePendingImageToolJobs({ userId, tool, onCompleted, onError }: 
         if (row.status === "failed") {
           removePendingJob(userId, job.jobId);
           refresh();
-          throw new Error(formatImageJobFailure(row));
+          throw new Error(formatJobFailure(row, "Falló el job de imagen."));
         }
 
         removePendingJob(userId, job.jobId);
