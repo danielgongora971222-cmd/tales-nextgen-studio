@@ -44,8 +44,8 @@ import {
   KLING_2_6,
   KLING_V3,
   KLING_O3_PRO,
-  SEEDANCE_2_PRO,
-  SEEDANCE_2_STANDARD,
+  SEEDANCE_2,
+  SEEDANCE_2_FAST,
   VEO_3,
   VEO_3_FAST,
   VEO_3_1,
@@ -267,7 +267,7 @@ const TOOL_ID = "video-generator";
 const PREFILL_TARGET = getCommunityPrefillTarget(TOOL_ID);
 const FRAME_UPLOAD_TOOL = "video-gen-frame";
 const SEEDANCE_REF_UPLOAD_TOOL = "video-gen-seedance-ref";
-const SEEDANCE_MAX_TOTAL_IMAGES = 9;
+const SEEDANCE_MAX_TOTAL_IMAGES = 2;
 
 const VIDEO_SETTINGS_VERSION = 2;
 
@@ -317,7 +317,7 @@ function safeParseJson(raw: string | null) {
 }
 
 function coerceAr(v: any): AspectRatio {
-  return v === "9:16" || v === "1:1" || v === "4:3" || v === "3:4" ? v : "16:9";
+  return v === "21:9" || v === "9:16" || v === "1:1" || v === "4:3" || v === "3:4" ? v : "16:9";
 }
 
 function coerceRes(v: any): "720p" | "1080p" | "4k" {
@@ -343,8 +343,8 @@ function getVideoModelDisplayLabel(modelId: string) {
   if (m === KLING_2_6) return "Kling 2.6";
   if (m === KLING_V3) return "Kling 3.0";
   if (m === KLING_O3_PRO) return "Kling O3 Pro";
-  if (m === SEEDANCE_2_PRO) return "Seedance 2.0 Pro";
-  if (m === SEEDANCE_2_STANDARD) return "Seedance 2.0 Standard";
+  if (m === SEEDANCE_2) return "Seedance 2";
+  if (m === SEEDANCE_2_FAST) return "Seedance 2 Fast";
   return m || "—";
 }
 
@@ -845,7 +845,7 @@ const elementMentionItems = useMemo<MentionItem[]>(() => {
     });
 }, [isKlingV3ElementsUI, allKlingElements, elementTokenById]);
 
-  const isSeedanceModel = modelNorm === SEEDANCE_2_PRO || modelNorm === SEEDANCE_2_STANDARD;
+  const isSeedanceModel = modelNorm === SEEDANCE_2 || modelNorm === SEEDANCE_2_FAST;
   const seedanceHistoryImages = useMemo(
     () => (imageAssets || []).filter((asset) => !isElementAsset(asset)),
     [imageAssets]
@@ -1166,7 +1166,7 @@ useEffect(() => {
   }, [modelNorm, capability, hasFirst, resolution, aspectRatio]);
 
   useEffect(() => {
-    const isSeedance = modelNorm === SEEDANCE_2_PRO || modelNorm === SEEDANCE_2_STANDARD;
+    const isSeedance = modelNorm === SEEDANCE_2 || modelNorm === SEEDANCE_2_FAST;
     if (!isSeedance || !firstFrame) return;
 
     const url = getAssetUrl(firstFrame);
@@ -1849,6 +1849,10 @@ const durationLabel = useMemo(() => {
   };
 
   const prepareSeedancePromptAndRefs = (rawPrompt: string) => {
+    const orderedFrameAssets = [firstFrame, lastFrame].filter((asset): asset is Asset => Boolean(asset));
+    const finalIds = orderedFrameAssets.map((asset) => asset.id);
+    const finalImageCount = finalIds.length;
+
     const lowerTokens = extractMentionTokens(rawPrompt).map((token) => token.toLowerCase());
     const numericImageIndices = lowerTokens
       .map((token) => {
@@ -1858,43 +1862,15 @@ const durationLabel = useMemo(() => {
       })
       .filter((n) => n > 0);
 
-    const mentionedRefIds: string[] = [];
-    for (const token of lowerTokens) {
-      const refId = seedanceRefTokenToId.get(token);
-      if (refId && !mentionedRefIds.includes(refId)) mentionedRefIds.push(refId);
-    }
-
-    const baseFinalIds = seedanceFinalOrderedImages.map((asset) => asset.id);
-    const finalIds = [...baseFinalIds];
-    for (const id of mentionedRefIds) {
-      if (!finalIds.includes(id)) finalIds.push(id);
-    }
-
-    if (finalIds.length > SEEDANCE_MAX_TOTAL_IMAGES) {
-      throw new Error(`Seedance 2.0 admite un máximo total de ${SEEDANCE_MAX_TOTAL_IMAGES} imágenes entre first frame, last frame y refs extra.`);
-    }
-
     const maxImageIndex = numericImageIndices.length ? Math.max(...numericImageIndices) : 0;
-    if (maxImageIndex > finalIds.length) {
-      throw new Error(`Tu prompt usa @Image${maxImageIndex}, pero solo hay ${finalIds.length} imágenes disponibles entre first frame, last frame y refs.`);
+    if (maxImageIndex > finalImageCount) {
+      throw new Error(`Tu prompt usa @Image${maxImageIndex}, pero solo hay ${finalImageCount} imagen${finalImageCount === 1 ? "" : "es"} disponible${finalImageCount === 1 ? "" : "s"} entre Start y End frame.`);
     }
-
-    const indexById = new Map<string, number>();
-    finalIds.forEach((id, index) => indexById.set(id, index + 1));
-
-    const promptForModel = String(rawPrompt || "").replace(/@[a-z0-9_]+/gi, (token) => {
-      const refId = seedanceRefTokenToId.get(token.toLowerCase());
-      if (!refId) return token;
-      const n = indexById.get(refId);
-      return n ? `@Image${n}` : token;
-    });
-
-    const referenceImageAssetIds = finalIds.filter((id) => id !== firstFrame?.id && id !== lastFrame?.id);
 
     return {
-      promptForModel,
-      referenceImageAssetIds,
-      finalImageCount: finalIds.length,
+      promptForModel: String(rawPrompt || ""),
+      referenceImageAssetIds: [],
+      finalImageCount,
     };
   };
 
@@ -2538,7 +2514,7 @@ const clearModalSelectedIds = () => {
                                 });
 
                                 if (!allowed) {
-                                  setError(`Seedance 2.0 admite un máximo total de ${SEEDANCE_MAX_TOTAL_IMAGES} imágenes entre first frame, last frame y refs extra.`);
+                                  setError(`Seedance 2 admite como máximo Start y End frame en esta herramienta.`);
                                 }
                                 return allowed;
                               }
@@ -2575,20 +2551,6 @@ const clearModalSelectedIds = () => {
                               >
                                 <Icon name="sound" />
                                 <span>{klingSound ? "On" : "Off"}</span>
-                              </button>
-                            )}
-
-                            {isSeedanceModel && (
-                              <button
-                                type="button"
-                                className={`${styles.videoActionBtn} ${styles.videoActionBtnMuted} ${seedanceReferenceImageIds.length ? styles.videoActionBtnActive : ""}`}
-                                onClick={() => setSeedanceRefsPickerOpen(true)}
-                                title="Open Seedance refs"
-                                aria-label="Open Seedance refs"
-                              >
-                                <Icon name="image" />
-                                <span>Refs</span>
-                                <span className={styles.videoActionBtnMeta}>{seedanceReferenceImageIds.length}/{seedanceRefsMaxSelectable}</span>
                               </button>
                             )}
 
@@ -2655,17 +2617,6 @@ const clearModalSelectedIds = () => {
                         <Icon name="mode" />
                         <span>{resolutionSelectorLabel}</span>
                       </button>
-
-                      {isSeedanceModel && (
-                        <button
-                          type="button"
-                          className={`${styles.videoQuickButton} ${seedanceRefsPickerOpen ? styles.videoSelectorButtonActive : ""}`}
-                          onClick={() => setSeedanceRefsPickerOpen(true)}
-                        >
-                          <Icon name="image" />
-                          <span>Refs {seedanceReferenceImageIds.length ? `(${seedanceReferenceImageIds.length})` : ""}</span>
-                        </button>
-                      )}
                     </div>
                   </div>
 

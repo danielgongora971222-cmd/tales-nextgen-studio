@@ -365,9 +365,18 @@ export function createAiVideoRouter(ctx) {
     });
   }
 
-  function isSeedanceModelId(value) {
+  function isSeedanceGenerateModelId(value) {
+    const v = String(value || "").trim();
+    return v === "seedance-2" || v === "seedance-2-fast";
+  }
+
+  function isSeedancePreviewModelId(value) {
     const v = String(value || "").trim();
     return v === "seedance-2-preview" || v === "seedance-2-fast-preview";
+  }
+
+  function isSeedanceModelId(value) {
+    return isSeedanceGenerateModelId(value) || isSeedancePreviewModelId(value);
   }
 
   function isEnvExplicitFalse(value) {
@@ -796,28 +805,26 @@ export function createAiVideoRouter(ctx) {
   }
 
   function coerceSeedanceDuration(value) {
-    const n = Number(value);
-    if (n === 15) return 15;
-    if (n === 10) return 10;
-    return 5;
+    const n = Math.trunc(Number(value));
+    if (!Number.isFinite(n)) return 5;
+    if (n < 4) return 4;
+    if (n > 15) return 15;
+    return n;
   }
 
   function coerceSeedanceAspectRatio(value, fallback = "16:9") {
     const v = String(value || "").trim();
-    return v === "9:16" || v === "16:9" || v === "4:3" || v === "3:4" ? v : fallback;
+    return ["auto", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"].includes(v) ? v : fallback;
   }
 
   function normalizeSeedancePrompt(prompt) {
     let value = String(prompt || "").trim();
     if (!value) return "";
 
-    // PiAPI documenta referencias de imagen como @imageN.
-    // Normalizamos variantes legacy (@Image1) para evitar rechazos por placeholder.
+    // PiAPI documenta placeholders como @imageN, @videoN y @audioN.
     value = value.replace(/@image(\d+)/gi, (_, n) => `@image${String(n)}`);
-
-    // Seedance video edit usa video_urls; @Video1 es una ayuda UX interna de Tales,
-    // no un placeholder documentado del proveedor. Lo convertimos a una frase segura.
-    value = value.replace(/@video\d+/gi, "the input video");
+    value = value.replace(/@audio(\d+)/gi, (_, n) => `@audio${String(n)}`);
+    value = value.replace(/@video(\d+)/gi, (_, n) => `@video${String(n)}`);
 
     return value.replace(/\s{2,}/g, " ").trim();
   }
@@ -826,8 +833,8 @@ export function createAiVideoRouter(ctx) {
     const visiblePrompt = normalizeSeedancePrompt(prompt);
     const instructions = [];
 
-    if (hasFirst) instructions.push("Use @image1 as initial frame.");
-    if (hasLast) instructions.push(`Use @image${hasFirst ? 2 : 1} as last frame.`);
+    if (hasFirst) instructions.push("Use @image1 as the first frame.");
+    if (hasLast) instructions.push(`Use @image${hasFirst ? 2 : 1} as the last frame.`);
 
     return [instructions.join(" "), visiblePrompt].filter(Boolean).join("\n").trim();
   }
@@ -1034,6 +1041,8 @@ export function createAiVideoRouter(ctx) {
     entryType = "gen_spend_video",
     refType = "ai_video",
     refId = null,
+    seedanceMode = undefined,
+    inputVideoDurationSeconds = undefined,
   }) {
     const dur = clampInt(durationSeconds || 0, 1, 60);
     const n = clampInt(count || 1, 1, 8);
@@ -1046,6 +1055,8 @@ export function createAiVideoRouter(ctx) {
       klingMode,
       voiceControl,
       count: n,
+      seedanceMode,
+      inputVideoDurationSeconds,
     });
 
     const baseIdem = ctx?.billing?.getIdempotencyKey ? ctx.billing.getIdempotencyKey(req) : undefined;
@@ -1526,6 +1537,9 @@ const isVeo = isVeoModelId(selectedModelNorm);
       }
     }
 
+    const isSeedanceGenerate = isSeedanceGenerateModelId(selectedModelNorm);
+    const isSeedancePreview = isSeedancePreviewModelId(selectedModelNorm);
+
     if (isSeedance) {
       ensureSeedanceEnabled();
     }
@@ -1563,34 +1577,32 @@ const isVeo = isVeoModelId(selectedModelNorm);
       });
     }
 
-    if (isSeedance) {
+    if (isSeedanceGenerate) {
       const INPUT_URL_TTL_SECONDS = 60 * 60 * 6;
       const visiblePrompt = normalizeSeedancePrompt(prompt);
       if (!visiblePrompt) {
-        throw httpError(400, "SEEDANCE_PROMPT_REQUIRED", "Seedance 2.0 requiere un prompt.");
+        throw httpError(400, "SEEDANCE_PROMPT_REQUIRED", "Seedance 2 requiere un prompt.");
       }
-
-      const dur = coerceSeedanceDuration(durationSeconds);
-      const ar = coerceSeedanceAspectRatio(aspectRatio, "16:9");
 
       const extraReferenceImageAssetIds = Array.isArray(referenceImageAssetIds)
         ? referenceImageAssetIds.filter(Boolean)
         : [];
+      if (extraReferenceImageAssetIds.length > 0) {
+        throw httpError(
+          400,
+          "SEEDANCE_GENERAL_REFS_NOT_SUPPORTED",
+          "En General Video Generator, Seedance 2 usa texto o first/last frame. Para refs múltiples usa Ingredients to Video."
+        );
+      }
+
+      const dur = coerceSeedanceDuration(durationSeconds);
+      const hasFirstSeedanceFrame = Boolean(firstFrameAssetId);
+      const hasLastSeedanceFrame = Boolean(lastFrameAssetId);
+      const mode = hasFirstSeedanceFrame ? "first_last_frames" : "text_to_video";
 
       const imageAssetIds = [];
-      const pushSeedanceImageId = (assetId) => {
-        const id = String(assetId || "").trim();
-        if (!id || imageAssetIds.includes(id)) return;
-        imageAssetIds.push(id);
-      };
-
-      if (firstFrameAssetId) pushSeedanceImageId(firstFrameAssetId);
-      if (lastFrameAssetId) pushSeedanceImageId(lastFrameAssetId);
-      for (const assetId of extraReferenceImageAssetIds) pushSeedanceImageId(assetId);
-
-      if (imageAssetIds.length > 9) {
-        throw httpError(400, "SEEDANCE_REFERENCE_LIMIT", "Seedance 2.0 admite un máximo total de 9 imágenes entre first frame, last frame y refs extra.");
-      }
+      if (firstFrameAssetId) imageAssetIds.push(String(firstFrameAssetId));
+      if (lastFrameAssetId) imageAssetIds.push(String(lastFrameAssetId));
 
       const imageUrls = [];
       for (const assetId of imageAssetIds) {
@@ -1599,15 +1611,26 @@ const isVeo = isVeoModelId(selectedModelNorm);
 
       const providerPrompt = buildSeedanceFramePrompt({
         prompt: visiblePrompt,
-        hasFirst: Boolean(firstFrameAssetId),
-        hasLast: Boolean(lastFrameAssetId),
+        hasFirst: hasFirstSeedanceFrame,
+        hasLast: hasLastSeedanceFrame,
       });
+
+      const effectiveAspectRatio = hasFirstSeedanceFrame
+        ? "auto"
+        : coerceSeedanceAspectRatio(aspectRatio, "16:9");
 
       const input = {
         prompt: providerPrompt,
         duration: dur,
-        aspect_ratio: ar,
-        ...(imageUrls.length ? { image_urls: imageUrls } : {}),
+        mode,
+        ...(mode === "first_last_frames"
+          ? {
+              image_urls: imageUrls,
+              aspect_ratio: "auto",
+            }
+          : {
+              aspect_ratio: effectiveAspectRatio,
+            }),
       };
 
       const spend = await spendVideoCreditsOrReject({
@@ -1620,6 +1643,7 @@ const isVeo = isVeoModelId(selectedModelNorm);
         entryType: "ai_video_generate",
         refType: "ai_video",
         refId: null,
+        seedanceMode: "generate",
       });
 
       if (!spend.ok) {
@@ -1643,15 +1667,15 @@ const isVeo = isVeoModelId(selectedModelNorm);
         category: toolName,
         provider: "piapi",
         model: selectedModelNorm,
-        aspectRatio: ar,
+        aspectRatio: effectiveAspectRatio,
         durationSeconds: dur,
         firstFrameAssetId: firstFrameAssetId || null,
         lastFrameAssetId: lastFrameAssetId || null,
-        referenceImageAssetIds: extraReferenceImageAssetIds,
+        referenceImageAssetIds: [],
         piapiTaskId: String(taskId),
         piapiTaskType: selectedModelNorm,
         seedance: {
-          mode: imageUrls.length ? (lastFrameAssetId ? "first-last-guided" : "image-to-video") : "text-to-video",
+          mode,
           imageReferenceAssetIds: imageAssetIds,
         },
       };
@@ -1668,7 +1692,7 @@ const isVeo = isVeoModelId(selectedModelNorm);
         extra: {
           clientJobId: clientJobIdNorm || null,
           meta,
-          aspectRatio: ar,
+          aspectRatio: effectiveAspectRatio,
           durationSeconds: dur,
           firstFrameAssetId: firstFrameAssetId || null,
           lastFrameAssetId: lastFrameAssetId || null,
@@ -3645,13 +3669,14 @@ const isVeo = isVeoModelId(selectedModelNorm);
     });
 
     const SeedanceVideoEditRequestSchema = z.object({
-      model: z.enum(["seedance-2-preview", "seedance-2-fast-preview"]),
+      model: z.enum(["seedance-2", "seedance-2-fast", "seedance-2-preview", "seedance-2-fast-preview"]),
       prompt: z.string().max(14000).optional(),
       videoAssetId: z.string().uuid().optional(),
-      referenceImageAssetIds: z.array(z.string().uuid()).max(9).optional(),
+      referenceImageAssetIds: z.array(z.string().uuid()).max(12).optional(),
+      audioReferenceAssetIds: z.array(z.string().uuid()).max(12).optional(),
       durationSeconds: z.coerce.number().optional(),
       referenceVideoDurationSeconds: z.coerce.number().optional(),
-      aspectRatio: z.enum(["auto", "16:9", "9:16", "1:1", "4:3", "3:4"]).optional(),
+      aspectRatio: z.enum(["auto", "21:9", "16:9", "9:16", "1:1", "4:3", "3:4"]).optional(),
       toolName: z.string().optional(),
       hint: z.string().optional(),
       async: z.boolean().optional(),
@@ -3675,75 +3700,100 @@ const isVeo = isVeoModelId(selectedModelNorm);
 
         const visiblePrompt = normalizeSeedancePrompt(body.prompt);
         if (!visiblePrompt) {
-          throw httpError(400, "SEEDANCE_PROMPT_REQUIRED", "Seedance 2.0 requiere un prompt.");
+          throw httpError(400, "SEEDANCE_PROMPT_REQUIRED", "Seedance 2 requiere un prompt.");
         }
 
+        const model = String(body.model || "").trim();
+        const isGenerateModel = isSeedanceGenerateModelId(model);
+        const isPreviewModel = isSeedancePreviewModelId(model);
         const toolName = body.toolName || "video-edit";
         const hint = body.hint || `seedance_${Date.now()}`;
         const INPUT_URL_TTL_SECONDS = 60 * 60 * 6;
-        const referenceImageAssetIds = Array.isArray(body.referenceImageAssetIds) ? body.referenceImageAssetIds : [];
+
+        if (toolName === "extend-video") {
+          throw httpError(400, "SEEDANCE_EXTEND_REMOVED", "Seedance 2 ya no está disponible en Extend Video.");
+        }
+
+        const referenceImageAssetIds = Array.isArray(body.referenceImageAssetIds) ? body.referenceImageAssetIds.filter(Boolean) : [];
+        const audioReferenceAssetIds = Array.isArray(body.audioReferenceAssetIds) ? body.audioReferenceAssetIds.filter(Boolean) : [];
+
         const referenceImageUrls = [];
         for (const assetId of referenceImageAssetIds) {
           referenceImageUrls.push(await assetIdToSignedUrl(assetId, user.id, INPUT_URL_TTL_SECONDS));
         }
 
+        const audioReferenceUrls = [];
+        for (const assetId of audioReferenceAssetIds) {
+          audioReferenceUrls.push(await assetIdToSignedUrl(assetId, user.id, INPUT_URL_TTL_SECONDS));
+        }
+
+        const effectiveAspectRatio = coerceSeedanceAspectRatio(body.aspectRatio, "16:9");
         let input = null;
         let pricingDurationSeconds = coerceSeedanceDuration(body.durationSeconds);
-        let mode = "text-to-video";
+        let inputVideoDurationSeconds = coerceReferenceVideoDurationSeconds(body.referenceVideoDurationSeconds) || 0;
+        let mode = "text_to_video";
         let parentTaskId = null;
+        let videoUrl = null;
+        let totalRefCount = referenceImageUrls.length + audioReferenceUrls.length;
 
-        if (toolName === "extend-video") {
-          if (!body.videoAssetId) {
-            throw httpError(400, "SEEDANCE_EXTEND_VIDEO_REQUIRED", "Selecciona un video generado previamente con Seedance para extenderlo.");
+        if (body.videoAssetId) totalRefCount += 1;
+        if (totalRefCount > 12) {
+          throw httpError(400, "SEEDANCE_REFERENCE_LIMIT", "Seedance 2 Omni Reference admite un máximo total de 12 referencias entre imágenes, audio y video.");
+        }
+
+        if (isGenerateModel) {
+          if (body.videoAssetId) {
+            videoUrl = await assetIdToSignedUrl(body.videoAssetId, user.id, INPUT_URL_TTL_SECONDS);
           }
 
-          const sourceAsset = await getOwnedAssetById(body.videoAssetId, user.id);
-          const sourceMeta = sourceAsset?.meta || {};
-          parentTaskId = sourceMeta?.piapiTaskId || sourceMeta?.seedance?.piapiTaskId || sourceMeta?.seedanceTaskId || null;
+          const hasImageOrVideoReference = referenceImageUrls.length > 0 || Boolean(videoUrl);
+          const hasAudioReference = audioReferenceUrls.length > 0;
 
-          if (!parentTaskId) {
-            throw httpError(400, "SEEDANCE_EXTEND_PARENT_TASK_REQUIRED", "Seedance Extend necesita un video generado previamente con Seedance dentro de Tales para reutilizar el parent_task_id.");
+          if (!hasImageOrVideoReference && hasAudioReference) {
+            throw httpError(400, "SEEDANCE_AUDIO_ONLY_NOT_SUPPORTED", "Seedance 2 Omni Reference no admite usar solo audio: agrega al menos una imagen o un video de referencia.");
           }
 
-          pricingDurationSeconds = coerceSeedanceDuration(body.durationSeconds);
-          mode = "extend-video";
+          if (!hasImageOrVideoReference && !hasAudioReference) {
+            throw httpError(400, "SEEDANCE_REFERENCE_REQUIRED", "Agrega al menos una imagen o un video de referencia para Ingredients to Video con Seedance 2.");
+          }
+
+          mode = "omni_reference";
           input = {
+            mode,
             prompt: visiblePrompt,
-            parent_task_id: String(parentTaskId),
             duration: pricingDurationSeconds,
-            aspect_ratio: coerceSeedanceAspectRatio(body.aspectRatio, "16:9"),
+            aspect_ratio: effectiveAspectRatio,
+            ...(referenceImageUrls.length ? { image_urls: referenceImageUrls } : {}),
+            ...(videoUrl ? { video_urls: [videoUrl] } : {}),
+            ...(audioReferenceUrls.length ? { audio_urls: audioReferenceUrls } : {}),
           };
-        } else if (body.videoAssetId) {
-          const videoUrl = await assetIdToSignedUrl(body.videoAssetId, user.id, INPUT_URL_TTL_SECONDS);
-          pricingDurationSeconds = coerceReferenceVideoDurationSeconds(body.referenceVideoDurationSeconds) || 5;
-          mode = referenceImageUrls.length ? "video-edit-with-image" : "video-edit";
+        } else if (isPreviewModel) {
+          if (!body.videoAssetId) {
+            throw httpError(400, "SEEDANCE_VIDEO_REQUIRED", "Selecciona un video de entrada para editar con Seedance 2 Preview.");
+          }
+
+          videoUrl = await assetIdToSignedUrl(body.videoAssetId, user.id, INPUT_URL_TTL_SECONDS);
+          pricingDurationSeconds = coerceReferenceVideoDurationSeconds(body.referenceVideoDurationSeconds) || pricingDurationSeconds || 5;
+          inputVideoDurationSeconds = pricingDurationSeconds;
+          mode = referenceImageUrls.length ? "video_edit_with_image" : "video_edit";
           input = {
             prompt: visiblePrompt,
             video_urls: [videoUrl],
             ...(referenceImageUrls.length ? { image_urls: referenceImageUrls } : {}),
-            aspect_ratio: coerceSeedanceAspectRatio(body.aspectRatio, "16:9"),
+            aspect_ratio: effectiveAspectRatio,
           };
         } else {
-          if (!referenceImageUrls.length) {
-            throw httpError(400, "SEEDANCE_REFERENCE_REQUIRED", "Agrega al menos una imagen de referencia o un video base para esta herramienta de Seedance.");
-          }
-
-          pricingDurationSeconds = coerceSeedanceDuration(body.durationSeconds);
-          mode = "image-to-video";
-          input = {
-            prompt: visiblePrompt,
-            image_urls: referenceImageUrls,
-            duration: pricingDurationSeconds,
-            aspect_ratio: coerceSeedanceAspectRatio(body.aspectRatio, "16:9"),
-          };
+          throw httpError(400, "SEEDANCE_MODEL_UNSUPPORTED", "Modelo de Seedance no soportado.");
         }
 
         const spend = await ctx.billing.spendCredits({
           userId: user.id,
           amountCredits: estimateVideoCostCredits({
-            modelNorm: body.model,
+            modelNorm: model,
             durationSeconds: pricingDurationSeconds,
             resolution: "720p",
+            seedanceMode: isPreviewModel ? "edit" : "generate",
+            inputVideoDurationSeconds,
           }),
           entryType: "ai_video_edit",
           refType: "ai_video",
@@ -3757,7 +3807,7 @@ const isVeo = isVeoModelId(selectedModelNorm);
 
         const webhookConfig = buildPiapiWebhookConfig(req);
         const taskResponse = await createPiapiSeedanceTask({
-          taskType: body.model,
+          taskType: model,
           input,
           webhookConfig,
         });
@@ -3771,25 +3821,29 @@ const isVeo = isVeoModelId(selectedModelNorm);
           tool: toolName,
           category: toolName,
           provider: "piapi",
-          model: body.model,
+          model,
           piapiTaskId: String(taskId),
-          piapiTaskType: body.model,
+          piapiTaskType: model,
           seedance: {
             mode,
             parentTaskId: parentTaskId ? String(parentTaskId) : null,
             videoAssetId: body.videoAssetId || null,
             referenceImageAssetIds,
+            audioReferenceAssetIds,
             durationSeconds: pricingDurationSeconds,
-            aspectRatio: coerceSeedanceAspectRatio(body.aspectRatio, "16:9"),
+            inputVideoDurationSeconds,
+            aspectRatio: effectiveAspectRatio,
           },
           editVideo: {
             kind: mode,
-            model: body.model,
+            model,
             prompt: visiblePrompt,
             videoAssetId: body.videoAssetId || null,
             referenceImageAssetIds,
+            audioReferenceAssetIds,
             durationSeconds: pricingDurationSeconds,
-            aspectRatio: coerceSeedanceAspectRatio(body.aspectRatio, "16:9"),
+            inputVideoDurationSeconds,
+            aspectRatio: effectiveAspectRatio,
           },
         };
 
@@ -3797,17 +3851,19 @@ const isVeo = isVeoModelId(selectedModelNorm);
           ownerId: user.id,
           kind: "video",
           taskId: String(taskId),
-          taskType: body.model,
+          taskType: model,
           toolName,
           hint,
-          model: body.model,
+          model,
           prompt: visiblePrompt,
           extra: {
             meta,
             durationSeconds: pricingDurationSeconds,
-            aspectRatio: coerceSeedanceAspectRatio(body.aspectRatio, "16:9"),
+            aspectRatio: effectiveAspectRatio,
             videoAssetId: body.videoAssetId || null,
             referenceImageAssetIds,
+            audioReferenceAssetIds,
+            inputVideoDurationSeconds,
             parentTaskId: parentTaskId ? String(parentTaskId) : null,
             providerWebhookEnabled: Boolean(webhookConfig?.endpoint),
             providerWebhookEndpoint: webhookConfig?.endpoint || null,
@@ -3819,6 +3875,8 @@ const isVeo = isVeoModelId(selectedModelNorm);
         next(err);
       }
     });
+
+
 
 
   // --- PASTE END ---

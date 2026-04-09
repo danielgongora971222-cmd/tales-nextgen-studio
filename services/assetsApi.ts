@@ -105,7 +105,7 @@ const myAssetsCache = new Map<string, AssetsCacheEntry>();
 const publicAssetsCache = new Map<string, AssetsCacheEntry>();
 const purchasedAssetsCache = new Map<string, AssetsCacheEntry>();
 
-function cacheKeyFor(type?: "image" | "video") {
+function cacheKeyFor(type?: "image" | "video" | "audio") {
   return type ? `type:${type}` : "type:all";
 }
 
@@ -113,17 +113,17 @@ function isFresh(entry: AssetsCacheEntry) {
   return Date.now() - entry.ts < ASSETS_CACHE_TTL_MS;
 }
 
-export function invalidateMyAssetsCache(type?: "image" | "video") {
+export function invalidateMyAssetsCache(type?: "image" | "video" | "audio") {
   if (type) myAssetsCache.delete(cacheKeyFor(type));
   else myAssetsCache.clear();
 }
 
-export function invalidatePublicAssetsCache(type?: "image" | "video") {
+export function invalidatePublicAssetsCache(type?: "image" | "video" | "audio") {
   if (type) publicAssetsCache.delete(cacheKeyFor(type));
   else publicAssetsCache.clear();
 }
 
-export function invalidatePurchasedAssetsCache(type?: "image" | "video") {
+export function invalidatePurchasedAssetsCache(type?: "image" | "video" | "audio") {
   if (type) purchasedAssetsCache.delete(cacheKeyFor(type));
   else purchasedAssetsCache.clear();
 }
@@ -184,9 +184,39 @@ function detectAssetKind(asset: any): "image" | "video" | null {
   return null;
 }
 
-export function filterAssetsByType(items: Asset[], type: "image" | "video") {
+function isAudioLikeAsset(asset: any): boolean {
+  if (!asset || typeof asset !== "object") return false;
+  const probe = (value: any) => String(value || "").trim().toLowerCase();
+  const candidates = [
+    asset.mime,
+    asset.mimeType,
+    asset.contentType,
+    asset.meta?.mime,
+    asset.meta?.mimeType,
+    asset.meta?.contentType,
+    asset.meta?.category,
+    asset.meta?.assetCategory,
+    asset.meta?.kind,
+    asset.meta?.mediaKind,
+  ].map(probe).filter(Boolean);
+
+  if (candidates.some((candidate) => candidate === "audio" || candidate.startsWith("audio/"))) return true;
+  if (candidates.includes("audio")) return true;
+
+  const names = [asset.url, asset.publicUrl, asset.signedUrl, asset.thumbUrl, asset.name, asset.filename]
+    .map(probe)
+    .filter(Boolean);
+
+  return names.some((value) => /\.(mp3|wav|m4a|aac|ogg)(\?|#|$)/i.test(value));
+}
+
+export function filterAssetsByType(items: Asset[], type: "image" | "video" | "audio") {
   return dedupeAssetsById(
-    (Array.isArray(items) ? items : []).filter((asset) => detectAssetKind(asset) === type)
+    (Array.isArray(items) ? items : []).filter((asset) => {
+      if (type === "audio") return isAudioLikeAsset(asset);
+      if (type === "video") return detectAssetKind(asset) === "video" && !isAudioLikeAsset(asset);
+      return detectAssetKind(asset) === "image";
+    })
   );
 }
 
@@ -203,14 +233,14 @@ function shouldRefetch(entry: AssetsCacheEntry, nextLimit?: number) {
   return false;
 }
 
-async function fetchMyAssetsNoCache(opts?: { type?: "image" | "video"; limit?: number }): Promise<Asset[]> {
+async function fetchMyAssetsNoCache(opts?: { type?: "image" | "video" | "audio"; limit?: number }): Promise<Asset[]> {
   // 1) sacar token del login actual
   const { data: sessionData } = await supabase.auth.getSession();
   const token = sessionData.session?.access_token;
 
   // 2) armar URL con filtros
   const params = new URLSearchParams();
-  if (opts?.type) params.set("type", opts.type);
+  if (opts?.type && opts.type !== "audio") params.set("type", opts.type);
   if (opts?.limit) params.set("limit", String(opts.limit));
 
   const path = `/api/assets${params.toString() ? `?${params.toString()}` : ""}`;
@@ -245,13 +275,13 @@ async function fetchMyAssetsNoCache(opts?: { type?: "image" | "video"; limit?: n
     .filter((a) => !isInternalAsset(a));
 }
 
-async function fetchPublicAssetsNoCache(opts?: { type?: "image" | "video"; limit?: number }): Promise<Asset[]> {
+async function fetchPublicAssetsNoCache(opts?: { type?: "image" | "video" | "audio"; limit?: number }): Promise<Asset[]> {
   const { data: sessionData } = await supabase.auth.getSession();
   const token = sessionData.session?.access_token;
 
   const params = new URLSearchParams();
   params.set("scope", "public");
-  if (opts?.type) params.set("type", opts.type);
+  if (opts?.type && opts.type !== "audio") params.set("type", opts.type);
   if (opts?.limit) params.set("limit", String(opts.limit));
 
   const url = apiUrl(`/api/assets?${params.toString()}`);
@@ -283,13 +313,13 @@ async function fetchPublicAssetsNoCache(opts?: { type?: "image" | "video"; limit
     .filter((a) => !isInternalAsset(a));
 }
 
-async function fetchPurchasedAssetsNoCache(opts?: { type?: "image" | "video"; limit?: number }): Promise<Asset[]> {
+async function fetchPurchasedAssetsNoCache(opts?: { type?: "image" | "video" | "audio"; limit?: number }): Promise<Asset[]> {
   const { data: sessionData } = await supabase.auth.getSession();
   const token = sessionData.session?.access_token;
 
   const params = new URLSearchParams();
   params.set("scope", "purchased");
-  if (opts?.type) params.set("type", opts.type);
+  if (opts?.type && opts.type !== "audio") params.set("type", opts.type);
   if (opts?.limit) params.set("limit", String(opts.limit));
 
   const url = apiUrl(`/api/assets?${params.toString()}`);
@@ -323,32 +353,38 @@ async function fetchPurchasedAssetsNoCache(opts?: { type?: "image" | "video"; li
 
 
 
-export async function listMyAssets(opts?: { type?: "image" | "video"; limit?: number; fresh?: boolean }): Promise<Asset[]> {
-  const key = cacheKeyFor(opts?.type);
+export async function listMyAssets(opts?: { type?: "image" | "video" | "audio"; limit?: number; fresh?: boolean }): Promise<Asset[]> {
+  const requestedType = opts?.type;
+  const fetchType = requestedType === "audio" ? undefined : requestedType;
+  const key = cacheKeyFor(requestedType);
   const limit = opts?.limit;
+
+  const normalize = (items: Asset[]) => {
+    const base = Array.isArray(items) ? items : [];
+    if (!requestedType) return sliceByLimit(base, limit);
+    return sliceByLimit(filterAssetsByType(base, requestedType), limit);
+  };
 
   if (!opts?.fresh) {
     const existing = myAssetsCache.get(key);
 
     if (existing && !shouldRefetch(existing, limit)) {
-      return sliceByLimit(existing.items, limit);
+      return normalize(existing.items);
     }
 
-    // Si ya hay un fetch en vuelo, reutilízalo (evita doble fetch)
     if (existing?.inFlight) {
       const items = await existing.inFlight;
-      return sliceByLimit(items, limit);
+      return normalize(items);
     }
   }
 
-  // Fetch real (sin cache), y luego actualiza cache
   const entry: AssetsCacheEntry = myAssetsCache.get(key) || {
     ts: 0,
     fetchedLimit: null,
     items: [],
   };
 
-  const inFlight = fetchMyAssetsNoCache({ type: opts?.type, limit: opts?.limit });
+  const inFlight = fetchMyAssetsNoCache({ type: fetchType, limit: opts?.limit });
   entry.inFlight = inFlight;
   myAssetsCache.set(key, entry);
 
@@ -359,7 +395,7 @@ export async function listMyAssets(opts?: { type?: "image" | "video"; limit?: nu
     entry.items = items;
     delete entry.inFlight;
     myAssetsCache.set(key, entry);
-    return sliceByLimit(items, limit);
+    return normalize(items);
   } catch (e) {
     delete entry.inFlight;
     myAssetsCache.set(key, entry);
@@ -368,20 +404,28 @@ export async function listMyAssets(opts?: { type?: "image" | "video"; limit?: nu
 }
 
 
-export async function listPublicAssets(opts?: { type?: "image" | "video"; limit?: number; fresh?: boolean }): Promise<Asset[]> {
-  const key = cacheKeyFor(opts?.type);
+export async function listPublicAssets(opts?: { type?: "image" | "video" | "audio"; limit?: number; fresh?: boolean }): Promise<Asset[]> {
+  const requestedType = opts?.type;
+  const fetchType = requestedType === "audio" ? undefined : requestedType;
+  const key = cacheKeyFor(requestedType);
   const limit = opts?.limit;
+
+  const normalize = (items: Asset[]) => {
+    const base = Array.isArray(items) ? items : [];
+    if (!requestedType) return sliceByLimit(base, limit);
+    return sliceByLimit(filterAssetsByType(base, requestedType), limit);
+  };
 
   if (!opts?.fresh) {
     const existing = publicAssetsCache.get(key);
 
     if (existing && !shouldRefetch(existing, limit)) {
-      return sliceByLimit(existing.items, limit);
+      return normalize(existing.items);
     }
 
     if (existing?.inFlight) {
       const items = await existing.inFlight;
-      return sliceByLimit(items, limit);
+      return normalize(items);
     }
   }
 
@@ -391,7 +435,7 @@ export async function listPublicAssets(opts?: { type?: "image" | "video"; limit?
     items: [],
   };
 
-  const inFlight = fetchPublicAssetsNoCache({ type: opts?.type, limit: opts?.limit });
+  const inFlight = fetchPublicAssetsNoCache({ type: fetchType, limit: opts?.limit });
   entry.inFlight = inFlight;
   publicAssetsCache.set(key, entry);
 
@@ -402,7 +446,7 @@ export async function listPublicAssets(opts?: { type?: "image" | "video"; limit?
     entry.items = items;
     delete entry.inFlight;
     publicAssetsCache.set(key, entry);
-    return sliceByLimit(items, limit);
+    return normalize(items);
   } catch (e) {
     delete entry.inFlight;
     publicAssetsCache.set(key, entry);
@@ -410,20 +454,28 @@ export async function listPublicAssets(opts?: { type?: "image" | "video"; limit?
   }
 }
 
-export async function listPurchasedAssets(opts?: { type?: "image" | "video"; limit?: number; fresh?: boolean }): Promise<Asset[]> {
-  const key = cacheKeyFor(opts?.type);
+export async function listPurchasedAssets(opts?: { type?: "image" | "video" | "audio"; limit?: number; fresh?: boolean }): Promise<Asset[]> {
+  const requestedType = opts?.type;
+  const fetchType = requestedType === "audio" ? undefined : requestedType;
+  const key = cacheKeyFor(requestedType);
   const limit = opts?.limit;
+
+  const normalize = (items: Asset[]) => {
+    const base = Array.isArray(items) ? items : [];
+    if (!requestedType) return sliceByLimit(base, limit);
+    return sliceByLimit(filterAssetsByType(base, requestedType), limit);
+  };
 
   if (!opts?.fresh) {
     const existing = purchasedAssetsCache.get(key);
 
     if (existing && !shouldRefetch(existing, limit)) {
-      return sliceByLimit(existing.items, limit);
+      return normalize(existing.items);
     }
 
     if (existing?.inFlight) {
       const items = await existing.inFlight;
-      return sliceByLimit(items, limit);
+      return normalize(items);
     }
   }
 
@@ -433,7 +485,7 @@ export async function listPurchasedAssets(opts?: { type?: "image" | "video"; lim
     items: [],
   };
 
-  const inFlight = fetchPurchasedAssetsNoCache({ type: opts?.type, limit: opts?.limit });
+  const inFlight = fetchPurchasedAssetsNoCache({ type: fetchType, limit: opts?.limit });
   entry.inFlight = inFlight;
   purchasedAssetsCache.set(key, entry);
 
@@ -444,7 +496,7 @@ export async function listPurchasedAssets(opts?: { type?: "image" | "video"; lim
     entry.items = items;
     delete entry.inFlight;
     purchasedAssetsCache.set(key, entry);
-    return sliceByLimit(items, limit);
+    return normalize(items);
   } catch (e) {
     delete entry.inFlight;
     purchasedAssetsCache.set(key, entry);
@@ -525,7 +577,7 @@ export async function uploadUserAsset(
         tool?: string;
         category?: string;
         name?: string;
-        type?: "image" | "video";
+        type?: "image" | "video" | "audio";
         meta?: Record<string, any>;
       } = "upload"
 ): Promise<Asset> {
@@ -883,7 +935,7 @@ export async function downloadAssetToDisk(assetId: string, filenameHint?: string
 
 
 
-export async function listMyAssetsRobust(opts?: { type?: "image" | "video"; limit?: number; fresh?: boolean }): Promise<Asset[]> {
+export async function listMyAssetsRobust(opts?: { type?: "image" | "video" | "audio"; limit?: number; fresh?: boolean }): Promise<Asset[]> {
   const type = opts?.type;
   if (!type) return listMyAssets(opts);
 
@@ -915,7 +967,7 @@ function isElementLibraryAssetClient(asset: Asset): boolean {
   );
 }
 
-export async function listMyAssetsPickerLibrary(opts?: { type?: "image" | "video"; limit?: number; fresh?: boolean }): Promise<Asset[]> {
+export async function listMyAssetsPickerLibrary(opts?: { type?: "image" | "video" | "audio"; limit?: number; fresh?: boolean }): Promise<Asset[]> {
   const type = opts?.type;
   const safeLimit = (() => {
     const raw = Number(opts?.limit || 0);
@@ -929,11 +981,7 @@ export async function listMyAssetsPickerLibrary(opts?: { type?: "image" | "video
   }
 
   const normalize = (items: Asset[]) => {
-    const typed = (Array.isArray(items) ? items : []).filter((asset) => {
-      if (!asset) return false;
-      if (asset.type === type) return true;
-      return detectAssetKind(asset) === type;
-    });
+    const typed = filterAssetsByType(Array.isArray(items) ? items : [], type);
     return sliceByLimit(sortAssetsNewestFirst(typed), safeLimit);
   };
 
@@ -959,7 +1007,7 @@ export async function listMyElementLibraryAssets(opts?: { limit?: number; fresh?
   return sliceByLimit(sortAssetsNewestFirst(onlyElements), safeLimit);
 }
 
-export async function listPurchasedAssetsRobust(opts?: { type?: "image" | "video"; limit?: number; fresh?: boolean }): Promise<Asset[]> {
+export async function listPurchasedAssetsRobust(opts?: { type?: "image" | "video" | "audio"; limit?: number; fresh?: boolean }): Promise<Asset[]> {
   const type = opts?.type;
   if (!type) return listPurchasedAssets(opts);
 

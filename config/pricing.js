@@ -32,6 +32,30 @@ function roundCreditsFromUsd(usd) {
   return Math.max(1, Math.ceil(value * CREDITS_PER_USD * PROVIDER_TO_SELLING_MULTIPLIER));
 }
 
+function roundSeedanceCreditsFromUsd(usd) {
+  const value = Number(usd || 0);
+  if (!Number.isFinite(value) || value <= 0) return 1;
+  return Math.max(1, Math.ceil(value * CREDITS_PER_USD * 3));
+}
+
+function seedanceUnitPricePerSecondUsd(modelNorm, mode = "generate") {
+  const model = normalizeVideoModelId(modelNorm);
+  const normalizedMode = String(mode || "generate").trim().toLowerCase();
+
+  switch (model) {
+    case "seedance-2":
+      return 0.13;
+    case "seedance-2-fast":
+      return 0.10;
+    case "seedance-2-preview":
+      return normalizedMode === "edit" ? 0.25 : 0.15;
+    case "seedance-2-fast-preview":
+      return normalizedMode === "edit" ? 0.17 : 0.10;
+    default:
+      return null;
+  }
+}
+
 function normalizeImageQuality(quality) {
   const q = String(quality || "1K").toUpperCase().trim();
   if (q === "2K") return "2K";
@@ -407,11 +431,17 @@ function videoUnitUsd({
     case "kling-v3-motion-control-pro":
       perSecondUsd = 0.168;
       break;
+    case "seedance-2":
+      perSecondUsd = 0.13;
+      break;
+    case "seedance-2-fast":
+      perSecondUsd = 0.10;
+      break;
     case "seedance-2-preview":
       perSecondUsd = 0.15;
       break;
     case "seedance-2-fast-preview":
-      perSecondUsd = 0.08;
+      perSecondUsd = 0.10;
       break;
     case "kling-2.6-motion-control":
       perSecondUsd = 0.07;
@@ -438,11 +468,25 @@ export function estimateVideoCostCredits({
   voiceControl = undefined,
   count = 1,
   isKling = undefined, // compat legacy (ya no hace falta, pero lo aceptamos)
+  seedanceMode = "generate",
+  inputVideoDurationSeconds = 0,
 } = {}) {
   const n = clampInt(count || 1, 1, 8, 1);
+  const normalizedModel = normalizeVideoModelId(modelNorm);
+
+  const seedanceUnitUsd = seedanceUnitPricePerSecondUsd(normalizedModel, seedanceMode);
+  if (seedanceUnitUsd != null) {
+    const outputSeconds = clampInt(durationSeconds != null ? durationSeconds : 5, 1, 3600, 5);
+    const inputSeconds = clampNumber(inputVideoDurationSeconds != null ? inputVideoDurationSeconds : 0, 0, 3600, 0);
+    const billableSeconds = Math.max(
+      1,
+      seedanceMode === "edit" ? (inputSeconds || outputSeconds) : (outputSeconds + inputSeconds)
+    );
+    return roundSeedanceCreditsFromUsd(seedanceUnitUsd * billableSeconds * n);
+  }
 
   const fixedCredits = fixedVideoTotalCredits({
-    modelNorm,
+    modelNorm: normalizedModel,
     durationSeconds,
     resolution,
     klingMode,
@@ -452,7 +496,7 @@ export function estimateVideoCostCredits({
   }
 
   const usd = videoUnitUsd({
-    modelNorm,
+    modelNorm: normalizedModel,
     durationSeconds,
     resolution,
     generateAudio,

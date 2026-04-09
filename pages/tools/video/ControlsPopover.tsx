@@ -7,8 +7,8 @@ import {
   KLING_2_6,
   KLING_O3_PRO,
   KLING_V3,
-  SEEDANCE_2_PRO,
-  SEEDANCE_2_STANDARD,
+  SEEDANCE_2,
+  SEEDANCE_2_FAST,
   VEO_3,
   VEO_3_1,
   VEO_3_1_FAST,
@@ -62,8 +62,8 @@ const MODEL_OPTIONS: ModelOption[] = [
   { id: KLING_2_6, name: "Kling 2.6", desc: "5/10s" },
   { id: KLING_V3, name: "Kling 3.0", desc: "3–15s · multishot" },
   { id: KLING_O3_PRO, name: "Kling O3 Pro", desc: "3–15s · multishot" },
-  { id: SEEDANCE_2_PRO, name: "Seedance 2.0 Pro", desc: "5/10/15s · texto/imagen/video" },
-  { id: SEEDANCE_2_STANDARD, name: "Seedance 2.0 Standard", desc: "5/10/15s · rápido" },
+  { id: SEEDANCE_2, name: "Seedance 2", desc: "4–15s · text / first-last" },
+  { id: SEEDANCE_2_FAST, name: "Seedance 2 Fast", desc: "4–15s · fast" },
 ];
 
 export function ControlsPopover({
@@ -92,7 +92,7 @@ export function ControlsPopover({
 
   const close = onClose || (() => setPanel(null));
 
-  const isSeedance = model === SEEDANCE_2_PRO || model === SEEDANCE_2_STANDARD;
+  const isSeedance = model === SEEDANCE_2 || model === SEEDANCE_2_FAST;
 
   const selectAspect = (next: AspectRatio) => {
     setAspectRatio(next);
@@ -156,22 +156,22 @@ export function ControlsPopover({
                 <label className={styles.formLabel}>Aspect ratio</label>
                 {capability.supportsAspectRatio ? (
                   <div className={styles.segment}>
-                    <button
-                      type="button"
-                      className={`${styles.segmentBtn} ${aspectRatio === "16:9" ? styles.segmentBtnActive : ""}`}
-                      onClick={() => selectAspect("16:9")}
-                    >
-                      16:9
-                    </button>
-                    <button
-                      type="button"
-                      className={`${styles.segmentBtn} ${aspectRatio === "9:16" ? styles.segmentBtnActive : ""}`}
-                      onClick={() => selectAspect("9:16")}
-                    >
-                      9:16
-                    </button>
                     {isSeedance ? (
                       <>
+                        <button
+                          type="button"
+                          className={`${styles.segmentBtn} ${aspectRatio === "21:9" ? styles.segmentBtnActive : ""}`}
+                          onClick={() => selectAspect("21:9")}
+                        >
+                          21:9
+                        </button>
+                        <button
+                          type="button"
+                          className={`${styles.segmentBtn} ${aspectRatio === "16:9" ? styles.segmentBtnActive : ""}`}
+                          onClick={() => selectAspect("16:9")}
+                        >
+                          16:9
+                        </button>
                         <button
                           type="button"
                           className={`${styles.segmentBtn} ${aspectRatio === "4:3" ? styles.segmentBtnActive : ""}`}
@@ -181,24 +181,54 @@ export function ControlsPopover({
                         </button>
                         <button
                           type="button"
+                          className={`${styles.segmentBtn} ${aspectRatio === "1:1" ? styles.segmentBtnActive : ""}`}
+                          onClick={() => selectAspect("1:1")}
+                        >
+                          1:1
+                        </button>
+                        <button
+                          type="button"
                           className={`${styles.segmentBtn} ${aspectRatio === "3:4" ? styles.segmentBtnActive : ""}`}
                           onClick={() => selectAspect("3:4")}
                         >
                           3:4
                         </button>
+                        <button
+                          type="button"
+                          className={`${styles.segmentBtn} ${aspectRatio === "9:16" ? styles.segmentBtnActive : ""}`}
+                          onClick={() => selectAspect("9:16")}
+                        >
+                          9:16
+                        </button>
                       </>
                     ) : (
-                      <button
-                        type="button"
-                        className={`${styles.segmentBtn} ${aspectRatio === "1:1" ? styles.segmentBtnActive : ""} ${
-                          capability.supportsAspectRatio1x1 ? "" : styles.segmentBtnDisabled
-                        }`}
-                        onClick={() => capability.supportsAspectRatio1x1 && selectAspect("1:1")}
-                        disabled={!capability.supportsAspectRatio1x1}
-                        title={!capability.supportsAspectRatio1x1 ? "No disponible" : "1:1"}
-                      >
-                        1:1
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          className={`${styles.segmentBtn} ${aspectRatio === "16:9" ? styles.segmentBtnActive : ""}`}
+                          onClick={() => selectAspect("16:9")}
+                        >
+                          16:9
+                        </button>
+                        <button
+                          type="button"
+                          className={`${styles.segmentBtn} ${aspectRatio === "9:16" ? styles.segmentBtnActive : ""}`}
+                          onClick={() => selectAspect("9:16")}
+                        >
+                          9:16
+                        </button>
+                        <button
+                          type="button"
+                          className={`${styles.segmentBtn} ${aspectRatio === "1:1" ? styles.segmentBtnActive : ""} ${
+                            capability.supportsAspectRatio1x1 ? "" : styles.segmentBtnDisabled
+                          }`}
+                          onClick={() => capability.supportsAspectRatio1x1 && selectAspect("1:1")}
+                          disabled={!capability.supportsAspectRatio1x1}
+                          title={!capability.supportsAspectRatio1x1 ? "No disponible" : "1:1"}
+                        >
+                          1:1
+                        </button>
+                      </>
                     )}
                   </div>
                 ) : (

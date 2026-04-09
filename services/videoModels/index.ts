@@ -3,15 +3,17 @@ export * from "./ids";
 export * from "./types";
 export * from "./utils";
 
-import type { AspectRatio, Resolution, VideoCapability } from "./types";
+import type { Resolution, VideoCapability } from "./types";
 import {
   DEFAULT_VIDEO_MODEL,
   KLING_2_5_TURBO,
   KLING_2_6,
   KLING_V3,
   KLING_O3_PRO,
-  SEEDANCE_2_PRO,
-  SEEDANCE_2_STANDARD,
+  SEEDANCE_2,
+  SEEDANCE_2_FAST,
+  SEEDANCE_2_PREVIEW,
+  SEEDANCE_2_FAST_PREVIEW,
   VEO_3,
   VEO_3_1,
   VEO_3_1_FAST,
@@ -42,8 +44,10 @@ export function prettyVideoModelLabel(modelId: string | null) {
   if (m === KLING_2_6) return "Kling 2.6";
   if (m === KLING_V3) return "Kling V3";
   if (m === KLING_O3_PRO) return "Kling O3 Pro";
-  if (m === SEEDANCE_2_PRO) return "Seedance 2.0 Pro";
-  if (m === SEEDANCE_2_STANDARD) return "Seedance 2.0 Standard";
+  if (m === SEEDANCE_2) return "Seedance 2";
+  if (m === SEEDANCE_2_FAST) return "Seedance 2 Fast";
+  if (m === SEEDANCE_2_PREVIEW) return "Seedance 2 Preview";
+  if (m === SEEDANCE_2_FAST_PREVIEW) return "Seedance 2 Fast Preview";
   if (m === "kling-o3-ref-to-video-pro") return "Kling O3 Pro — Reference to Video";
   if (m === "kling-o3-edit-video-pro") return "Kling O3 Pro — Edit Video";
   if (m === "kling-o3-ref-video-to-video-pro") return "Kling O3 Pro — Reference Video→Video";
@@ -66,21 +70,22 @@ export function coerceAspectRatioForModel(
   capability: VideoCapability,
   hasFirst: boolean,
   resolution: Resolution,
-  aspectRatio: AspectRatio
-): AspectRatio {
+  aspectRatio: any
+): any {
   const m = normalizeModelId(modelRaw);
-  const isSeedance = m === SEEDANCE_2_PRO || m === SEEDANCE_2_STANDARD;
+  const isSeedance = m === SEEDANCE_2 || m === SEEDANCE_2_FAST;
 
   if (m.startsWith("veo-3.0") && !hasFirst && resolution === "1080p" && aspectRatio === "9:16") {
     return "16:9";
   }
 
   if (isSeedance) {
-    return (["16:9", "9:16", "4:3", "3:4"] as const).includes(aspectRatio as any)
+    return (["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"] as const).includes(aspectRatio as any)
       ? aspectRatio
       : "16:9";
   }
 
+  if (aspectRatio === "21:9") return "16:9";
   if (aspectRatio === "4:3") return "16:9";
   if (aspectRatio === "3:4") return "9:16";
   if (!capability.supportsAspectRatio1x1 && aspectRatio === "1:1") return "16:9";

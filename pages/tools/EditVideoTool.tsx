@@ -45,7 +45,7 @@ type EditModelId =
   | "seedance-2-preview"
   | "seedance-2-fast-preview";
 
-type AspectRatio = "auto" | "16:9" | "9:16" | "1:1" | "4:3" | "3:4";
+type AspectRatio = "auto" | "21:9" | "16:9" | "9:16" | "1:1" | "4:3" | "3:4";
 
 const TOOL_NAME = "video-edit";
 const PREFILL_TARGET = getCommunityPrefillTarget(TOOL_NAME);
@@ -65,8 +65,8 @@ type PendingVideoEditJob = {
 };
 
 const isSeedanceModelId = (value: string) => value === "seedance-2-preview" || value === "seedance-2-fast-preview";
-const coerceSeedanceDurationLocal = (value: number) => (Number(value) === 15 ? 15 : Number(value) === 10 ? 10 : 5);
-const isSeedanceAspectRatio = (value: string) => ["16:9", "9:16", "4:3", "3:4"].includes(String(value || ""));
+const coerceSeedanceDurationLocal = (value: number) => Math.max(4, Math.min(15, Math.trunc(Number(value) || 5)));
+const isSeedanceAspectRatio = (value: string) => ["21:9", "16:9", "9:16", "1:1", "4:3", "3:4"].includes(String(value || ""));
 const MODEL_OPTIONS: Array<{
   id: EditModelId;
   uiName: string;
@@ -83,7 +83,7 @@ const MODEL_OPTIONS: Array<{
   },
   {
     id: "seedance-2-preview",
-    uiName: "Seedance 2.0 Pro",
+    uiName: "Seedance 2 Preview",
     uiDesc:
       "Edita un video base con prompt y referencias de imagen opcionales mediante PiAPI.",
     uiHint:
@@ -91,9 +91,9 @@ const MODEL_OPTIONS: Array<{
   },
   {
     id: "seedance-2-fast-preview",
-    uiName: "Seedance 2.0 Standard",
+    uiName: "Seedance 2 Fast Preview",
     uiDesc:
-      "Versión más rápida de Seedance 2.0 para edición de video guiada por texto + referencias.",
+      "Versión más rápida de Seedance 2 para edición de video guiada por texto + referencias.",
     uiHint:
       "El video base es @Video1 y puedes usar @Image1..@Image9 como referencias visuales.",
   },
@@ -342,6 +342,8 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
       resolution: "1080p",
       generateAudio: !isSeedanceModel && model === "kling-o3-ref-to-video-pro" ? generateAudio : false,
       klingMode: "pro",
+      seedanceMode: isSeedanceModel ? "edit" : undefined,
+      inputVideoDurationSeconds: isSeedanceModel ? pricingDurationSeconds : undefined,
     });
   }, [model, durationSeconds, isStoryboardMode, multishotTotalSeconds, generateAudio, referenceVideoDurationSeconds, isSeedanceModel]);
 
@@ -1511,7 +1513,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
 
     if (isSeedanceModel) {
       if (!inputVideo) {
-        return { ok: false as const, error: "Selecciona un VIDEO de entrada (obligatorio) para Seedance 2.0." };
+        return { ok: false as const, error: "Selecciona un VIDEO de entrada (obligatorio) para Seedance 2." };
       }
 
       const prepared = preparePromptAndRefs(prompt);
@@ -1671,7 +1673,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     }
 
     setIsGenerating(true);
-    setProgressText(isSeedanceModelId(model) ? "Enviando a Seedance 2.0…" : "Enviando a Kling O3…");
+    setProgressText(isSeedanceModelId(model) ? "Enviando a Seedance 2…" : "Enviando a Kling O3…");
 
     const ctrl = new AbortController();
     abortRef.current = ctrl;

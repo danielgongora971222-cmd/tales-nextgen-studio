@@ -1,5 +1,5 @@
 // services/videoModels/types.ts
-export type AspectRatio = "16:9" | "9:16" | "1:1" | "4:3" | "3:4";
+export type AspectRatio = "21:9" | "16:9" | "9:16" | "1:1" | "4:3" | "3:4";
 export type Resolution = "720p" | "1080p" | "4k";
 export type KlingMode = "std" | "pro";
 export type KlingShotType = "customize" | "intelligence";

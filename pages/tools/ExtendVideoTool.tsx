@@ -42,10 +42,9 @@ type EditModelId =
   | "kling-o3-ref-to-video-pro"
   | "kling-o3-edit-video-pro"
   | "kling-o3-ref-video-to-video-pro"
-  | "seedance-2-preview"
-  | "seedance-2-fast-preview";
+;
 
-type AspectRatio = "auto" | "16:9" | "9:16" | "1:1" | "4:3" | "3:4";
+type AspectRatio = "auto" | "21:9" | "16:9" | "9:16" | "1:1" | "4:3" | "3:4";
 
 const TOOL_NAME = "extend-video";
 const PREFILL_TARGET = getCommunityPrefillTarget(TOOL_NAME);
@@ -64,9 +63,9 @@ type PendingVideoEditJob = {
   createdAt: number;
 };
 
-const isSeedanceModelId = (value: string) => value === "seedance-2-preview" || value === "seedance-2-fast-preview";
-const coerceSeedanceDurationLocal = (value: number) => (Number(value) === 15 ? 15 : Number(value) === 10 ? 10 : 5);
-const isSeedanceAspectRatio = (value: string) => ["16:9", "9:16", "4:3", "3:4"].includes(String(value || ""));
+const isSeedanceModelId = (_value: string) => false;
+const coerceSeedanceDurationLocal = (value: number) => Math.max(4, Math.min(15, Math.trunc(Number(value) || 5)));
+const isSeedanceAspectRatio = (value: string) => ["21:9", "16:9", "9:16", "1:1", "4:3", "3:4"].includes(String(value || ""));
 const MODEL_OPTIONS: Array<{
   id: EditModelId;
   uiName: string;
@@ -81,22 +80,6 @@ const MODEL_OPTIONS: Array<{
     uiHint:
       "Usa un video base (@Video1) y referencias @Image1.. para identidad/estilo. Máximo 4 referencias combinadas.",
   },
-  {
-    id: "seedance-2-preview",
-    uiName: "Seedance 2.0 Pro",
-    uiDesc:
-      "Extiende un video previamente generado con Seedance reutilizando su parent_task_id vía PiAPI.",
-    uiHint:
-      "Selecciona un video Seedance previo de tu biblioteca. Este modo usa @Video1 como base de continuación.",
-  },
-  {
-    id: "seedance-2-fast-preview",
-    uiName: "Seedance 2.0 Standard",
-    uiDesc:
-      "Extiende un video Seedance previo con la variante más rápida del modelo.",
-    uiHint:
-      "Selecciona un video Seedance previo de tu biblioteca. Este modo usa @Video1 como base de continuación.",
-  },
 ];
 
 const DEFAULT_MODEL_ID: EditModelId = "kling-o3-ref-video-to-video-pro";
@@ -106,8 +89,6 @@ function coerceModelId(value: unknown): EditModelId {
   if (MODEL_OPTIONS.some((option) => option.id === raw)) return raw;
 
   const normalized = raw.toLowerCase();
-  if (normalized.includes("seedance-2-fast")) return "seedance-2-fast-preview";
-  if (normalized.includes("seedance")) return "seedance-2-preview";
   return DEFAULT_MODEL_ID;
 }
 
@@ -1511,42 +1492,6 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
       };
     }
 
-
-    if (isSeedanceModel) {
-      if (!inputVideo) {
-        return { ok: false as const, error: "Selecciona un VIDEO generado con Seedance para poder extenderlo." };
-      }
-
-      const prepared = preparePromptAndRefs(prompt);
-      if (!prepared.ok) return { ok: false as const, error: prepared.error };
-
-      if (!prepared.promptForModel) {
-        return { ok: false as const, error: "Escribe un prompt (obligatorio) para extender el video." };
-      }
-
-      if (prepared.referenceImageAssetIds.length > 0) {
-        return {
-          ok: false as const,
-          error: "Seedance Extend utiliza el video seleccionado como base de continuación y en esta integración no admite referencias de imagen adicionales.",
-        };
-      }
-
-      return {
-        ok: true as const,
-        finalPrompt: prepared.promptForModel,
-        endpoint: "/api/ai/video/seedance-edit",
-        body: {
-          model,
-          prompt: prepared.promptForModel,
-          videoAssetId: inputVideo.id,
-          durationSeconds: coerceSeedanceDurationLocal(durationSeconds),
-          aspectRatio: ar === "auto" ? "16:9" : ar,
-          toolName: TOOL_NAME,
-          hint: nowHint(model),
-          async: true,
-        },
-      };
-    }
 
     // ===== Video → Video =====
     if (!inputVideo) {

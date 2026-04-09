@@ -807,7 +807,7 @@ const taskStatusRaw = extractKlingTaskStatus(taskData, rawJson);
   // ===============================
   if (provider === "piapi") {
     const taskId = String(params.taskId || params.piapiTaskId || "").trim();
-    const taskType = String(params.taskType || params.piapiTaskType || "seedance-2-preview").trim();
+    const taskType = String(params.taskType || params.piapiTaskType || "seedance-2").trim();
     const modelName = params.model ? String(params.model) : null;
     const pollCount = Math.max(0, Number(params.providerPollCount || 0)) + 1;
     const createdAtMs = row.created_at ? Date.parse(row.created_at) : null;
