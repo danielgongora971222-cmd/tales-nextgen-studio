@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "./AuthContext";
-import { KLING_2_5_TURBO, KLING_2_6, KLING_O3_PRO, KLING_V3, SEEDANCE_2_PRO, SEEDANCE_2_STANDARD } from "../services/videoModels";
+import { KLING_2_5_TURBO, KLING_2_6, KLING_O3_PRO, KLING_V3 } from "../services/videoModels";
 import { apiPostJson, clearPendingFalJob, formatErr, loadPendingFalJobs, savePendingFalJob, waitFalJob } from "../services/videoGenApi";
 import { waitJobCompletion, findRecentRunningKlingJob } from "../services/jobsApi";
 import { invalidateMyAssetsCache } from "../services/assetsApi";
@@ -140,7 +140,8 @@ function isKlingBackgroundModel(modelNorm: string) {
 }
 
 function isSeedanceModel(modelNorm: string) {
-  return modelNorm === SEEDANCE_2_PRO || modelNorm === SEEDANCE_2_STANDARD;
+  const m = String(modelNorm || "").trim();
+  return m === "seedance-2" || m === "seedance-2-fast" || m === "seedance-2-preview" || m === "seedance-2-fast-preview";
 }
 
 function asArray(v: any) {

@@ -35,7 +35,7 @@ function roundCreditsFromUsd(usd) {
 function roundSeedanceCreditsFromUsd(usd) {
   const value = Number(usd || 0);
   if (!Number.isFinite(value) || value <= 0) return 1;
-  return Math.max(1, Math.ceil(value * CREDITS_PER_USD * 3));
+  return Math.max(1, Math.ceil(value * CREDITS_PER_USD * 2.2));
 }
 
 function seedanceUnitPricePerSecondUsd(modelNorm, mode = "generate") {
