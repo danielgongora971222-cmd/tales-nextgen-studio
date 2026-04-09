@@ -27,8 +27,9 @@ import { kling26Handler } from "./kling26";
 import { klingV3Handler } from "./klingV3";
 import { klingO3ProHandler } from "./klingO3Pro";
 import { seedanceHandler } from "./seedance";
+import { seedancePreviewHandler } from "./seedancePreview";
 
-const HANDLERS = [seedanceHandler, klingO3ProHandler, klingV3Handler, kling26Handler, kling25Handler, veo31Handler, veo3Handler];
+const HANDLERS = [seedancePreviewHandler, seedanceHandler, klingO3ProHandler, klingV3Handler, kling26Handler, kling25Handler, veo31Handler, veo3Handler];
 
 export function getVideoModelHandler(modelRaw: string) {
   const modelNorm = normalizeModelId(modelRaw);
@@ -46,8 +47,8 @@ export function prettyVideoModelLabel(modelId: string | null) {
   if (m === KLING_O3_PRO) return "Kling O3 Pro";
   if (m === SEEDANCE_2) return "Seedance 2";
   if (m === SEEDANCE_2_FAST) return "Seedance 2 Fast";
-  if (m === SEEDANCE_2_PREVIEW) return "Seedance 2 Preview";
-  if (m === SEEDANCE_2_FAST_PREVIEW) return "Seedance 2 Fast Preview";
+  if (m === SEEDANCE_2_PREVIEW) return "Seedance 2.0 Cinema";
+  if (m === SEEDANCE_2_FAST_PREVIEW) return "Seedance 2.0 Cinema Fast";
   if (m === "kling-o3-ref-to-video-pro") return "Kling O3 Pro — Reference to Video";
   if (m === "kling-o3-edit-video-pro") return "Kling O3 Pro — Edit Video";
   if (m === "kling-o3-ref-video-to-video-pro") return "Kling O3 Pro — Reference Video→Video";
@@ -73,7 +74,7 @@ export function coerceAspectRatioForModel(
   aspectRatio: any
 ): any {
   const m = normalizeModelId(modelRaw);
-  const isSeedance = m === SEEDANCE_2 || m === SEEDANCE_2_FAST;
+  const isSeedance = m === SEEDANCE_2 || m === SEEDANCE_2_FAST || m === SEEDANCE_2_PREVIEW || m === SEEDANCE_2_FAST_PREVIEW;
 
   if (m.startsWith("veo-3.0") && !hasFirst && resolution === "1080p" && aspectRatio === "9:16") {
     return "16:9";

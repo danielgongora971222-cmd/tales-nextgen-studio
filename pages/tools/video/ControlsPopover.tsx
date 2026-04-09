@@ -9,6 +9,7 @@ import {
   KLING_V3,
   SEEDANCE_2,
   SEEDANCE_2_FAST,
+  SEEDANCE_2_PREVIEW,
   VEO_3,
   VEO_3_1,
   VEO_3_1_FAST,
@@ -64,6 +65,7 @@ const MODEL_OPTIONS: ModelOption[] = [
   { id: KLING_O3_PRO, name: "Kling O3 Pro", desc: "3–15s · multishot" },
   { id: SEEDANCE_2, name: "Seedance 2", desc: "4–15s · text / first-last" },
   { id: SEEDANCE_2_FAST, name: "Seedance 2 Fast", desc: "4–15s · fast" },
+  { id: SEEDANCE_2_PREVIEW, name: "Seedance 2.0 Cinema", desc: "4–15s · text / image refs" },
 ];
 
 export function ControlsPopover({
@@ -92,7 +94,7 @@ export function ControlsPopover({
 
   const close = onClose || (() => setPanel(null));
 
-  const isSeedance = model === SEEDANCE_2 || model === SEEDANCE_2_FAST;
+  const isSeedance = model === SEEDANCE_2 || model === SEEDANCE_2_FAST || model === SEEDANCE_2_PREVIEW;
 
   const selectAspect = (next: AspectRatio) => {
     setAspectRatio(next);

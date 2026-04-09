@@ -82,7 +82,7 @@ export const VideoRequestSchema = z.object({
   async: z.boolean().optional(),
 
   // Solo aplica cuando NO hay firstFrame
-  aspectRatio: z.enum(["16:9", "9:16", "1:1", "4:3", "3:4"]).optional(),
+  aspectRatio: z.enum(["auto", "21:9", "16:9", "9:16", "1:1", "4:3", "3:4"]).optional(),
 
   // Params Veo
   resolution: z.enum(["720p", "1080p", "4k"]).optional(),

@@ -886,31 +886,256 @@ export function createAiVideoRouter(ctx) {
     return raw !== "direct" && raw !== "off" && raw !== "false" && raw !== "0";
   }
 
-  function buildPiapiInputProxyUrl(req, { ownerId, assetId, assetType = null, expiresInSeconds = 60 * 60 * 6 } = {}) {
+  function shouldUsePiapiEphemeralUploads() {
+    const raw = String(process.env.PIAPI_EPHEMERAL_UPLOADS_ENABLED || "auto").trim().toLowerCase();
+    return raw !== "off" && raw !== "false" && raw !== "0" && raw !== "disabled";
+  }
+
+  function parsePathExtension(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    const sanitized = raw.replace(/^r2:/i, "").split(/[?#]/)[0];
+    const base = sanitized.split("/").pop() || "";
+    const match = base.match(/\.([a-z0-9]{2,5})$/i);
+    return match ? String(match[1] || "").toLowerCase() : "";
+  }
+
+  function guessExtensionFromMimeType(mimeType, fallbackAssetType = null) {
+    const mime = String(mimeType || "").toLowerCase();
+    if (mime.includes("jpeg") || mime.includes("jpg")) return "jpg";
+    if (mime.includes("png")) return "png";
+    if (mime.includes("webp")) return "webp";
+    if (mime.includes("bmp")) return "bmp";
+    if (mime.includes("quicktime") || mime.includes("mov")) return "mov";
+    if (mime.includes("mp4")) return "mp4";
+    if (mime.includes("mpeg") || mime.includes("mp3")) return "mp3";
+    if (mime.includes("wav") || mime.includes("wave")) return "wav";
+    if (String(fallbackAssetType || "").trim() === "video") return "mp4";
+    if (String(fallbackAssetType || "").trim() === "audio") return "mp3";
+    return "jpg";
+  }
+
+  function sanitizePiapiFileBase(value, fallback = "seedance_input") {
+    const clean = String(value || "")
+      .normalize("NFKD")
+      .replace(/[̀-ͯ]/g, "")
+      .replace(/[^a-zA-Z0-9._-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 72);
+    return clean || fallback;
+  }
+
+  async function getPiapiInputAssetRecord(assetId) {
+    const { data, error } = await supabaseAdmin
+      .from("assets")
+      .select("id, owner_id, is_public, storage_path, url, type, name, meta")
+      .eq("id", assetId)
+      .maybeSingle();
+
+    if (error && error.code !== "PGRST116") {
+      throw httpError(500, "DB_ERROR", "No pude leer el asset para preparar el input de Seedance.", {
+        supabase: {
+          message: error?.message,
+          code: error?.code,
+          details: error?.details,
+          hint: error?.hint,
+        },
+      });
+    }
+
+    if (!data) {
+      throw httpError(404, "ASSET_NOT_FOUND", "No encontré el asset solicitado para Seedance.", { assetId });
+    }
+
+    return data;
+  }
+
+  function buildPiapiInputFileName({ assetRecord = null, mimeType = "", fallbackAssetType = null } = {}) {
+    const extFromPath =
+      parsePathExtension(assetRecord?.storage_path) ||
+      parsePathExtension(assetRecord?.url) ||
+      parsePathExtension(assetRecord?.name);
+    const ext = extFromPath || guessExtensionFromMimeType(mimeType, fallbackAssetType || assetRecord?.type || null);
+    const rawBase =
+      String(assetRecord?.name || "").replace(/\.[a-z0-9]{2,5}$/i, "") ||
+      String(assetRecord?.id || "") ||
+      "seedance_input";
+    return `${sanitizePiapiFileBase(rawBase, "seedance_input")}.${ext}`;
+  }
+
+  function supportsPiapiEphemeralUploadExtension(ext) {
+    return new Set(["jpg", "jpeg", "png", "webp", "mp4", "wav", "mp3"]).has(String(ext || "").toLowerCase());
+  }
+
+  async function uploadPiapiEphemeralResource({ fileName, fileDataBase64 }) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 90_000);
+
+    try {
+      const response = await fetch("https://upload.theapi.app/api/ephemeral_resource", {
+        method: "POST",
+        headers: {
+          "x-api-key": getPiapiApiKey(),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          file_name: fileName,
+          file_data: fileDataBase64,
+        }),
+        signal: controller.signal,
+      });
+
+      const rawText = await response.text();
+      let data = null;
+      try {
+        data = rawText ? JSON.parse(rawText) : null;
+      } catch {
+        data = rawText ? { raw: rawText } : null;
+      }
+
+      if (!response.ok) {
+        const error = new Error(getPiapiErrorMessage(data, `PiAPI upload error (${response.status})`));
+        error.status = response.status;
+        error.data = data;
+        throw error;
+      }
+
+      const uploadedUrl = String(data?.data?.url || "").trim();
+      if (!uploadedUrl) {
+        throw httpError(502, "PIAPI_UPLOAD_BAD_RESPONSE", "PiAPI no devolvió la URL del archivo temporal subido.", {
+          response: data,
+        });
+      }
+
+      return uploadedUrl;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function tryUploadPiapiInputAsset({ assetId, userId }) {
+    const assetRecord = await getPiapiInputAssetRecord(assetId);
+    const sourceUrl = await assetIdToSignedUrl(assetId, userId, 15 * 60);
+
+    let headMimeType = "";
+    let headSizeBytes = null;
+    try {
+      const headResponse = await fetch(sourceUrl, { method: "HEAD" });
+      if (headResponse.ok) {
+        headMimeType = String(headResponse.headers.get("content-type") || "").trim();
+        const len = Number(headResponse.headers.get("content-length") || 0);
+        headSizeBytes = Number.isFinite(len) && len > 0 ? len : null;
+      }
+    } catch {
+      headMimeType = "";
+      headSizeBytes = null;
+    }
+
+    const initialFileName = buildPiapiInputFileName({ assetRecord, mimeType: headMimeType });
+    const initialExt = parsePathExtension(initialFileName);
+    if (!supportsPiapiEphemeralUploadExtension(initialExt)) {
+      return { ok: false, reason: "unsupported_ext", fileName: initialFileName, assetRecord };
+    }
+
+    const maxBytes = 10 * 1024 * 1024;
+    if (headSizeBytes && headSizeBytes > maxBytes) {
+      return { ok: false, reason: "too_large", sizeBytes: headSizeBytes, fileName: initialFileName, assetRecord };
+    }
+
+    const upstream = await fetch(sourceUrl, { method: "GET" });
+    if (!upstream.ok) {
+      throw httpError(502, "ASSET_FETCH_FAILED", `No pude descargar el asset ${assetId} para preparar el input de Seedance.`, {
+        assetId,
+        upstreamStatus: upstream.status,
+      });
+    }
+
+    const mimeType = String(upstream.headers.get("content-type") || headMimeType || "").trim();
+    const fileName = buildPiapiInputFileName({ assetRecord, mimeType, fallbackAssetType: assetRecord?.type || null });
+    const ext = parsePathExtension(fileName);
+    if (!supportsPiapiEphemeralUploadExtension(ext)) {
+      return { ok: false, reason: "unsupported_ext", fileName, assetRecord, mimeType };
+    }
+
+    const buffer = Buffer.from(await upstream.arrayBuffer());
+    if (buffer.length > maxBytes) {
+      return { ok: false, reason: "too_large", sizeBytes: buffer.length, fileName, assetRecord, mimeType };
+    }
+
+    const url = await uploadPiapiEphemeralResource({
+      fileName,
+      fileDataBase64: buffer.toString("base64"),
+    });
+
+    return {
+      ok: true,
+      url,
+      fileName,
+      assetRecord,
+      mimeType,
+      sizeBytes: buffer.length,
+    };
+  }
+
+  function buildPiapiInputProxyUrl(req, { ownerId, assetId, assetType = null, fileName = null, expiresInSeconds = 60 * 60 * 6 } = {}) {
     const baseUrl = resolvePiapiWebhookBaseUrl(req);
     if (!baseUrl || !shouldUsePiapiInputProxy()) return null;
+
+    const normalizedFileName = sanitizePiapiFileBase(
+      String(fileName || "").replace(/\.[a-z0-9]{2,5}$/i, ""),
+      "seedance_input"
+    );
+    const ext = parsePathExtension(fileName) || guessExtensionFromMimeType("", assetType);
+    const fullFileName = `${normalizedFileName}.${ext}`;
 
     const token = signJobToken({
       kind: "piapi_input",
       ownerId: String(ownerId || "").trim(),
       assetId: String(assetId || "").trim(),
       assetType: assetType ? String(assetType).trim() : null,
+      fileName: fullFileName,
       exp: Date.now() + Math.max(60_000, Number(expiresInSeconds || 0) * 1000),
     });
 
-    return `${baseUrl}/api/ai/video/piapi/input/${encodeURIComponent(token)}`;
+    return `${baseUrl}/api/ai/video/piapi/input/${encodeURIComponent(token)}/${encodeURIComponent(fullFileName)}`;
   }
 
-  async function assetIdToPiapiInputUrl(assetId, userId, req, expiresInSeconds = 60 * 60 * 6) {
+  async function assetIdToPiapiInputUrl(assetId, userId, req, expiresInSeconds = 60 * 60 * 6, { assetType = null } = {}) {
+    const assetRecord = await getPiapiInputAssetRecord(assetId);
+    const fallbackFileName = buildPiapiInputFileName({
+      assetRecord,
+      fallbackAssetType: assetType || assetRecord?.type || null,
+    });
+
+    if (shouldUsePiapiEphemeralUploads()) {
+      try {
+        const uploaded = await tryUploadPiapiInputAsset({ assetId, userId });
+        if (uploaded?.ok && uploaded.url) {
+          return uploaded.url;
+        }
+        console.warn("[piapi][ephemeral_input_fallback]", {
+          assetId,
+          reason: uploaded?.reason || "unknown",
+          fileName: uploaded?.fileName || fallbackFileName,
+          sizeBytes: uploaded?.sizeBytes || null,
+        });
+      } catch (error) {
+        console.warn("[piapi][ephemeral_input_failed]", {
+          assetId,
+          message: error?.message || String(error),
+        });
+      }
+    }
+
     const proxyUrl = buildPiapiInputProxyUrl(req, {
       ownerId: userId,
       assetId,
-      assetType: null,
+      assetType: assetType || assetRecord?.type || null,
+      fileName: fallbackFileName,
       expiresInSeconds,
     });
 
     if (proxyUrl) {
-      // Preflight: validamos acceso antes de crear la tarea para fallar aquí y no dentro del proveedor.
       await assetIdToSignedUrl(assetId, userId, 60);
       return proxyUrl;
     }
@@ -1624,7 +1849,11 @@ const isVeo = isVeoModelId(selectedModelNorm);
 
       const imageUrls = [];
       for (const assetId of imageAssetIds) {
-        imageUrls.push(await assetIdToPiapiInputUrl(assetId, user.id, req, INPUT_URL_TTL_SECONDS));
+        imageUrls.push(
+          await assetIdToPiapiInputUrl(assetId, user.id, req, INPUT_URL_TTL_SECONDS, {
+            assetType: "image",
+          })
+        );
       }
 
       const providerPrompt = buildSeedanceFramePrompt({
@@ -1714,6 +1943,116 @@ const isVeo = isVeoModelId(selectedModelNorm);
           durationSeconds: dur,
           firstFrameAssetId: firstFrameAssetId || null,
           lastFrameAssetId: lastFrameAssetId || null,
+          providerWebhookEnabled: Boolean(webhookConfig?.endpoint),
+          providerWebhookEndpoint: webhookConfig?.endpoint || null,
+        },
+      });
+
+      return res.json({ ok: true, mode: "async", jobId, taskId: String(taskId) });
+    }
+
+    if (isSeedancePreview) {
+      const INPUT_URL_TTL_SECONDS = 60 * 60 * 6;
+      const visiblePrompt = normalizeSeedancePrompt(prompt);
+      if (!visiblePrompt) {
+        throw httpError(400, "SEEDANCE_PROMPT_REQUIRED", "Seedance 2.0 Cinema requiere un prompt.");
+      }
+
+      if (firstFrameAssetId || lastFrameAssetId) {
+        throw httpError(
+          400,
+          "SEEDANCE_PREVIEW_FRAMES_NOT_SUPPORTED",
+          "Seedance 2.0 Cinema no usa Start/End frame en General Video Generator. Usa Image refs."
+        );
+      }
+
+      const referenceIds = Array.isArray(referenceImageAssetIds)
+        ? referenceImageAssetIds.filter(Boolean).slice(0, 9)
+        : [];
+
+      const imageUrls = [];
+      for (const assetId of referenceIds) {
+        imageUrls.push(
+          await assetIdToPiapiInputUrl(assetId, user.id, req, INPUT_URL_TTL_SECONDS, {
+            assetType: "image",
+          })
+        );
+      }
+
+      const dur = coerceSeedanceDuration(durationSeconds);
+      const effectiveAspectRatio = coerceSeedanceAspectRatio(aspectRatio, "16:9");
+      const input = {
+        prompt: visiblePrompt,
+        duration: dur,
+        aspect_ratio: effectiveAspectRatio,
+        ...(imageUrls.length ? { image_urls: imageUrls } : {}),
+      };
+
+      const spend = await spendVideoCreditsOrReject({
+        userId: user.id,
+        req,
+        modelNorm: selectedModelNorm,
+        durationSeconds: dur,
+        resolution: "720p",
+        count: 1,
+        entryType: "ai_video_generate",
+        refType: "ai_video",
+        refId: null,
+        seedanceMode: "generate",
+      });
+
+      if (!spend.ok) {
+        return res.status(402).json({ ok: false, error: spend.error });
+      }
+
+      const webhookConfig = buildPiapiWebhookConfig(req);
+      const taskResponse = await createPiapiSeedanceTask({
+        taskType: selectedModelNorm,
+        input,
+        webhookConfig,
+      });
+
+      const taskId = extractPiapiTaskId(taskResponse);
+      if (!taskId) {
+        throw httpError(502, "PIAPI_BAD_RESPONSE", "PiAPI no devolvió task_id.", { response: taskResponse });
+      }
+
+      const seedanceMode = imageUrls.length ? "image_reference" : "text_to_video";
+      const meta = {
+        tool: toolName,
+        category: toolName,
+        provider: "piapi",
+        model: selectedModelNorm,
+        aspectRatio: effectiveAspectRatio,
+        durationSeconds: dur,
+        firstFrameAssetId: null,
+        lastFrameAssetId: null,
+        referenceImageAssetIds: referenceIds,
+        piapiTaskId: String(taskId),
+        piapiTaskType: selectedModelNorm,
+        seedance: {
+          mode: seedanceMode,
+          imageReferenceAssetIds: referenceIds,
+        },
+      };
+
+      const jobId = await upsertPiapiJobRow({
+        ownerId: user.id,
+        kind: "video",
+        taskId: String(taskId),
+        taskType: selectedModelNorm,
+        toolName,
+        hint,
+        model: selectedModelNorm,
+        prompt: visiblePrompt,
+        extra: {
+          clientJobId: clientJobIdNorm || null,
+          meta,
+          aspectRatio: effectiveAspectRatio,
+          durationSeconds: dur,
+          firstFrameAssetId: null,
+          lastFrameAssetId: null,
+          referenceImageAssetIds: referenceIds,
           providerWebhookEnabled: Boolean(webhookConfig?.endpoint),
           providerWebhookEndpoint: webhookConfig?.endpoint || null,
         },
@@ -3536,11 +3875,22 @@ const isVeo = isVeoModelId(selectedModelNorm);
           return res.status(400).send("Invalid token payload.");
         }
 
-        const sourceUrl = await assetIdToSignedUrl(assetId, ownerId, 15 * 60);
+        const fileName = buildPiapiInputFileName({
+          assetRecord: {
+            id: assetId,
+            name: payload?.fileName || null,
+            storage_path: payload?.fileName || null,
+            url: payload?.fileName || null,
+            type: payload?.assetType || null,
+          },
+          fallbackAssetType: payload?.assetType || null,
+        });
+
+        const sourceUrl = await assetIdToSignedUrl(assetId, ownerId, 30 * 60);
         const upstream = await fetch(sourceUrl, { method: req.method === "HEAD" ? "HEAD" : "GET" });
 
         if (!upstream.ok) {
-          console.error("[piapiInputProxy][upstream_error]", { assetId, ownerId, status: upstream.status });
+          console.error("[piapiInputProxy][upstream_error]", { assetId, ownerId, status: upstream.status, fileName });
           return res.status(502).send(`Upstream fetch failed (${upstream.status}).`);
         }
 
@@ -3549,8 +3899,8 @@ const isVeo = isVeoModelId(selectedModelNorm);
         const etag = upstream.headers.get("etag");
 
         res.setHeader("Content-Type", contentType);
-        res.setHeader("Cache-Control", "private, no-store, max-age=0");
-        res.setHeader("Content-Disposition", "inline");
+        res.setHeader("Cache-Control", "public, max-age=3600, s-maxage=3600");
+        res.setHeader("Content-Disposition", `inline; filename="${fileName}"`);
         res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
         if (contentLength) res.setHeader("Content-Length", contentLength);
         if (etag) res.setHeader("ETag", etag);
@@ -3572,6 +3922,8 @@ const isVeo = isVeoModelId(selectedModelNorm);
 
     router.head("/ai/video/piapi/input/:token", handlePiapiInputProxy);
     router.get("/ai/video/piapi/input/:token", handlePiapiInputProxy);
+    router.head("/ai/video/piapi/input/:token/:filename", handlePiapiInputProxy);
+    router.get("/ai/video/piapi/input/:token/:filename", handlePiapiInputProxy);
 
     router.post("/ai/video/piapi/webhook", async (req, res) => {
       try {
@@ -3796,12 +4148,20 @@ const isVeo = isVeoModelId(selectedModelNorm);
 
         const referenceImageUrls = [];
         for (const assetId of referenceImageAssetIds) {
-          referenceImageUrls.push(await assetIdToPiapiInputUrl(assetId, user.id, req, INPUT_URL_TTL_SECONDS));
+          referenceImageUrls.push(
+            await assetIdToPiapiInputUrl(assetId, user.id, req, INPUT_URL_TTL_SECONDS, {
+              assetType: "image",
+            })
+          );
         }
 
         const audioReferenceUrls = [];
         for (const assetId of audioReferenceAssetIds) {
-          audioReferenceUrls.push(await assetIdToPiapiInputUrl(assetId, user.id, req, INPUT_URL_TTL_SECONDS));
+          audioReferenceUrls.push(
+            await assetIdToPiapiInputUrl(assetId, user.id, req, INPUT_URL_TTL_SECONDS, {
+              assetType: "audio",
+            })
+          );
         }
 
         const effectiveAspectRatio = coerceSeedanceAspectRatio(body.aspectRatio, "16:9");
@@ -3820,7 +4180,9 @@ const isVeo = isVeoModelId(selectedModelNorm);
 
         if (isGenerateModel) {
           if (body.videoAssetId) {
-            videoUrl = await assetIdToPiapiInputUrl(body.videoAssetId, user.id, req, INPUT_URL_TTL_SECONDS);
+            videoUrl = await assetIdToPiapiInputUrl(body.videoAssetId, user.id, req, INPUT_URL_TTL_SECONDS, {
+              assetType: "video",
+            });
           }
 
           const hasImageOrVideoReference = referenceImageUrls.length > 0 || Boolean(videoUrl);
@@ -3846,10 +4208,28 @@ const isVeo = isVeoModelId(selectedModelNorm);
           };
         } else if (isPreviewModel) {
           if (!body.videoAssetId) {
-            throw httpError(400, "SEEDANCE_VIDEO_REQUIRED", "Selecciona un video de entrada para editar con Seedance 2 Preview.");
+            throw httpError(400, "SEEDANCE_VIDEO_REQUIRED", "Selecciona un video de entrada para editar con Seedance 2.0 Cinema.");
           }
 
-          videoUrl = await assetIdToPiapiInputUrl(body.videoAssetId, user.id, req, INPUT_URL_TTL_SECONDS);
+          if (audioReferenceUrls.length > 0) {
+            throw httpError(
+              400,
+              "SEEDANCE_PREVIEW_AUDIO_NOT_SUPPORTED",
+              "Seedance 2.0 Cinema no admite audio refs en Video Edit."
+            );
+          }
+
+          if (referenceImageUrls.length > 9) {
+            throw httpError(
+              400,
+              "SEEDANCE_PREVIEW_IMAGE_LIMIT",
+              "Seedance 2.0 Cinema admite un máximo de 9 image refs."
+            );
+          }
+
+          videoUrl = await assetIdToPiapiInputUrl(body.videoAssetId, user.id, req, INPUT_URL_TTL_SECONDS, {
+            assetType: "video",
+          });
           pricingDurationSeconds = coerceReferenceVideoDurationSeconds(body.referenceVideoDurationSeconds) || pricingDurationSeconds || 5;
           inputVideoDurationSeconds = pricingDurationSeconds;
           mode = referenceImageUrls.length ? "video_edit_with_image" : "video_edit";
@@ -3857,7 +4237,6 @@ const isVeo = isVeoModelId(selectedModelNorm);
             prompt: visiblePrompt,
             video_urls: [videoUrl],
             ...(referenceImageUrls.length ? { image_urls: referenceImageUrls } : {}),
-            aspect_ratio: effectiveAspectRatio,
           };
         } else {
           throw httpError(400, "SEEDANCE_MODEL_UNSUPPORTED", "Modelo de Seedance no soportado.");

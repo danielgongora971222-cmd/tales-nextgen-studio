@@ -83,7 +83,7 @@ const MODEL_OPTIONS: Array<{
   },
   {
     id: "seedance-2-preview",
-    uiName: "Seedance 2 Preview",
+    uiName: "Seedance 2.0 Cinema",
     uiDesc:
       "Edita un video base con prompt y referencias de imagen opcionales mediante PiAPI.",
     uiHint:
@@ -91,7 +91,7 @@ const MODEL_OPTIONS: Array<{
   },
   {
     id: "seedance-2-fast-preview",
-    uiName: "Seedance 2 Fast Preview",
+    uiName: "Seedance 2.0 Cinema Fast",
     uiDesc:
       "Versión más rápida de Seedance 2 para edición de video guiada por texto + referencias.",
     uiHint:
