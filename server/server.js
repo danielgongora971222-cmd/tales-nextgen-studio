@@ -584,6 +584,7 @@ app.use(
     falQueueSubmit,
     falQueueRun,
     signJobToken,
+    verifyJobToken,
     assetIdToSignedUrl,
     assetIdToInlinePart,
     assetIdToImageObject,

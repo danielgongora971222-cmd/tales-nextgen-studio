@@ -1,5 +1,7 @@
 import { z } from "zod";
 import express from "express";
+import { Readable } from "stream";
+import { pipeline } from "stream/promises";
 import {
   VideoRequestSchema,
   VideoEditRequestSchema,
@@ -88,6 +90,7 @@ export function createAiVideoRouter(ctx) {
     falQueueSubmit,
     falQueueRun,
     signJobToken,
+    verifyJobToken,
     assetIdToSignedUrl,
     assetIdToInlinePart,
     assetIdToImageObject,
@@ -878,6 +881,43 @@ export function createAiVideoRouter(ctx) {
     };
   }
 
+  function shouldUsePiapiInputProxy() {
+    const raw = String(process.env.PIAPI_INPUT_PROXY_MODE || "proxy").trim().toLowerCase();
+    return raw !== "direct" && raw !== "off" && raw !== "false" && raw !== "0";
+  }
+
+  function buildPiapiInputProxyUrl(req, { ownerId, assetId, assetType = null, expiresInSeconds = 60 * 60 * 6 } = {}) {
+    const baseUrl = resolvePiapiWebhookBaseUrl(req);
+    if (!baseUrl || !shouldUsePiapiInputProxy()) return null;
+
+    const token = signJobToken({
+      kind: "piapi_input",
+      ownerId: String(ownerId || "").trim(),
+      assetId: String(assetId || "").trim(),
+      assetType: assetType ? String(assetType).trim() : null,
+      exp: Date.now() + Math.max(60_000, Number(expiresInSeconds || 0) * 1000),
+    });
+
+    return `${baseUrl}/api/ai/video/piapi/input/${encodeURIComponent(token)}`;
+  }
+
+  async function assetIdToPiapiInputUrl(assetId, userId, req, expiresInSeconds = 60 * 60 * 6) {
+    const proxyUrl = buildPiapiInputProxyUrl(req, {
+      ownerId: userId,
+      assetId,
+      assetType: null,
+      expiresInSeconds,
+    });
+
+    if (proxyUrl) {
+      // Preflight: validamos acceso antes de crear la tarea para fallar aquí y no dentro del proveedor.
+      await assetIdToSignedUrl(assetId, userId, 60);
+      return proxyUrl;
+    }
+
+    return await assetIdToSignedUrl(assetId, userId, expiresInSeconds);
+  }
+
   async function createPiapiSeedanceTask({ taskType, input, webhookConfig = null }) {
     const body = {
       model: "seedance",
@@ -900,28 +940,6 @@ export function createAiVideoRouter(ctx) {
       retries: 2,
       body,
     });
-  }
-
-  async function getOwnedAssetById(assetId, ownerId) {
-    const { data, error } = await supabaseAdmin
-      .from("assets")
-      .select("id, owner_id, type, meta")
-      .eq("id", assetId)
-      .eq("owner_id", ownerId)
-      .maybeSingle();
-
-    if (error && error.code !== "PGRST116") {
-      throw httpError(500, "DB_ERROR", "No pude leer el asset solicitado.", {
-        supabase: {
-          message: error?.message,
-          code: error?.code,
-          details: error?.details,
-          hint: error?.hint,
-        },
-      });
-    }
-
-    return data || null;
   }
 
   async function resolveKlingElementList({
@@ -1606,7 +1624,7 @@ const isVeo = isVeoModelId(selectedModelNorm);
 
       const imageUrls = [];
       for (const assetId of imageAssetIds) {
-        imageUrls.push(await assetIdToSignedUrl(assetId, user.id, INPUT_URL_TTL_SECONDS));
+        imageUrls.push(await assetIdToPiapiInputUrl(assetId, user.id, req, INPUT_URL_TTL_SECONDS));
       }
 
       const providerPrompt = buildSeedanceFramePrompt({
@@ -3496,6 +3514,65 @@ const isVeo = isVeoModelId(selectedModelNorm);
 
 
 
+    async function handlePiapiInputProxy(req, res, next) {
+      try {
+        const token = String(req.params?.token || "").trim();
+        if (!token) {
+          return res.status(400).send("Missing token.");
+        }
+
+        if (typeof verifyJobToken !== "function") {
+          throw httpError(500, "PIAPI_INPUT_PROXY_UNAVAILABLE", "verifyJobToken no está disponible en el router de video.");
+        }
+
+        const payload = verifyJobToken(token);
+        if (payload?.kind !== "piapi_input") {
+          return res.status(401).send("Invalid token kind.");
+        }
+
+        const assetId = String(payload?.assetId || "").trim();
+        const ownerId = String(payload?.ownerId || "").trim();
+        if (!assetId || !ownerId) {
+          return res.status(400).send("Invalid token payload.");
+        }
+
+        const sourceUrl = await assetIdToSignedUrl(assetId, ownerId, 15 * 60);
+        const upstream = await fetch(sourceUrl, { method: req.method === "HEAD" ? "HEAD" : "GET" });
+
+        if (!upstream.ok) {
+          console.error("[piapiInputProxy][upstream_error]", { assetId, ownerId, status: upstream.status });
+          return res.status(502).send(`Upstream fetch failed (${upstream.status}).`);
+        }
+
+        const contentType = upstream.headers.get("content-type") || (payload?.assetType === "video" ? "video/mp4" : payload?.assetType === "audio" ? "audio/mpeg" : "application/octet-stream");
+        const contentLength = upstream.headers.get("content-length");
+        const etag = upstream.headers.get("etag");
+
+        res.setHeader("Content-Type", contentType);
+        res.setHeader("Cache-Control", "private, no-store, max-age=0");
+        res.setHeader("Content-Disposition", "inline");
+        res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
+        if (contentLength) res.setHeader("Content-Length", contentLength);
+        if (etag) res.setHeader("ETag", etag);
+
+        if (req.method === "HEAD") {
+          return res.status(200).end();
+        }
+
+        if (!upstream.body) {
+          const ab = await upstream.arrayBuffer();
+          return res.status(200).send(Buffer.from(ab));
+        }
+
+        await pipeline(Readable.fromWeb(upstream.body), res);
+      } catch (error) {
+        next(error);
+      }
+    }
+
+    router.head("/ai/video/piapi/input/:token", handlePiapiInputProxy);
+    router.get("/ai/video/piapi/input/:token", handlePiapiInputProxy);
+
     router.post("/ai/video/piapi/webhook", async (req, res) => {
       try {
         const providedSecret = String(req.get("x-webhook-secret") || "").trim();
@@ -3719,12 +3796,12 @@ const isVeo = isVeoModelId(selectedModelNorm);
 
         const referenceImageUrls = [];
         for (const assetId of referenceImageAssetIds) {
-          referenceImageUrls.push(await assetIdToSignedUrl(assetId, user.id, INPUT_URL_TTL_SECONDS));
+          referenceImageUrls.push(await assetIdToPiapiInputUrl(assetId, user.id, req, INPUT_URL_TTL_SECONDS));
         }
 
         const audioReferenceUrls = [];
         for (const assetId of audioReferenceAssetIds) {
-          audioReferenceUrls.push(await assetIdToSignedUrl(assetId, user.id, INPUT_URL_TTL_SECONDS));
+          audioReferenceUrls.push(await assetIdToPiapiInputUrl(assetId, user.id, req, INPUT_URL_TTL_SECONDS));
         }
 
         const effectiveAspectRatio = coerceSeedanceAspectRatio(body.aspectRatio, "16:9");
@@ -3743,7 +3820,7 @@ const isVeo = isVeoModelId(selectedModelNorm);
 
         if (isGenerateModel) {
           if (body.videoAssetId) {
-            videoUrl = await assetIdToSignedUrl(body.videoAssetId, user.id, INPUT_URL_TTL_SECONDS);
+            videoUrl = await assetIdToPiapiInputUrl(body.videoAssetId, user.id, req, INPUT_URL_TTL_SECONDS);
           }
 
           const hasImageOrVideoReference = referenceImageUrls.length > 0 || Boolean(videoUrl);
@@ -3772,7 +3849,7 @@ const isVeo = isVeoModelId(selectedModelNorm);
             throw httpError(400, "SEEDANCE_VIDEO_REQUIRED", "Selecciona un video de entrada para editar con Seedance 2 Preview.");
           }
 
-          videoUrl = await assetIdToSignedUrl(body.videoAssetId, user.id, INPUT_URL_TTL_SECONDS);
+          videoUrl = await assetIdToPiapiInputUrl(body.videoAssetId, user.id, req, INPUT_URL_TTL_SECONDS);
           pricingDurationSeconds = coerceReferenceVideoDurationSeconds(body.referenceVideoDurationSeconds) || pricingDurationSeconds || 5;
           inputVideoDurationSeconds = pricingDurationSeconds;
           mode = referenceImageUrls.length ? "video_edit_with_image" : "video_edit";
