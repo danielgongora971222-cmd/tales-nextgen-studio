@@ -269,7 +269,6 @@ const PREFILL_TARGET = getCommunityPrefillTarget(TOOL_ID);
 const FRAME_UPLOAD_TOOL = "video-gen-frame";
 const SEEDANCE_REF_UPLOAD_TOOL = "video-gen-seedance-ref";
 const SEEDANCE_MAX_TOTAL_IMAGES = 2;
-const SEEDANCE_PREVIEW_MAX_REFS = 9;
 
 const VIDEO_SETTINGS_VERSION = 2;
 
@@ -849,8 +848,8 @@ const elementMentionItems = useMemo<MentionItem[]>(() => {
 }, [isKlingV3ElementsUI, allKlingElements, elementTokenById]);
 
   const isSeedanceGenerateModel = modelNorm === SEEDANCE_2 || modelNorm === SEEDANCE_2_FAST;
-  const isSeedancePreviewModel = modelNorm === SEEDANCE_2_PREVIEW;
-  const isSeedanceModel = isSeedanceGenerateModel || isSeedancePreviewModel;
+  const isSeedanceCinemaModel = modelNorm === SEEDANCE_2_PREVIEW;
+  const isSeedanceModel = isSeedanceGenerateModel || isSeedanceCinemaModel;
   const seedanceHistoryImages = useMemo(
     () => (imageAssets || []).filter((asset) => !isElementAsset(asset)),
     [imageAssets]
@@ -866,12 +865,9 @@ const elementMentionItems = useMemo<MentionItem[]>(() => {
         .filter((asset): asset is Asset => Boolean(asset)),
     [seedanceReferenceImageIds, imageAssets]
   );
-  const seedanceRefsMaxSelectable = Math.max(
-    0,
-    isSeedancePreviewModel
-      ? SEEDANCE_PREVIEW_MAX_REFS
-      : (SEEDANCE_MAX_TOTAL_IMAGES - (firstFrame ? 1 : 0) - (lastFrame ? 1 : 0))
-  );
+  const seedanceRefsMaxSelectable = isSeedanceCinemaModel
+    ? SEEDANCE_MAX_TOTAL_IMAGES
+    : Math.max(0, SEEDANCE_MAX_TOTAL_IMAGES - (firstFrame ? 1 : 0) - (lastFrame ? 1 : 0));
   const seedanceRefTokenById = useMemo(
     () => buildImageTokenMap(seedanceSelectedRefAssets),
     [seedanceSelectedRefAssets]
@@ -890,13 +886,11 @@ const elementMentionItems = useMemo<MentionItem[]>(() => {
       seen.add(asset.id);
       out.push(asset);
     };
-    if (isSeedanceGenerateModel) {
-      push(firstFrame);
-      push(lastFrame);
-    }
+    push(firstFrame);
+    push(lastFrame);
     for (const asset of seedanceSelectedRefAssets) push(asset);
     return out;
-  }, [firstFrame, lastFrame, isSeedanceGenerateModel, seedanceSelectedRefAssets]);
+  }, [firstFrame, lastFrame, seedanceSelectedRefAssets]);
 
   const seedanceMentionItems = useMemo<MentionItem[]>(() => {
     if (!isSeedanceModel) return [];
@@ -936,10 +930,6 @@ const elementMentionItems = useMemo<MentionItem[]>(() => {
 
     return out;
   }, [isSeedanceModel, seedanceFinalOrderedImages, seedanceSelectedRefAssets, seedanceRefTokenById]);
-
-  const seedanceQuickRefLabel = isSeedancePreviewModel
-    ? `Refs${seedanceReferenceImageIds.length ? ` (${seedanceReferenceImageIds.length})` : ""}`
-    : `Frames${seedanceFinalOrderedImages.length ? ` (${seedanceFinalOrderedImages.length})` : ""}`;
 
   // Sync Elements con el prompt:
   // - Si borras un token de Element del prompt -> se deselecciona.
@@ -1049,10 +1039,17 @@ const elementMentionItems = useMemo<MentionItem[]>(() => {
   }, [firstFrame?.id, lastFrame?.id, seedanceRefsMaxSelectable]);
 
   useEffect(() => {
-    if (isSeedanceModel) return;
+    if (isSeedanceCinemaModel) return;
     if (!seedanceRefsPickerOpen && seedanceReferenceImageIds.length === 0) return;
     clearSeedanceRefsSelection();
-  }, [isSeedanceModel, seedanceRefsPickerOpen, seedanceReferenceImageIds.length, clearSeedanceRefsSelection]);
+  }, [isSeedanceCinemaModel, seedanceRefsPickerOpen, seedanceReferenceImageIds.length, clearSeedanceRefsSelection]);
+
+  useEffect(() => {
+    if (!isSeedanceCinemaModel) return;
+    if (!firstFrame && !lastFrame) return;
+    setFirstFrame(null);
+    setLastFrame(null);
+  }, [isSeedanceCinemaModel, firstFrame, lastFrame]);
 
   useEffect(() => {
     if (seedanceReferenceImageIds.length === 0) return;
@@ -1862,35 +1859,34 @@ const durationLabel = useMemo(() => {
   };
 
   const prepareSeedancePromptAndRefs = (rawPrompt: string) => {
-    const orderedFrameAssets = isSeedanceGenerateModel
-      ? [firstFrame, lastFrame].filter((asset): asset is Asset => Boolean(asset))
-      : [];
-    const finalRefAssets = isSeedancePreviewModel
-      ? [...seedanceSelectedRefAssets]
-      : [...orderedFrameAssets, ...seedanceSelectedRefAssets.filter((asset) => !orderedFrameAssets.some((frame) => frame.id === asset.id))];
-    const finalImageCount = finalRefAssets.length;
-    const maxAllowed = isSeedancePreviewModel ? SEEDANCE_PREVIEW_MAX_REFS : SEEDANCE_MAX_TOTAL_IMAGES;
+    const orderedAssets = isSeedanceCinemaModel
+      ? seedanceSelectedRefAssets
+      : [firstFrame, lastFrame].filter((asset): asset is Asset => Boolean(asset));
+
+    const finalIds = orderedAssets.map((asset) => asset.id);
+    const finalImageCount = finalIds.length;
 
     const lowerTokens = extractMentionTokens(rawPrompt).map((token) => token.toLowerCase());
     const numericImageIndices = lowerTokens
       .map((token) => {
         const m = token.match(/^@image(\d+)$/);
         const n = m ? Number(m[1]) : 0;
-        return n >= 1 && n <= maxAllowed ? n : 0;
+        return n >= 1 && n <= SEEDANCE_MAX_TOTAL_IMAGES ? n : 0;
       })
       .filter((n) => n > 0);
 
     const maxImageIndex = numericImageIndices.length ? Math.max(...numericImageIndices) : 0;
     if (maxImageIndex > finalImageCount) {
-      if (isSeedancePreviewModel) {
-        throw new Error(`Tu prompt usa @Image${maxImageIndex}, pero solo hay ${finalImageCount} imagen${finalImageCount === 1 ? "" : "es"} seleccionada${finalImageCount === 1 ? "" : "s"} en Refs.`);
-      }
-      throw new Error(`Tu prompt usa @Image${maxImageIndex}, pero solo hay ${finalImageCount} imagen${finalImageCount === 1 ? "" : "es"} disponible${finalImageCount === 1 ? "" : "s"} entre Start/End frame y Refs.`);
+      throw new Error(
+        isSeedanceCinemaModel
+          ? `Tu prompt usa @Image${maxImageIndex}, pero solo hay ${finalImageCount} imagen${finalImageCount === 1 ? "" : "es"} de referencia seleccionada${finalImageCount === 1 ? "" : "s"}.`
+          : `Tu prompt usa @Image${maxImageIndex}, pero solo hay ${finalImageCount} imagen${finalImageCount === 1 ? "" : "es"} disponible${finalImageCount === 1 ? "" : "s"} entre Start y End frame.`
+      );
     }
 
     return {
       promptForModel: String(rawPrompt || ""),
-      referenceImageAssetIds: seedanceSelectedRefAssets.map((asset) => asset.id),
+      referenceImageAssetIds: isSeedanceCinemaModel ? finalIds : [],
       finalImageCount,
     };
   };
@@ -2289,140 +2285,98 @@ const clearModalSelectedIds = () => {
             >
               <div className={styles.cookSidebar}>
                 <div className={`${styles.dock} ${styles.cookSectionCard} ${styles.cookPromptCard}`}>
-                  <div className={styles.videoCreateFrameRow}>
-                    {isSeedancePreviewModel ? (
-                      <div className={styles.videoCreateFrameSlot}>
+                  {!isSeedanceCinemaModel && (
+                    <div className={styles.videoCreateFrameRow}>
+                    <div className={styles.videoCreateFrameSlot}>
+                      <button
+                        type="button"
+                        className={`${styles.videoCreateFrameCard} ${hasFirst ? styles.videoCreateFrameCardFilled : ""}`}
+                        onClick={() => openPicker("first")}
+                      >
+                        <span className={styles.videoCreateFrameBadge}>Optional</span>
+                        {firstFramePreviewUrl && (
+                          <img
+                            src={firstFramePreviewUrl}
+                            alt={firstFrame?.name || "Start frame"}
+                            className={styles.videoCreateFramePreview}
+                          />
+                        )}
+                        <span className={styles.videoCreateFrameShade} aria-hidden="true" />
+                        {!firstFramePreviewUrl && (
+                          <span className={styles.videoCreateFrameIconOrb} aria-hidden="true">
+                            <Icon name="image" />
+                          </span>
+                        )}
+                        <span className={styles.videoCreateFrameLabel}>Start frame</span>
+                      </button>
+
+                      {hasFirst && (
                         <button
                           type="button"
-                          className={`${styles.videoCreateFrameCard} ${seedanceReferenceImageIds.length ? styles.videoCreateFrameCardFilled : ""}`}
-                          onClick={() => setSeedanceRefsPickerOpen(true)}
-                          title="Abrir image refs"
+                          className={styles.videoCreateFrameRemove}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setFirstFrame(null);
+                            setLastFrame(null);
+                          }}
+                          aria-label="Quitar Start frame"
+                          title="Quitar Start frame"
                         >
-                          <span className={styles.videoCreateFrameBadge}>Optional</span>
-                          {seedanceSelectedRefAssets[0] && getAssetUrl(seedanceSelectedRefAssets[0]) ? (
-                            <img
-                              src={getAssetUrl(seedanceSelectedRefAssets[0]) || undefined}
-                              alt={seedanceSelectedRefAssets[0]?.name || "Image refs"}
-                              className={styles.videoCreateFramePreview}
-                            />
-                          ) : null}
-                          <span className={styles.videoCreateFrameShade} aria-hidden="true" />
-                          {!seedanceSelectedRefAssets[0] && (
-                            <span className={styles.videoCreateFrameIconOrb} aria-hidden="true">
-                              <Icon name="image" />
-                            </span>
-                          )}
-                          <span className={styles.videoCreateFrameLabel}>Image refs</span>
+                          <Icon name="close" />
                         </button>
+                      )}
+                    </div>
 
-                        {seedanceReferenceImageIds.length > 0 && (
-                          <button
-                            type="button"
-                            className={styles.videoCreateFrameRemove}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              clearSeedanceRefsSelection();
-                            }}
-                            aria-label="Quitar image refs"
-                            title="Quitar image refs"
-                          >
-                            <Icon name="close" />
-                          </button>
+                    <div className={styles.videoCreateFrameSlot}>
+                      <button
+                        type="button"
+                        className={`${styles.videoCreateFrameCard} ${hasLast ? styles.videoCreateFrameCardFilled : ""} ${
+                          !hasFirst || lastFrameBlockedByMultishot ? styles.videoCreateFrameCardDisabled : ""
+                        }`}
+                        onClick={() => openPicker("last")}
+                        disabled={!hasFirst || lastFrameBlockedByMultishot}
+                        title={
+                          !hasFirst
+                            ? "End frame disponible después de seleccionar Start frame"
+                            : lastFrameBlockedByMultishot
+                              ? "End frame bloqueado mientras Multi-shot está activo"
+                              : "Seleccionar End frame"
+                        }
+                      >
+                        <span className={styles.videoCreateFrameBadge}>Optional</span>
+                        {lastFramePreviewUrl && (
+                          <img
+                            src={lastFramePreviewUrl}
+                            alt={lastFrame?.name || "End frame"}
+                            className={styles.videoCreateFramePreview}
+                          />
                         )}
-                      </div>
-                    ) : (
-                      <>
-                        <div className={styles.videoCreateFrameSlot}>
-                          <button
-                            type="button"
-                            className={`${styles.videoCreateFrameCard} ${hasFirst ? styles.videoCreateFrameCardFilled : ""}`}
-                            onClick={() => openPicker("first")}
-                          >
-                            <span className={styles.videoCreateFrameBadge}>Optional</span>
-                            {firstFramePreviewUrl && (
-                              <img
-                                src={firstFramePreviewUrl}
-                                alt={firstFrame?.name || "Start frame"}
-                                className={styles.videoCreateFramePreview}
-                              />
-                            )}
-                            <span className={styles.videoCreateFrameShade} aria-hidden="true" />
-                            {!firstFramePreviewUrl && (
-                              <span className={styles.videoCreateFrameIconOrb} aria-hidden="true">
-                                <Icon name="image" />
-                              </span>
-                            )}
-                            <span className={styles.videoCreateFrameLabel}>Start frame</span>
-                          </button>
+                        <span className={styles.videoCreateFrameShade} aria-hidden="true" />
+                        {!lastFramePreviewUrl && (
+                          <span className={styles.videoCreateFrameIconOrb} aria-hidden="true">
+                            <Icon name="image" />
+                          </span>
+                        )}
+                        <span className={styles.videoCreateFrameLabel}>End frame</span>
+                      </button>
 
-                          {hasFirst && (
-                            <button
-                              type="button"
-                              className={styles.videoCreateFrameRemove}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setFirstFrame(null);
-                                setLastFrame(null);
-                              }}
-                              aria-label="Quitar Start frame"
-                              title="Quitar Start frame"
-                            >
-                              <Icon name="close" />
-                            </button>
-                          )}
-                        </div>
-
-                        <div className={styles.videoCreateFrameSlot}>
-                          <button
-                            type="button"
-                            className={`${styles.videoCreateFrameCard} ${hasLast ? styles.videoCreateFrameCardFilled : ""} ${
-                              !hasFirst || lastFrameBlockedByMultishot ? styles.videoCreateFrameCardDisabled : ""
-                            }`}
-                            onClick={() => openPicker("last")}
-                            disabled={!hasFirst || lastFrameBlockedByMultishot}
-                            title={
-                              !hasFirst
-                                ? "End frame disponible después de seleccionar Start frame"
-                                : lastFrameBlockedByMultishot
-                                  ? "End frame bloqueado mientras Multi-shot está activo"
-                                  : "Seleccionar End frame"
-                            }
-                          >
-                            <span className={styles.videoCreateFrameBadge}>Optional</span>
-                            {lastFramePreviewUrl && (
-                              <img
-                                src={lastFramePreviewUrl}
-                                alt={lastFrame?.name || "End frame"}
-                                className={styles.videoCreateFramePreview}
-                              />
-                            )}
-                            <span className={styles.videoCreateFrameShade} aria-hidden="true" />
-                            {!lastFramePreviewUrl && (
-                              <span className={styles.videoCreateFrameIconOrb} aria-hidden="true">
-                                <Icon name="image" />
-                              </span>
-                            )}
-                            <span className={styles.videoCreateFrameLabel}>End frame</span>
-                          </button>
-
-                          {hasLast && (
-                            <button
-                              type="button"
-                              className={styles.videoCreateFrameRemove}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setLastFrame(null);
-                              }}
-                              aria-label="Quitar End frame"
-                              title="Quitar End frame"
-                            >
-                              <Icon name="close" />
-                            </button>
-                          )}
-                        </div>
-                      </>
-                    )}
-                  </div>
+                      {hasLast && (
+                        <button
+                          type="button"
+                          className={styles.videoCreateFrameRemove}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setLastFrame(null);
+                          }}
+                          aria-label="Quitar End frame"
+                          title="Quitar End frame"
+                        >
+                          <Icon name="close" />
+                        </button>
+                      )}
+                    </div>
+                    </div>
+                  )}
 
                   <div className={styles.videoComposerCard}>
                     {supportsMultishotUi && (
@@ -2530,7 +2484,7 @@ const clearModalSelectedIds = () => {
                                   </select>
                                 </div>
 
-                                {showKlingElementsButtons && isKlingV3ElementsUI && (
+                            {showKlingElementsButtons && isKlingV3ElementsUI && (
                                   <button
                                     type="button"
                                     className={`${styles.videoActionBtn} ${styles.videoActionBtnMuted} ${Array.isArray(shot.elementIds) && shot.elementIds.length ? styles.videoActionBtnActive : ""}`}
@@ -2579,9 +2533,7 @@ const clearModalSelectedIds = () => {
                                 });
 
                                 if (!allowed) {
-                                  setError(isSeedancePreviewModel
-                                    ? `Seedance 2.0 Cinema admite hasta ${seedanceRefsMaxSelectable} image refs en esta herramienta.`
-                                    : `Seedance 2 admite como máximo ${seedanceRefsMaxSelectable} imágenes totales entre Start, End y Refs.`);
+                                  setError(isSeedanceCinemaModel ? `Seedance 2.0 Cinema admite hasta ${SEEDANCE_MAX_TOTAL_IMAGES} image refs.` : `Seedance 2 admite como máximo Start y End frame en esta herramienta.`);
                                 }
                                 return allowed;
                               }
@@ -2618,6 +2570,20 @@ const clearModalSelectedIds = () => {
                               >
                                 <Icon name="sound" />
                                 <span>{klingSound ? "On" : "Off"}</span>
+                              </button>
+                            )}
+
+                            {isSeedanceCinemaModel && (
+                              <button
+                                type="button"
+                                className={`${styles.videoActionBtn} ${styles.videoActionBtnMuted} ${seedanceReferenceImageIds.length ? styles.videoActionBtnActive : ""}`}
+                                onClick={() => setSeedanceRefsPickerOpen(true)}
+                                title="Open image refs"
+                                aria-label="Open image refs"
+                              >
+                                <Icon name="image" />
+                                <span>Image refs</span>
+                                <span className={styles.videoActionBtnMeta}>{seedanceReferenceImageIds.length}/{seedanceRefsMaxSelectable}</span>
                               </button>
                             )}
 
@@ -2664,18 +2630,6 @@ const clearModalSelectedIds = () => {
                         >
                           <Icon name="clock" />
                           <span>{durationSelectorLabel}</span>
-                        </button>
-                      )}
-
-                      {isSeedancePreviewModel && (
-                        <button
-                          type="button"
-                          className={styles.videoQuickButton}
-                          onClick={() => setSeedanceRefsPickerOpen(true)}
-                          title="Abrir image refs"
-                        >
-                          <Icon name="image" />
-                          <span>{seedanceQuickRefLabel}</span>
                         </button>
                       )}
 
@@ -2783,18 +2737,6 @@ const clearModalSelectedIds = () => {
         historyAssets={seedanceHistoryImages}
         elementAssets={seedanceElementImages}
         max={seedanceRefsMaxSelectable}
-        title={isSeedancePreviewModel ? "Image refs" : "Seedance Refs"}
-        note={
-          isSeedancePreviewModel ? (
-            <>
-              Seleccionadas: <b>{seedanceReferenceImageIds.length}</b> / {seedanceRefsMaxSelectable}. Seedance 2.0 Cinema usa hasta 9 image refs.
-            </>
-          ) : (
-            <>
-              Seleccionadas: <b>{seedanceReferenceImageIds.length}</b> / {seedanceRefsMaxSelectable}. Seedance 2 usa hasta 2 imágenes totales entre Start/End frame y Refs.
-            </>
-          )
-        }
         isLoading={isLoadingImages}
         onUpload={async (file) => {
           const uploaded = await uploadUserAsset(file, SEEDANCE_REF_UPLOAD_TOOL);

@@ -65,7 +65,7 @@ const MODEL_OPTIONS: ModelOption[] = [
   { id: KLING_O3_PRO, name: "Kling O3 Pro", desc: "3–15s · multishot" },
   { id: SEEDANCE_2, name: "Seedance 2", desc: "4–15s · text / first-last" },
   { id: SEEDANCE_2_FAST, name: "Seedance 2 Fast", desc: "4–15s · fast" },
-  { id: SEEDANCE_2_PREVIEW, name: "Seedance 2.0 Cinema", desc: "4–15s · text / image refs" },
+  { id: SEEDANCE_2_PREVIEW, name: "Seedance 2.0 Cinema", desc: "4–15s · image refs" },
 ];
 
 export function ControlsPopover({
