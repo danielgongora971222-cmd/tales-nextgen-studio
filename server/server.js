@@ -454,7 +454,7 @@ const aiLimiter = rateLimit({
   keyGenerator: (req) => ipKeyGenerator(getClientIp(req)),
   skip: (req) => {
     const p = String(req.originalUrl || "");
-    return p.startsWith("/api/ai/video/fal/");
+    return p.startsWith("/api/ai/video/fal/") || p.startsWith("/api/ai/video/piapi/input/");
   },
   handler: (req, res) => {
     const retryAfter = Number(res.getHeader("Retry-After")) || null;

@@ -918,6 +918,11 @@ export function createAiVideoRouter(ctx) {
     return raw !== "direct" && raw !== "off" && raw !== "false" && raw !== "0";
   }
 
+  function shouldUseFalInputProxy() {
+    const raw = String(process.env.FAL_INPUT_PROXY_MODE || "direct").trim().toLowerCase();
+    return raw === "proxy" || raw === "on" || raw === "1" || raw === "true";
+  }
+
   function shouldPreferPiapiEphemeralUpload() {
     const raw = String(process.env.PIAPI_EPHEMERAL_UPLOAD_MODE || "prefer").trim().toLowerCase();
     return raw !== "off" && raw !== "false" && raw !== "0" && raw !== "direct-only";
@@ -1119,6 +1124,12 @@ export function createAiVideoRouter(ctx) {
   async function assetIdToFalSeedanceInputUrl(assetId, userId, req, expiresInSeconds = 60 * 60 * 6) {
     const descriptor = await getPiapiAssetSourceDescriptor(assetId, userId, expiresInSeconds);
 
+    // Fal descarga mucho mejor URLs firmadas directas que nuestro proxy interno bajo /api/ai/*.
+    // El proxy se mantiene solo como escape hatch por env para compatibilidad/depuración.
+    if (!shouldUseFalInputProxy()) {
+      return descriptor.sourceUrl;
+    }
+
     const proxyUrl = buildPiapiInputProxyUrl(req, {
       ownerId: userId,
       assetId,
@@ -1198,6 +1209,78 @@ export function createAiVideoRouter(ctx) {
       retries: 2,
       body,
     });
+  }
+
+  function buildFalCancelUrl({ cancelUrl = null, statusUrl = null, responseUrl = null, endpointId = null, requestId = null } = {}) {
+    const explicit = String(cancelUrl || "").trim();
+    if (explicit) return explicit;
+
+    const status = String(statusUrl || "").trim();
+    if (status) {
+      if (/\/status\/?$/i.test(status)) return status.replace(/\/status\/?$/i, "/cancel");
+      if (/\/requests\/[^/]+\/?$/i.test(status)) return `${status.replace(/\/+$/g, "")}/cancel`;
+    }
+
+    const response = String(responseUrl || "").trim();
+    if (response) {
+      if (/\/requests\/[^/]+\/?$/i.test(response)) return `${response.replace(/\/+$/g, "")}/cancel`;
+      if (/\/status\/?$/i.test(response)) return response.replace(/\/status\/?$/i, "/cancel");
+    }
+
+    const endpoint = String(endpointId || "").trim().replace(/^\/+|\/+$/g, "");
+    const reqId = String(requestId || "").trim();
+    if (endpoint && reqId) {
+      return `https://queue.fal.run/${endpoint}/requests/${encodeURIComponent(reqId)}/cancel`;
+    }
+    return null;
+  }
+
+  function formatFalErrorPayload(payload, fallback = "Fal request failed.") {
+    if (!payload) return String(fallback || "Fal request failed.");
+    if (Array.isArray(payload?.detail) && payload.detail.length) {
+      const parts = payload.detail.map((item) => {
+        const loc = Array.isArray(item?.loc) ? item.loc.join(".") : "";
+        const msg = String(item?.msg || item?.message || item?.type || "Fal validation error").trim();
+        return loc ? `${loc}: ${msg}` : msg;
+      }).filter(Boolean);
+      if (parts.length) return parts.join("\n");
+    }
+    return String(
+      payload?.error?.message ||
+      payload?.message ||
+      payload?.detail ||
+      payload?.raw ||
+      fallback ||
+      "Fal request failed."
+    ).trim();
+  }
+
+  async function falCancelRequest({ cancelUrl, endpointId, requestId, statusUrl, responseUrl }) {
+    const resolvedCancelUrl = buildFalCancelUrl({ cancelUrl, endpointId, requestId, statusUrl, responseUrl });
+    if (!resolvedCancelUrl) {
+      return { ok: false, status: 0, body: null, message: "No pude construir cancel_url para Fal." };
+    }
+
+    const response = await fetch(resolvedCancelUrl, {
+      method: "PUT",
+      headers: { Authorization: `Key ${String(process.env.FAL_KEY || "").trim()}` },
+    });
+
+    const rawText = await response.text();
+    let body = null;
+    try {
+      body = rawText ? JSON.parse(rawText) : null;
+    } catch {
+      body = rawText ? { raw: rawText } : null;
+    }
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      body,
+      message: formatFalErrorPayload(body, `Fal cancel HTTP ${response.status}`),
+      cancelUrl: resolvedCancelUrl,
+    };
   }
 
   async function resolveKlingElementList({
@@ -1381,6 +1464,7 @@ export function createAiVideoRouter(ctx) {
       requestId: requestId || null,
       statusUrl: statusUrl || null,
       responseUrl: responseUrl || null,
+      cancelUrl: buildFalCancelUrl({ statusUrl, responseUrl, endpointId, requestId }) || null,
       endpointId: endpointId || null,
       falEndpointId: endpointId || null,
       jobToken: jobToken || null,
@@ -4403,6 +4487,7 @@ const isVeo = isVeoModelId(selectedModelNorm);
             model,
             falEndpointId,
             falRequestId: submit.requestId,
+            falCancelUrl: buildFalCancelUrl({ statusUrl: submit.statusUrl, responseUrl: submit.responseUrl, endpointId: falEndpointId, requestId: submit.requestId }),
             seedance: {
               mode,
               videoAssetId: body.videoAssetId || null,
@@ -4531,6 +4616,142 @@ const isVeo = isVeoModelId(selectedModelNorm);
 
 
   // --- PASTE END ---
+
+  router.post("/ai/video/jobs/:jobId/cancel", async (req, res, next) => {
+    try {
+      const { user, error } = await requireUser(req);
+      if (error) return res.status(401).json({ ok: false, error });
+
+      const jobId = String(req.params?.jobId || "").trim();
+      if (!jobId) {
+        return res.status(400).json({ ok: false, error: { code: "JOB_ID_REQUIRED", message: "Falta jobId." } });
+      }
+
+      const lookup = await supabaseAdmin
+        .from("jobs")
+        .select("id, owner_id, kind, status, params, result_asset_id, error")
+        .eq("id", jobId)
+        .eq("owner_id", user.id)
+        .eq("kind", "video")
+        .maybeSingle();
+
+      if (lookup.error && lookup.error.code !== "PGRST116") {
+        throw httpError(500, "DB_ERROR", "No pude leer el job para cancelarlo.", { supabase: lookup.error });
+      }
+
+      const row = lookup.data || null;
+      if (!row) {
+        return res.status(404).json({ ok: false, error: { code: "JOB_NOT_FOUND", message: "No encontré ese job de video." } });
+      }
+
+      if (row.status === "succeeded" || row.status === "failed" || row.status === "canceled") {
+        return res.json({ ok: true, alreadyTerminal: true, status: row.status, jobId: row.id });
+      }
+
+      const params = row?.params && typeof row.params === "object" ? row.params : {};
+      const provider = String(params.provider || "").trim().toLowerCase();
+      const nowIso = new Date().toISOString();
+
+      if (provider === "fal") {
+        const cancelResult = await falCancelRequest({
+          cancelUrl: params.cancelUrl || null,
+          endpointId: params.endpointId || params.falEndpointId || null,
+          requestId: params.requestId || params.falRequestId || null,
+          statusUrl: params.statusUrl || null,
+          responseUrl: params.responseUrl || null,
+        }).catch((e) => ({ ok: false, status: Number(e?.status || 0), body: e?.data || null, message: String(e?.message || e), cancelUrl: null }));
+
+        const cancelStatus = String(cancelResult?.body?.status || "").trim().toUpperCase();
+
+        if (cancelStatus === "ALREADY_COMPLETED") {
+          const upd = await supabaseAdmin
+            .from("jobs")
+            .update({
+              status: "running",
+              error: null,
+              finished_at: null,
+              next_check_at: nowIso,
+              locked_at: null,
+              locked_by: null,
+              params: {
+                ...params,
+                providerStatus: cancelStatus,
+                providerCancelAttemptedAt: nowIso,
+                providerCancelMessage: cancelResult?.message || null,
+              },
+            })
+            .eq("id", row.id);
+
+          if (upd.error) {
+            throw httpError(500, "DB_ERROR", "No pude reactivar el job ya completado para finalización.", { supabase: upd.error });
+          }
+
+          return res.json({ ok: true, canceled: false, finalizing: true, status: "running", jobId: row.id });
+        }
+
+        if (!cancelResult.ok && cancelResult.status && cancelResult.status !== 202) {
+          return res.status(502).json({
+            ok: false,
+            error: {
+              code: "FAL_CANCEL_FAILED",
+              message: cancelResult?.message || "Fal no aceptó la cancelación.",
+              details: { provider: "fal", status: cancelResult?.status || null, body: cancelResult?.body || null },
+            },
+          });
+        }
+
+        const upd = await supabaseAdmin
+          .from("jobs")
+          .update({
+            status: "canceled",
+            error: null,
+            finished_at: nowIso,
+            next_check_at: null,
+            locked_at: null,
+            locked_by: null,
+            params: {
+              ...params,
+              providerStatus: cancelStatus || "CANCELLATION_REQUESTED",
+              providerCancelAttemptedAt: nowIso,
+              providerCancelMessage: cancelResult?.message || null,
+            },
+          })
+          .eq("id", row.id);
+
+        if (upd.error) {
+          throw httpError(500, "DB_ERROR", "No pude marcar el job como cancelado.", { supabase: upd.error });
+        }
+
+        return res.json({ ok: true, canceled: true, status: "canceled", jobId: row.id });
+      }
+
+      const upd = await supabaseAdmin
+        .from("jobs")
+        .update({
+          status: "canceled",
+          error: null,
+          finished_at: nowIso,
+          next_check_at: null,
+          locked_at: null,
+          locked_by: null,
+          params: {
+            ...params,
+            providerStatus: "CANCELED_BY_USER",
+            providerCancelAttemptedAt: nowIso,
+          },
+        })
+        .eq("id", row.id);
+
+      if (upd.error) {
+        throw httpError(500, "DB_ERROR", "No pude cancelar el job.", { supabase: upd.error });
+      }
+
+      return res.json({ ok: true, canceled: true, status: "canceled", jobId: row.id });
+    } catch (err) {
+      next(err);
+    }
+  });
+
   // ===============================
   // KLING Motion Control (2.6 + V3 direct)
   // ===============================

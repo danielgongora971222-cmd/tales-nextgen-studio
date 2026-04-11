@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useMemo, useRef, useState 
 import { useAuth } from "./AuthContext";
 import { KLING_2_5_TURBO, KLING_2_6, KLING_O3_PRO, KLING_V3 } from "../services/videoModels";
 import { apiPostJson, clearPendingFalJob, formatErr, loadPendingFalJobs, savePendingFalJob, waitFalJob } from "../services/videoGenApi";
-import { waitJobCompletion, findRecentRunningKlingJob } from "../services/jobsApi";
+import { waitJobCompletion, findRecentRunningKlingJob, formatJobFailure } from "../services/jobsApi";
 import { invalidateMyAssetsCache } from "../services/assetsApi";
 type QueueJobStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
 
@@ -170,6 +170,24 @@ function pickUrlFromJobRow(row: any) {
   return s || null;
 }
 
+
+function ensureCompletedBackgroundRow(row: any, fallback: string) {
+  if (!row) throw new Error(fallback);
+  if (row.status === "failed") {
+    throw new Error(formatJobFailure(row, fallback));
+  }
+  if (row.status === "canceled") {
+    const err: any = new Error("Cancelado.");
+    err.name = "AbortError";
+    err.isCanceled = true;
+    throw err;
+  }
+  if (row.status === "succeeded" && row.result_asset_id) {
+    return row;
+  }
+  throw new Error(fallback);
+}
+
 export const GenerationQueueProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
   const userId = user?.id || null;
@@ -323,16 +341,62 @@ export const GenerationQueueProvider: React.FC<{ children: React.ReactNode }> = 
     const c = controllersRef.current.get(jobId);
     if (c) c.abort();
 
-    const token = jobs.find((j) => j.id === jobId)?.payload?.falJobToken;
+    const currentJob = jobs.find((j) => j.id === jobId) || null;
+    const token = currentJob?.payload?.falJobToken;
+    const supabaseJobId = currentJob?.payload?.supabaseJobId ? String(currentJob.payload.supabaseJobId) : "";
+
     if (token) clearPendingFalJob(String(token));
+
+    if (!supabaseJobId) {
+      setJobs((prev) =>
+        prev.map((j) =>
+          j.id === jobId
+            ? { ...j, status: "canceled" as const, progressText: null, updatedAt: now(), error: null }
+            : j
+        )
+      );
+      return;
+    }
 
     setJobs((prev) =>
       prev.map((j) =>
         j.id === jobId
-          ? { ...j, status: "canceled" as const, progressText: null, updatedAt: now(), error: null }
+          ? { ...j, progressText: "Cancelando…", updatedAt: now(), error: null }
           : j
       )
     );
+
+    void apiPostJson<any>(`/api/ai/video/jobs/${encodeURIComponent(supabaseJobId)}/cancel`, {}, { timeoutMs: 60_000, retries: 0 })
+      .then((out) => {
+        const nextStatus = out?.finalizing ? "running" : "canceled";
+        setJobs((prev) =>
+          prev.map((j) =>
+            j.id === jobId
+              ? {
+                  ...j,
+                  status: nextStatus as any,
+                  progressText: out?.finalizing ? "Finalizando…" : null,
+                  updatedAt: now(),
+                  error: null,
+                }
+              : j
+          )
+        );
+      })
+      .catch((e: any) => {
+        setJobs((prev) =>
+          prev.map((j) =>
+            j.id === jobId
+              ? {
+                  ...j,
+                  progressText: null,
+                  updatedAt: now(),
+                  error: formatErr(e) || "No pude cancelar el job.",
+                }
+              : j
+          )
+        );
+      });
   };
 
   const removeJob = (jobId: string) => {
@@ -448,16 +512,10 @@ async function runVideoJob(
       onProgress("Reanudando (Kling, background)…");
       const row = await waitJobCompletion(existingJobId, { signal, onProgress, pollMs: 15_000 });
 
-      if (row.status === "failed") {
-        throw new Error(row.error || "Falló el job de Kling en background.");
-      }
-
-      if (row.status === "succeeded" && row.result_asset_id) {
-        const url = pickUrlFromJobRow(row);
-        invalidateMyAssetsCache("video");
-        return { ok: true, items: [{ assetId: row.result_asset_id, ...(url ? { url } : {}) }] };
-      }
-      throw new Error("Job Kling terminó pero no devolvió result_asset_id.");
+      const doneRow = ensureCompletedBackgroundRow(row, "Falló el job de Kling en background.");
+      const url = pickUrlFromJobRow(doneRow);
+      invalidateMyAssetsCache("video");
+      return { ok: true, items: [{ assetId: doneRow.result_asset_id, ...(url ? { url } : {}) }] };
     }
 
 // Submit async
@@ -517,17 +575,10 @@ while (true) {
         onProgress("Procesando (Kling, background)…");
         const row = await waitJobCompletion(supabaseJobId, { signal, onProgress, pollMs: 15_000 });
 
-        if (row.status === "failed") {
-          throw new Error(row.error || "Falló el job de Kling en background.");
-        }
-
-        if (row.status === "succeeded" && row.result_asset_id) {
-          const url = pickUrlFromJobRow(row);
-          invalidateMyAssetsCache("video");
-          return { ok: true, items: [{ assetId: row.result_asset_id, ...(url ? { url } : {}) }] };
-        }
-
-        throw new Error("Job Kling terminó pero no devolvió result_asset_id.");
+        const doneRow = ensureCompletedBackgroundRow(row, "Falló el job de Kling en background.");
+        const url = pickUrlFromJobRow(doneRow);
+        invalidateMyAssetsCache("video");
+        return { ok: true, items: [{ assetId: doneRow.result_asset_id, ...(url ? { url } : {}) }] };
       }
 
       // Si fue busy 429 y NO encontramos job, esperamos y reintentamos el submit.
@@ -561,16 +612,10 @@ onPayloadPatch({ supabaseJobId });
 onProgress("Procesando (Kling, background)…");
 const row = await waitJobCompletion(supabaseJobId, { signal, onProgress, pollMs: 15_000 });
 
-    if (row.status === "failed") {
-      throw new Error(row.error || "Falló el job de Kling en background.");
-    }
-
-    if (row.status === "succeeded" && row.result_asset_id) {
-      const url = pickUrlFromJobRow(row);
-      invalidateMyAssetsCache("video");
-      return { ok: true, items: [{ assetId: row.result_asset_id, ...(url ? { url } : {}) }] };
-    }
-    throw new Error("Job Kling terminó pero no devolvió result_asset_id.");
+    const doneRow = ensureCompletedBackgroundRow(row, "Falló el job de Kling en background.");
+    const url = pickUrlFromJobRow(doneRow);
+    invalidateMyAssetsCache("video");
+    return { ok: true, items: [{ assetId: doneRow.result_asset_id, ...(url ? { url } : {}) }] };
   }
 
   if (isSeedanceModel(modelNorm)) {
@@ -580,16 +625,10 @@ const row = await waitJobCompletion(supabaseJobId, { signal, onProgress, pollMs:
       onProgress("Reanudando (Seedance, background)…");
       const row = await waitJobCompletion(existingJobId, { signal, onProgress, pollMs: 15_000 });
 
-      if (row.status === "failed") {
-        throw new Error(row.error || "Falló el job de Seedance en background.");
-      }
-
-      if (row.status === "succeeded" && row.result_asset_id) {
-        const url = pickUrlFromJobRow(row);
-        invalidateMyAssetsCache("video");
-        return { ok: true, items: [{ assetId: row.result_asset_id, ...(url ? { url } : {}) }] };
-      }
-      throw new Error("Job Seedance terminó pero no devolvió result_asset_id.");
+      const doneRow = ensureCompletedBackgroundRow(row, "Falló el job de Seedance en background.");
+      const url = pickUrlFromJobRow(doneRow);
+      invalidateMyAssetsCache("video");
+      return { ok: true, items: [{ assetId: doneRow.result_asset_id, ...(url ? { url } : {}) }] };
     }
 
     onProgress("Enviando solicitud (Seedance)…");
@@ -608,16 +647,10 @@ const row = await waitJobCompletion(supabaseJobId, { signal, onProgress, pollMs:
     onProgress("Procesando (Seedance, background)…");
     const row = await waitJobCompletion(supabaseJobId, { signal, onProgress, pollMs: 15_000 });
 
-    if (row.status === "failed") {
-      throw new Error(row.error || "Falló el job de Seedance en background.");
-    }
-
-    if (row.status === "succeeded" && row.result_asset_id) {
-      const url = pickUrlFromJobRow(row);
-      invalidateMyAssetsCache("video");
-      return { ok: true, items: [{ assetId: row.result_asset_id, ...(url ? { url } : {}) }] };
-    }
-    throw new Error("Job Seedance terminó pero no devolvió result_asset_id.");
+    const doneRow = ensureCompletedBackgroundRow(row, "Falló el job de Seedance en background.");
+    const url = pickUrlFromJobRow(doneRow);
+    invalidateMyAssetsCache("video");
+    return { ok: true, items: [{ assetId: doneRow.result_asset_id, ...(url ? { url } : {}) }] };
   }
 
   if (isFalModel(modelNorm)) {
@@ -633,7 +666,15 @@ const row = await waitJobCompletion(supabaseJobId, { signal, onProgress, pollMs:
 
         if (row.status === "failed") {
           clearPendingFalJob(existingToken);
-          throw new Error(row.error || "Falló el job en background.");
+          throw new Error(formatJobFailure(row, "Falló el job en background."));
+        }
+
+        if (row.status === "canceled") {
+          clearPendingFalJob(existingToken);
+          const err: any = new Error("Cancelado.");
+          err.name = "AbortError";
+          err.isCanceled = true;
+          throw err;
         }
 
         if (row.status === "succeeded" && row.result_asset_id) {
@@ -705,7 +746,15 @@ const row = await waitJobCompletion(supabaseJobId, { signal, onProgress, pollMs:
 
       if (row.status === "failed") {
         clearPendingFalJob(jobToken);
-        throw new Error(row.error || "Falló el job en background.");
+        throw new Error(formatJobFailure(row, "Falló el job en background."));
+      }
+
+      if (row.status === "canceled") {
+        clearPendingFalJob(jobToken);
+        const err: any = new Error("Cancelado.");
+          err.name = "AbortError";
+          err.isCanceled = true;
+          throw err;
       }
 
       if (row.status === "succeeded" && row.result_asset_id) {

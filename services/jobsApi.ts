@@ -1,6 +1,6 @@
 import { supabase } from "./supabaseClient";
 
-export type JobStatus = "queued" | "running" | "succeeded" | "failed";
+export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
 
 export type JobRow = {
   id: string;
@@ -258,7 +258,7 @@ export async function waitJobCompletion(
   let lastRow: JobRow | null = await fetchJobById(jobId);
 
   const isTerminal = (row: JobRow | null) =>
-    row && (row.status === "succeeded" || row.status === "failed");
+    row && (row.status === "succeeded" || row.status === "failed" || row.status === "canceled");
 
   if (isTerminal(lastRow)) return lastRow as JobRow;
 

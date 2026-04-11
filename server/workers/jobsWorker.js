@@ -156,6 +156,32 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function isTerminalFalHttpError(err) {
+  const status = Number(err?.status || 0);
+  if (!status) return false;
+  if (status === 408 || status === 409 || status === 425 || status === 429) return false;
+  return status >= 400 && status < 500;
+}
+
+function formatFalWorkerError(err, fallback = "Fal request failed.") {
+  const data = err?.data || null;
+  if (Array.isArray(data?.detail) && data.detail.length) {
+    const parts = data.detail.map((item) => {
+      const loc = Array.isArray(item?.loc) ? item.loc.join(".") : "";
+      const msg = String(item?.msg || item?.message || item?.type || "Fal validation error").trim();
+      return loc ? `${loc}: ${msg}` : msg;
+    }).filter(Boolean);
+    if (parts.length) return parts.join("\n");
+  }
+  return String(
+    data?.message ||
+    data?.error?.message ||
+    err?.message ||
+    fallback ||
+    "Fal request failed."
+  ).trim();
+}
+
 
 async function falQueueStatus(statusUrl) {
   const r = await fetch(statusUrl, { method: "GET", headers: falHeaders() });
@@ -1335,6 +1361,16 @@ const taskStatusRaw = extractKlingTaskStatus(taskData, rawJson);
   try {
     st = await falQueueStatus(statusUrl);
   } catch (e) {
+    if (isTerminalFalHttpError(e)) {
+      await releaseAndReschedule(jobId, {
+        status: "failed",
+        error: formatFalWorkerError(e, "Fal rechazó la consulta de estado."),
+        finished_at: new Date().toISOString(),
+        next_check_at: null,
+        params: { ...params, providerStatus: "STATUS_ERROR", providerStatusDetail: formatFalWorkerError(e), errorDetails: e?.data || null },
+      });
+      return;
+    }
     const next = new Date(Date.now() + 30_000).toISOString();
     await releaseAndReschedule(jobId, {
       status: "running",
@@ -1373,6 +1409,16 @@ const taskStatusRaw = extractKlingTaskStatus(taskData, rawJson);
   try {
     result = await falQueueResult(responseUrl);
   } catch (e) {
+    if (isTerminalFalHttpError(e)) {
+      await releaseAndReschedule(jobId, {
+        status: "failed",
+        error: formatFalWorkerError(e, "Fal rechazó el resultado de la tarea."),
+        finished_at: new Date().toISOString(),
+        next_check_at: null,
+        params: { ...params, providerStatus: "RESULT_ERROR", providerStatusDetail: formatFalWorkerError(e), errorDetails: e?.data || null },
+      });
+      return;
+    }
     const next = new Date(Date.now() + 30_000).toISOString();
     await releaseAndReschedule(jobId, {
       status: "running",
