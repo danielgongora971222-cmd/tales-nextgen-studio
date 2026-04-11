@@ -51,6 +51,8 @@ function seedanceUnitPricePerSecondUsd(modelNorm, mode = "generate") {
       return normalizedMode === "edit" ? 0.25 : 0.15;
     case "seedance-2-fast-preview":
       return normalizedMode === "edit" ? 0.17 : 0.10;
+    case "seedance-2-preview-vip":
+      return 0.30;
     default:
       return null;
   }
@@ -442,6 +444,9 @@ function videoUnitUsd({
       break;
     case "seedance-2-fast-preview":
       perSecondUsd = 0.10;
+      break;
+    case "seedance-2-preview-vip":
+      perSecondUsd = 0.30;
       break;
     case "kling-2.6-motion-control":
       perSecondUsd = 0.07;

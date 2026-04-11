@@ -14,6 +14,7 @@ import {
   SEEDANCE_2_FAST,
   SEEDANCE_2_PREVIEW,
   SEEDANCE_2_FAST_PREVIEW,
+  SEEDANCE_2_PREVIEW_VIP,
   VEO_3,
   VEO_3_1,
   VEO_3_1_FAST,
@@ -49,6 +50,7 @@ export function prettyVideoModelLabel(modelId: string | null) {
   if (m === SEEDANCE_2_FAST) return "Seedance 2 Fast";
   if (m === SEEDANCE_2_PREVIEW) return "Seedance 2.0 Cinema";
   if (m === SEEDANCE_2_FAST_PREVIEW) return "Seedance 2.0 Cinema Fast";
+  if (m === SEEDANCE_2_PREVIEW_VIP) return "Seedance 2.0 Pro";
   if (m === "kling-o3-ref-to-video-pro") return "Kling O3 Pro — Reference to Video";
   if (m === "kling-o3-edit-video-pro") return "Kling O3 Pro — Edit Video";
   if (m === "kling-o3-ref-video-to-video-pro") return "Kling O3 Pro — Reference Video→Video";
@@ -74,10 +76,16 @@ export function coerceAspectRatioForModel(
   aspectRatio: any
 ): any {
   const m = normalizeModelId(modelRaw);
-  const isSeedance = m === SEEDANCE_2 || m === SEEDANCE_2_FAST || m === SEEDANCE_2_PREVIEW || m === SEEDANCE_2_FAST_PREVIEW;
+  const isSeedance = m === SEEDANCE_2 || m === SEEDANCE_2_FAST || m === SEEDANCE_2_PREVIEW || m === SEEDANCE_2_FAST_PREVIEW || m === SEEDANCE_2_PREVIEW_VIP;
 
   if (m.startsWith("veo-3.0") && !hasFirst && resolution === "1080p" && aspectRatio === "9:16") {
     return "16:9";
+  }
+
+  if (m === SEEDANCE_2_PREVIEW_VIP) {
+    return (["16:9", "4:3", "3:4", "9:16"] as const).includes(aspectRatio as any)
+      ? aspectRatio
+      : "16:9";
   }
 
   if (isSeedance) {

@@ -378,8 +378,13 @@ export function createAiVideoRouter(ctx) {
     return v === "seedance-2-preview" || v === "seedance-2-fast-preview";
   }
 
+  function isSeedancePreviewVipModelId(value) {
+    const v = String(value || "").trim();
+    return v === "seedance-2-preview-vip";
+  }
+
   function isSeedanceModelId(value) {
-    return isSeedanceGenerateModelId(value) || isSeedancePreviewModelId(value);
+    return isSeedanceGenerateModelId(value) || isSeedancePreviewModelId(value) || isSeedancePreviewVipModelId(value);
   }
 
   function isEnvExplicitFalse(value) {
@@ -827,6 +832,19 @@ export function createAiVideoRouter(ctx) {
   function coerceSeedanceAspectRatio(value, fallback = "16:9") {
     const v = String(value || "").trim();
     return ["auto", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"].includes(v) ? v : fallback;
+  }
+
+  function coerceSeedancePreviewVipDuration(value) {
+    const n = Math.trunc(Number(value));
+    if (!Number.isFinite(n)) return 5;
+    if (n <= 5) return 5;
+    if (n <= 10) return 10;
+    return 15;
+  }
+
+  function coerceSeedancePreviewVipAspectRatio(value, fallback = "16:9") {
+    const v = String(value || "").trim();
+    return ["16:9", "9:16", "4:3", "3:4"].includes(v) ? v : fallback;
   }
 
   function normalizeSeedancePrompt(prompt) {
@@ -4107,7 +4125,7 @@ const isVeo = isVeoModelId(selectedModelNorm);
     });
 
     const SeedanceVideoEditRequestSchema = z.object({
-      model: z.enum(["seedance-2", "seedance-2-fast", "seedance-2-preview", "seedance-2-fast-preview"]),
+      model: z.enum(["seedance-2", "seedance-2-fast", "seedance-2-preview", "seedance-2-fast-preview", "seedance-2-preview-vip"]),
       prompt: z.string().max(14000).optional(),
       videoAssetId: z.string().uuid().optional(),
       referenceImageAssetIds: z.array(z.string().uuid()).max(12).optional(),
@@ -4144,6 +4162,7 @@ const isVeo = isVeoModelId(selectedModelNorm);
         const model = String(body.model || "").trim();
         const isGenerateModel = isSeedanceGenerateModelId(model);
         const isPreviewModel = isSeedancePreviewModelId(model);
+        const isPreviewVipModel = isSeedancePreviewVipModelId(model);
         const toolName = body.toolName || "video-edit";
         const hint = body.hint || `seedance_${Date.now()}`;
         const INPUT_URL_TTL_SECONDS = 60 * 60 * 6;
@@ -4152,11 +4171,15 @@ const isVeo = isVeoModelId(selectedModelNorm);
           throw httpError(400, "SEEDANCE_EXTEND_REMOVED", "Seedance 2 ya no está disponible en Extend Video.");
         }
 
+        if (isPreviewVipModel && toolName !== "ingredients-to-video") {
+          throw httpError(400, "SEEDANCE_PREVIEW_VIP_TOOL_RESTRICTED", "Seedance 2.0 Pro solo está habilitado en Ingredients to Video.");
+        }
+
         const referenceImageAssetIds = Array.isArray(body.referenceImageAssetIds) ? body.referenceImageAssetIds.filter(Boolean) : [];
         const audioReferenceAssetIds = Array.isArray(body.audioReferenceAssetIds) ? body.audioReferenceAssetIds.filter(Boolean) : [];
 
-        if (isPreviewModel && referenceImageAssetIds.length > 9) {
-          throw httpError(400, "SEEDANCE_PREVIEW_TOO_MANY_IMAGES", "Seedance 2 Preview admite un máximo de 9 imágenes de referencia.");
+        if ((isPreviewModel || isPreviewVipModel) && referenceImageAssetIds.length > 9) {
+          throw httpError(400, "SEEDANCE_PREVIEW_TOO_MANY_IMAGES", isPreviewVipModel ? "Seedance 2.0 Pro admite un máximo de 9 imágenes de referencia." : "Seedance 2 Preview admite un máximo de 9 imágenes de referencia.");
         }
 
         if (isPreviewModel && audioReferenceAssetIds.length > 0) {
@@ -4173,9 +4196,13 @@ const isVeo = isVeoModelId(selectedModelNorm);
           audioReferenceUrls.push(await assetIdToPiapiInputUrl(assetId, user.id, req, INPUT_URL_TTL_SECONDS));
         }
 
-        const effectiveAspectRatio = coerceSeedanceAspectRatio(body.aspectRatio, "16:9");
+        const effectiveAspectRatio = isPreviewVipModel
+          ? coerceSeedancePreviewVipAspectRatio(body.aspectRatio, "16:9")
+          : coerceSeedanceAspectRatio(body.aspectRatio, "16:9");
         let input = null;
-        let pricingDurationSeconds = coerceSeedanceDuration(body.durationSeconds);
+        let pricingDurationSeconds = isPreviewVipModel
+          ? coerceSeedancePreviewVipDuration(body.durationSeconds)
+          : coerceSeedanceDuration(body.durationSeconds);
         let inputVideoDurationSeconds = coerceReferenceVideoDurationSeconds(body.referenceVideoDurationSeconds) || 0;
         let mode = "text_to_video";
         let parentTaskId = null;
@@ -4183,7 +4210,17 @@ const isVeo = isVeoModelId(selectedModelNorm);
         let totalRefCount = referenceImageUrls.length + audioReferenceUrls.length;
 
         if (body.videoAssetId) totalRefCount += 1;
-        if (totalRefCount > 12) {
+        if (isPreviewVipModel) {
+          if (totalRefCount > 9) {
+            throw httpError(400, "SEEDANCE_PREVIEW_VIP_REFERENCE_LIMIT", "Seedance 2.0 Pro admite un máximo total de 9 referencias entre imágenes, audio y video.");
+          }
+          if (audioReferenceUrls.length > 3) {
+            throw httpError(400, "SEEDANCE_PREVIEW_VIP_AUDIO_LIMIT", "Seedance 2.0 Pro admite un máximo de 3 audios de referencia.");
+          }
+          if (visiblePrompt.length > 4000) {
+            throw httpError(400, "SEEDANCE_PREVIEW_VIP_PROMPT_LIMIT", "Seedance 2.0 Pro admite prompts de hasta 4000 caracteres.");
+          }
+        } else if (totalRefCount > 12) {
           throw httpError(400, "SEEDANCE_REFERENCE_LIMIT", "Seedance 2 Omni Reference admite un máximo total de 12 referencias entre imágenes, audio y video.");
         }
 
@@ -4206,6 +4243,29 @@ const isVeo = isVeoModelId(selectedModelNorm);
           mode = "omni_reference";
           input = {
             mode,
+            prompt: visiblePrompt,
+            duration: pricingDurationSeconds,
+            aspect_ratio: effectiveAspectRatio,
+            ...(referenceImageUrls.length ? { image_urls: referenceImageUrls } : {}),
+            ...(videoUrl ? { video_urls: [videoUrl] } : {}),
+            ...(audioReferenceUrls.length ? { audio_urls: audioReferenceUrls } : {}),
+          };
+        } else if (isPreviewVipModel) {
+          mode = "preview_vip_reference";
+          if (!referenceImageUrls.length && !body.videoAssetId) {
+            throw httpError(400, "SEEDANCE_PREVIEW_VIP_REFERENCE_REQUIRED", "Agrega al menos una imagen o un video de referencia para Seedance 2.0 Pro.");
+          }
+
+          if (!referenceImageUrls.length && audioReferenceUrls.length) {
+            throw httpError(400, "SEEDANCE_PREVIEW_VIP_AUDIO_ONLY_NOT_SUPPORTED", "Seedance 2.0 Pro no admite usar solo audio: agrega al menos una imagen o un video de referencia.");
+          }
+
+          if (body.videoAssetId) {
+            videoUrl = await assetIdToPiapiInputUrl(body.videoAssetId, user.id, req, INPUT_URL_TTL_SECONDS);
+            inputVideoDurationSeconds = coerceReferenceVideoDurationSeconds(body.referenceVideoDurationSeconds) || 0;
+          }
+
+          input = {
             prompt: visiblePrompt,
             duration: pricingDurationSeconds,
             aspect_ratio: effectiveAspectRatio,

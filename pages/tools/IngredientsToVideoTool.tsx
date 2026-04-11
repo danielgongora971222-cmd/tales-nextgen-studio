@@ -40,7 +40,8 @@ type EditModelId =
   | "kling-o3-edit-video-pro"
   | "kling-o3-ref-video-to-video-pro"
   | "seedance-2"
-  | "seedance-2-fast";
+  | "seedance-2-fast"
+  | "seedance-2-preview-vip";
 
 type AspectRatio = "auto" | "21:9" | "16:9" | "9:16" | "1:1" | "4:3" | "3:4";
 
@@ -61,9 +62,17 @@ type PendingVideoEditJob = {
   createdAt: number;
 };
 
-const isSeedanceModelId = (value: string) => value === "seedance-2" || value === "seedance-2-fast";
+const isSeedancePreviewVipModelId = (value: string) => value === "seedance-2-preview-vip";
+const isSeedanceModelId = (value: string) => value === "seedance-2" || value === "seedance-2-fast" || isSeedancePreviewVipModelId(value);
 const coerceSeedanceDurationLocal = (value: number) => Math.max(4, Math.min(15, Math.trunc(Number(value) || 5)));
+const coerceSeedancePreviewVipDurationLocal = (value: number) => {
+  const n = Math.trunc(Number(value) || 5);
+  if (n <= 5) return 5;
+  if (n <= 10) return 10;
+  return 15;
+};
 const isSeedanceAspectRatio = (value: string) => ["21:9", "16:9", "9:16", "1:1", "4:3", "3:4"].includes(String(value || ""));
+const isSeedancePreviewVipAspectRatio = (value: string) => ["16:9", "9:16", "4:3", "3:4"].includes(String(value || ""));
 const MODEL_OPTIONS: Array<{
   id: EditModelId;
   uiName: string;
@@ -94,6 +103,14 @@ const MODEL_OPTIONS: Array<{
     uiHint:
       "Puedes usar hasta 12 refs combinadas entre imágenes, 1 video y audios. El audio solo no es válido: agrega al menos una imagen o un video.",
   },
+  {
+    id: "seedance-2-preview-vip",
+    uiName: "Seedance 2.0 Pro",
+    uiDesc:
+      "Preview VIP de Seedance para Ingredients to Video con imágenes, 1 video y audio refs en un flujo compacto.",
+    uiHint:
+      "Usa hasta 9 refs combinadas, con un máximo de 3 audios. En esta tool se admite 1 video de referencia.",
+  },
 ];
 
 const DEFAULT_MODEL_ID: EditModelId = "kling-o3-ref-to-video-pro";
@@ -103,6 +120,7 @@ function coerceModelId(value: unknown): EditModelId {
   if (MODEL_OPTIONS.some((option) => option.id === raw)) return raw;
 
   const normalized = raw.toLowerCase();
+  if (normalized.includes("preview-vip")) return "seedance-2-preview-vip";
   if (normalized.includes("seedance-2-fast")) return "seedance-2-fast";
   if (normalized.includes("seedance")) return "seedance-2";
   return DEFAULT_MODEL_ID;
@@ -317,6 +335,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     if (nextModel !== model) setModel(nextModel);
   }, [model]);
   const isSeedanceModel = useMemo(() => isSeedanceModelId(model), [model]);
+  const isSeedancePreviewVipModel = useMemo(() => isSeedancePreviewVipModelId(model), [model]);
 
   const shotsWithPrompt = useMemo(
     () => shots.filter((s) => (s.prompt || "").trim().length > 0),
@@ -332,19 +351,23 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     const dur = isStoryboardMode ? multishotTotalSeconds : durationSeconds;
     return estimateVideoCostCredits({
       modelNorm: model,
-      durationSeconds: isSeedanceModel ? coerceSeedanceDurationLocal(dur) : dur,
+      durationSeconds: isSeedanceModel
+        ? (isSeedancePreviewVipModel ? coerceSeedancePreviewVipDurationLocal(dur) : coerceSeedanceDurationLocal(dur))
+        : dur,
       resolution: "1080p",
       generateAudio: isSeedanceModel ? false : generateAudio,
       klingMode: "pro",
       seedanceMode: isSeedanceModel ? "generate" : undefined,
       inputVideoDurationSeconds: isSeedanceModel && inputVideo ? Number((inputVideo as any)?.meta?.durationSeconds || 0) : undefined,
     });
-  }, [model, durationSeconds, isStoryboardMode, multishotTotalSeconds, generateAudio, isSeedanceModel, inputVideo]);
+  }, [model, durationSeconds, isStoryboardMode, multishotTotalSeconds, generateAudio, isSeedanceModel, isSeedancePreviewVipModel, inputVideo]);
 
   const combinedRefsCount = isSeedanceModel
     ? referenceImageIds.length + audioReferenceIds.length + (inputVideo ? 1 : 0)
     : referenceImageIds.length + klingElementIds.length;
-  const maxCombinedRefs = isSeedanceModel ? 12 : (model === "kling-o3-ref-to-video-pro" ? 7 : 4);
+  const maxCombinedRefs = isSeedanceModel
+    ? (isSeedancePreviewVipModel ? 9 : 12)
+    : (model === "kling-o3-ref-to-video-pro" ? 7 : 4);
 
   useEffect(() => {
     if (!isSeedanceModel) {
@@ -355,15 +378,27 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
       return;
     }
 
-    const nextDuration = coerceSeedanceDurationLocal(durationSeconds);
+    const nextDuration = isSeedancePreviewVipModel
+      ? coerceSeedancePreviewVipDurationLocal(durationSeconds)
+      : coerceSeedanceDurationLocal(durationSeconds);
     if (nextDuration !== durationSeconds) setDurationSeconds(nextDuration);
-    if (aspectRatio === "auto" || !isSeedanceAspectRatio(aspectRatio)) setAspectRatio("16:9");
-  }, [isSeedanceModel, durationSeconds, aspectRatio, audioReferenceIds.length]);
+
+    const aspectIsValid = isSeedancePreviewVipModel
+      ? isSeedancePreviewVipAspectRatio(aspectRatio)
+      : isSeedanceAspectRatio(aspectRatio);
+    if (aspectRatio === "auto" || !aspectIsValid) setAspectRatio("16:9");
+
+    if (isSeedancePreviewVipModel && audioReferenceIds.length > 3) {
+      setAudioReferenceIds((prev) => prev.slice(0, 3));
+    }
+  }, [isSeedanceModel, isSeedancePreviewVipModel, durationSeconds, aspectRatio, audioReferenceIds.length]);
   const maxRefImages = isSeedanceModel
     ? Math.max(0, maxCombinedRefs - audioReferenceIds.length - (inputVideo ? 1 : 0))
     : Math.max(0, maxCombinedRefs - klingElementIds.length);
   const maxElements = Math.max(0, maxCombinedRefs - referenceImageIds.length);
-  const maxAudioRefs = isSeedanceModel ? Math.max(0, maxCombinedRefs - referenceImageIds.length - (inputVideo ? 1 : 0)) : 0;
+  const maxAudioRefs = isSeedanceModel
+    ? Math.max(0, Math.min(isSeedancePreviewVipModel ? 3 : 12, maxCombinedRefs - referenceImageIds.length - (inputVideo ? 1 : 0)))
+    : 0;
 
   // ===============================
   // Mentions (@) para referencias + Elements (Kling O3)
@@ -1529,6 +1564,10 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
         return { ok: false as const, error: "Escribe un prompt (obligatorio) para Seedance 2." };
       }
 
+      if (isSeedancePreviewVipModel && prepared.promptForModel.length > 4000) {
+        return { ok: false as const, error: "Seedance 2.0 Pro admite prompts de hasta 4000 caracteres." };
+      }
+
       const totalSeedanceRefs =
         prepared.referenceImageAssetIds.length + audioReferenceIds.length + (inputVideo ? 1 : 0);
 
@@ -1546,8 +1585,17 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
         };
       }
 
-      if (totalSeedanceRefs > 12) {
-        return { ok: false as const, error: "Seedance 2 admite un máximo total de 12 refs combinadas (imágenes + audio + 1 video)." };
+      if (totalSeedanceRefs > maxCombinedRefs) {
+        return {
+          ok: false as const,
+          error: isSeedancePreviewVipModel
+            ? "Seedance 2.0 Pro admite un máximo total de 9 refs combinadas (imágenes + audio + 1 video en esta tool)."
+            : "Seedance 2 admite un máximo total de 12 refs combinadas (imágenes + audio + 1 video).",
+        };
+      }
+
+      if (isSeedancePreviewVipModel && audioReferenceIds.length > 3) {
+        return { ok: false as const, error: "Seedance 2.0 Pro admite un máximo de 3 audios de referencia." };
       }
 
       return {
@@ -1562,7 +1610,9 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
             ? { referenceImageAssetIds: prepared.referenceImageAssetIds }
             : {}),
           ...(audioReferenceIds.length ? { audioReferenceAssetIds: audioReferenceIds } : {}),
-          durationSeconds: coerceSeedanceDurationLocal(durationSeconds),
+          durationSeconds: isSeedancePreviewVipModel
+            ? coerceSeedancePreviewVipDurationLocal(durationSeconds)
+            : coerceSeedanceDurationLocal(durationSeconds),
           aspectRatio: ar === "auto" ? "16:9" : ar,
           toolName: TOOL_NAME,
           hint: nowHint(model),
@@ -1642,6 +1692,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     shots,
     combinedRefsCount,
     isSeedanceModel,
+    isSeedancePreviewVipModel,
   ]);
 
 
@@ -1918,7 +1969,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
                       ))}
 
                       <div className={styles.note} style={{ gridColumn: "1 / -1" }}>
-                        <b>Tip:</b> Si Kling falla, reduce referencias (máx {maxCombinedRefs} combinadas), simplifica el prompt, o prueba una duración menor.
+                        <b>Tip:</b> Si el modelo falla, reduce referencias (máx {maxCombinedRefs} combinadas), simplifica el prompt, o prueba una duración menor.
                       </div>
                     </div>
                   ) : (
@@ -1935,7 +1986,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
                           <div className={styles.formRow}>
                             <label className={styles.formLabel}>Aspect</label>
                             <div className={styles.segment}>
-                              {model !== "kling-o3-ref-to-video-pro" && (
+                              {model !== "kling-o3-ref-to-video-pro" && !isSeedancePreviewVipModel && (
                                 <button
                                   type="button"
                                   className={`${styles.segmentBtn} ${aspectRatio === "auto" ? styles.segmentBtnActive : ""}`}
@@ -1979,6 +2030,16 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
                                   >
                                     3:4
                                   </button>
+                                  {!isSeedancePreviewVipModel && (
+                                    <button
+                                      type="button"
+                                      className={`${styles.segmentBtn} ${aspectRatio === "1:1" ? styles.segmentBtnActive : ""}`}
+                                      onClick={() => setAspectRatio("1:1")}
+                                      disabled={ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode}
+                                    >
+                                      1:1
+                                    </button>
+                                  )}
                                 </>
                               ) : (
                                 <button
@@ -2069,7 +2130,9 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
                           {model === "kling-o3-ref-to-video-pro"
                             ? `Requiere 1–${maxCombinedRefs} referencias visuales. `
                             : isSeedanceModel
-                              ? `Máximo ${maxCombinedRefs} refs combinadas (imágenes + audio + 1 video). `
+                              ? isSeedancePreviewVipModel
+                                ? `Máximo ${maxCombinedRefs} refs combinadas (imágenes + audio + 1 video en esta tool; audio máx 3). `
+                                : `Máximo ${maxCombinedRefs} refs combinadas (imágenes + audio + 1 video). `
                               : `Máximo ${maxCombinedRefs} referencias visuales.`}
                           1–2 referencias fuertes suele funcionar mejor que muchas débiles.
                         </div>
@@ -2441,7 +2504,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
         title={isSeedanceModel ? "Image refs" : "Imágenes de referencia"}
         note={
           <>
-            Seleccionadas: <b>{referenceImageIds.length}</b> / {maxRefImages}. {isSeedanceModel ? "Seedance usa hasta 12 refs combinadas entre imágenes, audio y 1 video." : "Puedes elegir imágenes normales o Elements de imagen como refs."}
+            Seleccionadas: <b>{referenceImageIds.length}</b> / {maxRefImages}. {isSeedanceModel ? (isSeedancePreviewVipModel ? "Seedance 2.0 Pro usa hasta 9 refs combinadas entre imágenes, audio y 1 video en esta tool." : "Seedance usa hasta 12 refs combinadas entre imágenes, audio y 1 video.") : "Puedes elegir imágenes normales o Elements de imagen como refs."}
           </>
         }
         selectedIds={referenceImageIds}
