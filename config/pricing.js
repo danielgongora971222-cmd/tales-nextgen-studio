@@ -53,6 +53,8 @@ function seedanceUnitPricePerSecondUsd(modelNorm, mode = "generate") {
       return normalizedMode === "edit" ? 0.17 : 0.10;
     case "seedance-2-preview-vip":
       return 0.30;
+    case "seedance-2-max":
+      return null;
     default:
       return null;
   }
@@ -448,6 +450,9 @@ function videoUnitUsd({
     case "seedance-2-preview-vip":
       perSecondUsd = 0.30;
       break;
+    case "seedance-2-max":
+      perSecondUsd = 0.3024;
+      break;
     case "kling-2.6-motion-control":
       perSecondUsd = 0.07;
       break;
@@ -475,9 +480,17 @@ export function estimateVideoCostCredits({
   isKling = undefined, // compat legacy (ya no hace falta, pero lo aceptamos)
   seedanceMode = "generate",
   inputVideoDurationSeconds = 0,
+  hasVideoReference = false,
 } = {}) {
   const n = clampInt(count || 1, 1, 8, 1);
   const normalizedModel = normalizeVideoModelId(modelNorm);
+
+  if (normalizedModel === "seedance-2-max") {
+    const outputSeconds = clampInt(durationSeconds != null ? durationSeconds : 5, 1, 3600, 5);
+    const hasVideoRef = Boolean(hasVideoReference);
+    const unitUsd = hasVideoRef ? 0.1814 : 0.3024;
+    return roundSeedanceCreditsFromUsd(unitUsd * outputSeconds * n);
+  }
 
   const seedanceUnitUsd = seedanceUnitPricePerSecondUsd(normalizedModel, seedanceMode);
   if (seedanceUnitUsd != null) {

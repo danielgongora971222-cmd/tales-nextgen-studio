@@ -14,6 +14,7 @@ export const SEEDANCE_2_FAST = "seedance-2-fast";
 export const SEEDANCE_2_PREVIEW = "seedance-2-preview";
 export const SEEDANCE_2_FAST_PREVIEW = "seedance-2-fast-preview";
 export const SEEDANCE_2_PREVIEW_VIP = "seedance-2-preview-vip";
+export const SEEDANCE_2_MAX = "seedance-2-max";
 
 // ✅ Este es el default REAL. No renombres VEO_3 ni otros.
 export const DEFAULT_VIDEO_MODEL = VEO_3_1;

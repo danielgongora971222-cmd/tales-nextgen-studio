@@ -383,8 +383,13 @@ export function createAiVideoRouter(ctx) {
     return v === "seedance-2-preview-vip";
   }
 
+  function isSeedanceFalMaxModelId(value) {
+    const v = String(value || "").trim();
+    return v === "seedance-2-max";
+  }
+
   function isSeedanceModelId(value) {
-    return isSeedanceGenerateModelId(value) || isSeedancePreviewModelId(value) || isSeedancePreviewVipModelId(value);
+    return isSeedanceGenerateModelId(value) || isSeedancePreviewModelId(value) || isSeedancePreviewVipModelId(value) || isSeedanceFalMaxModelId(value);
   }
 
   function isEnvExplicitFalse(value) {
@@ -1109,6 +1114,20 @@ export function createAiVideoRouter(ctx) {
     });
 
     return `${baseUrl}/api/ai/video/piapi/input/${encodeURIComponent(token)}/${encodeURIComponent(normalizedFilename)}`;
+  }
+
+  async function assetIdToFalSeedanceInputUrl(assetId, userId, req, expiresInSeconds = 60 * 60 * 6) {
+    const descriptor = await getPiapiAssetSourceDescriptor(assetId, userId, expiresInSeconds);
+
+    const proxyUrl = buildPiapiInputProxyUrl(req, {
+      ownerId: userId,
+      assetId,
+      assetType: descriptor.assetType,
+      filename: descriptor.filename,
+      expiresInSeconds,
+    });
+
+    return proxyUrl || descriptor.sourceUrl;
   }
 
   async function assetIdToPiapiInputUrl(assetId, userId, req, expiresInSeconds = 60 * 60 * 6) {
@@ -4125,7 +4144,7 @@ const isVeo = isVeoModelId(selectedModelNorm);
     });
 
     const SeedanceVideoEditRequestSchema = z.object({
-      model: z.enum(["seedance-2", "seedance-2-fast", "seedance-2-preview", "seedance-2-fast-preview", "seedance-2-preview-vip"]),
+      model: z.enum(["seedance-2", "seedance-2-fast", "seedance-2-preview", "seedance-2-fast-preview", "seedance-2-preview-vip", "seedance-2-max"]),
       prompt: z.string().max(14000).optional(),
       videoAssetId: z.string().uuid().optional(),
       referenceImageAssetIds: z.array(z.string().uuid()).max(12).optional(),
@@ -4163,6 +4182,7 @@ const isVeo = isVeoModelId(selectedModelNorm);
         const isGenerateModel = isSeedanceGenerateModelId(model);
         const isPreviewModel = isSeedancePreviewModelId(model);
         const isPreviewVipModel = isSeedancePreviewVipModelId(model);
+        const isFalMaxModel = isSeedanceFalMaxModelId(model);
         const toolName = body.toolName || "video-edit";
         const hint = body.hint || `seedance_${Date.now()}`;
         const INPUT_URL_TTL_SECONDS = 60 * 60 * 6;
@@ -4173,6 +4193,10 @@ const isVeo = isVeoModelId(selectedModelNorm);
 
         if (isPreviewVipModel && toolName !== "ingredients-to-video") {
           throw httpError(400, "SEEDANCE_PREVIEW_VIP_TOOL_RESTRICTED", "Seedance 2.0 Pro solo está habilitado en Ingredients to Video.");
+        }
+
+        if (isFalMaxModel && toolName !== "ingredients-to-video") {
+          throw httpError(400, "SEEDANCE_MAX_TOOL_RESTRICTED", "Seedance 2.0 Max solo está habilitado en Ingredients to Video.");
         }
 
         const referenceImageAssetIds = Array.isArray(body.referenceImageAssetIds) ? body.referenceImageAssetIds.filter(Boolean) : [];
@@ -4188,17 +4212,25 @@ const isVeo = isVeoModelId(selectedModelNorm);
 
         const referenceImageUrls = [];
         for (const assetId of referenceImageAssetIds) {
-          referenceImageUrls.push(await assetIdToPiapiInputUrl(assetId, user.id, req, INPUT_URL_TTL_SECONDS));
+          referenceImageUrls.push(
+            isFalMaxModel
+              ? await assetIdToFalSeedanceInputUrl(assetId, user.id, req, INPUT_URL_TTL_SECONDS)
+              : await assetIdToPiapiInputUrl(assetId, user.id, req, INPUT_URL_TTL_SECONDS)
+          );
         }
 
         const audioReferenceUrls = [];
         for (const assetId of audioReferenceAssetIds) {
-          audioReferenceUrls.push(await assetIdToPiapiInputUrl(assetId, user.id, req, INPUT_URL_TTL_SECONDS));
+          audioReferenceUrls.push(
+            isFalMaxModel
+              ? await assetIdToFalSeedanceInputUrl(assetId, user.id, req, INPUT_URL_TTL_SECONDS)
+              : await assetIdToPiapiInputUrl(assetId, user.id, req, INPUT_URL_TTL_SECONDS)
+          );
         }
 
         const effectiveAspectRatio = isPreviewVipModel
           ? coerceSeedancePreviewVipAspectRatio(body.aspectRatio, "16:9")
-          : coerceSeedanceAspectRatio(body.aspectRatio, "16:9");
+          : coerceSeedanceAspectRatio(body.aspectRatio, isFalMaxModel ? "auto" : "16:9");
         let input = null;
         let pricingDurationSeconds = isPreviewVipModel
           ? coerceSeedancePreviewVipDuration(body.durationSeconds)
@@ -4219,6 +4251,16 @@ const isVeo = isVeoModelId(selectedModelNorm);
           }
           if (visiblePrompt.length > 4000) {
             throw httpError(400, "SEEDANCE_PREVIEW_VIP_PROMPT_LIMIT", "Seedance 2.0 Pro admite prompts de hasta 4000 caracteres.");
+          }
+        } else if (isFalMaxModel) {
+          if (referenceImageUrls.length > 9) {
+            throw httpError(400, "SEEDANCE_MAX_IMAGE_LIMIT", "Seedance 2.0 Max admite un máximo de 9 imágenes de referencia.");
+          }
+          if (audioReferenceUrls.length > 3) {
+            throw httpError(400, "SEEDANCE_MAX_AUDIO_LIMIT", "Seedance 2.0 Max admite un máximo de 3 audios de referencia.");
+          }
+          if (totalRefCount > 12) {
+            throw httpError(400, "SEEDANCE_MAX_REFERENCE_LIMIT", "Seedance 2.0 Max admite un máximo total de 12 referencias entre imágenes, audio y video.");
           }
         } else if (totalRefCount > 12) {
           throw httpError(400, "SEEDANCE_REFERENCE_LIMIT", "Seedance 2 Omni Reference admite un máximo total de 12 referencias entre imágenes, audio y video.");
@@ -4249,6 +4291,33 @@ const isVeo = isVeoModelId(selectedModelNorm);
             ...(referenceImageUrls.length ? { image_urls: referenceImageUrls } : {}),
             ...(videoUrl ? { video_urls: [videoUrl] } : {}),
             ...(audioReferenceUrls.length ? { audio_urls: audioReferenceUrls } : {}),
+          };
+        } else if (isFalMaxModel) {
+          mode = "fal_reference_to_video";
+
+          if (!referenceImageUrls.length && !body.videoAssetId) {
+            throw httpError(400, "SEEDANCE_MAX_REFERENCE_REQUIRED", "Agrega al menos una imagen o un video de referencia para Seedance 2.0 Max.");
+          }
+
+          if (!referenceImageUrls.length && audioReferenceUrls.length) {
+            throw httpError(400, "SEEDANCE_MAX_AUDIO_ONLY_NOT_SUPPORTED", "Seedance 2.0 Max no admite usar solo audio: agrega al menos una imagen o un video de referencia.");
+          }
+
+          if (body.videoAssetId) {
+            videoUrl = await assetIdToFalSeedanceInputUrl(body.videoAssetId, user.id, req, INPUT_URL_TTL_SECONDS);
+            inputVideoDurationSeconds = coerceReferenceVideoDurationSeconds(body.referenceVideoDurationSeconds) || 0;
+          }
+
+          input = {
+            prompt: visiblePrompt,
+            resolution: "720p",
+            duration: String(coerceSeedanceDuration(body.durationSeconds)),
+            aspect_ratio: effectiveAspectRatio,
+            generate_audio: true,
+            ...(referenceImageUrls.length ? { image_urls: referenceImageUrls } : {}),
+            ...(videoUrl ? { video_urls: [videoUrl] } : {}),
+            ...(audioReferenceUrls.length ? { audio_urls: audioReferenceUrls } : {}),
+            end_user_id: user.id,
           };
         } else if (isPreviewVipModel) {
           mode = "preview_vip_reference";
@@ -4300,6 +4369,7 @@ const isVeo = isVeoModelId(selectedModelNorm);
             resolution: "720p",
             seedanceMode: isPreviewModel ? "edit" : "generate",
             inputVideoDurationSeconds,
+            hasVideoReference: isFalMaxModel ? Boolean(body.videoAssetId) : undefined,
           }),
           entryType: "ai_video_edit",
           refType: "ai_video",
@@ -4309,6 +4379,81 @@ const isVeo = isVeoModelId(selectedModelNorm);
 
         if (!spend.ok) {
           return res.status(402).json({ ok: false, error: spend.error });
+        }
+
+        if (isFalMaxModel) {
+          const falEndpointId = "bytedance/seedance-2.0/reference-to-video";
+          const submit = await falQueueSubmit(falEndpointId, input);
+
+          const jobToken = signJobToken({
+            uid: user.id,
+            provider: "fal",
+            statusUrl: submit.statusUrl,
+            responseUrl: submit.responseUrl,
+            requestId: submit.requestId,
+            toolName,
+            hint,
+            model,
+          });
+
+          const meta = {
+            tool: toolName,
+            category: toolName,
+            provider: "fal",
+            model,
+            falEndpointId,
+            falRequestId: submit.requestId,
+            seedance: {
+              mode,
+              videoAssetId: body.videoAssetId || null,
+              referenceImageAssetIds,
+              audioReferenceAssetIds,
+              durationSeconds: pricingDurationSeconds,
+              inputVideoDurationSeconds,
+              aspectRatio: effectiveAspectRatio,
+              resolution: "720p",
+              generateAudio: true,
+            },
+            editVideo: {
+              kind: mode,
+              model,
+              prompt: visiblePrompt,
+              videoAssetId: body.videoAssetId || null,
+              referenceImageAssetIds,
+              audioReferenceAssetIds,
+              durationSeconds: pricingDurationSeconds,
+              inputVideoDurationSeconds,
+              aspectRatio: effectiveAspectRatio,
+              resolution: "720p",
+              generateAudio: true,
+            },
+          };
+
+          const jobId = await upsertFalJobRow({
+            ownerId: user.id,
+            kind: "video",
+            requestId: submit.requestId,
+            jobToken,
+            statusUrl: submit.statusUrl,
+            responseUrl: submit.responseUrl,
+            endpointId: falEndpointId,
+            toolName,
+            hint,
+            model,
+            prompt: visiblePrompt,
+            extra: {
+              meta,
+              durationSeconds: pricingDurationSeconds,
+              aspectRatio: effectiveAspectRatio,
+              resolution: "720p",
+              videoAssetId: body.videoAssetId || null,
+              referenceImageAssetIds,
+              audioReferenceAssetIds,
+              inputVideoDurationSeconds,
+            },
+          });
+
+          return res.json({ ok: true, mode: "async", jobId, taskId: String(submit.requestId), jobToken });
         }
 
         const webhookConfig = buildPiapiWebhookConfig(req);
