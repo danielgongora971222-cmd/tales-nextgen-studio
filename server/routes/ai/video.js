@@ -4327,7 +4327,7 @@ const isVeo = isVeoModelId(selectedModelNorm);
     });
 
     const SeedanceVideoEditRequestSchema = z.object({
-      model: z.enum(["seedance-2", "seedance-2-fast", "seedance-2-preview", "seedance-2-fast-preview", "seedance-2-preview-vip", "seedance-2-max"]),
+      model: z.enum(["seedance-2", "seedance-2-fast", "seedance-2-preview", "seedance-2-fast-preview", "seedance-2-preview-vip"]),
       prompt: z.string().max(14000).optional(),
       videoAssetId: z.string().uuid().optional(),
       referenceImageAssetIds: z.array(z.string().uuid()).max(12).optional(),
@@ -4351,6 +4351,10 @@ const isVeo = isVeoModelId(selectedModelNorm);
         if (active.error) return res.status(403).json({ ok: false, error: active.error });
 
         ensureSeedanceEnabled();
+
+        if (String(req.body?.model || "").trim() === "seedance-2-max") {
+          throw httpError(410, "SEEDANCE_MAX_REMOVED", "Seedance 2.0 Max fue retirado de Ingredients to Video.", { provider: "fal", model: "seedance-2-max" });
+        }
 
         const body = SeedanceVideoEditRequestSchema.parse(req.body || {});
         const blockedByOwnSlot = await enforceUserVideoSlot(res, user.id);
@@ -4378,9 +4382,6 @@ const isVeo = isVeoModelId(selectedModelNorm);
           throw httpError(400, "SEEDANCE_PREVIEW_VIP_TOOL_RESTRICTED", "Seedance 2.0 Pro solo está habilitado en Ingredients to Video.");
         }
 
-        if (isFalMaxModel && toolName !== "ingredients-to-video") {
-          throw httpError(400, "SEEDANCE_MAX_TOOL_RESTRICTED", "Seedance 2.0 Max solo está habilitado en Ingredients to Video.");
-        }
 
         const referenceImageAssetIds = Array.isArray(body.referenceImageAssetIds) ? body.referenceImageAssetIds.filter(Boolean) : [];
         const audioReferenceAssetIds = Array.isArray(body.audioReferenceAssetIds) ? body.audioReferenceAssetIds.filter(Boolean) : [];

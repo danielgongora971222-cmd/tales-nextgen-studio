@@ -41,8 +41,7 @@ type EditModelId =
   | "kling-o3-ref-video-to-video-pro"
   | "seedance-2"
   | "seedance-2-fast"
-  | "seedance-2-preview-vip"
-  | "seedance-2-max";
+  | "seedance-2-preview-vip";
 
 type AspectRatio = "auto" | "21:9" | "16:9" | "9:16" | "1:1" | "4:3" | "3:4";
 
@@ -64,8 +63,7 @@ type PendingVideoEditJob = {
 };
 
 const isSeedancePreviewVipModelId = (value: string) => value === "seedance-2-preview-vip";
-const isSeedanceMaxModelId = (value: string) => value === "seedance-2-max";
-const isSeedanceModelId = (value: string) => value === "seedance-2" || value === "seedance-2-fast" || isSeedancePreviewVipModelId(value) || isSeedanceMaxModelId(value);
+const isSeedanceModelId = (value: string) => value === "seedance-2" || value === "seedance-2-fast" || isSeedancePreviewVipModelId(value);
 const coerceSeedanceDurationLocal = (value: number) => Math.max(4, Math.min(15, Math.trunc(Number(value) || 5)));
 const coerceSeedancePreviewVipDurationLocal = (value: number) => {
   const n = Math.trunc(Number(value) || 5);
@@ -113,14 +111,6 @@ const MODEL_OPTIONS: Array<{
     uiHint:
       "Usa hasta 9 refs combinadas, con un máximo de 3 audios. En esta tool se admite 1 video de referencia.",
   },
-  {
-    id: "seedance-2-max",
-    uiName: "Seedance 2.0 Max",
-    uiDesc:
-      "Seedance 2.0 Reference to Video vía Fal con imágenes, 1 video de referencia y audio nativo en Ingredients to Video.",
-    uiHint:
-      "Usa hasta 12 refs combinadas en total, con máximo 9 imágenes, hasta 3 audios y 1 video de referencia en esta tool.",
-  },
 ];
 
 const DEFAULT_MODEL_ID: EditModelId = "kling-o3-ref-to-video-pro";
@@ -130,7 +120,6 @@ function coerceModelId(value: unknown): EditModelId {
   if (MODEL_OPTIONS.some((option) => option.id === raw)) return raw;
 
   const normalized = raw.toLowerCase();
-  if (normalized.includes("seedance-2-max") || normalized.includes("seedance 2.0 max")) return "seedance-2-max";
   if (normalized.includes("preview-vip")) return "seedance-2-preview-vip";
   if (normalized.includes("seedance-2-fast")) return "seedance-2-fast";
   if (normalized.includes("seedance")) return "seedance-2";
@@ -347,7 +336,6 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
   }, [model]);
   const isSeedanceModel = useMemo(() => isSeedanceModelId(model), [model]);
   const isSeedancePreviewVipModel = useMemo(() => isSeedancePreviewVipModelId(model), [model]);
-  const isSeedanceMaxModel = useMemo(() => isSeedanceMaxModelId(model), [model]);
 
   const shotsWithPrompt = useMemo(
     () => shots.filter((s) => (s.prompt || "").trim().length > 0),
@@ -371,9 +359,9 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
       klingMode: "pro",
       seedanceMode: isSeedanceModel ? "generate" : undefined,
       inputVideoDurationSeconds: isSeedanceModel && inputVideo ? Number((inputVideo as any)?.meta?.durationSeconds || 0) : undefined,
-      hasVideoReference: isSeedanceMaxModel ? Boolean(inputVideo) : undefined,
+      hasVideoReference: undefined,
     });
-  }, [model, durationSeconds, isStoryboardMode, multishotTotalSeconds, generateAudio, isSeedanceModel, isSeedancePreviewVipModel, isSeedanceMaxModel, inputVideo]);
+  }, [model, durationSeconds, isStoryboardMode, multishotTotalSeconds, generateAudio, isSeedanceModel, isSeedancePreviewVipModel, inputVideo]);
 
   const combinedRefsCount = isSeedanceModel
     ? referenceImageIds.length + audioReferenceIds.length + (inputVideo ? 1 : 0)
@@ -399,19 +387,19 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     const aspectIsValid = isSeedancePreviewVipModel
       ? isSeedancePreviewVipAspectRatio(aspectRatio)
       : isSeedanceAspectRatio(aspectRatio);
-    const defaultAspect = isSeedanceMaxModel ? "auto" : "16:9";
+    const defaultAspect = "16:9";
     if (!aspectIsValid) setAspectRatio(defaultAspect);
 
-    if ((isSeedancePreviewVipModel || isSeedanceMaxModel) && audioReferenceIds.length > 3) {
+    if (isSeedancePreviewVipModel && audioReferenceIds.length > 3) {
       setAudioReferenceIds((prev) => prev.slice(0, 3));
     }
-  }, [isSeedanceModel, isSeedancePreviewVipModel, isSeedanceMaxModel, durationSeconds, aspectRatio, audioReferenceIds.length]);
+  }, [isSeedanceModel, isSeedancePreviewVipModel, durationSeconds, aspectRatio, audioReferenceIds.length]);
   const maxRefImages = isSeedanceModel
-    ? Math.max(0, Math.min(isSeedancePreviewVipModel || isSeedanceMaxModel ? 9 : 12, maxCombinedRefs - audioReferenceIds.length - (inputVideo ? 1 : 0)))
+    ? Math.max(0, Math.min(isSeedancePreviewVipModel ? 9 : 12, maxCombinedRefs - audioReferenceIds.length - (inputVideo ? 1 : 0)))
     : Math.max(0, maxCombinedRefs - klingElementIds.length);
   const maxElements = Math.max(0, maxCombinedRefs - referenceImageIds.length);
   const maxAudioRefs = isSeedanceModel
-    ? Math.max(0, Math.min(isSeedancePreviewVipModel || isSeedanceMaxModel ? 3 : 12, maxCombinedRefs - referenceImageIds.length - (inputVideo ? 1 : 0)))
+    ? Math.max(0, Math.min(isSeedancePreviewVipModel ? 3 : 12, maxCombinedRefs - referenceImageIds.length - (inputVideo ? 1 : 0)))
     : 0;
 
   // ===============================
@@ -1582,24 +1570,20 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
         return { ok: false as const, error: "Seedance 2.0 Pro admite prompts de hasta 4000 caracteres." };
       }
 
-      if (isSeedanceMaxModel && prepared.referenceImageAssetIds.length > 9) {
-        return { ok: false as const, error: "Seedance 2.0 Max admite un máximo de 9 imágenes de referencia." };
-      }
-
       const totalSeedanceRefs =
         prepared.referenceImageAssetIds.length + audioReferenceIds.length + (inputVideo ? 1 : 0);
 
       if (totalSeedanceRefs < 1) {
         return {
           ok: false as const,
-          error: isSeedanceMaxModel ? "Agrega al menos una imagen o un video de referencia para Seedance 2.0 Max." : "Agrega al menos una imagen o un video de referencia para Seedance 2.",
+          error: "Agrega al menos una imagen o un video de referencia para Seedance 2.",
         };
       }
 
       if (!inputVideo && prepared.referenceImageAssetIds.length < 1) {
         return {
           ok: false as const,
-          error: isSeedanceMaxModel ? "Seedance 2.0 Max no admite audio solo. Agrega al menos una imagen o un video de referencia." : "Seedance 2 Omni Reference no admite audio solo. Agrega al menos una imagen o un video de referencia.",
+          error: "Seedance 2 Omni Reference no admite audio solo. Agrega al menos una imagen o un video de referencia.",
         };
       }
 
@@ -1608,18 +1592,12 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
           ok: false as const,
           error: isSeedancePreviewVipModel
             ? "Seedance 2.0 Pro admite un máximo total de 9 refs combinadas (imágenes + audio + 1 video en esta tool)."
-            : isSeedanceMaxModel
-              ? "Seedance 2.0 Max admite un máximo total de 12 refs combinadas (máx 9 imágenes, 3 audios y 1 video en esta tool)."
-              : "Seedance 2 admite un máximo total de 12 refs combinadas (imágenes + audio + 1 video).",
+            : "Seedance 2 admite un máximo total de 12 refs combinadas (imágenes + audio + 1 video).",
         };
       }
 
       if (isSeedancePreviewVipModel && audioReferenceIds.length > 3) {
         return { ok: false as const, error: "Seedance 2.0 Pro admite un máximo de 3 audios de referencia." };
-      }
-
-      if (isSeedanceMaxModel && audioReferenceIds.length > 3) {
-        return { ok: false as const, error: "Seedance 2.0 Max admite un máximo de 3 audios de referencia." };
       }
 
       return {
@@ -1637,7 +1615,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
           durationSeconds: isSeedancePreviewVipModel
             ? coerceSeedancePreviewVipDurationLocal(durationSeconds)
             : coerceSeedanceDurationLocal(durationSeconds),
-          aspectRatio: isSeedanceMaxModel ? ar : (ar === "auto" ? "16:9" : ar),
+          aspectRatio: ar === "auto" ? "16:9" : ar,
           toolName: TOOL_NAME,
           hint: nowHint(model),
           async: true,
@@ -1717,7 +1695,6 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     combinedRefsCount,
     isSeedanceModel,
     isSeedancePreviewVipModel,
-    isSeedanceMaxModel,
   ]);
 
 
@@ -1770,11 +1747,9 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     const { body, finalPrompt } = built;
     setIsGenerating(true);
       setProgressText(
-        model === "seedance-2-max"
-          ? "Preparando referencias para Seedance 2.0 Max…"
-          : isSeedanceModelId(model)
-            ? "Enviando a Seedance 2.0…"
-            : "Enviando a Kling O3…"
+        isSeedanceModelId(model)
+          ? "Enviando a Seedance 2.0…"
+          : "Enviando a Kling O3…"
       );
 
     const ctrl = new AbortController();
@@ -2099,7 +2074,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
                             <label className={styles.formLabel}>Duration</label>
                             <div className={styles.segment}>
                               {(isSeedanceModel
-                                ? (isSeedanceMaxModel ? [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] : [5, 10, 15])
+                                ? [5, 10, 15]
                                 : [3, 5, 8, 10, 12, 15]).map((d) => (
                                 <button
                                   key={d}
@@ -2175,9 +2150,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
                             : isSeedanceModel
                               ? isSeedancePreviewVipModel
                                 ? `Máximo ${maxCombinedRefs} refs combinadas (imágenes + audio + 1 video en esta tool; audio máx 3). `
-                                : isSeedanceMaxModel
-                                ? `Máximo ${maxCombinedRefs} refs combinadas en total (máx 9 imágenes, hasta 3 audios y 1 video en esta tool). `
-                                  : `Máximo ${maxCombinedRefs} refs combinadas (imágenes + audio + 1 video). `
+                                : `Máximo ${maxCombinedRefs} refs combinadas (imágenes + audio + 1 video). `
                               : `Máximo ${maxCombinedRefs} referencias visuales.`}
                           1–2 referencias fuertes suele funcionar mejor que muchas débiles.
                         </div>
@@ -2360,13 +2333,9 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
                     }}
                     placeholder={
                       isSeedanceModel
-                        ? isSeedanceMaxModel
-                          ? inputVideo
-                            ? "Describe la transformación… (El video base es @Video1. Puedes usar @Image1..@Image9 y @Audio1..@Audio3 según tus refs cargadas)."
-                            : "Describe la escena… Usa @Image1..@Image9 y @Audio1..@Audio3 según tus refs. Si cargas un video, podrás referenciarlo como @Video1."
-                          : inputVideo
-                            ? "Describe la transformación… (El video base es @Video1. Puedes usar @Image1..@Image12 y @Audio1..@Audio12 según tus refs cargadas)."
-                            : "Describe la escena… Usa @Image1..@Image12 y @Audio1..@Audio12 según tus refs. Si cargas un video, podrás referenciarlo como @Video1."
+                        ? inputVideo
+                          ? "Describe la transformación… (El video base es @Video1. Puedes usar @Image1..@Image12 y @Audio1..@Audio12 según tus refs cargadas)."
+                          : "Describe la escena… Usa @Image1..@Image12 y @Audio1..@Audio12 según tus refs. Si cargas un video, podrás referenciarlo como @Video1."
                         : model === "kling-o3-ref-to-video-pro"
                           ? "Describe la escena… (personaje, acción, cámara, estilo)."
                           : model === "kling-o3-edit-video-pro"
@@ -2553,7 +2522,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
         title={isSeedanceModel ? "Image refs" : "Imágenes de referencia"}
         note={
           <>
-            Seleccionadas: <b>{referenceImageIds.length}</b> / {maxRefImages}. {isSeedanceModel ? (isSeedancePreviewVipModel ? "Seedance 2.0 Pro usa hasta 9 refs combinadas entre imágenes, audio y 1 video en esta tool." : isSeedanceMaxModel ? "Seedance 2.0 Max usa hasta 12 refs combinadas en total, con máximo 9 imágenes, hasta 3 audios y 1 video en esta tool." : "Seedance usa hasta 12 refs combinadas entre imágenes, audio y 1 video.") : "Puedes elegir imágenes normales o Elements de imagen como refs."}
+            Seleccionadas: <b>{referenceImageIds.length}</b> / {maxRefImages}. {isSeedanceModel ? (isSeedancePreviewVipModel ? "Seedance 2.0 Pro usa hasta 9 refs combinadas entre imágenes, audio y 1 video en esta tool." : "Seedance usa hasta 12 refs combinadas entre imágenes, audio y 1 video.") : "Puedes elegir imágenes normales o Elements de imagen como refs."}
           </>
         }
         selectedIds={referenceImageIds}
@@ -2572,7 +2541,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
         title="Audio refs"
         note={
           <>
-            Seleccionados: <b>{audioReferenceIds.length}</b> / {maxAudioRefs}. {isSeedanceMaxModel ? "Seedance 2.0 Max admite MP3/WAV de hasta 15s por audio (máx 3)." : "Seedance admite MP3/WAV de hasta 15s por audio."}
+            Seleccionados: <b>{audioReferenceIds.length}</b> / {maxAudioRefs}. Seedance admite MP3/WAV de hasta 15s por audio.
           </>
         }
         selectedIds={audioReferenceIds}
