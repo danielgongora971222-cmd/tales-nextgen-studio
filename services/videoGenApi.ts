@@ -154,6 +154,18 @@ function makeHttpError(message: string, resp: Response, extra?: any) {
   return err;
 }
 
+function stringifyErrorDetails(details: any, maxChars = 1800) {
+  if (details == null) return "";
+  let text = "";
+  try {
+    text = JSON.stringify(details, null, 2);
+  } catch {
+    text = String(details);
+  }
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, maxChars)}\n…[detalles truncados]`;
+}
+
 function makeCanceledError() {
   const err: any = new Error("Cancelado.");
   err.name = "AbortError";
@@ -289,7 +301,7 @@ export async function apiPostJson<T>(
               : e?.message || e?.error || `Request failed: ${resp.status}`;
 
           const details =
-            e?.details ? `\n\nDetalles:\n${JSON.stringify(e.details, null, 2)}` : "";
+            e?.details ? `\n\nDetalles:\n${stringifyErrorDetails(e.details)}` : "";
 
           const httpErr = makeHttpError(
             `${e?.code ? `${e.code}: ` : ""}${msg}${details}`,
@@ -329,7 +341,7 @@ export async function apiPostJson<T>(
           const msg =
             typeof e === "string" ? e : e?.message || e?.error || "Request failed";
           const details =
-            e?.details ? `\n\nDetalles:\n${JSON.stringify(e.details, null, 2)}` : "";
+            e?.details ? `\n\nDetalles:\n${stringifyErrorDetails(e.details)}` : "";
 
           throw makeHttpError(`${e?.code ? `${e.code}: ` : ""}${msg}${details}`, resp, e);
         }

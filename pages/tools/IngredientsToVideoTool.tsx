@@ -119,7 +119,7 @@ const MODEL_OPTIONS: Array<{
     uiDesc:
       "Seedance 2.0 Reference to Video vía Fal con imágenes, 1 video de referencia y audio nativo en Ingredients to Video.",
     uiHint:
-      "Usa hasta 12 refs combinadas, con máximo 9 imágenes y 3 audios. En esta tool se admite 1 video de referencia.",
+      "Usa hasta 12 refs combinadas en total, con máximo 9 imágenes, hasta 3 audios y 1 video de referencia en esta tool.",
   },
 ];
 
@@ -1769,7 +1769,13 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
 
     const { body, finalPrompt } = built;
     setIsGenerating(true);
-    setProgressText(isSeedanceModelId(model) ? "Enviando a Seedance 2.0…" : "Enviando a Kling O3…");
+      setProgressText(
+        model === "seedance-2-max"
+          ? "Preparando referencias para Seedance 2.0 Max…"
+          : isSeedanceModelId(model)
+            ? "Enviando a Seedance 2.0…"
+            : "Enviando a Kling O3…"
+      );
 
     const ctrl = new AbortController();
     abortRef.current = ctrl;
@@ -2170,7 +2176,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
                               ? isSeedancePreviewVipModel
                                 ? `Máximo ${maxCombinedRefs} refs combinadas (imágenes + audio + 1 video en esta tool; audio máx 3). `
                                 : isSeedanceMaxModel
-                                  ? `Máximo ${maxCombinedRefs} refs combinadas (máx 9 imágenes, 3 audios y 1 video en esta tool). `
+                                ? `Máximo ${maxCombinedRefs} refs combinadas en total (máx 9 imágenes, hasta 3 audios y 1 video en esta tool). `
                                   : `Máximo ${maxCombinedRefs} refs combinadas (imágenes + audio + 1 video). `
                               : `Máximo ${maxCombinedRefs} referencias visuales.`}
                           1–2 referencias fuertes suele funcionar mejor que muchas débiles.
@@ -2547,7 +2553,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
         title={isSeedanceModel ? "Image refs" : "Imágenes de referencia"}
         note={
           <>
-            Seleccionadas: <b>{referenceImageIds.length}</b> / {maxRefImages}. {isSeedanceModel ? (isSeedancePreviewVipModel ? "Seedance 2.0 Pro usa hasta 9 refs combinadas entre imágenes, audio y 1 video en esta tool." : isSeedanceMaxModel ? "Seedance 2.0 Max usa hasta 12 refs combinadas, con máximo 9 imágenes, 3 audios y 1 video en esta tool." : "Seedance usa hasta 12 refs combinadas entre imágenes, audio y 1 video.") : "Puedes elegir imágenes normales o Elements de imagen como refs."}
+            Seleccionadas: <b>{referenceImageIds.length}</b> / {maxRefImages}. {isSeedanceModel ? (isSeedancePreviewVipModel ? "Seedance 2.0 Pro usa hasta 9 refs combinadas entre imágenes, audio y 1 video en esta tool." : isSeedanceMaxModel ? "Seedance 2.0 Max usa hasta 12 refs combinadas en total, con máximo 9 imágenes, hasta 3 audios y 1 video en esta tool." : "Seedance usa hasta 12 refs combinadas entre imágenes, audio y 1 video.") : "Puedes elegir imágenes normales o Elements de imagen como refs."}
           </>
         }
         selectedIds={referenceImageIds}

@@ -2,6 +2,7 @@ import { z } from "zod";
 import express from "express";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
+import { fal } from "@fal-ai/client";
 import {
   VideoRequestSchema,
   VideoEditRequestSchema,
@@ -937,6 +938,15 @@ export function createAiVideoRouter(ctx) {
     return fallback;
   }
 
+  function inferAssetTypeFromExt(value, fallback = null) {
+    const ext = String(value || "").trim().toLowerCase().replace(/^\./, "");
+    if (!ext) return fallback;
+    if (["jpg", "jpeg", "png", "webp", "gif", "avif"].includes(ext)) return "image";
+    if (["mp4", "mov", "webm", "m4v"].includes(ext)) return "video";
+    if (["mp3", "wav", "m4a", "aac", "flac", "ogg"].includes(ext)) return "audio";
+    return fallback;
+  }
+
   function extFromPathOrUrl(value) {
     const raw = String(value || "").trim();
     if (!raw) return "";
@@ -1005,7 +1015,17 @@ export function createAiVideoRouter(ctx) {
       meta?.content_type ||
       ""
     ).trim();
-    const assetType = inferPiapiAssetType(data?.type, inferPiapiAssetType(hintedMimeType, null));
+    const assetType =
+      inferPiapiAssetType(
+        meta?.category || meta?.assetType || meta?.kind || "",
+        inferPiapiAssetType(
+          hintedMimeType,
+          inferAssetTypeFromExt(
+            extFromPathOrUrl(data?.name || meta?.filename || meta?.originalName || ""),
+            inferPiapiAssetType(data?.type, null)
+          )
+        )
+      ) || inferPiapiAssetType(data?.type, null);
     const filename = buildPiapiFallbackFilename({
       assetId,
       assetType,
@@ -1023,6 +1043,7 @@ export function createAiVideoRouter(ctx) {
       directUrl: String(data?.url || "").trim() || null,
       filename,
       hintedMimeType: hintedMimeType || null,
+      meta,
     };
   }
 
@@ -1056,6 +1077,7 @@ export function createAiVideoRouter(ctx) {
       filename,
       buffer,
       sizeBytes: buffer.length,
+      meta: descriptor.meta,
     };
   }
 
@@ -1099,6 +1121,67 @@ export function createAiVideoRouter(ctx) {
     return url;
   }
 
+  function createFalUploadBlob(buffer, filename, mimeType) {
+    const safeName = buildPiapiFallbackFilename({ rawName: filename, mimeType });
+    if (typeof File === "function") {
+      return new File([buffer], safeName, { type: mimeType || "application/octet-stream" });
+    }
+    const blob = new Blob([buffer], { type: mimeType || "application/octet-stream" });
+    try {
+      Object.defineProperty(blob, "name", { value: safeName, enumerable: false, configurable: true });
+    } catch {}
+    return blob;
+  }
+
+  function falSeedanceUploadLifecycle(expiresInSeconds) {
+    const seconds = clampInt(expiresInSeconds, 3600, 7 * 24 * 60 * 60);
+    return { expiresIn: seconds };
+  }
+
+  function validateFalSeedanceReferenceAsset(downloaded) {
+    const assetId = String(downloaded?.assetId || "").trim();
+    const sizeBytes = Number(downloaded?.sizeBytes || 0);
+    const filename = String(downloaded?.filename || "asset.bin").trim() || "asset.bin";
+    const assetType =
+      inferPiapiAssetType(downloaded?.assetType, inferPiapiAssetType(downloaded?.mimeType, inferAssetTypeFromExt(extFromPathOrUrl(filename), null))) ||
+      "unknown";
+
+    if (!sizeBytes || !Number.isFinite(sizeBytes)) {
+      throw httpError(400, "FAL_INPUT_EMPTY_FILE", "Una de las referencias está vacía o no pude medir su tamaño.", { assetId, assetType, filename });
+    }
+
+    if (assetType === "image" && sizeBytes > 30 * 1024 * 1024) {
+      throw httpError(400, "FAL_INPUT_IMAGE_TOO_LARGE", "Seedance 2.0 Max admite imágenes de referencia de hasta 30 MB por archivo.", { assetId, filename, sizeBytes });
+    }
+
+    if (assetType === "audio" && sizeBytes > 15 * 1024 * 1024) {
+      throw httpError(400, "FAL_INPUT_AUDIO_TOO_LARGE", "Seedance 2.0 Max admite audios de referencia de hasta 15 MB por archivo.", { assetId, filename, sizeBytes });
+    }
+
+    if (assetType === "video" && sizeBytes > 50 * 1024 * 1024) {
+      throw httpError(400, "FAL_INPUT_VIDEO_TOO_LARGE", "Seedance 2.0 Max admite video(s) de referencia con tamaño total inferior a 50 MB. En esta tool se admite 1 video.", { assetId, filename, sizeBytes });
+    }
+
+    return { assetType, sizeBytes, filename };
+  }
+
+  async function uploadFalReferenceToCdn(downloaded, expiresInSeconds = 60 * 60 * 24) {
+    const { filename } = validateFalSeedanceReferenceAsset(downloaded);
+    const uploadBlob = createFalUploadBlob(downloaded.buffer, filename, downloaded.mimeType || "application/octet-stream");
+    try {
+      return await fal.storage.upload(uploadBlob, {
+        lifecycle: falSeedanceUploadLifecycle(expiresInSeconds),
+      });
+    } catch (error) {
+      throw httpError(
+        Number(error?.status || 502),
+        "FAL_INPUT_UPLOAD_FAILED",
+        `No pude preparar una referencia para Seedance 2.0 Max en Fal: ${String(error?.message || error || "upload failed")}`,
+        { assetId: downloaded?.assetId || null, filename, provider: "fal" }
+      );
+    }
+  }
+
   function buildPiapiInputProxyUrl(req, { ownerId, assetId, assetType = null, filename = null, expiresInSeconds = 60 * 60 * 6 } = {}) {
     const baseUrl = resolvePiapiWebhookBaseUrl(req);
     if (!baseUrl || !shouldUsePiapiInputProxy()) return null;
@@ -1122,23 +1205,8 @@ export function createAiVideoRouter(ctx) {
   }
 
   async function assetIdToFalSeedanceInputUrl(assetId, userId, req, expiresInSeconds = 60 * 60 * 6) {
-    const descriptor = await getPiapiAssetSourceDescriptor(assetId, userId, expiresInSeconds);
-
-    // Fal descarga mucho mejor URLs firmadas directas que nuestro proxy interno bajo /api/ai/*.
-    // El proxy se mantiene solo como escape hatch por env para compatibilidad/depuración.
-    if (!shouldUseFalInputProxy()) {
-      return descriptor.sourceUrl;
-    }
-
-    const proxyUrl = buildPiapiInputProxyUrl(req, {
-      ownerId: userId,
-      assetId,
-      assetType: descriptor.assetType,
-      filename: descriptor.filename,
-      expiresInSeconds,
-    });
-
-    return proxyUrl || descriptor.sourceUrl;
+    const downloaded = await downloadPiapiInputAsset(assetId, userId, expiresInSeconds);
+    return uploadFalReferenceToCdn(downloaded, Math.max(3600, Number(expiresInSeconds || 0)));
   }
 
   async function assetIdToPiapiInputUrl(assetId, userId, req, expiresInSeconds = 60 * 60 * 6) {
@@ -1235,13 +1303,44 @@ export function createAiVideoRouter(ctx) {
     return null;
   }
 
+  function summarizeFalInputValue(input) {
+    if (Array.isArray(input)) {
+      const count = input.length;
+      const looksLikeUrls = input.every((entry) => typeof entry === "string" && /^https?:\/\//i.test(String(entry || "")));
+      if (looksLikeUrls) return `${count} URL(s)`;
+      return `${count} item(s)`;
+    }
+    if (typeof input === "string") {
+      if (/^https?:\/\//i.test(input)) return "URL";
+      if (input.length > 180) return `${input.slice(0, 180)}…`;
+      return input;
+    }
+    return input;
+  }
+
+  function summarizeFalValidationDetail(payload) {
+    if (!Array.isArray(payload?.detail)) return null;
+    const out = payload.detail
+      .map((item) => ({
+        loc: Array.isArray(item?.loc) ? item.loc.join(".") : null,
+        msg: String(item?.msg || item?.message || item?.type || "Fal validation error").trim(),
+        input: item?.input !== undefined ? summarizeFalInputValue(item.input) : undefined,
+        url: typeof item?.url === "string" && item.url ? item.url : undefined,
+        type: typeof item?.type === "string" && item.type ? item.type : undefined,
+      }))
+      .filter((item) => item.loc || item.msg);
+    return out.length ? out : null;
+  }
+
   function formatFalErrorPayload(payload, fallback = "Fal request failed.") {
     if (!payload) return String(fallback || "Fal request failed.");
     if (Array.isArray(payload?.detail) && payload.detail.length) {
       const parts = payload.detail.map((item) => {
         const loc = Array.isArray(item?.loc) ? item.loc.join(".") : "";
         const msg = String(item?.msg || item?.message || item?.type || "Fal validation error").trim();
-        return loc ? `${loc}: ${msg}` : msg;
+        const summarizedInput = item?.input !== undefined ? summarizeFalInputValue(item.input) : undefined;
+        const suffix = summarizedInput !== undefined ? ` (${typeof summarizedInput === "string" ? summarizedInput : JSON.stringify(summarizedInput)})` : "";
+        return loc ? `${loc}: ${msg}${suffix}` : `${msg}${suffix}`;
       }).filter(Boolean);
       if (parts.length) return parts.join("\n");
     }
@@ -4294,23 +4393,21 @@ const isVeo = isVeoModelId(selectedModelNorm);
           throw httpError(400, "SEEDANCE_PREVIEW_AUDIO_NOT_SUPPORTED", "Seedance 2 Preview no admite referencias de audio en video edit.");
         }
 
-        const referenceImageUrls = [];
-        for (const assetId of referenceImageAssetIds) {
-          referenceImageUrls.push(
+        const referenceImageUrls = await Promise.all(
+          referenceImageAssetIds.map((assetId) =>
             isFalMaxModel
-              ? await assetIdToFalSeedanceInputUrl(assetId, user.id, req, INPUT_URL_TTL_SECONDS)
-              : await assetIdToPiapiInputUrl(assetId, user.id, req, INPUT_URL_TTL_SECONDS)
-          );
-        }
+              ? assetIdToFalSeedanceInputUrl(assetId, user.id, req, INPUT_URL_TTL_SECONDS)
+              : assetIdToPiapiInputUrl(assetId, user.id, req, INPUT_URL_TTL_SECONDS)
+          )
+        );
 
-        const audioReferenceUrls = [];
-        for (const assetId of audioReferenceAssetIds) {
-          audioReferenceUrls.push(
+        const audioReferenceUrls = await Promise.all(
+          audioReferenceAssetIds.map((assetId) =>
             isFalMaxModel
-              ? await assetIdToFalSeedanceInputUrl(assetId, user.id, req, INPUT_URL_TTL_SECONDS)
-              : await assetIdToPiapiInputUrl(assetId, user.id, req, INPUT_URL_TTL_SECONDS)
-          );
-        }
+              ? assetIdToFalSeedanceInputUrl(assetId, user.id, req, INPUT_URL_TTL_SECONDS)
+              : assetIdToPiapiInputUrl(assetId, user.id, req, INPUT_URL_TTL_SECONDS)
+          )
+        );
 
         const effectiveAspectRatio = isPreviewVipModel
           ? coerceSeedancePreviewVipAspectRatio(body.aspectRatio, "16:9")
@@ -4390,6 +4487,9 @@ const isVeo = isVeoModelId(selectedModelNorm);
           if (body.videoAssetId) {
             videoUrl = await assetIdToFalSeedanceInputUrl(body.videoAssetId, user.id, req, INPUT_URL_TTL_SECONDS);
             inputVideoDurationSeconds = coerceReferenceVideoDurationSeconds(body.referenceVideoDurationSeconds) || 0;
+            if (inputVideoDurationSeconds && (inputVideoDurationSeconds < 2 || inputVideoDurationSeconds > 15)) {
+              throw httpError(400, "SEEDANCE_MAX_VIDEO_DURATION_INVALID", "Seedance 2.0 Max admite un video de referencia de entre 2 y 15 segundos en esta tool.", { inputVideoDurationSeconds });
+            }
           }
 
           input = {
@@ -4467,7 +4567,25 @@ const isVeo = isVeoModelId(selectedModelNorm);
 
         if (isFalMaxModel) {
           const falEndpointId = "bytedance/seedance-2.0/reference-to-video";
-          const submit = await falQueueSubmit(falEndpointId, input);
+          let submit;
+          try {
+            submit = await falQueueSubmit(falEndpointId, input);
+          } catch (error) {
+            const status = Number(error?.status || 0);
+            const message = formatFalErrorPayload(error?.data, error?.message || "Fal rechazó la solicitud de Seedance 2.0 Max.");
+            const compactDetails = summarizeFalValidationDetail(error?.data);
+            throw httpError(
+              status >= 400 && status < 600 ? status : 502,
+              status >= 400 && status < 500 ? "FAL_BAD_REQUEST" : "FAL_REQUEST_FAILED",
+              message,
+              {
+                provider: "fal",
+                endpointId: falEndpointId,
+                status: status || null,
+                validation: compactDetails,
+              }
+            );
+          }
 
           const jobToken = signJobToken({
             uid: user.id,
