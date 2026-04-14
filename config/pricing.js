@@ -53,6 +53,8 @@ function seedanceUnitPricePerSecondUsd(modelNorm, mode = "generate") {
       return normalizedMode === "edit" ? 0.17 : 0.10;
     case "seedance-2-preview-vip":
       return 0.30;
+    case "seedance-2-fast-preview-vip":
+      return 0.22;
     case "seedance-2-max":
       return null;
     default:
@@ -450,6 +452,9 @@ function videoUnitUsd({
     case "seedance-2-preview-vip":
       perSecondUsd = 0.30;
       break;
+    case "seedance-2-fast-preview-vip":
+      perSecondUsd = 0.22;
+      break;
     case "seedance-2-max":
       perSecondUsd = 0.3024;
       break;
@@ -496,9 +501,11 @@ export function estimateVideoCostCredits({
   if (seedanceUnitUsd != null) {
     const outputSeconds = clampInt(durationSeconds != null ? durationSeconds : 5, 1, 3600, 5);
     const inputSeconds = clampNumber(inputVideoDurationSeconds != null ? inputVideoDurationSeconds : 0, 0, 3600, 0);
+    const normalizedSeedanceModel = normalizeVideoModelId(normalizedModel);
+    const isPreviewVipEdit = seedanceMode === "edit" && (normalizedSeedanceModel === "seedance-2-preview-vip" || normalizedSeedanceModel === "seedance-2-fast-preview-vip");
     const billableSeconds = Math.max(
       1,
-      seedanceMode === "edit" ? (inputSeconds || outputSeconds) : (outputSeconds + inputSeconds)
+      isPreviewVipEdit ? ((inputSeconds || outputSeconds) + outputSeconds) : (seedanceMode === "edit" ? (inputSeconds || outputSeconds) : (outputSeconds + inputSeconds))
     );
     return roundSeedanceCreditsFromUsd(seedanceUnitUsd * billableSeconds * n);
   }

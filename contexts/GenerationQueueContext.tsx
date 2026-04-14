@@ -141,7 +141,7 @@ function isKlingBackgroundModel(modelNorm: string) {
 
 function isSeedanceModel(modelNorm: string) {
   const m = String(modelNorm || "").trim();
-  return m === "seedance-2" || m === "seedance-2-fast" || m === "seedance-2-preview" || m === "seedance-2-fast-preview" || m === "seedance-2-preview-vip" || m === "seedance-2-max";
+  return m === "seedance-2" || m === "seedance-2-fast" || m === "seedance-2-preview" || m === "seedance-2-fast-preview" || m === "seedance-2-preview-vip" || m === "seedance-2-fast-preview-vip" || m === "seedance-2-max";
 }
 
 function asArray(v: any) {

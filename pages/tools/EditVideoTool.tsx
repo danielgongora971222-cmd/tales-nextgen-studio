@@ -42,8 +42,8 @@ type EditModelId =
   | "kling-o3-ref-to-video-pro"
   | "kling-o3-edit-video-pro"
   | "kling-o3-ref-video-to-video-pro"
-  | "seedance-2-preview"
-  | "seedance-2-fast-preview";
+  | "seedance-2-preview-vip"
+  | "seedance-2-fast-preview-vip";
 
 type AspectRatio = "auto" | "21:9" | "16:9" | "9:16" | "1:1" | "4:3" | "3:4";
 
@@ -64,9 +64,42 @@ type PendingVideoEditJob = {
   createdAt: number;
 };
 
-const isSeedanceModelId = (value: string) => value === "seedance-2-preview" || value === "seedance-2-fast-preview";
-const coerceSeedanceDurationLocal = (value: number) => Math.max(4, Math.min(15, Math.trunc(Number(value) || 5)));
-const isSeedanceAspectRatio = (value: string) => ["21:9", "16:9", "9:16", "1:1", "4:3", "3:4"].includes(String(value || ""));
+const isSeedanceModelId = (value: string) => value === "seedance-2-preview-vip" || value === "seedance-2-fast-preview-vip";
+const isSeedanceAspectRatio = (value: string) => ["16:9", "9:16", "4:3", "3:4"].includes(String(value || ""));
+
+const SEEDANCE_EDIT_DURATION_WINDOWS: Array<{ min: number; max: number; apiDuration: 5 | 10 | 15 }> = [
+  { min: 4.5, max: 5.5, apiDuration: 5 },
+  { min: 9.5, max: 10.5, apiDuration: 10 },
+  { min: 14.5, max: 15.4, apiDuration: 15 },
+];
+
+function getSeedanceEditModelLabel(modelId: string) {
+  return modelId === "seedance-2-preview-vip" ? "Seedance 2.0 Max" : "Seedance 2.0 Pro";
+}
+
+function resolveSeedanceEditVideoDuration(value: number | null | undefined) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return {
+      ok: false as const,
+      error: "No pudimos leer la duración del video. Vuelve a cargarlo o usa otro archivo.",
+    };
+  }
+  if (seconds > 15.4) {
+    return {
+      ok: false as const,
+      error: `${seconds.toFixed(2)} s excede el límite. Seedance 2.0 Max/Pro en Edit Video solo admiten videos base de hasta 15.4 segundos.`,
+    };
+  }
+  const match = SEEDANCE_EDIT_DURATION_WINDOWS.find((item) => seconds >= item.min && seconds <= item.max);
+  if (!match) {
+    return {
+      ok: false as const,
+      error: `Tu video dura ${seconds.toFixed(2)} s. En Edit Video, Seedance 2.0 Max/Pro solo aceptan clips de 5, 10 o 15 segundos.`,
+    };
+  }
+  return { ok: true as const, inputSeconds: seconds, apiDuration: match.apiDuration };
+}
 const MODEL_OPTIONS: Array<{
   id: EditModelId;
   uiName: string;
@@ -82,20 +115,20 @@ const MODEL_OPTIONS: Array<{
       "Ideal para retoques: cambia estilo/objetos/ambiente sin perder coherencia. En el prompt, el video base es @Video1. También puedes usar @Image1.. como referencias.",
   },
   {
-    id: "seedance-2-preview",
-    uiName: "Seedance 2.0 Cinema",
+    id: "seedance-2-preview-vip",
+    uiName: "Seedance 2.0 Max",
     uiDesc:
-      "Edita un video base con prompt y referencias de imagen opcionales mediante PiAPI.",
+      "Edita un video base con PiAPI usando la variante VIP de mayor calidad.",
     uiHint:
-      "El video base es @Video1 y puedes usar @Image1..@Image9 como referencias visuales.",
+      "Requiere un video base de 5, 10 o 15 segundos. El video base es @Video1 y puedes sumar hasta 9 imágenes de referencia @Image1..@Image9.",
   },
   {
-    id: "seedance-2-fast-preview",
-    uiName: "Seedance 2.0 Cinema Fast",
+    id: "seedance-2-fast-preview-vip",
+    uiName: "Seedance 2.0 Pro",
     uiDesc:
-      "Versión más rápida de Seedance 2 para edición de video guiada por texto + referencias.",
+      "Versión más rápida de Seedance VIP para editar video con prompt + imágenes de apoyo.",
     uiHint:
-      "El video base es @Video1 y puedes usar @Image1..@Image9 como referencias visuales.",
+      "Requiere un video base de 5, 10 o 15 segundos. El video base es @Video1 y puedes sumar hasta 9 imágenes de referencia @Image1..@Image9.",
   },
 ];
 const DEFAULT_MODEL_ID: EditModelId = "kling-o3-edit-video-pro";
@@ -105,8 +138,8 @@ function coerceModelId(value: unknown): EditModelId {
   if (MODEL_OPTIONS.some((option) => option.id === raw)) return raw;
 
   const normalized = raw.toLowerCase();
-  if (normalized.includes("seedance-2-fast")) return "seedance-2-fast-preview";
-  if (normalized.includes("seedance")) return "seedance-2-preview";
+  if (normalized.includes("seedance-2-fast")) return "seedance-2-fast-preview-vip";
+  if (normalized.includes("seedance")) return "seedance-2-preview-vip";
   return DEFAULT_MODEL_ID;
 }
 
@@ -328,13 +361,18 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     () => formatDurationLabel(referenceVideoDurationSeconds),
     [referenceVideoDurationSeconds]
   );
+  const seedanceVideoDurationValidation = useMemo(
+    () => (isSeedanceModel ? resolveSeedanceEditVideoDuration(referenceVideoDurationSeconds) : null),
+    [isSeedanceModel, referenceVideoDurationSeconds]
+  );
+
 
   const estimatedCostCredits = useMemo(() => {
     const generationDurationSeconds = isStoryboardMode ? multishotTotalSeconds : durationSeconds;
     const pricingDurationSeconds =
       model === "kling-o3-ref-to-video-pro"
         ? generationDurationSeconds
-        : referenceVideoDurationSeconds || 5;
+        : (seedanceVideoDurationValidation?.ok ? seedanceVideoDurationValidation.apiDuration : referenceVideoDurationSeconds || 5);
 
     return estimateVideoCostCredits({
       modelNorm: model,
@@ -345,7 +383,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
       seedanceMode: isSeedanceModel ? "edit" : undefined,
       inputVideoDurationSeconds: isSeedanceModel ? pricingDurationSeconds : undefined,
     });
-  }, [model, durationSeconds, isStoryboardMode, multishotTotalSeconds, generateAudio, referenceVideoDurationSeconds, isSeedanceModel]);
+  }, [model, durationSeconds, isStoryboardMode, multishotTotalSeconds, generateAudio, referenceVideoDurationSeconds, isSeedanceModel, seedanceVideoDurationValidation]);
 
   const combinedRefsCount = referenceImageIds.length + klingElementIds.length;
   const maxCombinedRefs = isSeedanceModel ? 9 : (model === "kling-o3-ref-to-video-pro" ? 7 : 4);
@@ -357,10 +395,8 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
       return;
     }
 
-    const nextDuration = coerceSeedanceDurationLocal(durationSeconds);
-    if (nextDuration !== durationSeconds) setDurationSeconds(nextDuration);
-    if (aspectRatio === "auto" || !isSeedanceAspectRatio(aspectRatio)) setAspectRatio("16:9");
-  }, [isSeedanceModel, durationSeconds, aspectRatio]);
+    if (!isSeedanceAspectRatio(aspectRatio)) setAspectRatio("16:9");
+  }, [isSeedanceModel, aspectRatio]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1513,7 +1549,12 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
 
     if (isSeedanceModel) {
       if (!inputVideo) {
-        return { ok: false as const, error: "Selecciona un VIDEO de entrada (obligatorio) para Seedance 2." };
+        return { ok: false as const, error: `Carga un video base para editar con ${getSeedanceEditModelLabel(model)}.` };
+      }
+
+      const durationCheck = resolveSeedanceEditVideoDuration(referenceVideoDurationSeconds);
+      if (!durationCheck.ok) {
+        return { ok: false as const, error: durationCheck.error };
       }
 
       const prepared = preparePromptAndRefs(prompt);
@@ -1532,7 +1573,8 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
           prompt: prepared.promptForModel,
           videoAssetId: inputVideo.id,
           referenceImageAssetIds: prepared.referenceImageAssetIds,
-          referenceVideoDurationSeconds,
+          durationSeconds: durationCheck.apiDuration,
+          referenceVideoDurationSeconds: durationCheck.inputSeconds,
           aspectRatio: ar === "auto" ? "16:9" : ar,
           toolName: TOOL_NAME,
           hint: nowHint(model),
@@ -1773,6 +1815,14 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
     paramsLabelParts.push("Aspect: input");
     paramsLabelParts.push("Duration: input");
     paramsLabelParts.push(keepAudio ? "Keep audio: yes" : "Keep audio: no");
+  } else if (isSeedanceModel) {
+    paramsLabelParts.push(`Aspect: ${aspectRatio}`);
+    paramsLabelParts.push(
+      seedanceVideoDurationValidation?.ok
+        ? `Base video: ${seedanceVideoDurationValidation.inputSeconds.toFixed(2)}s → salida ${seedanceVideoDurationValidation.apiDuration}s`
+        : "Base video: pendiente"
+    );
+    paramsLabelParts.push("Keep audio: no");
   } else {
     paramsLabelParts.push(aspectRatio === "auto" ? "Aspect: auto" : `Aspect: ${aspectRatio}`);
     paramsLabelParts.push(
@@ -1915,7 +1965,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
                           <div className={styles.formRow}>
                             <label className={styles.formLabel}>Aspect</label>
                             <div className={styles.segment}>
-                              {model !== "kling-o3-ref-to-video-pro" && (
+                              {!isSeedanceModel && model !== "kling-o3-ref-to-video-pro" && (
                                 <button
                                   type="button"
                                   className={`${styles.segmentBtn} ${aspectRatio === "auto" ? styles.segmentBtnActive : ""}`}
@@ -1973,28 +2023,42 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
                             </div>
                           </div>
 
-                          <div className={styles.formRow}>
-                            <label className={styles.formLabel}>Duration</label>
-                            <div className={styles.segment}>
-                              {(isSeedanceModel ? [5, 10, 15] : [3, 5, 8, 10, 12, 15]).map((d) => (
-                                <button
-                                  key={d}
-                                  type="button"
-                                  className={`${styles.segmentBtn} ${durationSeconds === d ? styles.segmentBtnActive : ""}`}
-                                  onClick={() => setDurationSeconds(d)}
-                                  disabled={ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode}
-                                  title={ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode ? "Con Storyboard la duración viene de la suma de shots" : ""}
-                                >
-                                  {d}s
-                                </button>
-                              ))}
-                            </div>
-                            {ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode && (
-                              <div className={styles.segmentMeta}>
-                                Storyboard total: <b>{multishotTotalSeconds}s</b>
+                          {isSeedanceModel ? (
+                            <div className={styles.note}>
+                              <div>
+                                <b>Base video obligatorio:</b> Seedance 2.0 Max/Pro en Edit Video usa la duración del video cargado.
+                                PiAPI solo admite clips compatibles con <b>5, 10 o 15 segundos</b> en esta familia.
                               </div>
-                            )}
-                          </div>
+                              <div style={{ marginTop: 6 }}>
+                                {seedanceVideoDurationValidation?.ok
+                                  ? <>Video detectado: <b>{seedanceVideoDurationValidation.inputSeconds.toFixed(2)} s</b> · duración enviada a PiAPI: <b>{seedanceVideoDurationValidation.apiDuration} s</b>.</>
+                                  : <>{inputVideo ? <span style={{ color: "#ffb4b4" }}>{seedanceVideoDurationValidation?.error || "Calculando duración del video..."}</span> : "Carga primero un video base para validar la duración."}</>}
+                              </div>
+                            </div>
+                          ) : (
+                            <div className={styles.formRow}>
+                              <label className={styles.formLabel}>Duration</label>
+                              <div className={styles.segment}>
+                                {[3, 5, 8, 10, 12, 15].map((d) => (
+                                  <button
+                                    key={d}
+                                    type="button"
+                                    className={`${styles.segmentBtn} ${durationSeconds === d ? styles.segmentBtnActive : ""}`}
+                                    onClick={() => setDurationSeconds(d)}
+                                    disabled={ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode}
+                                    title={ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode ? "Con Storyboard la duración viene de la suma de shots" : ""}
+                                  >
+                                    {d}s
+                                  </button>
+                                ))}
+                              </div>
+                              {ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode && (
+                                <div className={styles.segmentMeta}>
+                                  Storyboard total: <b>{multishotTotalSeconds}s</b>
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </>
                       )}
 
@@ -2019,6 +2083,12 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
                             </button>
                           </div>
                           <div className={styles.segmentMeta}>Audio aumenta costo y tiempo.</div>
+                        </div>
+                      ) : isSeedanceModel ? (
+                        <div className={styles.note}>
+                          <div>
+                            <b>Audio:</b> esta integración de Seedance Edit envía solo el video base y referencias de imagen. El audio de referencia no se usa en esta tool.
+                          </div>
                         </div>
                       ) : (
                         <div className={styles.formRow}>
@@ -2048,7 +2118,9 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
                           <b>Referencias:</b>{" "}
                           {model === "kling-o3-ref-to-video-pro"
                             ? `Requiere 1–${maxCombinedRefs} referencias visuales. `
-                            : `Máximo ${maxCombinedRefs} referencias visuales.`}
+                            : isSeedanceModel
+                              ? `Máximo ${maxCombinedRefs} imágenes de apoyo además del video base. `
+                              : `Máximo ${maxCombinedRefs} referencias visuales.`}
                           1–2 referencias fuertes suele funcionar mejor que muchas débiles.
                         </div>
                       </div>
@@ -2303,7 +2375,7 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
                   combinedRefsCount > maxCombinedRefs ||
                   videoSlotBusy ||
                   (isSeedanceModel
-                    ? (!inputVideo || (prompt || "").trim().length === 0)
+                    ? (!inputVideo || (prompt || "").trim().length === 0 || !seedanceVideoDurationValidation?.ok)
                     : (model === "kling-o3-ref-to-video-pro"
                         ? ((ENABLE_EDITVIDEO_MULTISHOT && isStoryboardMode) ? !multishotReady : (prompt || "").trim().length === 0)
                         : !inputVideo || (prompt || "").trim().length === 0))
@@ -2321,8 +2393,11 @@ const [multishotModeOpen, setMultishotModeOpen] = useState(false);
 
               {model !== "kling-o3-ref-to-video-pro" && inputVideo && (
                 <div style={{ marginTop: 6, fontSize: 11, color: "rgba(255,255,255,0.5)", textAlign: "center" }}>
-                  Precio según la duración del video cargado
-                  {referenceDurationLabel ? ` · ${referenceDurationLabel}` : " · calculando duración..."}
+                  {isSeedanceModel
+                    ? (seedanceVideoDurationValidation?.ok
+                        ? `Video base: ${seedanceVideoDurationValidation.inputSeconds.toFixed(2)} s · Seedance enviará ${seedanceVideoDurationValidation.apiDuration} s`
+                        : (referenceDurationLabel ? `Video base: ${referenceDurationLabel}` : "Validando duración del video base..."))
+                    : <>Precio según la duración del video cargado{referenceDurationLabel ? ` · ${referenceDurationLabel}` : " · calculando duración..."}</>}
                 </div>
               )}
 

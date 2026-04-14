@@ -381,7 +381,7 @@ export function createAiVideoRouter(ctx) {
 
   function isSeedancePreviewVipModelId(value) {
     const v = String(value || "").trim();
-    return v === "seedance-2-preview-vip";
+    return v === "seedance-2-preview-vip" || v === "seedance-2-fast-preview-vip";
   }
 
   function isSeedanceFalMaxModelId(value) {
@@ -851,6 +851,24 @@ export function createAiVideoRouter(ctx) {
   function coerceSeedancePreviewVipAspectRatio(value, fallback = "16:9") {
     const v = String(value || "").trim();
     return ["16:9", "9:16", "4:3", "3:4"].includes(v) ? v : fallback;
+  }
+
+  function getSeedancePreviewVipUiName(model) {
+    return String(model || "").trim() === "seedance-2-fast-preview-vip" ? "Seedance 2.0 Pro" : "Seedance 2.0 Max";
+  }
+
+  function resolveSeedancePreviewVipEditVideoDuration(value) {
+    const seconds = coerceReferenceVideoDurationSeconds(value);
+    if (!seconds) {
+      return { ok: false, code: "SEEDANCE_EDIT_VIDEO_DURATION_UNKNOWN", message: "No pude leer la duración del video base. Vuelve a cargarlo o usa otro archivo." };
+    }
+    if (seconds > 15.4) {
+      return { ok: false, code: "SEEDANCE_EDIT_VIDEO_TOO_LONG", message: `Tu video dura ${seconds.toFixed(2)} s. Seedance 2.0 Max/Pro en Edit Video solo admiten hasta 15.4 segundos.` };
+    }
+    if (seconds >= 4.5 && seconds <= 5.5) return { ok: true, inputSeconds: seconds, apiDuration: 5 };
+    if (seconds >= 9.5 && seconds <= 10.5) return { ok: true, inputSeconds: seconds, apiDuration: 10 };
+    if (seconds >= 14.5 && seconds <= 15.4) return { ok: true, inputSeconds: seconds, apiDuration: 15 };
+    return { ok: false, code: "SEEDANCE_EDIT_VIDEO_DURATION_UNSUPPORTED", message: `Tu video dura ${seconds.toFixed(2)} s. Seedance 2.0 Max/Pro en Edit Video solo aceptan clips de 5, 10 o 15 segundos.` };
   }
 
   function normalizeSeedancePrompt(prompt) {
@@ -4327,7 +4345,7 @@ const isVeo = isVeoModelId(selectedModelNorm);
     });
 
     const SeedanceVideoEditRequestSchema = z.object({
-      model: z.enum(["seedance-2", "seedance-2-fast", "seedance-2-preview", "seedance-2-fast-preview", "seedance-2-preview-vip"]),
+      model: z.enum(["seedance-2", "seedance-2-fast", "seedance-2-preview", "seedance-2-fast-preview", "seedance-2-preview-vip", "seedance-2-fast-preview-vip"]),
       prompt: z.string().max(14000).optional(),
       videoAssetId: z.string().uuid().optional(),
       referenceImageAssetIds: z.array(z.string().uuid()).max(12).optional(),
@@ -4378,8 +4396,8 @@ const isVeo = isVeoModelId(selectedModelNorm);
           throw httpError(400, "SEEDANCE_EXTEND_REMOVED", "Seedance 2 ya no está disponible en Extend Video.");
         }
 
-        if (isPreviewVipModel && toolName !== "ingredients-to-video") {
-          throw httpError(400, "SEEDANCE_PREVIEW_VIP_TOOL_RESTRICTED", "Seedance 2.0 Pro solo está habilitado en Ingredients to Video.");
+        if (isPreviewVipModel && toolName !== "ingredients-to-video" && toolName !== "video-edit") {
+          throw httpError(400, "SEEDANCE_PREVIEW_VIP_TOOL_RESTRICTED", "Seedance Preview VIP solo está habilitado en Ingredients to Video y Edit Video.");
         }
 
 
@@ -4505,29 +4523,61 @@ const isVeo = isVeoModelId(selectedModelNorm);
             end_user_id: user.id,
           };
         } else if (isPreviewVipModel) {
-          mode = "preview_vip_reference";
-          if (!referenceImageUrls.length && !body.videoAssetId) {
-            throw httpError(400, "SEEDANCE_PREVIEW_VIP_REFERENCE_REQUIRED", "Agrega al menos una imagen o un video de referencia para Seedance 2.0 Pro.");
-          }
-
-          if (!referenceImageUrls.length && audioReferenceUrls.length) {
-            throw httpError(400, "SEEDANCE_PREVIEW_VIP_AUDIO_ONLY_NOT_SUPPORTED", "Seedance 2.0 Pro no admite usar solo audio: agrega al menos una imagen o un video de referencia.");
-          }
-
-          if (body.videoAssetId) {
+          const previewVipUiName = getSeedancePreviewVipUiName(model);
+          if (toolName === "video-edit") {
+            mode = "preview_vip_video_edit";
+            if (!body.videoAssetId) {
+              throw httpError(400, "SEEDANCE_EDIT_VIDEO_REQUIRED", `Carga un video base para editar con ${previewVipUiName}.`);
+            }
+            if (audioReferenceUrls.length > 0) {
+              throw httpError(400, "SEEDANCE_EDIT_AUDIO_NOT_SUPPORTED", `${previewVipUiName} en Edit Video no usa audios de referencia. Usa solo el video base y, si quieres, imágenes de apoyo.`);
+            }
+            const durationCheck = resolveSeedancePreviewVipEditVideoDuration(body.referenceVideoDurationSeconds);
+            if (!durationCheck.ok) {
+              throw httpError(400, durationCheck.code, durationCheck.message, {
+                provider: "piapi",
+                model,
+                inputVideoDurationSeconds: coerceReferenceVideoDurationSeconds(body.referenceVideoDurationSeconds) || null,
+              });
+            }
             videoUrl = await assetIdToPiapiInputUrl(body.videoAssetId, user.id, req, INPUT_URL_TTL_SECONDS);
-            inputVideoDurationSeconds = coerceReferenceVideoDurationSeconds(body.referenceVideoDurationSeconds) || 0;
-          }
+            inputVideoDurationSeconds = durationCheck.inputSeconds;
+            pricingDurationSeconds = durationCheck.apiDuration;
+            input = {
+              prompt: visiblePrompt,
+              duration: durationCheck.apiDuration,
+              aspect_ratio: effectiveAspectRatio,
+              video_urls: [videoUrl],
+              ...(referenceImageUrls.length ? { image_urls: referenceImageUrls } : {}),
+            };
+          } else {
+            mode = "preview_vip_reference";
+            if (!referenceImageUrls.length && !body.videoAssetId) {
+              throw httpError(400, "SEEDANCE_PREVIEW_VIP_REFERENCE_REQUIRED", `${previewVipUiName} requiere al menos una imagen o un video de referencia.`);
+            }
 
-          input = {
-            prompt: visiblePrompt,
-            duration: pricingDurationSeconds,
-            aspect_ratio: effectiveAspectRatio,
-            ...(referenceImageUrls.length ? { image_urls: referenceImageUrls } : {}),
-            ...(videoUrl ? { video_urls: [videoUrl] } : {}),
-            ...(audioReferenceUrls.length ? { audio_urls: audioReferenceUrls } : {}),
-          };
+            if (!referenceImageUrls.length && audioReferenceUrls.length) {
+              throw httpError(400, "SEEDANCE_PREVIEW_VIP_AUDIO_ONLY_NOT_SUPPORTED", `${previewVipUiName} no admite usar solo audio: agrega al menos una imagen o un video de referencia.`);
+            }
+
+            if (body.videoAssetId) {
+              videoUrl = await assetIdToPiapiInputUrl(body.videoAssetId, user.id, req, INPUT_URL_TTL_SECONDS);
+              inputVideoDurationSeconds = coerceReferenceVideoDurationSeconds(body.referenceVideoDurationSeconds) || 0;
+            }
+
+            input = {
+              prompt: visiblePrompt,
+              duration: pricingDurationSeconds,
+              aspect_ratio: effectiveAspectRatio,
+              ...(referenceImageUrls.length ? { image_urls: referenceImageUrls } : {}),
+              ...(videoUrl ? { video_urls: [videoUrl] } : {}),
+              ...(audioReferenceUrls.length ? { audio_urls: audioReferenceUrls } : {}),
+            };
+          }
         } else if (isPreviewModel) {
+          if (toolName === "video-edit") {
+            throw httpError(400, "SEEDANCE_EDIT_MODEL_REPLACED", "En Edit Video, los modelos Seedance anteriores fueron sustituidos por Seedance 2.0 Max y Seedance 2.0 Pro.");
+          }
           if (!body.videoAssetId) {
             throw httpError(400, "SEEDANCE_VIDEO_REQUIRED", "Selecciona un video de entrada para editar con Seedance 2 Preview.");
           }
@@ -4552,7 +4602,7 @@ const isVeo = isVeoModelId(selectedModelNorm);
             modelNorm: model,
             durationSeconds: pricingDurationSeconds,
             resolution: "720p",
-            seedanceMode: isPreviewModel ? "edit" : "generate",
+            seedanceMode: (isPreviewModel || (isPreviewVipModel && toolName === "video-edit")) ? "edit" : "generate",
             inputVideoDurationSeconds,
             hasVideoReference: isFalMaxModel ? Boolean(body.videoAssetId) : undefined,
           }),
