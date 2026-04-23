@@ -1,89 +1,13 @@
-import React, { Suspense, useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef } from "react";
 import { AppRoute } from "../types";
 import { useAuth } from "../contexts/AuthContext";
 import { useWallet } from "../contexts/WalletContext";
 import styles from "./Home.module.css";
+import CommunityStore from "./CommunityStore";
 import OneNationUpIcon from "../components/brand/OneNationUpIcon";
-
-const CommunityStore = React.lazy(() => import("./CommunityStore"));
 
 interface HomeProps {
   onNavigate: (route: AppRoute) => void;
-}
-
-function CommunityStorePlaceholder() {
-  return (
-    <div className="rounded-[30px] border border-white/10 bg-black/35 p-5 text-white/60 shadow-[0_20px_48px_rgba(0,0,0,0.28)]">
-      <div className="h-3 w-32 rounded-full bg-white/10" />
-      <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, index) => (
-          <div key={index} className="aspect-[4/5] rounded-[22px] bg-white/[0.045]" />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function DeferredCommunityStore({ onNavigate }: HomeProps) {
-  const [shouldLoad, setShouldLoad] = useState(false);
-  const holderRef = useRef<HTMLElement | null>(null);
-
-  useEffect(() => {
-    if (shouldLoad) return;
-
-    let cancelled = false;
-    let timeoutId = 0;
-    let idleId: number | null = null;
-    let observer: IntersectionObserver | null = null;
-
-    const load = () => {
-      if (!cancelled) setShouldLoad(true);
-    };
-
-    const requestIdle = (window as any).requestIdleCallback as
-      | ((cb: () => void, opts?: { timeout?: number }) => number)
-      | undefined;
-    const cancelIdle = (window as any).cancelIdleCallback as ((id: number) => void) | undefined;
-
-    if ("IntersectionObserver" in window && holderRef.current) {
-      observer = new IntersectionObserver(
-        (entries) => {
-          if (entries.some((entry) => entry.isIntersecting)) {
-            observer?.disconnect();
-            observer = null;
-            load();
-          }
-        },
-        { rootMargin: "720px 0px" }
-      );
-      observer.observe(holderRef.current);
-    }
-
-    if (requestIdle) {
-      idleId = requestIdle(load, { timeout: 2600 });
-    } else {
-      timeoutId = window.setTimeout(load, 1400);
-    }
-
-    return () => {
-      cancelled = true;
-      observer?.disconnect();
-      window.clearTimeout(timeoutId);
-      if (idleId != null && cancelIdle) cancelIdle(idleId);
-    };
-  }, [shouldLoad]);
-
-  return (
-    <section ref={holderRef}>
-      {shouldLoad ? (
-        <Suspense fallback={<CommunityStorePlaceholder />}>
-          <CommunityStore onNavigate={onNavigate} />
-        </Suspense>
-      ) : (
-        <CommunityStorePlaceholder />
-      )}
-    </section>
-  );
 }
 
 type ConstellationEffectOptions = {
@@ -101,9 +25,7 @@ function setupConstellationEffect(opts: ConstellationEffectOptions) {
   if (!btn || !canvas) return () => {};
 
   const prefersReducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
-  const canHover = window.matchMedia?.("(hover: hover) and (pointer: fine)")?.matches;
-  const smallScreen = window.matchMedia?.("(max-width: 767px)")?.matches;
-  const shouldAnimate = Boolean(!prefersReducedMotion && canHover && !smallScreen);
+  if (prefersReducedMotion) return () => {};
 
   const ctx = canvas.getContext("2d");
   if (!ctx) return () => {};
@@ -120,53 +42,37 @@ function setupConstellationEffect(opts: ConstellationEffectOptions) {
   }> = [];
 
   let raf = 0;
-  let active = false;
-  let destroyed = false;
-  let dpr = 1;
 
   const resize = () => {
-    const rect = btn.getBoundingClientRect();
-    const w = Math.max(1, Math.floor(rect.width || btn.offsetWidth || 1));
-    const h = Math.max(1, Math.floor(rect.height || btn.offsetHeight || 1));
-    dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 1.25));
-
-    const nextWidth = Math.floor(w * dpr);
-    const nextHeight = Math.floor(h * dpr);
-
-    if (canvas.width !== nextWidth || canvas.height !== nextHeight) {
-      canvas.width = nextWidth;
-      canvas.height = nextHeight;
-      canvas.style.width = `${w}px`;
-      canvas.style.height = `${h}px`;
-    }
-
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const w = btn.offsetWidth;
+    const h = btn.offsetHeight;
+    canvas.width = Math.max(1, Math.floor(w));
+    canvas.height = Math.max(1, Math.floor(h));
 
     particles = [];
-    const count = Math.max(10, Math.min(28, Math.floor((w * h) / 6500)));
+    const count = Math.max(14, Math.floor((canvas.width * canvas.height) / 4200));
 
-    for (let i = 0; i < count; i += 1) {
+    for (let i = 0; i < count; i++) {
       particles.push({
-        x: Math.random() * w,
-        y: Math.random() * h,
-        vx: (Math.random() - 0.5) * 0.34,
-        vy: (Math.random() - 0.5) * 0.34,
-        baseRadius: Math.random() * 1.1 + 0.45,
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        vx: (Math.random() - 0.5) * 0.45,
+        vy: (Math.random() - 0.5) * 0.45,
+        baseRadius: Math.random() * 1.3 + 0.45,
         radius: 1,
         color: colors[Math.floor(Math.random() * colors.length)],
         phase: Math.random() * Math.PI * 2,
       });
     }
-
-    draw(false);
   };
 
-  const drawLines = (interactive: boolean) => {
+  const drawLines = () => {
+    const isHovered = hoverRef.current;
     const mouse = mouseRef.current;
-    const connectionDistance = interactive ? 96 : 72;
+    const connectionDistance = isHovered ? 105 : 80;
 
-    for (let i = 0; i < particles.length; i += 1) {
-      for (let j = i + 1; j < particles.length; j += 1) {
+    for (let i = 0; i < particles.length; i++) {
+      for (let j = i + 1; j < particles.length; j++) {
         const dx = particles[i].x - particles[j].x;
         const dy = particles[i].y - particles[j].y;
         const dist = Math.sqrt(dx * dx + dy * dy);
@@ -174,7 +80,7 @@ function setupConstellationEffect(opts: ConstellationEffectOptions) {
         if (dist < connectionDistance) {
           ctx.beginPath();
           let opacity = 1 - dist / connectionDistance;
-          opacity *= interactive ? 0.48 : 0.16;
+          opacity *= isHovered ? 0.6 : 0.22;
           ctx.strokeStyle = `rgba(${lineRgb}, ${opacity})`;
           ctx.lineWidth = 1;
           ctx.moveTo(particles[i].x, particles[i].y);
@@ -183,17 +89,17 @@ function setupConstellationEffect(opts: ConstellationEffectOptions) {
         }
       }
 
-      if (interactive) {
+      if (isHovered) {
         const mdx = particles[i].x - mouse.x;
         const mdy = particles[i].y - mouse.y;
         const mdist = Math.sqrt(mdx * mdx + mdy * mdy);
 
-        if (mdist < 110) {
+        if (mdist < 120) {
           ctx.beginPath();
-          const mOpacity = 1 - mdist / 110;
+          const mOpacity = 1 - mdist / 120;
           ctx.strokeStyle = particles[i].color;
-          ctx.globalAlpha = mOpacity * 0.62;
-          ctx.lineWidth = 1.2;
+          ctx.globalAlpha = mOpacity * 0.78;
+          ctx.lineWidth = 1.35;
           ctx.moveTo(particles[i].x, particles[i].y);
           ctx.lineTo(mouse.x, mouse.y);
           ctx.stroke();
@@ -203,127 +109,70 @@ function setupConstellationEffect(opts: ConstellationEffectOptions) {
     }
   };
 
-  const draw = (interactive: boolean) => {
-    const cssWidth = canvas.width / dpr;
-    const cssHeight = canvas.height / dpr;
-    ctx.clearRect(0, 0, cssWidth, cssHeight);
+  const tick = () => {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+    const isHovered = hoverRef.current;
     const mouse = mouseRef.current;
 
     for (const p of particles) {
-      if (interactive) {
-        p.x += p.vx;
-        p.y += p.vy;
+      p.x += p.vx;
+      p.y += p.vy;
 
-        if (p.x < 0 || p.x > cssWidth) p.vx *= -1;
-        if (p.y < 0 || p.y > cssHeight) p.vy *= -1;
+      if (p.x < 0 || p.x > canvas.width) p.vx *= -1;
+      if (p.y < 0 || p.y > canvas.height) p.vy *= -1;
 
-        p.phase += 0.018;
-        p.radius = p.baseRadius + Math.sin(p.phase) * 0.38;
+      p.phase += 0.02;
+      p.radius = p.baseRadius + Math.sin(p.phase) * 0.45;
 
+      if (isHovered) {
         const dx = mouse.x - p.x;
         const dy = mouse.y - p.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
-        const interactionRadius = 88;
+        const interactionRadius = 96;
 
         if (dist > 0.001 && dist < interactionRadius) {
           const fx = dx / dist;
           const fy = dy / dist;
           const force = (interactionRadius - dist) / interactionRadius;
-          p.vx += fx * force * 0.012;
-          p.vy += fy * force * 0.012;
+          p.vx += fx * force * 0.018;
+          p.vy += fy * force * 0.018;
 
-          const maxSpeed = 0.9;
+          const maxSpeed = 1.25;
           const sp = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
           if (sp > maxSpeed) {
             p.vx = (p.vx / sp) * maxSpeed;
             p.vy = (p.vy / sp) * maxSpeed;
           }
 
-          p.radius = p.baseRadius + force * 0.95;
-        } else {
-          p.vx *= 0.996;
-          p.vy *= 0.996;
+          p.radius = p.baseRadius + force * 1.2;
         }
       } else {
-        p.radius = p.baseRadius;
+        p.vx *= 0.992;
+        p.vy *= 0.992;
       }
 
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
       ctx.fillStyle = p.color;
-      ctx.globalAlpha = interactive ? 0.72 : 0.46;
+      ctx.globalAlpha = isHovered ? 0.82 : 0.55;
       ctx.fill();
       ctx.globalAlpha = 1;
     }
 
-    drawLines(interactive);
-  };
-
-  const stop = () => {
-    active = false;
-    hoverRef.current = false;
-    if (raf) {
-      cancelAnimationFrame(raf);
-      raf = 0;
-    }
-    draw(false);
-  };
-
-  const tick = () => {
-    if (destroyed || !active || document.visibilityState === "hidden") {
-      raf = 0;
-      return;
-    }
-
-    draw(true);
+    drawLines();
     raf = requestAnimationFrame(tick);
   };
 
-  const start = () => {
-    if (!shouldAnimate || destroyed || document.visibilityState === "hidden") return;
-    active = true;
-    hoverRef.current = true;
-    if (!raf) raf = requestAnimationFrame(tick);
-  };
-
-  const onPointerMove = (event: PointerEvent) => {
-    const rect = btn.getBoundingClientRect();
-    mouseRef.current = { x: event.clientX - rect.left, y: event.clientY - rect.top };
-  };
-
-  const onVisibility = () => {
-    if (document.visibilityState === "hidden") {
-      stop();
-    }
-  };
-
   resize();
+  raf = requestAnimationFrame(tick);
 
-  const resizeObserver = "ResizeObserver" in window ? new ResizeObserver(resize) : null;
-  resizeObserver?.observe(btn);
-  window.addEventListener("resize", resize, { passive: true });
-  document.addEventListener("visibilitychange", onVisibility);
-
-  if (shouldAnimate) {
-    btn.addEventListener("pointerenter", start, { passive: true });
-    btn.addEventListener("pointerleave", stop, { passive: true });
-    btn.addEventListener("pointermove", onPointerMove, { passive: true });
-    btn.addEventListener("focusin", start);
-    btn.addEventListener("focusout", stop);
-  }
+  const onResize = () => resize();
+  window.addEventListener("resize", onResize);
 
   return () => {
-    destroyed = true;
-    stop();
-    resizeObserver?.disconnect();
-    window.removeEventListener("resize", resize);
-    document.removeEventListener("visibilitychange", onVisibility);
-    btn.removeEventListener("pointerenter", start);
-    btn.removeEventListener("pointerleave", stop);
-    btn.removeEventListener("pointermove", onPointerMove);
-    btn.removeEventListener("focusin", start);
-    btn.removeEventListener("focusout", stop);
+    cancelAnimationFrame(raf);
+    window.removeEventListener("resize", onResize);
   };
 }
 
@@ -339,17 +188,17 @@ export default function Home({ onNavigate }: HomeProps) {
 
   const designsBtnRef = useRef<HTMLButtonElement | null>(null);
   const designsCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const designsHoverRef = useRef(false);
+  const designsHoverRef = useRef(true);
   const designsMouseRef = useRef({ x: -1000, y: -1000 });
 
   const creatorBtnRef = useRef<HTMLDivElement | null>(null);
   const creatorCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const creatorHoverRef = useRef(false);
+  const creatorHoverRef = useRef(true);
   const creatorMouseRef = useRef({ x: -1000, y: -1000 });
 
   const oneNationBtnRef = useRef<HTMLButtonElement | null>(null);
   const oneNationCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const oneNationHoverRef = useRef(false);
+  const oneNationHoverRef = useRef(true);
   const oneNationMouseRef = useRef({ x: -1000, y: -1000 });
 
   useEffect(() => {
@@ -409,10 +258,10 @@ export default function Home({ onNavigate }: HomeProps) {
             }
           }}
           onMouseEnter={() => {
-            creatorHoverRef.current = true;
+            creatorHoverRef.current = false;
           }}
           onMouseLeave={() => {
-            creatorHoverRef.current = false;
+            creatorHoverRef.current = true;
             creatorMouseRef.current = { x: -1000, y: -1000 };
           }}
           onMouseMove={(event) => {
@@ -486,10 +335,10 @@ export default function Home({ onNavigate }: HomeProps) {
           onClick={() => onNavigate(AppRoute.IMAGE_GEN_ROOT)}
           className={`${styles.heroCard} ${styles.heroCardRefBase} ${styles.refHeroCard} ${styles.designsTheme}`}
           onMouseEnter={() => {
-            designsHoverRef.current = true;
+            designsHoverRef.current = false;
           }}
           onMouseLeave={() => {
-            designsHoverRef.current = false;
+            designsHoverRef.current = true;
             designsMouseRef.current = { x: -1000, y: -1000 };
           }}
           onMouseMove={(event) => {
@@ -538,10 +387,10 @@ export default function Home({ onNavigate }: HomeProps) {
           onClick={() => onNavigate(AppRoute.STORE)}
           className={`${styles.heroCard} ${styles.heroCardVideo} ${styles.oneNationHeroCard}`}
           onMouseEnter={() => {
-            oneNationHoverRef.current = true;
+            oneNationHoverRef.current = false;
           }}
           onMouseLeave={() => {
-            oneNationHoverRef.current = false;
+            oneNationHoverRef.current = true;
             oneNationMouseRef.current = { x: -1000, y: -1000 };
           }}
           onMouseMove={(event) => {
@@ -575,7 +424,7 @@ export default function Home({ onNavigate }: HomeProps) {
       </section>
 
       <section>
-        <DeferredCommunityStore onNavigate={onNavigate} />
+        <CommunityStore onNavigate={onNavigate} />
       </section>
     </div>
   );

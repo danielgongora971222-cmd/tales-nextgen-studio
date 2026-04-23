@@ -1,52 +1,43 @@
-import React, { Suspense, useCallback, useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Layout from "./components/Layout";
+import Home from "./pages/Home";
+import ImageGenHub from "./pages/ImageGenHub";
+import VideoGenHub from "./pages/VideoGenHub";
+import MyCreations from "./pages/MyCreations";
+import Store from "./pages/Store";
+import CommunityStore from "./pages/CommunityStore";
+import MyTrades from "./pages/MyTrades";
 import SellListingModal from "./components/SellListingModal";
+import type { Asset, StorePrefill } from "./types";
+import ImageGeneratorTool from "./pages/tools/ImageGeneratorTool";
+import Profile from "./pages/Profile";
+import RestylerTool from "./pages/tools/RestylerTool";
+import LightroomTool from "./pages/tools/LightroomTool";
+import FaceSwapTool from "./pages/tools/FaceSwapTool";
+import UpscalerTool from "./pages/tools/UpscalerTool";
+import EditorTool from "./pages/tools/EditorTool";
+import CameraAnglesTool from "./pages/tools/CameraAnglesTool";
+import CollageTool from "./pages/tools/CollageTool";
+import EditVideoTool from "./pages/tools/EditVideoTool";
+import IngredientsToVideoTool from "./pages/tools/IngredientsToVideoTool";
+import ExtendVideoTool from "./pages/tools/ExtendVideoTool";
+import MotionControlTool from "./pages/tools/MotionControlTool";
+import VideoGeneratorTool from "./pages/tools/VideoGeneratorTool";
 import Background3D from "./components/Background3D";
-import { AppRoute, type Asset, type StorePrefill } from "./types";
+import { AppRoute } from "./types";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { GenerationQueueProvider } from "./contexts/GenerationQueueContext";
 import { apiUrl } from "./services/apiBase";
+import Paywall from "./pages/Paywall";
 import { billingMe, getStripeCheckoutStatus } from "./services/billingApi";
 import { WalletProvider } from "@/contexts/WalletContext";
 import InsufficientCreditsModal from "@/components/InsufficientCreditsModal";
 import PlanRequiredModal from "@/components/PlanRequiredModal";
 import { EVENT_INSUFFICIENT_CREDITS, EVENT_PLAN_REQUIRED, emitWalletRefresh } from "@/services/appEvents";
+import EarnMoney from "./pages/EarnMoney.tsx";
+import ReelFeed from "./pages/ReelFeed.tsx";
 import StripeCheckoutStatusModal from "@/components/StripeCheckoutStatusModal";
 import { clearBillingSearchParams, clearPendingStripeCheckout, hasStripeCheckoutSearchParams, isStripeCheckoutSessionTemplate, readPendingStripeCheckout } from "@/services/stripeCheckoutState";
-
-const Home = React.lazy(() => import("./pages/Home"));
-const ImageGenHub = React.lazy(() => import("./pages/ImageGenHub"));
-const VideoGenHub = React.lazy(() => import("./pages/VideoGenHub"));
-const MyCreations = React.lazy(() => import("./pages/MyCreations"));
-const Store = React.lazy(() => import("./pages/Store"));
-const CommunityStore = React.lazy(() => import("./pages/CommunityStore"));
-const MyTrades = React.lazy(() => import("./pages/MyTrades"));
-const Profile = React.lazy(() => import("./pages/Profile"));
-const Paywall = React.lazy(() => import("./pages/Paywall"));
-const EarnMoney = React.lazy(() => import("./pages/EarnMoney"));
-const ReelFeed = React.lazy(() => import("./pages/ReelFeed"));
-
-const ImageGeneratorTool = React.lazy(() => import("./pages/tools/ImageGeneratorTool"));
-const RestylerTool = React.lazy(() => import("./pages/tools/RestylerTool"));
-const LightroomTool = React.lazy(() => import("./pages/tools/LightroomTool"));
-const FaceSwapTool = React.lazy(() => import("./pages/tools/FaceSwapTool"));
-const UpscalerTool = React.lazy(() => import("./pages/tools/UpscalerTool"));
-const EditorTool = React.lazy(() => import("./pages/tools/EditorTool"));
-const CameraAnglesTool = React.lazy(() => import("./pages/tools/CameraAnglesTool"));
-const CollageTool = React.lazy(() => import("./pages/tools/CollageTool"));
-const EditVideoTool = React.lazy(() => import("./pages/tools/EditVideoTool"));
-const IngredientsToVideoTool = React.lazy(() => import("./pages/tools/IngredientsToVideoTool"));
-const ExtendVideoTool = React.lazy(() => import("./pages/tools/ExtendVideoTool"));
-const MotionControlTool = React.lazy(() => import("./pages/tools/MotionControlTool"));
-const VideoGeneratorTool = React.lazy(() => import("./pages/tools/VideoGeneratorTool"));
-
-const RouteLoader = () => (
-  <div className="flex min-h-[54vh] items-center justify-center px-6 text-center text-white/70">
-    <div className="rounded-2xl border border-white/10 bg-black/35 px-5 py-4 text-xs font-semibold uppercase tracking-[0.24em] shadow-[0_18px_48px_rgba(0,0,0,0.35)]">
-      Loading studio…
-    </div>
-  </div>
-);
 
 type CheckoutOverlayState =
   | null
@@ -93,8 +84,8 @@ const AppContent: React.FC = () => {
   const { user, isLoading: authLoading } = useAuth();
   const healthUrl = apiUrl("/api/health");
 
-  const navigate = useCallback(
-    (nextRoute: AppRoute) => {
+  const navigate = useMemo(
+    () => (nextRoute: AppRoute) => {
       if (!user && !PUBLIC_ROUTES.has(nextRoute)) {
         setAuthModalOpen(true);
         return;
@@ -611,7 +602,7 @@ const AppContent: React.FC = () => {
           onOpenAuth={() => setAuthModalOpen(true)}
           onCloseAuth={() => setAuthModalOpen(false)}
         >
-          <Suspense fallback={<RouteLoader />}>{renderPage()}</Suspense>
+          {renderPage()}
         </Layout>
 
         <SellListingModal

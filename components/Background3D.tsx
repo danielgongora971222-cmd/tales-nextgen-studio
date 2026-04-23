@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef } from 'react';
 
 interface Star {
   x: number;
@@ -11,17 +11,6 @@ interface Star {
   twinkleDir: number;
 }
 
-function getLowPowerMode() {
-  if (typeof window === "undefined") return true;
-
-  const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
-  const coarsePointer = window.matchMedia?.("(hover: none), (pointer: coarse)")?.matches;
-  const smallScreen = window.matchMedia?.("(max-width: 767px)")?.matches;
-  const lowCoreDevice = typeof navigator !== "undefined" && Number(navigator.hardwareConcurrency || 8) <= 4;
-
-  return Boolean(reducedMotion || coarsePointer || smallScreen || lowCoreDevice);
-}
-
 const Background3D: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const mouseRef = useRef({ x: -9999, y: -9999 });
@@ -32,295 +21,240 @@ const Background3D: React.FC = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const ctx = canvas.getContext("2d", { alpha: false });
+    const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const lowPowerMode = getLowPowerMode();
-    const targetFps = lowPowerMode ? 0 : 24;
-    const frameBudget = targetFps > 0 ? 1000 / targetFps : Number.POSITIVE_INFINITY;
-
-    let width = 1;
-    let height = 1;
-    let dpr = 1;
-    let rafId = 0;
-    let resizeTimer = 0;
-    let destroyed = false;
-    let running = false;
-    let lastFrame = 0;
-    let time = 0;
-    let forwardSpeed = 0;
-    let canvasRect = canvas.getBoundingClientRect();
+    let width = window.innerWidth;
+    let height = window.innerHeight;
 
     const initStars = () => {
-      const density = lowPowerMode ? 12000 : 8500;
-      const maxStars = lowPowerMode ? 70 : 220;
-      const minStars = lowPowerMode ? 24 : 56;
-      const starCount = Math.max(minStars, Math.min(maxStars, Math.floor((width * height) / density)));
-      const nextStars: Star[] = [];
-
-      for (let i = 0; i < starCount; i += 1) {
-        const baseOpacity = Math.random() * 0.52 + 0.12;
-        nextStars.push({
+      const starCount = Math.floor((width * height) / 4000); 
+      const newStars: Star[] = [];
+      for (let i = 0; i < starCount; i++) {
+        const baseOp = Math.random() * 0.7 + 0.1;
+        newStars.push({
           x: Math.random() * width,
           y: Math.random() * height,
-          size: Math.random() * 1.1 + 0.18,
-          opacity: baseOpacity,
-          baseOpacity,
-          speed: Math.random() * 0.035 + 0.008,
-          twinkleSpeed: Math.random() * 0.006 + 0.0015,
-          twinkleDir: Math.random() > 0.5 ? 1 : -1,
+          size: Math.random() * 1.2 + 0.1,
+          opacity: baseOp,
+          baseOpacity: baseOp,
+          speed: Math.random() * 0.05 + 0.01, // Slower stars
+          twinkleSpeed: Math.random() * 0.01 + 0.002,
+          twinkleDir: Math.random() > 0.5 ? 1 : -1
         });
       }
-
-      starsRef.current = nextStars;
+      starsRef.current = newStars;
     };
-
-    const resize = () => {
-      canvasRect = canvas.getBoundingClientRect();
-      width = Math.max(1, Math.floor(canvasRect.width || window.innerWidth));
-      height = Math.max(1, Math.floor(canvasRect.height || window.innerHeight));
-      dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, lowPowerMode ? 1 : 1.25));
-
-      const pixelWidth = Math.max(1, Math.floor(width * dpr));
-      const pixelHeight = Math.max(1, Math.floor(height * dpr));
-
-      if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
-        canvas.width = pixelWidth;
-        canvas.height = pixelHeight;
-      }
-
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    
+    const handleResize = () => {
+      width = window.innerWidth;
+      height = window.innerHeight;
+      canvas.width = width;
+      canvas.height = height;
       initStars();
-      drawFrame(performance.now(), true);
+    };
+    
+    const handleMouseMove = (e: MouseEvent) => {
+        const rect = canvas.getBoundingClientRect();
+        mouseRef.current = {
+            x: e.clientX - rect.left,
+            y: e.clientY - rect.top
+        };
+    };
+    
+    const handleMouseLeave = () => {
+        mouseRef.current = { x: -9999, y: -9999 };
     };
 
-    const scheduleResize = () => {
-      window.clearTimeout(resizeTimer);
-      resizeTimer = window.setTimeout(resize, 140);
-    };
+    window.addEventListener('resize', handleResize);
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseout', handleMouseLeave);
 
-    const handlePointerMove = (event: PointerEvent) => {
-      mouseRef.current = {
-        x: event.clientX - canvasRect.left,
-        y: event.clientY - canvasRect.top,
-      };
-    };
+    handleResize();
 
-    const handlePointerLeave = () => {
-      mouseRef.current = { x: -9999, y: -9999 };
-    };
-
+    let time = 0;
+    
+    // Grid settings
+    const gridSize = 45; 
+    let forwardSpeed = 0;
+    
+    // Interaction physics - SUBTLE & MINIMALIST
+    const influenceRadius = 180; // Smaller radius
+    
+    // Noise function (dampened)
     const noise = (x: number, y: number, t: number) => {
-      return Math.sin(x * 0.004 + t) * Math.cos(y * 0.004 + t * 0.5) * (lowPowerMode ? 3.5 : 6.5);
+        return Math.sin(x * 0.005 + t) * Math.cos(y * 0.005 + t * 0.5) * 8; // Amplitude reduced from 20 to 8
     };
 
-    function drawFrame(timestamp: number, staticFrame = false) {
-      const animate = !staticFrame && !lowPowerMode;
-      const gridSize = lowPowerMode ? 72 : 58;
-      const horizon = height * 0.36;
-      const influenceRadius = lowPowerMode ? 0 : 150;
-
-      ctx.fillStyle = "#020202";
+    const draw = () => {
+      ctx.fillStyle = '#020202'; 
       ctx.fillRect(0, 0, width, height);
 
-      if (animate) {
-        time += 0.006;
-        forwardSpeed = (forwardSpeed + 0.12) % gridSize;
-      }
+      time += 0.008; // Slower time
+      forwardSpeed = (forwardSpeed + 0.2) % gridSize; // Slower movement
 
-      const targetMouse = mouseRef.current;
-      smoothMouseRef.current.x += (targetMouse.x - smoothMouseRef.current.x) * 0.045;
-      smoothMouseRef.current.y += (targetMouse.y - smoothMouseRef.current.y) * 0.045;
+      // Very smooth mouse interpolation
+      const dx = mouseRef.current.x - smoothMouseRef.current.x;
+      const dy = mouseRef.current.y - smoothMouseRef.current.y;
+      smoothMouseRef.current.x += dx * 0.05;
+      smoothMouseRef.current.y += dy * 0.05;
 
-      const nebX = Math.sin(time * 0.25) * 34 + width / 2;
-      const nebY = Math.cos(time * 0.18) * 18 + height / 2;
-      const nebulaGrad = ctx.createRadialGradient(nebX, nebY, 0, width / 2, height / 2, width * 0.86);
-      nebulaGrad.addColorStop(0, "rgba(42, 42, 52, 0.018)");
-      nebulaGrad.addColorStop(0.62, "rgba(10, 10, 15, 0.005)");
-      nebulaGrad.addColorStop(1, "transparent");
+      // Nebula
+      const nebX = Math.sin(time * 0.3) * 50 + width / 2;
+      const nebY = Math.cos(time * 0.2) * 20 + height / 2;
+      
+      const nebulaGrad = ctx.createRadialGradient(nebX, nebY, 0, width / 2, height / 2, width * 0.9);
+      nebulaGrad.addColorStop(0, 'rgba(40, 40, 50, 0.02)'); 
+      nebulaGrad.addColorStop(0.6, 'rgba(10, 10, 15, 0.005)');
+      nebulaGrad.addColorStop(1, 'transparent');
+      
       ctx.fillStyle = nebulaGrad;
       ctx.fillRect(0, 0, width, height);
 
-      for (const star of starsRef.current) {
-        if (animate) {
-          star.y -= star.speed;
-          if (star.y < 0) {
-            star.y = height;
-            star.x = Math.random() * width;
-          }
-
-          star.opacity += star.twinkleSpeed * star.twinkleDir;
-          if (star.opacity > star.baseOpacity + 0.08 || star.opacity < star.baseOpacity - 0.08) {
-            star.twinkleDir *= -1;
-          }
+      // Stars
+      starsRef.current.forEach(star => {
+        star.y -= star.speed; 
+        if (star.y < 0) {
+          star.y = height;
+          star.x = Math.random() * width;
         }
-
+        star.opacity += star.twinkleSpeed * star.twinkleDir;
+        if (star.opacity > star.baseOpacity + 0.1 || star.opacity < star.baseOpacity - 0.1) {
+          star.twinkleDir *= -1;
+        }
         ctx.fillStyle = `rgba(255, 255, 255, ${Math.max(0, star.opacity)})`;
         ctx.beginPath();
         ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
         ctx.fill();
-      }
+      });
 
+      // Grid Logic
+      const horizon = height * 0.35; 
       const mx = smoothMouseRef.current.x;
       const my = smoothMouseRef.current.y;
-      const isMouseActive = animate && mouseRef.current.x > -100;
+      const isMouseActive = mouseRef.current.x > -100;
 
-      const transformPoint = (worldX: number, worldY: number) => {
-        const perspective = (worldY - horizon) / Math.max(1, height - horizon);
-        if (perspective <= 0) return null;
+      const transformPoint = (wx: number, wy: number) => {
+          const perspective = (wy - horizon) / (height - horizon); 
+          if (perspective <= 0) return null;
 
-        const zScale = Math.pow(perspective, 0.9);
-        let sx = width / 2 + (worldX - width / 2) * zScale;
-        let sy = worldY;
+          const zScale = Math.pow(perspective, 0.9); // Flatter perspective
+          
+          let sx = (width / 2) + (wx - width / 2) * zScale;
+          let sy = wy;
 
-        sx += noise(worldY, worldX, time * 0.78) * perspective * 0.24;
-        sy += noise(worldX, worldY, time) * perspective;
+          // Organic low-freq wave
+          const waveY = noise(wx, wy, time) * perspective; 
+          const waveX = noise(wy, wx, time * 0.8) * perspective * 0.3;
+          
+          sx += waveX;
+          sy += waveY;
 
-        if (isMouseActive) {
-          const distX = sx - mx;
-          const distY = sy - my;
-          const dist = Math.sqrt(distX * distX + distY * distY);
+          // Subtle Mouse Interaction
+          if (isMouseActive) {
+              const distX = sx - mx;
+              const distY = sy - my;
+              const dist = Math.sqrt(distX*distX + distY*distY);
 
-          if (dist < influenceRadius) {
-            const force = 1 - dist / influenceRadius;
-            const ease = force * force;
-            sx += distX * ease * 0.055;
-            sy += distY * ease * 0.055 - 11 * ease;
+              if (dist < influenceRadius) {
+                  const force = (1 - dist / influenceRadius); 
+                  const ease = force * force; // Quadratic easing
+
+                  // Gentle push
+                  const pushX = distX * ease * 0.08;
+                  const pushY = distY * ease * 0.08;
+
+                  // Very subtle lift
+                  const lift = -15 * ease; 
+
+                  sx += pushX;
+                  sy += pushY + lift;
+              }
           }
-        }
 
-        return { x: sx, y: sy };
+          return { x: sx, y: sy, opacity: perspective };
       };
 
       ctx.lineWidth = 1;
 
-      const verticalColumns = Math.ceil(width / gridSize) + 4;
-      const verticalStepY = lowPowerMode ? 34 : 24;
-      for (let i = -4; i <= verticalColumns; i += 1) {
-        const worldX = i * gridSize * 2.8 - width * 0.36;
-        let started = false;
-        let maxDistortion = 0;
+      // Verticals
+      const vCols = Math.ceil(width / gridSize) + 6;
+      for (let i = -6; i <= vCols; i++) {
+          const worldX = (i * gridSize * 3) - (width * 0.5);
+          
+          ctx.beginPath();
+          let started = false;
+          let maxDistortion = 0;
 
-        ctx.beginPath();
-        for (let y = horizon; y < height; y += verticalStepY) {
-          const p = transformPoint(worldX + width / 2, y);
-          if (!p) continue;
+          for (let y = horizon; y < height; y += 20) {
+             const p = transformPoint(worldX + width/2, y);
+             if (!p) continue;
 
-          if (isMouseActive) {
-            const d = Math.hypot(p.x - mx, p.y - my);
-            if (d < influenceRadius) maxDistortion = Math.max(maxDistortion, 1 - d / influenceRadius);
+             if (isMouseActive) {
+                const d = Math.hypot(p.x - mx, p.y - my);
+                if (d < influenceRadius) maxDistortion = Math.max(maxDistortion, (1 - d/influenceRadius));
+             }
+
+             if (!started) { ctx.moveTo(p.x, p.y); started = true; } 
+             else { ctx.lineTo(p.x, p.y); }
           }
 
-          if (!started) {
-            ctx.moveTo(p.x, p.y);
-            started = true;
-          } else {
-            ctx.lineTo(p.x, p.y);
+          const baseAlpha = 0.05;
+          const activeAlpha = 0.2; // Reduced active glow
+          const alpha = baseAlpha + (maxDistortion * activeAlpha);
+          
+          ctx.strokeStyle = `rgba(255, 255, 255, ${alpha})`;
+          ctx.stroke();
+      }
+
+      // Horizontals
+      const hLines = 25;
+      for (let j = 0; j < hLines; j++) {
+          const logicZ = (j * gridSize) - forwardSpeed;
+          const progress = (logicZ + gridSize) / (hLines * gridSize);
+          if (progress <= 0 || progress >= 1) continue;
+
+          const screenY = horizon + Math.pow(progress, 2.2) * (height - horizon);
+          
+          ctx.beginPath();
+          let started = false;
+          let maxDistortion = 0;
+
+          for (let x = 0; x <= width; x += 30) {
+              const p = transformPoint(x, screenY);
+              if (!p) continue;
+
+              if (isMouseActive) {
+                  const d = Math.hypot(p.x - mx, p.y - my);
+                  if (d < influenceRadius) maxDistortion = Math.max(maxDistortion, (1 - d/influenceRadius));
+               }
+
+              if (!started) { ctx.moveTo(p.x, p.y); started = true; } 
+              else { ctx.lineTo(p.x, p.y); }
           }
-        }
 
-        ctx.strokeStyle = `rgba(255, 255, 255, ${0.04 + maxDistortion * 0.13})`;
-        ctx.stroke();
+          const baseAlpha = progress * 0.15;
+          const activeAlpha = 0.3;
+          const alpha = Math.min(1, baseAlpha + (maxDistortion * activeAlpha));
+
+          ctx.strokeStyle = `rgba(255, 255, 255, ${alpha})`;
+          ctx.stroke();
       }
 
-      const horizontalLines = lowPowerMode ? 13 : 20;
-      const horizontalStepX = lowPowerMode ? 58 : 40;
-      for (let j = 0; j < horizontalLines; j += 1) {
-        const logicZ = j * gridSize - forwardSpeed;
-        const progress = (logicZ + gridSize) / Math.max(1, horizontalLines * gridSize);
-        if (progress <= 0 || progress >= 1) continue;
-
-        const screenY = horizon + Math.pow(progress, 2.18) * (height - horizon);
-        let started = false;
-        let maxDistortion = 0;
-
-        ctx.beginPath();
-        for (let x = 0; x <= width; x += horizontalStepX) {
-          const p = transformPoint(x, screenY);
-          if (!p) continue;
-
-          if (isMouseActive) {
-            const d = Math.hypot(p.x - mx, p.y - my);
-            if (d < influenceRadius) maxDistortion = Math.max(maxDistortion, 1 - d / influenceRadius);
-          }
-
-          if (!started) {
-            ctx.moveTo(p.x, p.y);
-            started = true;
-          } else {
-            ctx.lineTo(p.x, p.y);
-          }
-        }
-
-        ctx.strokeStyle = `rgba(255, 255, 255, ${Math.min(1, progress * 0.11 + maxDistortion * 0.2)})`;
-        ctx.stroke();
-      }
-    }
-
-    const stop = () => {
-      running = false;
-      if (rafId) {
-        cancelAnimationFrame(rafId);
-        rafId = 0;
-      }
+      requestAnimationFrame(draw);
     };
 
-    const loop = (timestamp: number) => {
-      if (destroyed || document.visibilityState === "hidden") {
-        stop();
-        return;
-      }
-
-      if (!lastFrame || timestamp - lastFrame >= frameBudget) {
-        drawFrame(timestamp);
-        lastFrame = timestamp;
-      }
-
-      rafId = requestAnimationFrame(loop);
-    };
-
-    const start = () => {
-      if (lowPowerMode || running || destroyed || document.visibilityState === "hidden") return;
-      running = true;
-      lastFrame = 0;
-      rafId = requestAnimationFrame(loop);
-    };
-
-    const handleVisibility = () => {
-      if (document.visibilityState === "hidden") {
-        stop();
-        return;
-      }
-
-      drawFrame(performance.now(), true);
-      start();
-    };
-
-    resize();
-    start();
-
-    window.addEventListener("resize", scheduleResize, { passive: true });
-    document.addEventListener("visibilitychange", handleVisibility);
-
-    if (!lowPowerMode) {
-      window.addEventListener("pointermove", handlePointerMove, { passive: true });
-      window.addEventListener("pointerleave", handlePointerLeave, { passive: true });
-      window.addEventListener("blur", handlePointerLeave);
-    }
+    const animId = requestAnimationFrame(draw);
 
     return () => {
-      destroyed = true;
-      stop();
-      window.clearTimeout(resizeTimer);
-      window.removeEventListener("resize", scheduleResize);
-      document.removeEventListener("visibilitychange", handleVisibility);
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerleave", handlePointerLeave);
-      window.removeEventListener("blur", handlePointerLeave);
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseout', handleMouseLeave);
+      cancelAnimationFrame(animId);
     };
   }, []);
 
-  return <canvas ref={canvasRef} className="h-full w-full opacity-60" aria-hidden="true" />;
+  return <canvas ref={canvasRef} className="w-full h-full opacity-60" />; // Reduced base opacity
 };
 
 export default Background3D;
