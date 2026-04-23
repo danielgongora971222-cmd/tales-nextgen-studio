@@ -275,18 +275,34 @@ export default function ReelFeed({ onNavigate }: Props) {
   }, [items]);
 
   useEffect(() => {
-    for (const [id, video] of Object.entries(videoRefs.current)) {
-      if (!video) continue;
-      const isActive = id === activeId && !commentsOpen;
-      video.muted = reelMuted;
-      video.defaultMuted = reelMuted;
-      if (isActive) {
-        const playPromise = video.play();
-        if (playPromise && typeof playPromise.catch === "function") playPromise.catch(() => undefined);
-      } else {
-        video.pause();
+    const syncVideos = () => {
+      const pageHidden = document.visibilityState === "hidden";
+
+      for (const [id, video] of Object.entries(videoRefs.current)) {
+        if (!video) continue;
+
+        const isActive = !pageHidden && id === activeId && !commentsOpen;
+        video.muted = reelMuted;
+        video.defaultMuted = reelMuted;
+
+        if (isActive) {
+          const playPromise = video.play();
+          if (playPromise && typeof playPromise.catch === "function") playPromise.catch(() => undefined);
+        } else {
+          video.pause();
+        }
       }
-    }
+    };
+
+    syncVideos();
+    document.addEventListener("visibilitychange", syncVideos);
+
+    return () => {
+      document.removeEventListener("visibilitychange", syncVideos);
+      for (const video of Object.values(videoRefs.current)) {
+        video?.pause();
+      }
+    };
   }, [activeId, commentsOpen, items, reelMuted]);
 
   useEffect(() => {
@@ -570,13 +586,9 @@ export default function ReelFeed({ onNavigate }: Props) {
                   {item.previewUrl ? (
                     item.mediaTag === "video" ? (
                       <>
-                        <video
-                          src={item.previewUrl}
-                          muted
-                          loop
-                          playsInline
-                          preload="metadata"
-                          className="absolute inset-0 h-full w-full scale-110 object-cover opacity-50 blur-2xl"
+                        <div
+                          className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.16),transparent_32%),linear-gradient(180deg,rgba(18,18,22,0.92),rgba(0,0,0,0.98))]"
+                          aria-hidden="true"
                         />
                         <div className="absolute inset-0 flex items-center justify-center">
                           <video
@@ -598,9 +610,17 @@ export default function ReelFeed({ onNavigate }: Props) {
                           src={item.previewUrl}
                           alt={item.name || "Listing"}
                           className="absolute inset-0 h-full w-full scale-110 object-cover opacity-45 blur-2xl"
+                          loading="lazy"
+                          decoding="async"
                         />
                         <div className="absolute inset-0 flex items-center justify-center">
-                          <img src={item.previewUrl} alt={item.name || "Listing"} className="h-full w-full object-contain" />
+                          <img
+                            src={item.previewUrl}
+                            alt={item.name || "Listing"}
+                            className="h-full w-full object-contain"
+                            loading="lazy"
+                            decoding="async"
+                          />
                         </div>
                       </>
                     )

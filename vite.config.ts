@@ -21,5 +21,27 @@ export default defineConfig(() => {
         "@": path.resolve(__dirname, "."),
       },
     },
+    esbuild: {
+      legalComments: "none",
+    },
+    build: {
+      target: "es2022",
+      cssCodeSplit: true,
+      sourcemap: false,
+      chunkSizeWarningLimit: 900,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (!id.includes("node_modules")) return undefined;
+            if (id.includes("react") || id.includes("react-dom") || id.includes("react-router")) return "vendor-react";
+            if (id.includes("@react-three") || id.includes("three")) return "vendor-3d";
+            if (id.includes("@supabase")) return "vendor-supabase";
+            if (id.includes("@sentry")) return "vendor-observability";
+            if (id.includes("lucide-react")) return "vendor-icons";
+            return "vendor";
+          },
+        },
+      },
+    },
   };
 });

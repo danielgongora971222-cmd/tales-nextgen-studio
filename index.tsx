@@ -18,10 +18,15 @@ if (apiBase && apiBase.trim()) {
 }
 
 if (dsn) {
+  const configuredSampleRate = Number(import.meta.env.VITE_SENTRY_TRACES_SAMPLE_RATE ?? 0.01);
+  const tracesSampleRate = Number.isFinite(configuredSampleRate)
+    ? Math.max(0, Math.min(1, configuredSampleRate))
+    : 0.01;
+
   Sentry.init({
     dsn,
     environment: (import.meta.env.VITE_APP_ENV as string) || "development",
-    tracesSampleRate: Number(import.meta.env.VITE_SENTRY_TRACES_SAMPLE_RATE || 0.05),
+    tracesSampleRate,
 
     // En Sentry v8, tracePropagationTargets se configura a nivel de Sentry.init (no en la integración).
     tracePropagationTargets: traceTargets,
